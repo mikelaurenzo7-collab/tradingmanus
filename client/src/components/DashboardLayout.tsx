@@ -28,8 +28,12 @@ import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { Button } from "./ui/button";
 
 const menuItems = [
-  { icon: LayoutDashboard, label: "Page 1", path: "/" },
-  { icon: Users, label: "Page 2", path: "/some-path" },
+  { icon: LayoutDashboard, label: "Dashboard", path: "/" },
+  { icon: Users, label: "Bots", path: "/bots" },
+  { icon: LayoutDashboard, label: "Positions", path: "/positions" },
+  { icon: LayoutDashboard, label: "Trades", path: "/trades" },
+  { icon: LayoutDashboard, label: "Reasoning", path: "/reasoning" },
+  { icon: LayoutDashboard, label: "Analytics", path: "/analytics" },
 ];
 
 const SIDEBAR_WIDTH_KEY = "sidebar-width";

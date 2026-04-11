@@ -4,13 +4,23 @@ import NotFound from "@/pages/NotFound";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
-import Home from "./pages/Home";
+import DashboardLayout from "./components/DashboardLayout";
+import Dashboard from "./pages/Dashboard";
+import Bots from "./pages/Bots";
+import Positions from "./pages/Positions";
+import Trades from "./pages/Trades";
+import ReasoningLog from "./pages/ReasoningLog";
+import Analytics from "./pages/Analytics";
 
 function Router() {
-  // make sure to consider if you need authentication for certain routes
   return (
     <Switch>
-      <Route path={"/"} component={Home} />
+      <Route path={"/"} component={() => <DashboardLayout><Dashboard /></DashboardLayout>} />
+      <Route path={"/bots"} component={() => <DashboardLayout><Bots /></DashboardLayout>} />
+      <Route path={"/positions"} component={() => <DashboardLayout><Positions /></DashboardLayout>} />
+      <Route path={"/trades"} component={() => <DashboardLayout><Trades /></DashboardLayout>} />
+      <Route path={"/reasoning"} component={() => <DashboardLayout><ReasoningLog /></DashboardLayout>} />
+      <Route path={"/analytics"} component={() => <DashboardLayout><Analytics /></DashboardLayout>} />
       <Route path={"/404"} component={NotFound} />
       {/* Final fallback route */}
       <Route component={NotFound} />
@@ -18,17 +28,11 @@ function Router() {
   );
 }
 
-// NOTE: About Theme
-// - First choose a default theme according to your design style (dark or light bg), than change color palette in index.css
-//   to keep consistent foreground/background color across components
-// - If you want to make theme switchable, pass `switchable` ThemeProvider and use `useTheme` hook
-
 function App() {
   return (
     <ErrorBoundary>
       <ThemeProvider
-        defaultTheme="light"
-        // switchable
+        defaultTheme="dark"
       >
         <TooltipProvider>
           <Toaster />
