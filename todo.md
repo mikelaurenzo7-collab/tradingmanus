@@ -1,4 +1,4 @@
-# NEXUS OMEGA: Real-Data Transformation TODO
+# LAURENZO: Real-Data Transformation TODO
 
 ## Phase 1: Real-Data Connectors & Empty States
 
@@ -7,6 +7,7 @@
 - [x] tRPC procedures created for connector management, account sync, data freshness checks
 - [x] Frontend Connectors page built with data and account connector status display
 - [x] Empty states for unlinked market data and account feeds
+- [x] Loading and error states added to all new pages (Connectors, PaperTrading, Strategies, RiskControls, AuditLog)
 - [ ] Implement market data adapter interface (Alpha Vantage, Polygon, Alpaca, Kraken APIs)
 - [ ] Implement account state adapter interface (Alpaca, Interactive Brokers, Kraken)
 - [ ] Add data freshness indicators and source provenance to all market/account displays
@@ -80,3 +81,13 @@
 - [ ] Validate risk controls under stress scenarios
 - [ ] Run end-to-end paper trading experiment (30+ days)
 - [ ] Deploy to production with real-data mode
+
+## Phase 8: Branding Rename
+
+- [x] Rename "NEXUS OMEGA" to "LAURENZO" throughout the codebase
+  - [x] Update all page titles and headers (client/src/**/*.tsx)
+  - [x] Update dashboard title and subtitle
+  - [x] Update project name in package.json
+  - [x] Update window title and meta tags (client/index.html)
+  - [x] Verified no remaining NEXUS OMEGA references in source code
+  - [x] TypeScript validation passes after rename

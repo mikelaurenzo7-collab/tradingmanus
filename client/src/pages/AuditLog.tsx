@@ -6,6 +6,28 @@ import { AlertCircle } from "lucide-react";
 export default function AuditLog() {
   const auditLog = trpc.audit.log.useQuery({ limitDays: 30 });
 
+  if (auditLog.isLoading) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold text-cyan-400 font-mono">[ AUDIT LOG ]</h1>
+          <p className="text-gray-400 mt-2">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (auditLog.error) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold text-cyan-400 font-mono">[ AUDIT LOG ]</h1>
+          <p className="text-red-400 mt-2">Error loading audit log</p>
+        </div>
+      </div>
+    );
+  }
+
   const getEventColor = (eventType: string) => {
     if (eventType.includes("kill_switch")) return "bg-red-900 text-red-200";
     if (eventType.includes("position_close")) return "bg-yellow-900 text-yellow-200";

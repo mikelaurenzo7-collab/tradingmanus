@@ -11,6 +11,28 @@ export default function Connectors() {
   const dataConnectors = trpc.connectors.dataConnectors.useQuery();
   const accountConnectors = trpc.connectors.accountConnectors.useQuery();
 
+  if (dataConnectors.isLoading || accountConnectors.isLoading) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold text-cyan-400 font-mono">[ DATA CONNECTORS ]</h1>
+          <p className="text-gray-400 mt-2">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (dataConnectors.error || accountConnectors.error) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold text-cyan-400 font-mono">[ DATA CONNECTORS ]</h1>
+          <p className="text-red-400 mt-2">Error loading connectors</p>
+        </div>
+      </div>
+    );
+  }
+
   const getStatusIcon = (status: string) => {
     switch (status) {
       case "connected":

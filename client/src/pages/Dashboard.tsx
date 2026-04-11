@@ -45,7 +45,7 @@ export default function Dashboard() {
         <div>
           <h1 className="text-3xl font-bold tracking-wider">
             <span className="bracket">[</span>
-            NEXUS OMEGA
+            LAURENZO
             <span className="bracket">]</span>
           </h1>
           <p className="text-muted-foreground text-sm mt-1">

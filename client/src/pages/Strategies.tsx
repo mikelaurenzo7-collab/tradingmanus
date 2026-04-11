@@ -6,6 +6,28 @@ import { AlertCircle } from "lucide-react";
 export default function Strategies() {
   const strategies = trpc.strategies.list.useQuery();
 
+  if (strategies.isLoading) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold text-cyan-400 font-mono">[ STRATEGY REGISTRY ]</h1>
+          <p className="text-gray-400 mt-2">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (strategies.error) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold text-cyan-400 font-mono">[ STRATEGY REGISTRY ]</h1>
+          <p className="text-red-400 mt-2">Error loading strategies</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div>

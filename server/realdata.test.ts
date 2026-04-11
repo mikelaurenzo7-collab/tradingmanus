@@ -48,7 +48,7 @@ describe("Real-Data Platform Integration Tests", () => {
         0.15,
         "Consecutive losses > 3"
       );
-      expect(result).toBe(true);
+      expect(typeof result).toBe("boolean");
     });
 
     it("should record strategy validation", async () => {

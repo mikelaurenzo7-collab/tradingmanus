@@ -6,6 +6,28 @@ import { AlertCircle } from "lucide-react";
 export default function RiskControls() {
   const riskLimits = trpc.riskControls.limits.useQuery();
 
+  if (riskLimits.isLoading) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold text-cyan-400 font-mono">[ RISK CONTROLS ]</h1>
+          <p className="text-gray-400 mt-2">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (riskLimits.error) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold text-cyan-400 font-mono">[ RISK CONTROLS ]</h1>
+          <p className="text-red-400 mt-2">Error loading risk limits</p>
+        </div>
+      </div>
+    );
+  }
+
   const getLimitCategory = (limitType: string) => {
     if (limitType.includes("daily")) return "Daily Limits";
     if (limitType.includes("weekly")) return "Weekly Limits";
