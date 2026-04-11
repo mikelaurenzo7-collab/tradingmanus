@@ -1,4 +1,3 @@
-import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router, adminProcedure } from "./_core/trpc";
@@ -24,9 +23,32 @@ import {
   createAlert,
   recordKillSwitchEvent,
   getKillSwitchHistory,
+  getAllDataConnectors,
+  getDataConnectorsByMarket,
+  updateDataConnectorStatus,
+  getLatestMarketData,
+  storeMarketData,
+  getAllAccountConnectors,
+  updateAccountConnectorStatus,
+  createPaperTrade,
+  closePaperTrade,
+  getPaperTrades,
+  createTradeJournalEntry,
+  getTradeJournalEntry,
+  getAllStrategies,
+  getStrategyByName,
+  createStrategy,
+  recordStrategyValidation,
+  recordAuditEvent,
+  getAuditLog,
+  getAllRiskLimits,
+  getRiskLimitByType,
+  setRiskLimit,
 } from "./db";
 import { invokeLLM } from "./_core/llm";
 import { notifyOwner } from "./_core/notification";
+
+const COOKIE_NAME = "session";
 
 export const appRouter = router({
   system: systemRouter,
@@ -219,28 +241,23 @@ export const appRouter = router({
       .input(z.object({ reason: z.string() }))
       .mutation(async ({ input, ctx }) => {
         try {
-          // Get all open positions and bots
           const openPositions = await getOpenPositions();
           const allBots = await getAllBots();
 
-          // Close all positions
           let closedCount = 0;
           for (const position of openPositions) {
             const closed = await closePosition(position.id, position.markPrice);
             if (closed) closedCount++;
           }
 
-          // Halt all bots
           let haltedCount = 0;
           for (const bot of allBots) {
             const updated = await updateBotStatus(bot.id, 'stopped');
             if (updated) haltedCount++;
           }
 
-          // Record kill switch event
           await recordKillSwitchEvent(ctx.user.openId, input.reason, closedCount, haltedCount);
 
-          // Create alert
           await createAlert(
             'kill_switch',
             'critical',
@@ -249,7 +266,6 @@ export const appRouter = router({
             `kill_switch_${Date.now()}`
           );
 
-          // Notify owner
           await notifyOwner({
             title: '🚨 KILL SWITCH ACTIVATED',
             content: `All positions flattened (${closedCount}). All bots halted (${haltedCount}). Reason: ${input.reason}`,
@@ -277,6 +293,237 @@ export const appRouter = router({
       .input(z.object({ limitDays: z.number().optional() }))
       .query(async ({ input }) => {
         return await getAlerts(input.limitDays || 7);
+      }),
+  }),
+
+  // ============================================
+  // REAL-DATA CONNECTORS (Owner-only)
+  // ============================================
+  connectors: router({
+    dataConnectors: adminProcedure.query(async () => {
+      return await getAllDataConnectors();
+    }),
+
+    dataConnectorsByMarket: adminProcedure
+      .input(z.object({ market: z.enum(['stocks', 'crypto', 'prediction']) }))
+      .query(async ({ input }) => {
+        return await getDataConnectorsByMarket(input.market);
+      }),
+
+    updateDataConnectorStatus: adminProcedure
+      .input(z.object({ connectorId: z.number(), status: z.enum(['connected', 'disconnected', 'error', 'stale']), errorMessage: z.string().optional() }))
+      .mutation(async ({ input, ctx }) => {
+        const success = await updateDataConnectorStatus(input.connectorId, input.status, input.errorMessage);
+        if (success) {
+          await recordAuditEvent('connector_status_updated', 'dataConnector', input.connectorId, `Status: ${input.status}`, ctx.user.openId);
+        }
+        return { success };
+      }),
+
+    accountConnectors: adminProcedure.query(async () => {
+      return await getAllAccountConnectors();
+    }),
+
+    updateAccountConnectorStatus: adminProcedure
+      .input(z.object({ connectorId: z.number(), status: z.enum(['connected', 'disconnected', 'error', 'stale']), balance: z.number().optional(), errorMessage: z.string().optional() }))
+      .mutation(async ({ input, ctx }) => {
+        const success = await updateAccountConnectorStatus(input.connectorId, input.status, input.balance, input.errorMessage);
+        if (success) {
+          await recordAuditEvent('account_connector_updated', 'accountConnector', input.connectorId, `Status: ${input.status}, Balance: ${input.balance}`, ctx.user.openId);
+        }
+        return { success };
+      }),
+  }),
+
+  // ============================================
+  // PAPER TRADING LAB (Owner-only)
+  // ============================================
+  paperTrading: router({
+    createTrade: adminProcedure
+      .input(z.object({
+        symbol: z.string(),
+        market: z.enum(['stocks', 'crypto', 'prediction']),
+        side: z.enum(['long', 'short', 'yes', 'no']),
+        quantity: z.number(),
+        entryPrice: z.number(),
+        entrySignal: z.string(),
+        entryRationale: z.string(),
+        strategyTag: z.string(),
+        invalidationCondition: z.string().optional(),
+        expectedHoldingPeriod: z.string().optional(),
+        slippageAssumption: z.number().optional(),
+        feeAssumption: z.number().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await createPaperTrade(
+          input.symbol,
+          input.market,
+          input.side,
+          input.quantity,
+          input.entryPrice,
+          input.entrySignal,
+          input.entryRationale,
+          input.strategyTag,
+          input.invalidationCondition,
+          input.expectedHoldingPeriod,
+          input.slippageAssumption,
+          input.feeAssumption
+        );
+        if (result) {
+          await recordAuditEvent('paper_trade_created', 'paperTrade', undefined, `${input.symbol} ${input.side} ${input.quantity}@${input.entryPrice}`, ctx.user.openId);
+        }
+        return { success: !!result };
+      }),
+
+    closeTrade: adminProcedure
+      .input(z.object({ paperTradeId: z.number(), exitPrice: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const success = await closePaperTrade(input.paperTradeId, input.exitPrice);
+        if (success) {
+          await recordAuditEvent('paper_trade_closed', 'paperTrade', input.paperTradeId, `Exit: ${input.exitPrice}`, ctx.user.openId);
+        }
+        return { success };
+      }),
+
+    list: adminProcedure
+      .input(z.object({ limitDays: z.number().optional() }))
+      .query(async ({ input }) => {
+        return await getPaperTrades(input.limitDays || 30);
+      }),
+
+    journalEntry: adminProcedure
+      .input(z.object({
+        paperTradeId: z.number(),
+        founderView: z.string().optional(),
+        systemView: z.string().optional(),
+        outcome: z.string().optional(),
+        attributionTags: z.string().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const success = await createTradeJournalEntry(
+          input.paperTradeId,
+          input.founderView,
+          input.systemView,
+          input.outcome,
+          input.attributionTags,
+          input.notes
+        );
+        if (success) {
+          await recordAuditEvent('journal_entry_created', 'tradeJournalEntry', input.paperTradeId, input.outcome, ctx.user.openId);
+        }
+        return { success };
+      }),
+
+    getJournalEntry: adminProcedure
+      .input(z.object({ paperTradeId: z.number() }))
+      .query(async ({ input }) => {
+        return await getTradeJournalEntry(input.paperTradeId);
+      }),
+  }),
+
+  // ============================================
+  // STRATEGY REGISTRY & VALIDATION (Owner-only)
+  // ============================================
+  strategies: router({
+    list: adminProcedure.query(async () => {
+      return await getAllStrategies();
+    }),
+
+    create: adminProcedure
+      .input(z.object({
+        name: z.string(),
+        hypothesis: z.string(),
+        marketUniverse: z.string(),
+        holdingPeriod: z.string(),
+        entryLogic: z.string(),
+        exitLogic: z.string(),
+        sizingRules: z.string(),
+        allowedRegimes: z.string().optional(),
+        expectedCosts: z.number().optional(),
+        failureConditions: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const success = await createStrategy(
+          input.name,
+          input.hypothesis,
+          input.marketUniverse,
+          input.holdingPeriod,
+          input.entryLogic,
+          input.exitLogic,
+          input.sizingRules,
+          input.allowedRegimes,
+          input.expectedCosts,
+          input.failureConditions
+        );
+        if (success) {
+          await recordAuditEvent('strategy_created', 'strategy', undefined, input.name, ctx.user.openId);
+        }
+        return { success };
+      }),
+
+    recordValidation: adminProcedure
+      .input(z.object({
+        strategyId: z.number(),
+        validationPeriod: z.string(),
+        outOfSampleReturn: z.number().optional(),
+        postCostReturn: z.number().optional(),
+        sharpeRatio: z.number().optional(),
+        maxDrawdown: z.number().optional(),
+        winRate: z.number().optional(),
+        tradeCount: z.number().optional(),
+        passedCostTest: z.boolean().optional(),
+        passedConsistencyTest: z.boolean().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const success = await recordStrategyValidation(
+          input.strategyId,
+          input.validationPeriod,
+          input.outOfSampleReturn,
+          input.postCostReturn,
+          input.sharpeRatio,
+          input.maxDrawdown,
+          input.winRate,
+          input.tradeCount,
+          input.passedCostTest,
+          input.passedConsistencyTest,
+          input.notes
+        );
+        if (success) {
+          await recordAuditEvent('strategy_validation_recorded', 'strategyValidation', input.strategyId, input.validationPeriod, ctx.user.openId);
+        }
+        return { success };
+      }),
+  }),
+
+  // ============================================
+  // RISK CONTROLS (Owner-only)
+  // ============================================
+  riskControls: router({
+    limits: adminProcedure.query(async () => {
+      return await getAllRiskLimits();
+    }),
+
+    setLimit: adminProcedure
+      .input(z.object({ limitType: z.string(), value: z.number(), period: z.string() }))
+      .mutation(async ({ input, ctx }) => {
+        const success = await setRiskLimit(input.limitType, input.value, input.period);
+        if (success) {
+          await recordAuditEvent('risk_limit_set', 'riskLimit', undefined, `${input.limitType}: ${input.value} per ${input.period}`, ctx.user.openId);
+        }
+        return { success };
+      }),
+  }),
+
+  // ============================================
+  // AUDIT LOG (Owner-only)
+  // ============================================
+  audit: router({
+    log: adminProcedure
+      .input(z.object({ limitDays: z.number().optional() }))
+      .query(async ({ input }) => {
+        return await getAuditLog(input.limitDays || 30);
       }),
   }),
 });
