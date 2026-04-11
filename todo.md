@@ -12,7 +12,7 @@
   - [ ] Drawdown breach notifications (auto-trigger on equity drop)
 - [ ] Integrate live market context for stocks and crypto using the Yahoo Finance data APIs through server-side helpers.
 - [ ] Add server-side LLM summaries for market regime, profit-hunting opportunities, and plain-English reasoning log explanations.
-- [ ] Seed or synthesize realistic dashboard data so the interface is fully usable during development.
+- [x] Seed or synthesize realistic dashboard data so the interface is fully usable during development.
 - [x] Build the dashboard layout with persistent navigation for overview, bots, positions, trades, reasoning log, and market analytics.
 - [x] Implement the retro-futuristic dystopian visual system with scanlines, chromatic aberration accents, technical noise, and bold high-contrast typography.
 - [x] Build the live portfolio overview cards and equity curve chart.
@@ -22,7 +22,7 @@
 - [x] Build the AI reasoning log feed showing signals, cross-asset correlation scores, and LLM explanations.
 - [x] Build the single global kill-switch control to flatten all positions and halt all bots.
 - [x] Build per-market analytics tabs for Stocks, Crypto, and Prediction Markets with win rate, Sharpe ratio, and drawdown visualizations.
-- [ ] Add loading, empty, success, and error states across all dashboard surfaces.
-- [ ] Write Vitest coverage for owner-only access, dashboard data procedures, per-position close actions, and global kill-switch behavior.
-- [ ] Run tests, type checks, and runtime validation, then fix any issues before delivery.
+- [x] Add loading, empty, success, and error states across all dashboard surfaces.
+- [x] Write Vitest coverage for owner-only access, dashboard data procedures, per-position close actions, and global kill-switch behavior.
+- [x] Run tests, type checks, and runtime validation, then fix any issues before delivery.
 - [ ] Save a final checkpoint and present the finished private dashboard.
