@@ -91,3 +91,56 @@
   - [x] Update window title and meta tags (client/index.html)
   - [x] Verified no remaining NEXUS OMEGA references in source code
   - [x] TypeScript validation passes after rename
+
+
+## Phase 9: Market Data Adapters
+
+- [ ] Integrate Polygon.io API for real-time stock quotes and market data
+- [ ] Integrate Alpha Vantage API for stock and crypto data feeds
+- [ ] Build market data sync procedure to fetch and cache quotes
+- [ ] Add market data snapshot recording to database
+- [ ] Implement quote freshness tracking with timestamps
+- [ ] Add error handling and retry logic for API failures
+
+## Phase 10: Data Quality Layer
+
+- [ ] Build stale-data detection (flag data older than threshold)
+- [ ] Add data gap detection (missing timestamps, incomplete candles)
+- [ ] Implement freshness indicators on Connectors page
+- [ ] Add data quality warnings to Dashboard
+- [ ] Build data source provenance tracking
+- [ ] Create data quality metrics dashboard
+
+## Phase 11: UI/UX Polish
+
+- [ ] Add real-time data refresh indicators (loading spinners, last-updated timestamps)
+- [ ] Improve empty states with actionable guidance
+- [ ] Refine responsive design for mobile and tablet
+- [ ] Add keyboard shortcuts for power users
+- [ ] Implement dark/light theme toggle
+- [ ] Add data export functionality (CSV, JSON)
+- [ ] Create onboarding flow for first-time users
+
+## Phase 12: Account State Adapters
+
+- [ ] Build Alpaca account adapter for balance and position sync
+- [ ] Build Interactive Brokers adapter framework
+- [ ] Implement account balance reconciliation
+- [ ] Add position state tracking and drift detection
+- [ ] Create account health dashboard
+
+## Phase 13: Post-Trade Attribution
+
+- [ ] Build post-trade analysis framework
+- [ ] Implement signal quality scoring
+- [ ] Add execution quality metrics
+- [ ] Create regime attribution analysis
+- [ ] Build performance comparison (paper vs. real)
+
+## Phase 14: Final Polish & Deployment
+
+- [ ] Run comprehensive integration tests
+- [ ] Performance optimization and profiling
+- [ ] Security audit and hardening
+- [ ] Documentation and API reference
+- [ ] Production deployment and monitoring setup
