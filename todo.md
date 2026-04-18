@@ -95,12 +95,17 @@
 
 ## Phase 9: Market Data Adapters
 
-- [ ] Integrate Polygon.io API for real-time stock quotes and market data
-- [ ] Integrate Alpha Vantage API for stock and crypto data feeds
-- [ ] Build market data sync procedure to fetch and cache quotes
-- [ ] Add market data snapshot recording to database
-- [ ] Implement quote freshness tracking with timestamps
-- [ ] Add error handling and retry logic for API failures
+- [x] Create Polygon.io adapter with quote fetching
+- [x] Create Alpha Vantage adapter for stocks and crypto
+- [x] Create Kraken adapter for crypto data
+- [x] Build market data sync service with parallel fetching
+- [x] Implement data quality scoring (confidence 0-1)
+- [x] Wire marketDataSync into tRPC procedures for live fetching
+- [ ] Add scheduled sync jobs (cron or interval)
+- [ ] Implement retry logic with exponential backoff
+- [ ] Add integration tests for all adapters
+- [ ] Surface freshness indicators in Connectors UI
+- [ ] Update connector status based on sync results
 
 ## Phase 10: Data Quality Layer
 

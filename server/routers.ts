@@ -47,6 +47,7 @@ import {
 } from "./db";
 import { invokeLLM } from "./_core/llm";
 import { notifyOwner } from "./_core/notification";
+import { syncMarketData, syncMultipleSymbols, getLatestQuoteWithQuality } from "./_core/marketDataSync";
 
 const COOKIE_NAME = "session";
 
@@ -333,8 +334,21 @@ export const appRouter = router({
         }
         return { success };
       }),
-  }),
 
+    syncMarketData: adminProcedure
+      .input(z.object({ symbol: z.string(), market: z.enum(['stocks', 'crypto', 'prediction']) }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await syncMarketData(input.symbol, input.market as 'stocks' | 'crypto');
+        await recordAuditEvent('market_data_synced', 'marketData', undefined, `Symbol: ${input.symbol}, Success: ${result.success}`, ctx.user.openId);
+        return result;
+      }),
+
+    getLatestQuote: adminProcedure
+      .input(z.object({ symbol: z.string() }))
+      .query(async ({ input }) => {
+        return await getLatestQuoteWithQuality(input.symbol);
+      }),
+  }),
   // ============================================
   // PAPER TRADING LAB (Owner-only)
   // ============================================
