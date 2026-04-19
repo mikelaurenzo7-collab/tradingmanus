@@ -147,6 +147,59 @@ export async function fetchAlphaVantageQuote(
 }
 
 /**
+ * Fetch stock quote from Alpaca
+ * Requires ALPACA_API_KEY environment variable
+ */
+export async function fetchAlpacaQuote(symbol: string): Promise<QuoteData | null> {
+  if (!process.env.ALPACA_API_KEY) {
+    console.warn("[MarketData] Alpaca API key not configured");
+    return null;
+  }
+
+  try {
+    const url = `https://data.alpaca.markets/v1beta3/latest/bars?symbols=${symbol}&feed=sip`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${process.env.ALPACA_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      console.error(`[MarketData] Alpaca API error: ${response.status}`);
+      return null;
+    }
+
+    const data = await response.json();
+    const bar = data.bars?.[symbol]?.[0];
+
+    if (!bar) {
+      console.warn(`[MarketData] No quote data from Alpaca for ${symbol}`);
+      return null;
+    }
+
+    return {
+      symbol,
+      market: "stocks",
+      open: bar.o,
+      high: bar.h,
+      low: bar.l,
+      close: bar.c,
+      volume: bar.v,
+      timestamp: new Date(bar.t),
+      source: "alpha_vantage",
+    };
+  } catch (error) {
+    console.error(`[MarketData] Alpaca fetch failed for ${symbol}:`, error);
+    return null;
+  }
+}
+
+/**
  * Fetch crypto quote from Kraken
  */
 export async function fetchKrakenQuote(symbol: string): Promise<QuoteData | null> {
@@ -248,6 +301,10 @@ export async function fetchQuoteWithFallback(
   if (market === "stocks") {
     // Try Polygon first for stocks
     let quote = await fetchPolygonQuote(symbol);
+    if (quote) return quote;
+
+    // Try Alpaca
+    quote = await fetchAlpacaQuote(symbol);
     if (quote) return quote;
 
     // Fall back to Alpha Vantage

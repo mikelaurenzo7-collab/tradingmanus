@@ -8,8 +8,8 @@
 - [x] Frontend Connectors page built with data and account connector status display
 - [x] Empty states for unlinked market data and account feeds
 - [x] Loading and error states added to all new pages (Connectors, PaperTrading, Strategies, RiskControls, AuditLog)
-- [ ] Implement market data adapter interface (Alpha Vantage, Polygon, Alpaca, Kraken APIs)
-- [ ] Implement account state adapter interface (Alpaca, Interactive Brokers, Kraken)
+- [x] Implement market data adapter interface (Alpha Vantage, Polygon, Alpaca, Kraken APIs)
+- [x] Implement account state adapter interface (Alpaca, Interactive Brokers, Kraken)
 - [ ] Add data freshness indicators and source provenance to all market/account displays
 - [ ] Build data quality layer with stale-data flags and gap detection
 - [ ] Replace equity snapshot seeding with real-time balance and position aggregation
@@ -21,7 +21,7 @@
 - [x] Trade journal entry creation with founder/system view annotations
 - [x] Query helpers for paper trade CRUD and journal management
 - [x] tRPC procedures for paper trading operations
-- [ ] Build post-trade attribution dashboard (regime, signal type, execution quality)
+- [x] Build post-trade attribution dashboard (regime, signal type, execution quality)
 - [ ] Add paper vs. real performance comparison view
 - [ ] Create strategy experiment framework with locked methodology
 
