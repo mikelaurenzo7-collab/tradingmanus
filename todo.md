@@ -9,6 +9,11 @@
 - [x] Empty states for unlinked market data and account feeds
 - [x] Loading and error states added to all new pages (Connectors, PaperTrading, Strategies, RiskControls, AuditLog)
 - [x] Implement market data adapter interface (Alpha Vantage, Polygon, Alpaca, Kraken APIs)
+  - [x] Polygon.io adapter for stock quotes
+  - [x] Alpha Vantage adapter for stocks and crypto
+  - [x] Alpaca adapter for stock quotes
+  - [x] Kraken adapter for crypto quotes
+  - [x] Fallback strategy with multi-source retry
 - [x] Implement account state adapter interface (Alpaca, Interactive Brokers, Kraken)
 - [ ] Add data freshness indicators and source provenance to all market/account displays
 - [ ] Build data quality layer with stale-data flags and gap detection
