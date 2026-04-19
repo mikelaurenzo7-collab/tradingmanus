@@ -1,5 +1,6 @@
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
+import { attributionRouter } from "./_core/attributionRouter";
 import { publicProcedure, router, adminProcedure } from "./_core/trpc";
 import { z } from "zod";
 import {
@@ -540,6 +541,11 @@ export const appRouter = router({
         return await getAuditLog(input.limitDays || 30);
       }),
   }),
+
+  // ============================================
+  // Attribution & Account State
+  // ============================================
+  attribution: attributionRouter,
 });
 
 export type AppRouter = typeof appRouter;
