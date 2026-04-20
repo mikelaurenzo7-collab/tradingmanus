@@ -2,7 +2,7 @@ import { trpc } from "@/lib/trpc";
 import { Loader2 } from "lucide-react";
 
 export default function Trades() {
-  const tradesQuery = trpc.trades.history.useQuery({ limitDays: 30 });
+  const tradesQuery = trpc.kalshi.getAuditLog.useQuery();
 
   if (tradesQuery.isLoading) {
     return (
@@ -12,7 +12,7 @@ export default function Trades() {
     );
   }
 
-  const trades = tradesQuery.data || [];
+  const trades = (tradesQuery.data || []).filter((e: any) => e.event.includes('order'));
 
   return (
     <div className="space-y-6 p-6">
@@ -48,23 +48,19 @@ export default function Trades() {
               </tr>
             </thead>
             <tbody>
-              {trades.map((trade) => (
+              {trades.map((trade: any) => (
                 <tr key={trade.id}>
-                  <td className="font-mono font-bold">{trade.symbol}</td>
-                  <td className="capitalize text-xs">{trade.market}</td>
+                  <td className="font-mono font-bold">{trade.event}</td>
+                  <td className="capitalize text-xs">Kalshi</td>
                   <td>
-                    <span className="capitalize text-xs">{trade.action}</span>
+                    <span className="capitalize text-xs">{trade.event}</span>
                   </td>
-                  <td className="capitalize">{trade.side}</td>
-                  <td className="font-mono">{trade.quantity.toFixed(4)}</td>
-                  <td className="font-mono">${trade.fillPrice.toFixed(2)}</td>
-                  <td className={`font-mono font-bold ${trade.pnl > 0 ? "profit" : "loss"}`}>
-                    ${trade.pnl.toFixed(2)}
-                  </td>
-                  <td className="text-xs text-muted-foreground">{trade.strategyTag}</td>
-                  <td className="text-xs text-muted-foreground">
-                    {new Date(trade.executedAt).toLocaleString()}
-                  </td>
+                  <td className="capitalize">-</td>
+                  <td className="font-mono">-</td>
+                  <td className="font-mono">-</td>
+                  <td className="font-mono text-green-400">-</td>
+                  <td className="text-xs text-muted-foreground">-</td>
+                  <td className="text-xs text-muted-foreground">{new Date(trade.createdAt).toLocaleString()}</td>
                 </tr>
               ))}
             </tbody>

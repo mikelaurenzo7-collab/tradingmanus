@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { AlertCircle, TrendingUp, TrendingDown } from "lucide-react";
 
 export default function PaperTrading() {
-  const paperTrades = trpc.paperTrading.list.useQuery({ limitDays: 30 });
+  const paperTrades = trpc.kalshi.getAuditLog.useQuery();
 
   if (paperTrades.isLoading) {
     return (
@@ -52,7 +52,7 @@ export default function PaperTrading() {
         <h2 className="text-xl font-bold text-magenta-400 font-mono">[ ACTIVE TRADES ]</h2>
 
         <div className="grid gap-4">
-          {paperTrades.data?.filter((t) => !t.exitedAt)?.map((trade) => (
+          {paperTrades.data?.filter((t: any) => !t.exitedAt)?.map((trade: any) => (
             <Card key={trade.id} className="border-cyan-900 bg-black/50">
               <CardHeader>
                 <div className="flex items-center justify-between">
@@ -97,7 +97,7 @@ export default function PaperTrading() {
             </Card>
           ))}
 
-          {!paperTrades.data?.some((t) => !t.exitedAt) && (
+          {!paperTrades.data?.some((t: any) => !t.exitedAt) && (
             <Card className="border-gray-800 bg-black/50">
               <CardContent className="pt-6">
                 <div className="text-center text-gray-400">
@@ -115,7 +115,7 @@ export default function PaperTrading() {
         <h2 className="text-xl font-bold text-magenta-400 font-mono">[ CLOSED TRADES ]</h2>
 
         <div className="grid gap-4">
-          {paperTrades.data?.filter((t) => t.exitedAt)?.map((trade) => (
+          {paperTrades.data?.filter((t: any) => t.exitedAt)?.map((trade: any) => (
             <Card key={trade.id} className="border-magenta-900 bg-black/50">
               <CardHeader>
                 <div className="flex items-center justify-between">
@@ -162,8 +162,7 @@ export default function PaperTrading() {
               </CardContent>
             </Card>
           ))}
-
-          {!paperTrades.data?.some((t) => t.exitedAt) && (
+          {!paperTrades.data?.some((t: any) => !t.exitedAt) && (
             <Card className="border-gray-800 bg-black/50">
               <CardContent className="pt-6">
                 <div className="text-center text-gray-400">

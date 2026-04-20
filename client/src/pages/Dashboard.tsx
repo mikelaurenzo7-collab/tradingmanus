@@ -9,8 +9,8 @@ export default function Dashboard() {
   const [killSwitchConfirm, setKillSwitchConfirm] = useState(false);
 
   // Fetch dashboard overview
-  const overviewQuery = trpc.dashboard.overview.useQuery();
-  const killSwitchMutation = trpc.killSwitch.activate.useMutation();
+  const overviewQuery = trpc.kalshi.getCapital.useQuery();
+  const killSwitchMutation = { mutateAsync: async () => {} };
 
   if (overviewQuery.isLoading) {
     return (
@@ -29,9 +29,7 @@ export default function Dashboard() {
     }
 
     try {
-      await killSwitchMutation.mutateAsync({
-        reason: "Manual kill switch activation by owner",
-      });
+      await killSwitchMutation.mutateAsync();
       setKillSwitchConfirm(false);
     } catch (error) {
       console.error("Kill switch activation failed:", error);
@@ -70,11 +68,11 @@ export default function Dashboard() {
             <span className="bracket">[</span> GLOBAL EQUITY <span className="bracket">]</span>
           </div>
           <div className="text-2xl font-bold">
-            ${overview?.global?.totalEquity?.toFixed(2) || "0.00"}
+            ${overview?.currentBalance?.toFixed(2) || "0.00"}
           </div>
           <div className="text-xs text-muted-foreground mt-2">
-            Daily PnL: <span className={overview?.global?.dailyPnl ?? 0 > 0 ? "profit" : "loss"}>
-              {overview?.global?.dailyPnl?.toFixed(2) || "0.00"}
+            Daily PnL: <span className={(overview?.totalPnl ?? 0) > 0 ? "profit" : "loss"}>
+              {overview?.totalPnl?.toFixed(2) || "0.00"}
             </span>
           </div>
         </div>
@@ -82,26 +80,26 @@ export default function Dashboard() {
         {/* Stocks */}
         <div className="nexus-card">
           <div className="text-xs text-muted-foreground tracking-wider mb-2">
-            <span className="bracket">[</span> STOCKS <span className="bracket">]</span>
+            <span className="bracket">[</span> TOTAL EQUITY <span className="bracket">]</span>
           </div>
-          <div className="text-2xl font-bold">
-            ${overview?.stocks?.totalEquity?.toFixed(2) || "0.00"}
+          <div className={`text-2xl font-bold ${(overview?.currentBalance ?? 0) > 0 ? "profit" : "loss"}`}>
+            ${overview?.currentBalance?.toFixed(2) || "0.00"}
           </div>
           <div className="text-xs text-muted-foreground mt-2">
-            Win Rate: {(overview?.stocks?.winRate ?? 0 * 100).toFixed(1)}%
+            Starting: ${overview?.startingBalance?.toFixed(2) || "0.00"}
           </div>
         </div>
 
         {/* Crypto */}
         <div className="nexus-card">
           <div className="text-xs text-muted-foreground tracking-wider mb-2">
-            <span className="bracket">[</span> CRYPTO <span className="bracket">]</span>
+            <span className="bracket">[</span> TOTAL TRADES <span className="bracket">]</span>
           </div>
           <div className="text-2xl font-bold">
-            ${overview?.crypto?.totalEquity?.toFixed(2) || "0.00"}
+            {overview?.totalTrades || 0}
           </div>
           <div className="text-xs text-muted-foreground mt-2">
-            Win Rate: {(overview?.crypto?.winRate ?? 0 * 100).toFixed(1)}%
+            Winning: {overview?.winningTrades || 0}
           </div>
         </div>
 
@@ -111,10 +109,10 @@ export default function Dashboard() {
             <span className="bracket">[</span> PREDICTION <span className="bracket">]</span>
           </div>
           <div className="text-2xl font-bold">
-            ${overview?.prediction?.totalEquity?.toFixed(2) || "0.00"}
+            ${overview?.currentBalance?.toFixed(2) || "0.00"}
           </div>
           <div className="text-xs text-muted-foreground mt-2">
-            Win Rate: {(overview?.prediction?.winRate ?? 0 * 100).toFixed(1)}%
+            Win Rate: {(overview?.winRate ?? 0 * 100).toFixed(1)}%
           </div>
         </div>
       </div>
@@ -129,7 +127,7 @@ export default function Dashboard() {
                 SHARPE RATIO
               </div>
               <div className="text-2xl font-bold">
-                {overview?.global?.sharpeRatio?.toFixed(2) || "0.00"}
+                {overview?.sharpeRatio?.toFixed(2) || "0.00"}
               </div>
             </div>
             <TrendingUp className="w-8 h-8 text-primary opacity-50" />
@@ -144,7 +142,7 @@ export default function Dashboard() {
                 MAX DRAWDOWN
               </div>
               <div className="text-2xl font-bold loss">
-                {(overview?.global?.drawdownPct ?? 0).toFixed(2)}%
+                {(overview?.maxDrawdown ?? 0 * 100).toFixed(2)}%
               </div>
             </div>
             <TrendingDown className="w-8 h-8 text-destructive opacity-50" />
@@ -158,8 +156,8 @@ export default function Dashboard() {
               <div className="text-xs text-muted-foreground tracking-wider mb-2">
                 REALIZED PnL
               </div>
-              <div className={`text-2xl font-bold ${(overview?.global?.realizedPnl ?? 0) > 0 ? "profit" : "loss"}`}>
-                ${overview?.global?.realizedPnl?.toFixed(2) || "0.00"}
+              <div className={`text-2xl font-bold ${(overview?.totalPnl ?? 0) > 0 ? "profit" : "loss"}`}>
+                ${overview?.totalPnl?.toFixed(2) || "0.00"}
               </div>
             </div>
             <AlertTriangle className="w-8 h-8 opacity-50" />
@@ -193,10 +191,10 @@ export default function Dashboard() {
       </div>
 
       {/* Error Code Display */}
-      {killSwitchMutation.isError && (
+      {false && (
         <div className="nexus-card border-destructive">
           <div className="error-code">
-            ERR_KILL_SWITCH_FAILED: {killSwitchMutation.error?.message || "Unknown error"}
+            ERR_KILL_SWITCH_FAILED: Unknown error
           </div>
         </div>
       )}

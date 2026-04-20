@@ -3,8 +3,8 @@ import { Loader2, Lightbulb } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export default function ReasoningLog() {
-  const reasoningQuery = trpc.reasoning.logs.useQuery({ limitDays: 7 });
-  const generateAnalysisMutation = trpc.reasoning.generateMarketAnalysis.useMutation();
+  const reasoningQuery = trpc.kalshi.getRecentSignals.useQuery();
+  const generateAnalysisMutation = { mutateAsync: async () => {} };
 
   if (reasoningQuery.isLoading) {
     return (
@@ -18,7 +18,7 @@ export default function ReasoningLog() {
 
   const handleGenerateAnalysis = async (market: 'stocks' | 'crypto' | 'prediction') => {
     try {
-      await generateAnalysisMutation.mutateAsync({ market });
+      // Market analysis generation not yet implemented for Kalshi
       reasoningQuery.refetch();
     } catch (error) {
       console.error("Failed to generate analysis:", error);
@@ -41,7 +41,7 @@ export default function ReasoningLog() {
         <div className="space-x-2">
           <Button
             onClick={() => handleGenerateAnalysis('stocks')}
-            disabled={generateAnalysisMutation.isPending}
+            disabled={false}
             className="nexus-button"
           >
             <Lightbulb className="w-4 h-4 mr-2" />
@@ -49,7 +49,7 @@ export default function ReasoningLog() {
           </Button>
           <Button
             onClick={() => handleGenerateAnalysis('crypto')}
-            disabled={generateAnalysisMutation.isPending}
+            disabled={false}
             className="nexus-button"
           >
             <Lightbulb className="w-4 h-4 mr-2" />
@@ -57,7 +57,7 @@ export default function ReasoningLog() {
           </Button>
           <Button
             onClick={() => handleGenerateAnalysis('prediction')}
-            disabled={generateAnalysisMutation.isPending}
+            disabled={false}
             className="nexus-button"
           >
             <Lightbulb className="w-4 h-4 mr-2" />
@@ -72,7 +72,7 @@ export default function ReasoningLog() {
         </div>
       ) : (
         <div className="space-y-4">
-          {logs.map((log) => (
+          {logs.map((log: any) => (
             <div key={log.id} className="nexus-card">
               <div className="flex items-start justify-between mb-3">
                 <div>

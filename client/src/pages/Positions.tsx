@@ -4,8 +4,8 @@ import { Button } from "@/components/ui/button";
 import { useState } from "react";
 
 export default function Positions() {
-  const positionsQuery = trpc.positions.open.useQuery();
-  const closePositionMutation = trpc.positions.close.useMutation();
+  const positionsQuery = trpc.kalshi.getPositions.useQuery();
+  const closePositionMutation = trpc.kalshi.closePosition.useMutation();
   const [closingId, setClosingId] = useState<number | null>(null);
 
   if (positionsQuery.isLoading) {
@@ -18,12 +18,13 @@ export default function Positions() {
 
   const positions = positionsQuery.data || [];
 
-  const handleClosePosition = async (positionId: number, markPrice: number) => {
+  const handleClosePosition = async (positionId: number, marketId: string, markPrice: number) => {
     setClosingId(positionId);
     try {
       await closePositionMutation.mutateAsync({
         positionId,
-        closingPrice: markPrice,
+        marketId,
+        currentPrice: markPrice,
       });
       positionsQuery.refetch();
     } catch (error) {
@@ -67,8 +68,8 @@ export default function Positions() {
               </tr>
             </thead>
             <tbody>
-              {positions.map((position) => {
-                const unrealizedPnl = (position.markPrice - position.entryPrice) * position.size;
+              {positions.map((position: any) => {
+                const unrealizedPnl = (position.currentPrice - position.entryPrice) * position.quantity;
                 const isProfit = unrealizedPnl > 0;
 
                 return (
@@ -91,7 +92,7 @@ export default function Positions() {
                       <Button
                         size="sm"
                         className="nexus-button-kill"
-                        onClick={() => handleClosePosition(position.id, position.markPrice)}
+                        onClick={() => handleClosePosition(position.id, position.marketId, position.currentPrice)}
                         disabled={closingId === position.id}
                       >
                         <X className="w-3 h-3" />

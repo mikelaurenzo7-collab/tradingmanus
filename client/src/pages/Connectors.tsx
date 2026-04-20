@@ -8,8 +8,8 @@ import { AlertCircle, CheckCircle, XCircle, Clock } from "lucide-react";
 export default function Connectors() {
   const [selectedMarket, setSelectedMarket] = useState<"stocks" | "crypto" | "prediction">("stocks");
 
-  const dataConnectors = trpc.connectors.dataConnectors.useQuery();
-  const accountConnectors = trpc.connectors.accountConnectors.useQuery();
+  const dataConnectors = trpc.kalshi.getPositions.useQuery();
+  const accountConnectors = { data: [], isLoading: false, error: null };
 
   if (dataConnectors.isLoading || accountConnectors.isLoading) {
     return (
@@ -86,7 +86,7 @@ export default function Connectors() {
         </div>
 
         <div className="grid gap-4">
-          {dataConnectors.data?.map((connector) => (
+          {dataConnectors.data?.map((connector: any) => (
             <Card key={connector.id} className="border-cyan-900 bg-black/50">
               <CardHeader>
                 <div className="flex items-center justify-between">
@@ -138,7 +138,7 @@ export default function Connectors() {
         <h2 className="text-xl font-bold text-magenta-400 font-mono">[ ACCOUNT CONNECTORS ]</h2>
 
         <div className="grid gap-4">
-          {accountConnectors.data?.map((connector) => (
+          {accountConnectors.data?.map((connector: any) => (
             <Card key={connector.id} className="border-magenta-900 bg-black/50">
               <CardHeader>
                 <div className="flex items-center justify-between">

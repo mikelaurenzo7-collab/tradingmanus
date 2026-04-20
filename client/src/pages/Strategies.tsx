@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { AlertCircle } from "lucide-react";
 
 export default function Strategies() {
-  const strategies = trpc.strategies.list.useQuery();
+  const strategies = trpc.kalshi.getRecentSignals.useQuery();
 
   if (strategies.isLoading) {
     return (
@@ -36,14 +36,14 @@ export default function Strategies() {
       </div>
 
       <div className="grid gap-4">
-        {strategies.data?.map((strategy) => (
+        {strategies.data?.map((strategy: any) => (
           <Card key={strategy.id} className="border-cyan-900 bg-black/50">
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div>
-                  <CardTitle className="text-cyan-400">{strategy.name}</CardTitle>
+                  <CardTitle className="text-cyan-400">{strategy.signalType}</CardTitle>
                   <CardDescription className="text-gray-500 mt-1">
-                    {strategy.marketUniverse} • {strategy.holdingPeriod}
+                    Market: {strategy.marketId} • Confidence: {(strategy.confidence * 100).toFixed(1)}%
                   </CardDescription>
                 </div>
                 <Badge className="bg-green-900 text-green-200">ACTIVE</Badge>

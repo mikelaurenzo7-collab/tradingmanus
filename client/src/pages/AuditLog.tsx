@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { AlertCircle } from "lucide-react";
 
 export default function AuditLog() {
-  const auditLog = trpc.audit.log.useQuery({ limitDays: 30 });
+  const auditLog = trpc.kalshi.getAuditLog.useQuery();
 
   if (auditLog.isLoading) {
     return (
@@ -44,7 +44,7 @@ export default function AuditLog() {
       </div>
 
       <div className="space-y-2">
-        {auditLog.data?.map((event) => (
+        {auditLog.data?.map((event: any) => (
           <Card key={event.id} className="border-gray-800 bg-black/50">
             <CardContent className="pt-4">
               <div className="flex items-start justify-between gap-4">

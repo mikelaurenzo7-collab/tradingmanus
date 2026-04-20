@@ -6,11 +6,8 @@ import { useState } from "react";
 export default function Analytics() {
   const [activeMarket, setActiveMarket] = useState<'stocks' | 'crypto' | 'prediction'>('stocks');
   
-  const stocksQuery = trpc.dashboard.overview.useQuery();
-  const stocksHistoryQuery = trpc.dashboard.equityHistory.useQuery({
-    scope: 'stocks',
-    limitDays: 30,
-  });
+  const stocksQuery = trpc.kalshi.getCapital.useQuery();
+  const stocksHistoryQuery = { data: [], isLoading: false, error: null };
 
   if (stocksQuery.isLoading || stocksHistoryQuery.isLoading) {
     return (
@@ -24,16 +21,8 @@ export default function Analytics() {
   const history = stocksHistoryQuery.data || [];
 
   const getMarketData = () => {
-    switch (activeMarket) {
-      case 'stocks':
-        return overview?.stocks;
-      case 'crypto':
-        return overview?.crypto;
-      case 'prediction':
-        return overview?.prediction;
-      default:
-        return overview?.stocks;
-    }
+    // All markets use the same capital data for Kalshi
+    return overview;
   };
 
   const marketData = getMarketData();
@@ -111,7 +100,7 @@ export default function Analytics() {
                 MAX DRAWDOWN
               </div>
               <div className="text-3xl font-bold loss">
-                {(marketData?.drawdownPct ?? 0).toFixed(2)}%
+                {(marketData?.maxDrawdown ?? 0 * 100).toFixed(2)}%
               </div>
               <p className="text-xs text-muted-foreground mt-2">
                 Peak-to-trough decline
@@ -136,7 +125,7 @@ export default function Analytics() {
             <div className="text-sm">
               <div className="text-muted-foreground mb-2">Historical Equity Snapshots</div>
               <div className="space-y-2 max-h-64 overflow-y-auto">
-                {history.map((snapshot, idx) => (
+                {history.map((snapshot: any, idx: any) => (
                   <div key={idx} className="flex items-center justify-between text-xs border-b border-border pb-2">
                     <span className="text-muted-foreground">
                       {new Date(snapshot.recordedAt).toLocaleString()}
@@ -162,27 +151,27 @@ export default function Analytics() {
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
           <div>
-            <div className="text-xs text-muted-foreground mb-1">Total Equity</div>
+            <div className="text-xs text-muted-foreground mb-1">Current Balance</div>
             <div className="font-mono font-bold">
-              ${marketData?.totalEquity?.toFixed(2) || "0.00"}
+              ${marketData?.currentBalance?.toFixed(2) || "0.00"}
             </div>
           </div>
           <div>
-            <div className="text-xs text-muted-foreground mb-1">Daily PnL</div>
-            <div className={`font-mono font-bold ${(marketData?.dailyPnl ?? 0) > 0 ? 'profit' : 'loss'}`}>
-              ${marketData?.dailyPnl?.toFixed(2) || "0.00"}
+            <div className="text-xs text-muted-foreground mb-1">Total PnL</div>
+            <div className={`font-mono font-bold ${(marketData?.totalPnl ?? 0) > 0 ? 'profit' : 'loss'}`}>
+              ${marketData?.totalPnl?.toFixed(2) || "0.00"}
             </div>
           </div>
           <div>
-            <div className="text-xs text-muted-foreground mb-1">Realized PnL</div>
-            <div className={`font-mono font-bold ${(marketData?.realizedPnl ?? 0) > 0 ? 'profit' : 'loss'}`}>
-              ${marketData?.realizedPnl?.toFixed(2) || "0.00"}
+            <div className="text-xs text-muted-foreground mb-1">Total PnL</div>
+            <div className={`font-mono font-bold ${(marketData?.totalPnl ?? 0) > 0 ? 'profit' : 'loss'}`}>
+              ${marketData?.totalPnl?.toFixed(2) || "0.00"}
             </div>
           </div>
           <div>
-            <div className="text-xs text-muted-foreground mb-1">Unrealized PnL</div>
-            <div className={`font-mono font-bold ${(marketData?.unrealizedPnl ?? 0) > 0 ? 'profit' : 'loss'}`}>
-              ${marketData?.unrealizedPnl?.toFixed(2) || "0.00"}
+            <div className="text-xs text-muted-foreground mb-1">Win Rate</div>
+            <div className={`font-mono font-bold`}>
+              {(marketData?.winRate ?? 0 * 100).toFixed(1)}%
             </div>
           </div>
         </div>
