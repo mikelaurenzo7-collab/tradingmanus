@@ -33,6 +33,7 @@ export const appRouter = router({
       .query(async ({ input }) => {
         try {
           const markets = await fetchKalshiMarkets(input || {});
+          await Promise.all(markets.map((market) => db.upsertKalshiMarket(market)));
           return markets;
         } catch (error) {
           console.error("[Kalshi] Get markets error:", error);
@@ -44,7 +45,11 @@ export const appRouter = router({
       .input(z.object({ marketId: z.string() }))
       .query(async ({ input }) => {
         try {
-          return await fetchKalshiMarketDetails(input.marketId);
+          const market = await fetchKalshiMarketDetails(input.marketId);
+          if (market) {
+            await db.upsertKalshiMarket(market);
+          }
+          return market;
         } catch (error) {
           console.error("[Kalshi] Get market details error:", error);
           return null;
