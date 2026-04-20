@@ -237,9 +237,8 @@ export async function closeKalshiPosition(
   positionId: number,
   marketId: string,
   currentPrice: number
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; error?: string; mode?: "exchange" | "local"; orderId?: string }> {
   try {
-    // Get position details
     const position = await db
       .select()
       .from(kalshiPositions)
@@ -250,34 +249,40 @@ export async function closeKalshiPosition(
       return { success: false, error: "Position not found" };
     }
 
-    // Place closing order (opposite side)
-    const closingSide = position.side === "yes" ? "no" : "yes";
-    const result = await placeKalshiOrder(
-      apiKey,
-      marketId,
-      closingSide,
-      position.quantity,
-      currentPrice
-    );
+    const entryPrice = Number(position.entryPrice ?? 0);
+    const markPrice = Number(currentPrice ?? position.currentPrice ?? entryPrice);
+    const quantity = Number(position.quantity ?? 0);
+    const side = position.positionSide as "yes" | "no";
 
-    if (!result.success) {
-      return result;
+    let mode: "exchange" | "local" = "local";
+    let orderId: string | undefined;
+
+    if (apiKey?.trim()) {
+      const closingSide = side === "yes" ? "no" : "yes";
+      const result = await placeKalshiOrder(apiKey, marketId, closingSide, quantity, markPrice);
+      if (!result.success) {
+        return result;
+      }
+      mode = "exchange";
+      orderId = result.orderId;
     }
 
-    // Calculate realized PnL
-    const realizedPnl = position.quantity * (currentPrice - position.entryPrice);
+    const realizedPnl = side === "yes"
+      ? quantity * (markPrice - entryPrice)
+      : quantity * (entryPrice - markPrice);
 
-    // Update position
     await db
       .update(kalshiPositions)
       .set({
-        status: "closed",
+        currentPrice: markPrice,
+        unrealizedPnl: 0,
+        positionStatus: "closed",
         closedAt: new Date(),
         realizedPnl,
       })
       .where(eq(kalshiPositions.id, positionId));
 
-    return { success: true };
+    return { success: true, mode, orderId };
   } catch (error) {
     console.error("[Kalshi] Close position error:", error);
     return { success: false, error: String(error) };
@@ -295,9 +300,9 @@ export async function createPositionFromFill(
   fillPrice: number
 ): Promise<void> {
   try {
-    await db.insert(kalshiPositions).values({
+      await db.insert(kalshiPositions).values({
       marketId,
-      side,
+      positionSide: side,
       quantity,
       entryPrice: fillPrice,
       currentPrice: fillPrice,
@@ -314,6 +319,45 @@ export async function createPositionFromFill(
 /**
  * Update position mark price and unrealized PnL
  */
+export async function activateKalshiKillSwitch(apiKey: string): Promise<{
+  success: boolean;
+  totalPositions: number;
+  closedPositions: number;
+  failedPositions: number;
+  results: Array<{ positionId: number; marketId: string; success: boolean; error?: string; mode?: "exchange" | "local" }>;
+}> {
+  const positions = await getKalshiPositions();
+  const results: Array<{ positionId: number; marketId: string; success: boolean; error?: string; mode?: "exchange" | "local" }> = [];
+
+  for (const position of positions) {
+    const closeResult = await closeKalshiPosition(
+      apiKey,
+      Number(position.id),
+      String(position.marketId),
+      Number(position.currentPrice ?? position.entryPrice ?? 0)
+    );
+
+    results.push({
+      positionId: Number(position.id),
+      marketId: String(position.marketId),
+      success: closeResult.success,
+      error: closeResult.error,
+      mode: closeResult.mode,
+    });
+  }
+
+  const closedPositions = results.filter((item) => item.success).length;
+  const failedPositions = results.length - closedPositions;
+
+  return {
+    success: failedPositions === 0,
+    totalPositions: results.length,
+    closedPositions,
+    failedPositions,
+    results,
+  };
+}
+
 export async function updatePositionMarkPrice(
   positionId: number,
   currentPrice: number

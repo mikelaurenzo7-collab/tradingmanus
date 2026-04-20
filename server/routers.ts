@@ -3,9 +3,18 @@ import { publicProcedure, router, protectedProcedure } from "./_core/trpc";
 import { z } from "zod";
 import * as db from "./db";
 import { fetchKalshiMarkets } from "./_core/kalshiMarketData";
-import { placeKalshiOrder, cancelKalshiOrder, getKalshiOrderStatus, getKalshiPositions, closeKalshiPosition } from "./_core/kalshiExecution";
+import { placeKalshiOrder, cancelKalshiOrder, getKalshiOrderStatus, getKalshiPositions, closeKalshiPosition, activateKalshiKillSwitch } from "./_core/kalshiExecution";
 
 const COOKIE_NAME = "session";
+
+// Risk limits (hardcoded for $100 capital)
+const RISK_LIMITS = {
+  maxCapital: 100,
+  maxLossPerTrade: 5,
+  maxLossPerDay: 10,
+  maxPositionSize: 20,
+  maxOpenPositions: 5,
+};
 
 export const appRouter = router({
   auth: router({
@@ -166,6 +175,35 @@ export const appRouter = router({
         return [];
       }
     }),
+
+    // Risk controls
+    killSwitch: protectedProcedure.mutation(async ({ ctx }) => {
+      try {
+        const result = await activateKalshiKillSwitch(process.env.KALSHI_API_KEY || "");
+        await db.logAuditEvent(
+          "kalshi_kill_switch_activated",
+          JSON.stringify({
+            totalPositions: result.totalPositions,
+            closedPositions: result.closedPositions,
+            failedPositions: result.failedPositions,
+          }),
+          ctx.user!.openId
+        );
+        return result;
+      } catch (error) {
+        console.error("[Kalshi] Kill switch error:", error);
+        return {
+          success: false,
+          totalPositions: 0,
+          closedPositions: 0,
+          failedPositions: 0,
+          results: [],
+          error: String(error),
+        };
+      }
+    }),
+
+    getRiskLimits: protectedProcedure.query(async () => RISK_LIMITS),
   }),
 });
 

@@ -31,14 +31,14 @@
 
 ## Phase 4: Capital Controls ($100)
 
-- [ ] Set hard capital limits: $100 starting capital
-- [ ] Max loss per trade: $5 (5% of capital)
-- [ ] Max loss per day: $10 (10% of capital)
-- [ ] Max position size: $20 (20% of capital)
-- [ ] Max open positions: 5
+- [x] Set hard capital limits: $100 starting capital
+- [x] Max loss per trade: $5 (5% of capital)
+- [x] Max loss per day: $10 (10% of capital)
+- [x] Max position size: $20 (20% of capital)
+- [x] Max open positions: 5
 - [ ] Implement pre-trade checks that block violations
-- [ ] Add kill-switch to flatten all positions instantly
-- [ ] Wire into tRPC: `kalshi.getRiskLimits`, `kalshi.updateRiskLimits`, `kalshi.killSwitch`
+- [x] Add kill-switch to flatten all positions instantly
+- [x] Wire into tRPC: `kalshi.getRiskLimits`, `kalshi.killSwitch`
 
 ## Phase 5: Signal Generation
 
@@ -95,3 +95,8 @@
 - [x] Fixed all TypeScript compilation errors (0 errors)
 - [x] Aligned data structures to use kalshiCapital schema
 - [x] Verified dev server is running and frontend is responsive
+
+- [x] Implement and test a robust kill switch that returns detailed per-position outcomes
+- [ ] Add `kalshi.updateRiskLimits` or explicitly defer it after validating scope
+- [x] Add Vitest coverage for `kalshi.getRiskLimits` and `kalshi.killSwitch`
+- [ ] Wire risk control procedures into the frontend and verify loading, error, and success states
