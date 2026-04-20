@@ -84,8 +84,9 @@
 **Frontend:** 11-page dashboard with retro-futuristic UI - MIGRATED to Kalshi-only architecture
 **Tests:** 46/47 passing
 **Completed:** Phase 1 (Audit & Organize) - Frontend pages refactored to use Kalshi router
-**In Progress:** Database schema verification and OAuth fixes
-**Next:** Fix server-side errors and implement Phase 2 (Kalshi Market Data)
+**Database:** All Kalshi tables created and initialized with $100 capital
+**In Progress:** OAuth flow verification
+**Next:** Test OAuth login and implement Phase 2 (Kalshi Market Data)
 
 ## Recent Changes (Frontend Migration)
 

@@ -13,13 +13,26 @@ import {
 import { ENV } from "./_core/env";
 import { eq, and, desc, gte } from "drizzle-orm";
 import { drizzle as drizzleInit } from "drizzle-orm/mysql2";
+import * as mysql from "mysql2/promise";
 
-let _db: ReturnType<typeof drizzleInit> | null = null;
+let _db: any = null;
+let _connection: any = null;
 
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
-      _db = drizzle(process.env.DATABASE_URL);
+      const url = new URL(process.env.DATABASE_URL);
+      _connection = await mysql.createConnection({
+        host: url.hostname,
+        user: url.username,
+        password: url.password,
+        database: url.pathname.slice(1),
+        port: parseInt(url.port || "3306"),
+        ssl: {
+          rejectUnauthorized: false,
+        },
+      });
+      _db = drizzleInit(_connection);
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;
@@ -60,15 +73,19 @@ export async function upsertUser(payload: { openId: string; name?: string; email
   if (payload.name) updates.name = payload.name;
   if (payload.email) updates.email = payload.email;
   
-  // If no updates, skip the upsert
+  // Always include at least one update field
   if (Object.keys(updates).length === 0) {
-    updates.openId = payload.openId; // Always update at least one field
+    updates.name = payload.name || null;
   }
   
-  await database
-    .insert(users)
-    .values(values)
-    .onDuplicateKeyUpdate({ set: updates });
+  try {
+    await database
+      .insert(users)
+      .values(values)
+      .onDuplicateKeyUpdate({ set: updates });
+  } catch (error) {
+    console.error("[Database] Upsert user failed:", error);
+  }
 }
 
 export async function getUser(openId: string) {
@@ -211,7 +228,7 @@ export async function updateKalshiPositionPrice(positionId: number, currentPrice
     .select()
     .from(kalshiPositions)
     .where(eq(kalshiPositions.id, positionId))
-    .then((rows) => rows[0]);
+    .then((rows: any[]) => rows[0]);
   
   if (!position) return;
   
@@ -231,7 +248,7 @@ export async function closeKalshiPosition(positionId: number, exitPrice: number)
     .select()
     .from(kalshiPositions)
     .where(eq(kalshiPositions.id, positionId))
-    .then((rows) => rows[0]);
+    .then((rows: any[]) => rows[0]);
   
   if (!position) return;
   

@@ -244,7 +244,7 @@ export async function closeKalshiPosition(
       .select()
       .from(kalshiPositions)
       .where(eq(kalshiPositions.id, positionId))
-      .then((rows) => rows[0]);
+      .then((rows: any[]) => rows[0]);
 
     if (!position) {
       return { success: false, error: "Position not found" };
@@ -323,7 +323,7 @@ export async function updatePositionMarkPrice(
       .select()
       .from(kalshiPositions)
       .where(eq(kalshiPositions.id, positionId))
-      .then((rows) => rows[0]);
+      .then((rows: any[]) => rows[0]);
 
     if (!position) return;
 
