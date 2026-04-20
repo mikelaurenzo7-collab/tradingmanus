@@ -63,7 +63,7 @@ export async function fetchKalshiMarkets(filters?: {
       noPrice: m.no_price,
       yesVolume: m.yes_volume,
       noVolume: m.no_volume,
-      impliedProbability: m.yes_price,
+      impliedProbability: calculateImpliedProbability(Number(m.yes_price ?? 0), Number(m.no_price ?? 0)),
     }));
   } catch (error) {
     console.error("[Kalshi] Market fetch failed:", error);
@@ -101,7 +101,7 @@ export async function fetchKalshiMarketDetails(marketId: string): Promise<Kalshi
       noPrice: m.no_price,
       yesVolume: m.yes_volume,
       noVolume: m.no_volume,
-      impliedProbability: m.yes_price,
+      impliedProbability: calculateImpliedProbability(Number(m.yes_price ?? 0), Number(m.no_price ?? 0)),
     };
   } catch (error) {
     console.error(`[Kalshi] Market details fetch failed for ${marketId}:`, error);
@@ -119,6 +119,8 @@ export async function fetchKalshiMarketsByCategory(category: string): Promise<Ka
 /**
  * Calculate implied probability from yes/no prices
  */
+export const getKalshiMarketDetails = fetchKalshiMarketDetails;
+
 export function calculateImpliedProbability(yesPrice: number, noPrice: number): number {
   const total = yesPrice + noPrice;
   if (total === 0) return 0.5;

@@ -99,4 +99,4 @@
 - [x] Implement and test a robust kill switch that returns detailed per-position outcomes
 - [ ] Add `kalshi.updateRiskLimits` or explicitly defer it after validating scope
 - [x] Add Vitest coverage for `kalshi.getRiskLimits` and `kalshi.killSwitch`
-- [ ] Wire risk control procedures into the frontend and verify loading, error, and success states
+- [x] Wire risk control procedures into the frontend and verify loading, error, and success states

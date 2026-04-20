@@ -2,7 +2,7 @@ import { getSessionCookieOptions } from "./_core/cookies";
 import { publicProcedure, router, protectedProcedure } from "./_core/trpc";
 import { z } from "zod";
 import * as db from "./db";
-import { fetchKalshiMarkets } from "./_core/kalshiMarketData";
+import { fetchKalshiMarkets, fetchKalshiMarketDetails } from "./_core/kalshiMarketData";
 import { placeKalshiOrder, cancelKalshiOrder, getKalshiOrderStatus, getKalshiPositions, closeKalshiPosition, activateKalshiKillSwitch } from "./_core/kalshiExecution";
 
 const COOKIE_NAME = "session";
@@ -44,9 +44,7 @@ export const appRouter = router({
       .input(z.object({ marketId: z.string() }))
       .query(async ({ input }) => {
         try {
-          const markets = await fetchKalshiMarkets();
-          const market = markets.find((m) => m.id === input.marketId);
-          return market || null;
+          return await fetchKalshiMarketDetails(input.marketId);
         } catch (error) {
           console.error("[Kalshi] Get market details error:", error);
           return null;
