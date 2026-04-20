@@ -36,7 +36,7 @@
 - [x] Max loss per day: $10 (10% of capital)
 - [x] Max position size: $20 (20% of capital)
 - [x] Max open positions: 5
-- [ ] Implement pre-trade checks that block violations
+- [x] Implement pre-trade checks that block violations
 - [x] Add kill-switch to flatten all positions instantly
 - [x] Wire into tRPC: `kalshi.getRiskLimits`, `kalshi.killSwitch`
 

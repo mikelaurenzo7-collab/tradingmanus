@@ -65,10 +65,52 @@ export const appRouter = router({
       )
       .mutation(async ({ input, ctx }) => {
         try {
+          const capital = await db.getKalshiCapital();
+          const openPositions = await db.getOpenKalshiPositions();
+          const todayRealizedLoss = await db.getTodayRealizedLoss();
+          const orderExposure = Number(input.quantity) * Number(input.limitPrice);
+
+          if (openPositions.length >= RISK_LIMITS.maxOpenPositions) {
+            return {
+              success: false,
+              error: `Open position limit reached (${RISK_LIMITS.maxOpenPositions})`,
+            };
+          }
+
+          if (orderExposure > RISK_LIMITS.maxPositionSize) {
+            return {
+              success: false,
+              error: `Order exceeds max position size of $${RISK_LIMITS.maxPositionSize}`,
+            };
+          }
+
+          if (orderExposure > RISK_LIMITS.maxLossPerTrade) {
+            return {
+              success: false,
+              error: `Order exceeds max per-trade risk of $${RISK_LIMITS.maxLossPerTrade}`,
+            };
+          }
+
+          if (todayRealizedLoss >= RISK_LIMITS.maxLossPerDay) {
+            return {
+              success: false,
+              error: `Daily loss limit reached ($${RISK_LIMITS.maxLossPerDay})`,
+            };
+          }
+
+          if (capital && orderExposure > Number(capital.currentBalance ?? 0)) {
+            return {
+              success: false,
+              error: "Order exceeds available capital",
+            };
+          }
+
           const result = await placeKalshiOrder(process.env.KALSHI_API_KEY || "", input.marketId, input.side, input.quantity, input.limitPrice);
 
           if (result.success) {
             await db.logAuditEvent("kalshi_order_placed", JSON.stringify(input), ctx.user!.openId);
+          } else {
+            await db.logAuditEvent("kalshi_order_blocked_or_failed", JSON.stringify({ ...input, reason: result.error ?? "unknown" }), ctx.user!.openId);
           }
 
           return result;

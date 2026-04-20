@@ -274,6 +274,24 @@ export async function getOpenKalshiPositions() {
     .where(eq(kalshiPositions.positionStatus, "open"));
 }
 
+export async function getTodayRealizedLoss() {
+  const database = await getDb();
+  if (!database) return 0;
+
+  const startOfDay = new Date();
+  startOfDay.setHours(0, 0, 0, 0);
+
+  const closedToday = await database
+    .select()
+    .from(kalshiPositions)
+    .where(and(eq(kalshiPositions.positionStatus, "closed"), gte(kalshiPositions.closedAt, startOfDay)));
+
+  return closedToday.reduce((total: number, position: any) => {
+    const pnl = Number(position.realizedPnl ?? 0);
+    return pnl < 0 ? total + Math.abs(pnl) : total;
+  }, 0);
+}
+
 // Kalshi signal queries
 export async function createKalshiSignal(signal: any) {
   const database = await getDb();
