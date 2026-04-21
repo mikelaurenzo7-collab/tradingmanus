@@ -2,9 +2,9 @@ import { trpc } from "@/lib/trpc";
 import { Loader2 } from "lucide-react";
 
 export default function Trades() {
-  const tradesQuery = trpc.kalshi.getAuditLog.useQuery();
+  const tradeHistoryQuery = trpc.kalshi.getTradeHistory.useQuery({ limit: 50 });
 
-  if (tradesQuery.isLoading) {
+  if (tradeHistoryQuery.isLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <Loader2 className="animate-spin w-8 h-8 text-primary" />
@@ -12,7 +12,7 @@ export default function Trades() {
     );
   }
 
-  const trades = (tradesQuery.data || []).filter((e: any) => e.event.includes('order'));
+  const trades = tradeHistoryQuery.data || [];
 
   return (
     <div className="space-y-6 p-6">
@@ -36,31 +36,43 @@ export default function Trades() {
           <table className="nexus-table">
             <thead>
               <tr>
-                <th>Symbol</th>
-                <th>Market</th>
-                <th>Action</th>
+                <th>Market ID</th>
                 <th>Side</th>
                 <th>Quantity</th>
-                <th>Fill Price</th>
-                <th>PnL</th>
-                <th>Strategy</th>
-                <th>Executed</th>
+                <th>Entry Price</th>
+                <th>Current Price</th>
+                <th>Status</th>
+                <th>Realized PnL</th>
+                <th>Unrealized PnL</th>
+                <th>Closed At</th>
               </tr>
             </thead>
             <tbody>
               {trades.map((trade: any) => (
                 <tr key={trade.id}>
-                  <td className="font-mono font-bold">{trade.event}</td>
-                  <td className="capitalize text-xs">Kalshi</td>
-                  <td>
-                    <span className="capitalize text-xs">{trade.event}</span>
+                  <td className="font-mono font-bold text-sm">{trade.marketId}</td>
+                  <td className="capitalize text-xs font-semibold">
+                    <span className={trade.side === 'yes' ? 'text-green-400' : 'text-red-400'}>
+                      {trade.side.toUpperCase()}
+                    </span>
                   </td>
-                  <td className="capitalize">-</td>
-                  <td className="font-mono">-</td>
-                  <td className="font-mono">-</td>
-                  <td className="font-mono text-green-400">-</td>
-                  <td className="text-xs text-muted-foreground">-</td>
-                  <td className="text-xs text-muted-foreground">{new Date(trade.createdAt).toLocaleString()}</td>
+                  <td className="font-mono text-sm">{trade.quantity}</td>
+                  <td className="font-mono text-sm">${trade.entryPrice.toFixed(4)}</td>
+                  <td className="font-mono text-sm">${trade.currentPrice.toFixed(4)}</td>
+                  <td className="capitalize text-xs">
+                    <span className={trade.positionStatus === 'closed' ? 'text-gray-400' : 'text-blue-400'}>
+                      {trade.positionStatus}
+                    </span>
+                  </td>
+                  <td className={`font-mono text-sm ${trade.realizedPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                    ${trade.realizedPnl.toFixed(2)}
+                  </td>
+                  <td className={`font-mono text-sm ${trade.unrealizedPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                    ${trade.unrealizedPnl.toFixed(2)}
+                  </td>
+                  <td className="text-xs text-muted-foreground">
+                    {trade.closedAt ? new Date(trade.closedAt).toLocaleString() : '-'}
+                  </td>
                 </tr>
               ))}
             </tbody>

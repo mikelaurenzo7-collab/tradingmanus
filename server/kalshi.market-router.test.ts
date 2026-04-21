@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   fetchKalshiMarkets: vi.fn(),
   fetchKalshiMarketDetails: vi.fn(),
   upsertKalshiMarket: vi.fn(),
+  getKalshiTradeHistory: vi.fn(),
 }));
 
 vi.mock("./db", () => ({
@@ -16,6 +17,7 @@ vi.mock("./db", () => ({
   initializeKalshiCapital: vi.fn(),
   getRecentSignals: vi.fn(async () => []),
   getAuditLog: vi.fn(async () => []),
+  getKalshiTradeHistory: mocks.getKalshiTradeHistory,
 }));
 
 vi.mock("./_core/kalshiMarketData", () => ({
@@ -68,6 +70,7 @@ function createProtectedContext(): TrpcContext {
 describe("kalshi market-data router", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getKalshiTradeHistory.mockResolvedValue([]);
   });
 
   it("upserts each market returned by getMarkets", async () => {
@@ -132,5 +135,29 @@ describe("kalshi market-data router", () => {
     expect(result).toEqual(market);
     expect(mocks.fetchKalshiMarketDetails).toHaveBeenCalledWith("JOBS-2026");
     expect(mocks.upsertKalshiMarket).toHaveBeenCalledWith(market);
+  });
+
+  it("returns trade history using the requested limit", async () => {
+    const history = [
+      {
+        id: 7,
+        marketId: "CPI-2026",
+        side: "yes",
+        quantity: 3,
+        entryPrice: 0.44,
+        currentPrice: 0.57,
+        positionStatus: "closed",
+        realizedPnl: 0.39,
+        unrealizedPnl: 0,
+        closedAt: new Date("2026-04-20T12:00:00Z"),
+      },
+    ];
+    mocks.getKalshiTradeHistory.mockResolvedValue(history);
+
+    const caller = appRouter.createCaller(createProtectedContext());
+    const result = await caller.kalshi.getTradeHistory({ limit: 25 });
+
+    expect(result).toEqual(history);
+    expect(mocks.getKalshiTradeHistory).toHaveBeenCalledWith(25);
   });
 });

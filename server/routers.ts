@@ -4,8 +4,10 @@ import { z } from "zod";
 import * as db from "./db";
 import { fetchKalshiMarkets, fetchKalshiMarketDetails } from "./_core/kalshiMarketData";
 import { placeKalshiOrder, cancelKalshiOrder, getKalshiOrderStatus, getKalshiPositions, closeKalshiPosition, activateKalshiKillSwitch } from "./_core/kalshiExecution";
+import { subscribeToMarketFeed, unsubscribeFromMarketFeed, getMarketFeed, getAllMarketFeeds } from "./_core/kalshiMarketFeed";
+import { generateSignalsForMarkets, filterSignalsByConfidence, getTopSignalsForExecution, saveSignals } from "./_core/kalshiSignals";
 
-const COOKIE_NAME = "session";
+import { COOKIE_NAME } from "../shared/const";
 
 // Risk limits (hardcoded for $100 capital)
 const RISK_LIMITS = {
@@ -154,12 +156,23 @@ export const appRouter = router({
     // Positions
     getPositions: protectedProcedure.query(async () => {
       try {
-        return await getKalshiPositions();
+        return await db.getOpenKalshiPositions();
       } catch (error) {
         console.error("[Kalshi] Get positions error:", error);
         return [];
       }
     }),
+
+    getTradeHistory: protectedProcedure
+      .input(z.object({ limit: z.number().min(1).max(200).optional() }).optional())
+      .query(async ({ input }) => {
+        try {
+          return await db.getKalshiTradeHistory(input?.limit ?? 50);
+        } catch (error) {
+          console.error("[Kalshi] Get trade history error:", error);
+          return [];
+        }
+      }),
 
     closePosition: protectedProcedure
       .input(z.object({ positionId: z.number(), marketId: z.string(), currentPrice: z.number() }))
@@ -249,6 +262,122 @@ export const appRouter = router({
     }),
 
     getRiskLimits: protectedProcedure.query(async () => RISK_LIMITS),
+
+    // Phase 2: Market Feed Subscriptions
+    subscribeMarketFeed: protectedProcedure
+      .input(z.object({ marketId: z.string() }))
+      .mutation(async ({ input, ctx }) => {
+        try {
+          const feed = await subscribeToMarketFeed(input.marketId);
+          if (feed) {
+            await db.logAuditEvent("kalshi_market_feed_subscribed", input.marketId, ctx.user!.openId);
+            return { success: true, feed };
+          }
+          return { success: false, error: "Failed to subscribe to market feed" };
+        } catch (error) {
+          console.error("[Kalshi] Subscribe market feed error:", error);
+          return { success: false, error: String(error) };
+        }
+      }),
+
+    unsubscribeMarketFeed: protectedProcedure
+      .input(z.object({ marketId: z.string() }))
+      .mutation(async ({ input, ctx }) => {
+        try {
+          unsubscribeFromMarketFeed(input.marketId);
+          await db.logAuditEvent("kalshi_market_feed_unsubscribed", input.marketId, ctx.user!.openId);
+          return { success: true };
+        } catch (error) {
+          console.error("[Kalshi] Unsubscribe market feed error:", error);
+          return { success: false, error: String(error) };
+        }
+      }),
+
+    getMarketFeed: protectedProcedure
+      .input(z.object({ marketId: z.string() }))
+      .query(async ({ input }) => {
+        try {
+          return getMarketFeed(input.marketId);
+        } catch (error) {
+          console.error("[Kalshi] Get market feed error:", error);
+          return null;
+        }
+      }),
+
+    getAllMarketFeeds: protectedProcedure.query(async () => {
+      try {
+        return getAllMarketFeeds();
+      } catch (error) {
+        console.error("[Kalshi] Get all market feeds error:", error);
+        return [];
+      }
+    }),
+
+    // Phase 5: Signal Generation
+    generateSignals: protectedProcedure
+      .input(
+        z.object({
+          marketIds: z.array(z.string()),
+          minConfidence: z.number().min(0).max(1).optional().default(0.5),
+          fundamentalProbabilities: z.record(z.string(), z.number()).optional(),
+        })
+      )
+      .mutation(async ({ input, ctx }) => {
+        try {
+          const markets = await Promise.all(input.marketIds.map((id) => db.getKalshiMarket(id)));
+          const validMarkets = markets.filter((m): m is any => m !== null);
+
+          if (validMarkets.length === 0) {
+            return { success: false, signals: [], error: "No valid markets found" };
+          }
+
+          const feeds = new Map();
+          for (const marketId of input.marketIds) {
+            const feed = getMarketFeed(marketId);
+            if (feed) feeds.set(marketId, feed);
+          }
+
+          const fundamentalProbs = input.fundamentalProbabilities ? new Map(Object.entries(input.fundamentalProbabilities)) : undefined;
+          const allSignals = await generateSignalsForMarkets(validMarkets, feeds, fundamentalProbs);
+          const filteredSignals = filterSignalsByConfidence(allSignals, input.minConfidence);
+
+          await saveSignals(filteredSignals);
+          await db.logAuditEvent("kalshi_signals_generated", JSON.stringify({ count: filteredSignals.length, minConfidence: input.minConfidence }), ctx.user!.openId);
+
+          return { success: true, signals: filteredSignals };
+        } catch (error) {
+          console.error("[Kalshi] Generate signals error:", error);
+          return { success: false, signals: [], error: String(error) };
+        }
+      }),
+
+    getTopSignals: protectedProcedure
+      .input(
+        z.object({
+          topN: z.number().min(1).max(20).optional().default(5),
+          minExecutionScore: z.number().min(0).max(1).optional().default(0.6),
+        })
+      )
+      .query(async ({ input }) => {
+        try {
+          const recentSignals = await db.getRecentSignals(50);
+          return getTopSignalsForExecution(recentSignals, input.topN, input.minExecutionScore);
+        } catch (error) {
+          console.error("[Kalshi] Get top signals error:", error);
+          return [];
+        }
+      }),
+
+    getSignalHistory: protectedProcedure
+      .input(z.object({ limit: z.number().min(1).max(200).optional().default(50) }))
+      .query(async ({ input }) => {
+        try {
+          return await db.getRecentSignals(input.limit);
+        } catch (error) {
+          console.error("[Kalshi] Get signal history error:", error);
+          return [];
+        }
+      }),
   }),
 });
 

@@ -13,12 +13,14 @@
 
 ## Phase 2: Kalshi Market Data
 
-- [ ] Build Kalshi market data adapter (fetch all markets, odds, volumes, order book)
-- [ ] Implement real-time market feed subscription
-- [ ] Store market snapshots with timestamps
-- [ ] Track market metadata (category, description, resolution date, liquidity)
-- [ ] Add data freshness tracking and quality scoring
-- [ ] Wire into tRPC: `kalshi.getMarkets`, `kalshi.getMarketDetails`, `kalshi.subscribeMarketFeed`
+- [x] Build Kalshi market data adapter (fetch all markets, odds, volumes)
+- [x] Implement polling-based market feed subscription (5s interval, 1-hour history)
+- [ ] Persist market snapshots to database with timestamped history
+- [x] Track market metadata (category, description, resolution date)
+- [x] Add data freshness tracking and quality scoring
+- [x] Wire into tRPC: `kalshi.getMarkets`, `kalshi.getMarketDetails`, `kalshi.subscribeMarketFeed`
+- [ ] Implement order-book fetching and persistence
+- [ ] Add liquidity tracking to market metadata
 
 ## Phase 3: Kalshi Trading Execution
 
@@ -42,12 +44,15 @@
 
 ## Phase 5: Signal Generation
 
-- [ ] Define signal framework (what makes a good Kalshi prediction?)
-- [ ] Build market analysis service (implied probability, sentiment, volume patterns)
-- [ ] Implement signal scoring (confidence 0-1)
-- [ ] Create signal types (value play, momentum, contrarian, arbitrage)
-- [ ] Add signal filtering (only trade high-confidence signals)
-- [ ] Wire into tRPC: `kalshi.generateSignals`, `kalshi.getSignalHistory`
+- [x] Define signal framework (value play, momentum, contrarian)
+- [x] Build market analysis service (implied probability, volume patterns)
+- [x] Implement signal scoring (confidence 0-1)
+- [x] Create signal types (value play, momentum, contrarian)
+- [x] Add signal filtering (only trade high-confidence signals)
+- [x] Wire into tRPC: `kalshi.generateSignals`, `kalshi.getSignalHistory`
+- [ ] Implement arbitrage signal detection
+- [ ] Add sentiment analysis (defer or integrate external API)
+- [ ] Wire signal generation into frontend UI with loading/error states
 
 ## Phase 6: Learning Loop
 
@@ -100,3 +105,10 @@
 - [ ] Add `kalshi.updateRiskLimits` or explicitly defer it after validating scope
 - [x] Add Vitest coverage for `kalshi.getRiskLimits` and `kalshi.killSwitch`
 - [x] Wire risk control procedures into the frontend and verify loading, error, and success states
+
+- [x] Add trade-history database helper and expose via tRPC
+- [x] Add focused router-level tests for trade-history retrieval
+- [x] Improve market-data adapter with dedicated market-details helper
+- [x] Add implied-probability calculation to market data
+- [x] Persist fetched market metadata through the router
+- [x] Add focused market-data router tests

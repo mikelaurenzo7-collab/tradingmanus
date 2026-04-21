@@ -274,6 +274,17 @@ export async function getOpenKalshiPositions() {
     .where(eq(kalshiPositions.positionStatus, "open"));
 }
 
+export async function getKalshiTradeHistory(limit: number = 50) {
+  const database = await getDb();
+  if (!database) return [];
+
+  return await database
+    .select()
+    .from(kalshiPositions)
+    .orderBy(desc(kalshiPositions.closedAt), desc(kalshiPositions.id))
+    .limit(limit);
+}
+
 export async function getTodayRealizedLoss() {
   const database = await getDb();
   if (!database) return 0;
