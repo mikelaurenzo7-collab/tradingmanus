@@ -1,23 +1,89 @@
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, TrendingUp, Zap, AlertTriangle } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { useEffect, useState } from "react";
+import { toast } from "sonner";
 
 export default function Strategies() {
-  const strategies = trpc.kalshi.getRecentSignals.useQuery();
+  const signals = trpc.kalshi.getRecentSignals.useQuery();
+  const marketsQuery = trpc.kalshi.getMarkets.useQuery({ status: "open" });
+  const generateSignalsMutation = trpc.kalshi.generateSignals.useMutation();
+  const [isGenerating, setIsGenerating] = useState(false);
 
-  if (strategies.isLoading) {
+  const handleGenerateSignals = async () => {
+    if (!marketsQuery.data || marketsQuery.data.length === 0) {
+      toast.error("No open markets available");
+      return;
+    }
+
+    setIsGenerating(true);
+    try {
+      const marketIds = marketsQuery.data.slice(0, 10).map((m: any) => m.id);
+      const result = await generateSignalsMutation.mutateAsync({
+        marketIds,
+        minConfidence: 0.5,
+      });
+
+      if (result.success) {
+        toast.success(`Generated ${result.signals.length} signals`);
+        await signals.refetch();
+      } else {
+        toast.error(result.error || "Failed to generate signals");
+      }
+    } catch (error) {
+      console.error("Failed to generate signals:", error);
+      toast.error("Error generating signals");
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const getSignalIcon = (signalType: string) => {
+    switch (signalType) {
+      case "value_play":
+        return <TrendingUp className="w-4 h-4 text-green-400" />;
+      case "momentum":
+        return <Zap className="w-4 h-4 text-yellow-400" />;
+      case "contrarian":
+        return <AlertTriangle className="w-4 h-4 text-red-400" />;
+      default:
+        return <TrendingUp className="w-4 h-4 text-cyan-400" />;
+    }
+  };
+
+  const getSignalDescription = (signalType: string) => {
+    switch (signalType) {
+      case "value_play":
+        return "Market mispricing - fundamental vs market probability divergence";
+      case "momentum":
+        return "Strong directional movement with volume confirmation";
+      case "contrarian":
+        return "Extreme condition suggesting reversal opportunity";
+      default:
+        return "Trading signal generated";
+    }
+  };
+
+  const getConfidenceBadgeColor = (confidence: number) => {
+    if (confidence >= 0.8) return "bg-green-900 text-green-200";
+    if (confidence >= 0.6) return "bg-yellow-900 text-yellow-200";
+    return "bg-orange-900 text-orange-200";
+  };
+
+  if (signals.isLoading) {
     return (
       <div className="space-y-6">
         <div>
           <h1 className="text-3xl font-bold text-cyan-400 font-mono">[ STRATEGY REGISTRY ]</h1>
-          <p className="text-gray-400 mt-2">Loading...</p>
+          <p className="text-gray-400 mt-2">Loading strategies...</p>
         </div>
       </div>
     );
   }
 
-  if (strategies.error) {
+  if (signals.error) {
     return (
       <div className="space-y-6">
         <div>
@@ -30,61 +96,90 @@ export default function Strategies() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-cyan-400 font-mono">[ STRATEGY REGISTRY ]</h1>
-        <p className="text-gray-400 mt-2">Validated trading strategies with walk-forward performance</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold text-cyan-400 font-mono">[ STRATEGY REGISTRY ]</h1>
+          <p className="text-gray-400 mt-2">Validated trading strategies with confidence scoring</p>
+        </div>
+        <Button
+          onClick={handleGenerateSignals}
+          disabled={isGenerating || marketsQuery.isLoading}
+          className="bg-cyan-600 hover:bg-cyan-700 text-black font-mono"
+        >
+          {isGenerating ? "Generating..." : "Generate Signals"}
+        </Button>
       </div>
 
       <div className="grid gap-4">
-        {strategies.data?.map((strategy: any) => (
-          <Card key={strategy.id} className="border-cyan-900 bg-black/50">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="text-cyan-400">{strategy.signalType}</CardTitle>
-                  <CardDescription className="text-gray-500 mt-1">
-                    Market: {strategy.marketId} • Confidence: {(strategy.confidence * 100).toFixed(1)}%
-                  </CardDescription>
-                </div>
-                <Badge className="bg-green-900 text-green-200">ACTIVE</Badge>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3 text-sm">
-                <div>
-                  <div className="text-gray-500 font-mono">[ HYPOTHESIS ]</div>
-                  <div className="text-gray-300 mt-1">{strategy.hypothesis}</div>
-                </div>
-                <div>
-                  <div className="text-gray-500 font-mono">[ ENTRY LOGIC ]</div>
-                  <div className="text-gray-300 text-xs mt-1 font-mono">{strategy.entryLogic}</div>
-                </div>
-                <div>
-                  <div className="text-gray-500 font-mono">[ EXIT LOGIC ]</div>
-                  <div className="text-gray-300 text-xs mt-1 font-mono">{strategy.exitLogic}</div>
-                </div>
-                <div>
-                  <div className="text-gray-500 font-mono">[ SIZING ]</div>
-                  <div className="text-gray-300 text-xs mt-1">{strategy.sizingRules}</div>
-                </div>
-                {strategy.expectedCosts && (
-                  <div>
-                    <div className="text-gray-500 font-mono">[ EXPECTED COSTS ]</div>
-                    <div className="text-yellow-400 font-mono">{strategy.expectedCosts.toFixed(2)}%</div>
+        {signals.data && signals.data.length > 0 ? (
+          signals.data.map((signal: any) => (
+            <Card key={signal.id} className="border-cyan-900 bg-black/50 hover:border-cyan-700 transition-colors">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    {getSignalIcon(signal.signalType)}
+                    <div>
+                      <CardTitle className="text-cyan-400 capitalize">{signal.signalType.replace(/_/g, " ")}</CardTitle>
+                      <CardDescription className="text-gray-500 mt-1">{getSignalDescription(signal.signalType)}</CardDescription>
+                    </div>
                   </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        ))}
+                  <Badge className={getConfidenceBadgeColor(signal.confidence)}>
+                    {(signal.confidence * 100).toFixed(0)}% CONF
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3 text-sm">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <div className="text-gray-500 font-mono">[ MARKET ]</div>
+                      <div className="text-gray-300 mt-1 font-mono text-xs">{signal.marketId}</div>
+                    </div>
+                    <div>
+                      <div className="text-gray-500 font-mono">[ SIDE ]</div>
+                      <div className={`mt-1 font-mono text-xs font-bold ${signal.side === "yes" ? "text-green-400" : "text-red-400"}`}>
+                        {signal.side.toUpperCase()}
+                      </div>
+                    </div>
+                  </div>
 
-        {!strategies.data || strategies.data.length === 0 && (
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <div className="text-gray-500 font-mono">[ IMPLIED PROB ]</div>
+                      <div className="text-cyan-300 mt-1 font-mono">{(signal.impliedProbability * 100).toFixed(1)}%</div>
+                    </div>
+                    <div>
+                      <div className="text-gray-500 font-mono">[ MARKET PRICE ]</div>
+                      <div className="text-cyan-300 mt-1 font-mono">${signal.marketPrice.toFixed(2)}</div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-gray-500 font-mono">[ EXPECTED VALUE ]</div>
+                    <div className={`mt-1 font-mono font-bold ${signal.expectedValue > 0 ? "text-green-400" : "text-red-400"}`}>
+                      ${signal.expectedValue.toFixed(4)}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-gray-500 font-mono">[ REASONING ]</div>
+                    <div className="text-gray-300 text-xs mt-1 font-mono">{signal.reasoning}</div>
+                  </div>
+
+                  <div className="text-gray-600 text-xs pt-2 border-t border-gray-800">
+                    Generated: {new Date(signal.createdAt).toLocaleString()}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))
+        ) : (
           <Card className="border-gray-800 bg-black/50">
             <CardContent className="pt-6">
               <div className="text-center text-gray-400">
                 <AlertCircle className="w-8 h-8 mx-auto mb-2 opacity-50" />
                 <p>No strategies registered</p>
-                <p className="text-sm mt-1">Add trading strategies to the registry</p>
+                <p className="text-sm mt-1">Click "Generate Signals" to analyze open markets</p>
               </div>
             </CardContent>
           </Card>

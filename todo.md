@@ -52,7 +52,7 @@
 - [x] Wire into tRPC: `kalshi.generateSignals`, `kalshi.getSignalHistory`
 - [ ] Implement arbitrage signal detection
 - [ ] Add sentiment analysis (defer or integrate external API)
-- [ ] Wire signal generation into frontend UI with loading/error states
+- [x] Wire signal generation into frontend UI with loading/error states
 
 ## Phase 6: Learning Loop
 

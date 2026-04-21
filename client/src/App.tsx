@@ -14,6 +14,7 @@ import Analytics from "./pages/Analytics";
 import Connectors from "./pages/Connectors";
 import PaperTrading from "./pages/PaperTrading";
 import Strategies from "./pages/Strategies";
+import Signals from "./pages/Signals";
 import RiskControls from "./pages/RiskControls";
 import AuditLog from "./pages/AuditLog";
 
@@ -29,6 +30,7 @@ function Router() {
       <Route path={"/connectors"} component={() => <DashboardLayout><Connectors /></DashboardLayout>} />
       <Route path={"/paper-trading"} component={() => <DashboardLayout><PaperTrading /></DashboardLayout>} />
       <Route path={"/strategies"} component={() => <DashboardLayout><Strategies /></DashboardLayout>} />
+      <Route path={"/signals"} component={() => <DashboardLayout><Signals /></DashboardLayout>} />
       <Route path={"/risk-controls"} component={() => <DashboardLayout><RiskControls /></DashboardLayout>} />
       <Route path={"/audit"} component={() => <DashboardLayout><AuditLog /></DashboardLayout>} />
       <Route path={"/404"} component={NotFound} />
