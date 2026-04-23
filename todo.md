@@ -98,6 +98,27 @@
 - [x] Improve login screen with Kalshi branding and clear next steps
 - [x] All 42 tests passing with simplified UI
 
+## Kalshi Account Connection (Complete)
+
+- [x] Implement encrypted credential storage (AES-256-CBC)
+- [x] Create server-side credential validation
+- [x] Implement real account equity fetching
+- [x] Wire Connect page to backend
+- [x] Update Dashboard to display real equity from Kalshi
+- [x] Add three tRPC procedures: connectKalshiAccount, getKalshiAccountStatus, disconnectKalshiAccount
+- [x] All 42 tests passing with credential flow
+
+## Agent Training Module (Complete)
+
+- [x] Design training instructions database schema (4 tables)
+- [x] Create backend helpers for instruction CRUD and scheduling
+- [x] Add 6 tRPC procedures for training management
+- [x] Integrate instructions into signal generation logic
+- [x] Create Training page UI for managing instructions
+- [x] Implement instruction scheduling (time windows, day of week)
+- [x] Implement instruction versioning and audit trail
+- [x] All 42 tests passing with training module
+
 ## Phase 8: Live Deployment
 
 - [ ] Deploy to production

@@ -12,6 +12,7 @@ import Signals from "./pages/Signals";
 import RiskControls from "./pages/RiskControls";
 import AuditLog from "./pages/AuditLog";
 import Connect from "./pages/Connect";
+import Training from "./pages/Training";
 
 function Router() {
   return (
@@ -23,6 +24,7 @@ function Router() {
       <Route path={"/signals"} component={() => <DashboardLayout><Signals /></DashboardLayout>} />
       <Route path={"/risk-controls"} component={() => <DashboardLayout><RiskControls /></DashboardLayout>} />
       <Route path={"/audit"} component={() => <DashboardLayout><AuditLog /></DashboardLayout>} />
+      <Route path={"/training"} component={() => <DashboardLayout><Training /></DashboardLayout>} />
       <Route path={"/404"} component={NotFound} />
       {/* Final fallback route */}
       <Route component={NotFound} />

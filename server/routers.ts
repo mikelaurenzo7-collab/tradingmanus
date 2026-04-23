@@ -8,6 +8,7 @@ import { subscribeToMarketFeed, unsubscribeFromMarketFeed, getMarketFeed, getAll
 import { generateSignalsForMarkets, filterSignalsByConfidence, getTopSignalsForExecution, saveSignals } from "./_core/kalshiSignals";
 import { validateKalshiCredentials, fetchKalshiAccountEquity } from "./_core/kalshiAuth";
 import * as kalshiCredDb from "./db.kalshi-credentials";
+import { trainingRouter } from "./training.router";
 
 import { COOKIE_NAME } from "../shared/const";
 
@@ -29,6 +30,8 @@ export const appRouter = router({
       return { success: true } as const;
     }),
   }),
+
+  training: trainingRouter,
 
   kalshi: router({
     // Market data

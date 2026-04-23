@@ -26,6 +26,49 @@ export const auditLog = mysqlTable("auditLog", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
+// Training instructions tables
+export const trainingInstructions = mysqlTable("trainingInstructions", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description"),
+  instructionType: mysqlEnum("instructionType", ["market_filter", "signal_filter", "position_limit", "time_window", "custom"]).notNull(),
+  priority: int("priority").default(0).notNull(), // Higher = more important
+  isActive: int("isActive").default(1).notNull(), // 1 = active, 0 = inactive
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export const instructionRules = mysqlTable("instructionRules", {
+  id: int("id").autoincrement().primaryKey(),
+  instructionId: int("instructionId").notNull(),
+  ruleType: mysqlEnum("ruleType", ["include", "exclude", "require", "forbid"]).notNull(),
+  ruleKey: varchar("ruleKey", { length: 128 }).notNull(), // e.g., "category", "minConfidence", "dayOfWeek"
+  ruleValue: text("ruleValue").notNull(), // e.g., "politics", "0.75", "1,2,3,4,5"
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export const instructionSchedules = mysqlTable("instructionSchedules", {
+  id: int("id").autoincrement().primaryKey(),
+  instructionId: int("instructionId").notNull(),
+  scheduleType: mysqlEnum("scheduleType", ["always", "time_window", "day_of_week", "market_condition"]).notNull(),
+  startTime: varchar("startTime", { length: 8 }), // HH:MM format
+  endTime: varchar("endTime", { length: 8 }), // HH:MM format
+  daysOfWeek: varchar("daysOfWeek", { length: 20 }), // "1,2,3,4,5" for Mon-Fri
+  timezone: varchar("timezone", { length: 50 }).default("UTC").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export const instructionHistory = mysqlTable("instructionHistory", {
+  id: int("id").autoincrement().primaryKey(),
+  instructionId: int("instructionId").notNull(),
+  version: int("version").notNull(),
+  previousState: text("previousState"), // JSON snapshot
+  changeReason: text("changeReason"),
+  changedBy: varchar("changedBy", { length: 64 }).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
 // Kalshi credentials table
 export const kalshiCredentials = mysqlTable("kalshiCredentials", {
   id: int("id").autoincrement().primaryKey(),
