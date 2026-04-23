@@ -1,6 +1,15 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+@layer base {
+  * {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+  code, pre, .font-mono {
+    font-family: 'JetBrains Mono', 'Courier New', monospace;
+  }
+}
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
@@ -43,76 +52,77 @@
 }
 
 :root {
-  /* Retro-futuristic color palette: deep black + neon cyan/magenta */
-  --primary: oklch(0.85 0.31 262.2); /* Neon cyan */
-  --primary-foreground: oklch(0.05 0 0); /* Deep black */
-  --sidebar-primary: oklch(0.75 0.28 262.2); /* Slightly darker cyan */
-  --sidebar-primary-foreground: oklch(0.05 0 0);
-  --chart-1: oklch(0.85 0.31 262.2); /* Cyan */
-  --chart-2: oklch(0.80 0.35 310.4); /* Magenta */
-  --chart-3: oklch(0.75 0.30 262.2); /* Darker cyan */
-  --chart-4: oklch(0.70 0.32 310.4); /* Darker magenta */
-  --chart-5: oklch(0.65 0.28 262.2); /* Even darker cyan */
-  --radius: 0.25rem; /* Sharp, technical corners */
-  --background: oklch(0.05 0 0); /* Deep black */
-  --foreground: oklch(0.95 0.01 65); /* Bright white */
-  --card: oklch(0.08 0.01 280); /* Very dark blue-black */
-  --card-foreground: oklch(0.95 0.01 65);
-  --popover: oklch(0.08 0.01 280);
-  --popover-foreground: oklch(0.95 0.01 65);
-  --secondary: oklch(0.80 0.35 310.4); /* Neon magenta */
-  --secondary-foreground: oklch(0.05 0 0);
-  --muted: oklch(0.25 0.02 280); /* Dark gray */
-  --muted-foreground: oklch(0.70 0.02 65);
-  --accent: oklch(0.85 0.31 262.2); /* Cyan accent */
-  --accent-foreground: oklch(0.05 0 0);
-  --destructive: oklch(0.80 0.35 310.4); /* Magenta for warnings */
-  --destructive-foreground: oklch(0.05 0 0);
-  --border: oklch(0.20 0.02 280); /* Very dark border */
-  --input: oklch(0.10 0.01 280); /* Dark input background */
-  --ring: oklch(0.85 0.31 262.2); /* Cyan ring */
-  --sidebar: oklch(0.08 0.01 280);
-  --sidebar-foreground: oklch(0.95 0.01 65);
-  --sidebar-accent: oklch(0.85 0.31 262.2);
-  --sidebar-accent-foreground: oklch(0.05 0 0);
-  --sidebar-border: oklch(0.20 0.02 280);
-  --sidebar-ring: oklch(0.85 0.31 262.2);
+  /* Bold, dreamy, disruptive palette: Gradient mesh with vibrant accents */
+  --primary: oklch(0.88 0.35 280); /* Electric violet */
+  --primary-foreground: oklch(0.98 0.01 65); /* Off-white */
+  --sidebar-primary: oklch(0.78 0.32 280); /* Deeper violet */
+  --sidebar-primary-foreground: oklch(0.98 0.01 65);
+  --chart-1: oklch(0.88 0.35 280); /* Violet */
+  --chart-2: oklch(0.85 0.38 15); /* Coral pink */
+  --chart-3: oklch(0.82 0.36 200); /* Cyan */
+  --chart-4: oklch(0.80 0.35 140); /* Lime */
+  --chart-5: oklch(0.75 0.32 280); /* Deep violet */
+  --radius: 1rem; /* Smooth, organic corners */
+  --background: linear-gradient(135deg, oklch(0.08 0.02 280) 0%, oklch(0.06 0.03 320) 50%, oklch(0.07 0.02 260) 100%); /* Gradient mesh background */
+  --background-solid: oklch(0.07 0.02 280); /* Fallback solid */
+  --foreground: oklch(0.98 0.01 65); /* Off-white */
+  --card: oklch(0.12 0.03 280); /* Frosted glass base */
+  --card-foreground: oklch(0.98 0.01 65);
+  --popover: oklch(0.12 0.03 280);
+  --popover-foreground: oklch(0.98 0.01 65);
+  --secondary: oklch(0.85 0.38 15); /* Coral pink */
+  --secondary-foreground: oklch(0.08 0.02 280);
+  --muted: oklch(0.35 0.05 280); /* Muted violet */
+  --muted-foreground: oklch(0.75 0.05 65);
+  --accent: oklch(0.88 0.35 280); /* Electric violet */
+  --accent-foreground: oklch(0.98 0.01 65);
+  --destructive: oklch(0.85 0.38 15); /* Coral pink */
+  --destructive-foreground: oklch(0.98 0.01 65);
+  --border: oklch(0.25 0.05 280); /* Subtle violet border */
+  --input: oklch(0.10 0.02 280); /* Dark frosted input */
+  --ring: oklch(0.88 0.35 280); /* Violet ring */
+  --sidebar: oklch(0.10 0.02 280);
+  --sidebar-foreground: oklch(0.98 0.01 65);
+  --sidebar-accent: oklch(0.88 0.35 280);
+  --sidebar-accent-foreground: oklch(0.98 0.01 65);
+  --sidebar-border: oklch(0.25 0.05 280);
+  --sidebar-ring: oklch(0.88 0.35 280);
 }
 
 .dark {
-  /* Dark theme is the default for retro-futuristic */
-  --primary: oklch(0.85 0.31 262.2);
-  --primary-foreground: oklch(0.05 0 0);
-  --sidebar-primary: oklch(0.75 0.28 262.2);
-  --sidebar-primary-foreground: oklch(0.05 0 0);
-  --background: oklch(0.05 0 0);
-  --foreground: oklch(0.95 0.01 65);
-  --card: oklch(0.08 0.01 280);
-  --card-foreground: oklch(0.95 0.01 65);
-  --popover: oklch(0.08 0.01 280);
-  --popover-foreground: oklch(0.95 0.01 65);
-  --secondary: oklch(0.80 0.35 310.4);
-  --secondary-foreground: oklch(0.05 0 0);
-  --muted: oklch(0.25 0.02 280);
-  --muted-foreground: oklch(0.70 0.02 65);
-  --accent: oklch(0.85 0.31 262.2);
-  --accent-foreground: oklch(0.05 0 0);
-  --destructive: oklch(0.80 0.35 310.4);
-  --destructive-foreground: oklch(0.05 0 0);
-  --border: oklch(0.20 0.02 280);
-  --input: oklch(0.10 0.01 280);
-  --ring: oklch(0.85 0.31 262.2);
-  --chart-1: oklch(0.85 0.31 262.2);
-  --chart-2: oklch(0.80 0.35 310.4);
-  --chart-3: oklch(0.75 0.30 262.2);
-  --chart-4: oklch(0.70 0.32 310.4);
-  --chart-5: oklch(0.65 0.28 262.2);
-  --sidebar: oklch(0.08 0.01 280);
-  --sidebar-foreground: oklch(0.95 0.01 65);
-  --sidebar-accent: oklch(0.85 0.31 262.2);
-  --sidebar-accent-foreground: oklch(0.05 0 0);
-  --sidebar-border: oklch(0.20 0.02 280);
-  --sidebar-ring: oklch(0.85 0.31 262.2);
+  /* Dark theme with dreamy gradient mesh */
+  --primary: oklch(0.88 0.35 280);
+  --primary-foreground: oklch(0.98 0.01 65);
+  --sidebar-primary: oklch(0.78 0.32 280);
+  --sidebar-primary-foreground: oklch(0.98 0.01 65);
+  --background: oklch(0.07 0.02 280);
+  --foreground: oklch(0.98 0.01 65);
+  --card: oklch(0.12 0.03 280);
+  --card-foreground: oklch(0.98 0.01 65);
+  --popover: oklch(0.12 0.03 280);
+  --popover-foreground: oklch(0.98 0.01 65);
+  --secondary: oklch(0.85 0.38 15);
+  --secondary-foreground: oklch(0.08 0.02 280);
+  --muted: oklch(0.35 0.05 280);
+  --muted-foreground: oklch(0.75 0.05 65);
+  --accent: oklch(0.88 0.35 280);
+  --accent-foreground: oklch(0.98 0.01 65);
+  --destructive: oklch(0.85 0.38 15);
+  --destructive-foreground: oklch(0.98 0.01 65);
+  --border: oklch(0.25 0.05 280);
+  --input: oklch(0.10 0.02 280);
+  --ring: oklch(0.88 0.35 280);
+  --chart-1: oklch(0.88 0.35 280);
+  --chart-2: oklch(0.85 0.38 15);
+  --chart-3: oklch(0.82 0.36 200);
+  --chart-4: oklch(0.80 0.35 140);
+  --chart-5: oklch(0.75 0.32 280);
+  --sidebar: oklch(0.10 0.02 280);
+  --sidebar-foreground: oklch(0.98 0.01 65);
+  --sidebar-accent: oklch(0.88 0.35 280);
+  --sidebar-accent-foreground: oklch(0.98 0.01 65);
+  --sidebar-border: oklch(0.25 0.05 280);
+  --sidebar-ring: oklch(0.88 0.35 280);
 }
 
 @layer base {
@@ -120,17 +130,28 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground font-mono;
-    /* Horizontal scanlines effect */
-    background-image: repeating-linear-gradient(
-      0deg,
-      rgba(0, 0, 0, 0.15),
-      rgba(0, 0, 0, 0.15) 1px,
-      transparent 1px,
-      transparent 2px
-    );
-    background-size: 100% 2px;
+    @apply bg-background text-foreground font-sans;
+    background: linear-gradient(135deg, oklch(0.08 0.02 280) 0%, oklch(0.06 0.03 320) 50%, oklch(0.07 0.02 260) 100%);
+    background-attachment: fixed;
+    position: relative;
+    overflow-x: hidden;
   }
+  
+  body::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: 
+      radial-gradient(circle at 20% 50%, rgba(136, 100, 255, 0.1) 0%, transparent 50%),
+      radial-gradient(circle at 80% 80%, rgba(255, 100, 150, 0.08) 0%, transparent 50%),
+      radial-gradient(circle at 40% 20%, rgba(100, 200, 255, 0.08) 0%, transparent 50%);
+    pointer-events: none;
+    z-index: 0;
+  }
+  
   button:not(:disabled),
   [role="button"]:not([aria-disabled="true"]),
   [type="button"]:not(:disabled),
@@ -143,19 +164,25 @@
     @apply cursor-pointer;
   }
   h1, h2, h3, h4, h5, h6 {
-    @apply font-bold tracking-wider;
-    text-shadow: 0 0 10px rgba(0, 255, 255, 0.3);
+    @apply font-bold tracking-wide;
+    background: linear-gradient(135deg, oklch(0.88 0.35 280), oklch(0.85 0.38 15), oklch(0.82 0.36 200));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    letter-spacing: 0.05em;
   }
 }
 
 @layer components {
-  /* Retro-futuristic container */
+  /* Dreamy gradient mesh container */
   .container {
     width: 100%;
     margin-left: auto;
     margin-right: auto;
     padding-left: 1rem;
     padding-right: 1rem;
+    position: relative;
+    z-index: 1;
   }
 
   .flex {
@@ -178,13 +205,18 @@
     }
   }
 
-  /* Retro-futuristic card with chromatic aberration effect */
+  /* Glassmorphism card with blur and gradient */
   .nexus-card {
-    @apply bg-card text-card-foreground border border-border rounded-sm p-4;
-    position: relative;
+    @apply text-card-foreground rounded-2xl p-6 backdrop-blur-xl border;
+    background: linear-gradient(135deg, rgba(18, 30, 50, 0.6) 0%, rgba(25, 20, 50, 0.5) 100%);
+    border-color: rgba(136, 100, 255, 0.2);
     box-shadow: 
-      0 0 20px rgba(0, 255, 255, 0.2),
-      inset 0 0 20px rgba(0, 255, 255, 0.05);
+      0 8px 32px rgba(0, 0, 0, 0.3),
+      inset 0 1px 1px rgba(255, 255, 255, 0.1),
+      0 0 40px rgba(136, 100, 255, 0.15);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
   }
 
   .nexus-card::before {
@@ -194,85 +226,106 @@
     left: 0;
     right: 0;
     bottom: 0;
+    background: radial-gradient(circle at top right, rgba(255, 100, 150, 0.1) 0%, transparent 50%);
     pointer-events: none;
-    background-image: 
-      linear-gradient(90deg, transparent 0%, rgba(255, 0, 255, 0.03) 50%, transparent 100%);
-    border-radius: 0.25rem;
   }
 
-  /* Chromatic aberration text effect */
-  .chromatic-text {
-    position: relative;
-    display: inline-block;
+  .nexus-card:hover {
+    border-color: rgba(136, 100, 255, 0.4);
+    box-shadow: 
+      0 12px 48px rgba(0, 0, 0, 0.4),
+      inset 0 1px 1px rgba(255, 255, 255, 0.15),
+      0 0 60px rgba(136, 100, 255, 0.25);
+    transform: translateY(-4px);
   }
 
-  .chromatic-text::before {
-    content: attr(data-text);
-    position: absolute;
-    left: 2px;
-    top: 0;
-    z-index: -1;
-    color: oklch(0.85 0.31 262.2);
-    opacity: 0.5;
-  }
-
-  .chromatic-text::after {
-    content: attr(data-text);
-    position: absolute;
-    left: -2px;
-    top: 0;
-    z-index: -1;
-    color: oklch(0.80 0.35 310.4);
-    opacity: 0.5;
+  /* Gradient text effect */
+  .gradient-text {
+    background: linear-gradient(135deg, oklch(0.88 0.35 280), oklch(0.85 0.38 15), oklch(0.82 0.36 200));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
   }
 
   /* Geometric bracket accent */
   .bracket {
     display: inline-block;
     font-weight: bold;
-    color: oklch(0.85 0.31 262.2);
-    opacity: 0.7;
+    background: linear-gradient(135deg, oklch(0.88 0.35 280), oklch(0.85 0.38 15));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    opacity: 0.9;
   }
 
   /* Monospace error code styling */
   .error-code {
-    @apply font-mono text-sm;
-    color: oklch(0.80 0.35 310.4);
-    background: rgba(255, 0, 255, 0.05);
-    padding: 0.25rem 0.5rem;
-    border-left: 2px solid oklch(0.80 0.35 310.4);
+    @apply font-mono text-sm rounded-lg;
+    color: oklch(0.85 0.38 15);
+    background: linear-gradient(135deg, rgba(255, 100, 150, 0.1) 0%, rgba(255, 100, 150, 0.05) 100%);
+    padding: 0.5rem 0.75rem;
+    border-left: 3px solid oklch(0.85 0.38 15);
+    backdrop-filter: blur(10px);
   }
 
-  /* Neon glow button */
+  /* Neon glow button with gradient */
   .nexus-button {
-    @apply px-4 py-2 font-bold tracking-wider rounded-sm;
-    background: oklch(0.85 0.31 262.2);
-    color: oklch(0.05 0 0);
-    border: 1px solid oklch(0.85 0.31 262.2);
-    box-shadow: 0 0 10px rgba(0, 255, 255, 0.5);
-    transition: all 0.2s ease;
+    @apply px-6 py-3 font-bold tracking-wide rounded-xl;
+    background: linear-gradient(135deg, oklch(0.88 0.35 280), oklch(0.82 0.36 200));
+    color: oklch(0.98 0.01 65);
+    border: 1px solid rgba(136, 100, 255, 0.3);
+    box-shadow: 
+      0 4px 15px rgba(136, 100, 255, 0.4),
+      inset 0 1px 0 rgba(255, 255, 255, 0.2);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .nexus-button::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+    transition: left 0.5s;
   }
 
   .nexus-button:hover {
-    box-shadow: 0 0 20px rgba(0, 255, 255, 0.8), inset 0 0 10px rgba(0, 255, 255, 0.2);
+    box-shadow: 
+      0 8px 30px rgba(136, 100, 255, 0.6),
+      inset 0 1px 0 rgba(255, 255, 255, 0.3);
+    transform: translateY(-2px);
+  }
+
+  .nexus-button:hover::before {
+    left: 100%;
   }
 
   .nexus-button:active {
-    transform: scale(0.98);
+    transform: translateY(0) scale(0.98);
   }
 
   /* Kill-switch button (destructive) */
   .nexus-button-kill {
-    @apply px-4 py-2 font-bold tracking-wider rounded-sm;
-    background: oklch(0.80 0.35 310.4);
-    color: oklch(0.05 0 0);
-    border: 2px solid oklch(0.80 0.35 310.4);
-    box-shadow: 0 0 15px rgba(255, 0, 255, 0.6);
-    transition: all 0.2s ease;
+    @apply px-6 py-3 font-bold tracking-wide rounded-xl;
+    background: linear-gradient(135deg, oklch(0.85 0.38 15), oklch(0.80 0.35 20));
+    color: oklch(0.98 0.01 65);
+    border: 2px solid rgba(255, 100, 150, 0.4);
+    box-shadow: 
+      0 4px 20px rgba(255, 100, 150, 0.5),
+      inset 0 1px 0 rgba(255, 255, 255, 0.2);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
   }
 
   .nexus-button-kill:hover {
-    box-shadow: 0 0 30px rgba(255, 0, 255, 0.9), inset 0 0 15px rgba(255, 0, 255, 0.3);
+    box-shadow: 
+      0 8px 40px rgba(255, 100, 150, 0.7),
+      inset 0 1px 0 rgba(255, 255, 255, 0.3);
+    transform: translateY(-2px);
   }
 
   /* Data table styling */
@@ -281,69 +334,106 @@
   }
 
   .nexus-table thead {
-    @apply border-b border-border;
+    @apply border-b;
+    border-color: rgba(136, 100, 255, 0.2);
   }
 
   .nexus-table th {
-    @apply px-4 py-2 text-left font-bold tracking-wider;
-    color: oklch(0.85 0.31 262.2);
-    text-shadow: 0 0 10px rgba(0, 255, 255, 0.3);
+    @apply px-4 py-3 text-left font-bold tracking-wide;
+    background: linear-gradient(135deg, rgba(136, 100, 255, 0.1), rgba(255, 100, 150, 0.05));
+    color: oklch(0.88 0.35 280);
   }
 
   .nexus-table td {
-    @apply px-4 py-2 border-b border-border;
+    @apply px-4 py-3 border-b;
+    border-color: rgba(136, 100, 255, 0.1);
   }
 
   .nexus-table tbody tr:hover {
-    background: rgba(0, 255, 255, 0.05);
+    background: linear-gradient(135deg, rgba(136, 100, 255, 0.1), rgba(255, 100, 150, 0.05));
   }
 
   /* Status badge */
   .status-badge {
-    @apply inline-block px-2 py-1 rounded-sm text-xs font-bold tracking-wider;
+    @apply inline-block px-3 py-1 rounded-full text-xs font-bold tracking-wider;
   }
 
   .status-running {
-    @apply bg-green-900 text-green-100;
-    box-shadow: 0 0 8px rgba(0, 255, 0, 0.4);
+    background: linear-gradient(135deg, rgba(100, 200, 100, 0.3), rgba(100, 200, 100, 0.1));
+    color: oklch(0.82 0.36 200);
+    border: 1px solid rgba(100, 200, 100, 0.4);
+    box-shadow: 0 0 12px rgba(100, 200, 100, 0.3);
   }
 
   .status-paused {
-    @apply bg-yellow-900 text-yellow-100;
-    box-shadow: 0 0 8px rgba(255, 255, 0, 0.4);
+    background: linear-gradient(135deg, rgba(255, 200, 100, 0.3), rgba(255, 200, 100, 0.1));
+    color: oklch(0.80 0.35 140);
+    border: 1px solid rgba(255, 200, 100, 0.4);
+    box-shadow: 0 0 12px rgba(255, 200, 100, 0.3);
   }
 
   .status-stopped {
-    @apply bg-red-900 text-red-100;
-    box-shadow: 0 0 8px rgba(255, 0, 0, 0.4);
+    background: linear-gradient(135deg, rgba(255, 100, 150, 0.3), rgba(255, 100, 150, 0.1));
+    color: oklch(0.85 0.38 15);
+    border: 1px solid rgba(255, 100, 150, 0.4);
+    box-shadow: 0 0 12px rgba(255, 100, 150, 0.3);
   }
 
   /* Profit/loss styling */
   .profit {
-    color: oklch(0.75 0.25 142.5); /* Green */
+    color: oklch(0.82 0.36 200); /* Cyan */
+    font-weight: 600;
   }
 
   .loss {
-    color: oklch(0.80 0.35 310.4); /* Magenta */
+    color: oklch(0.85 0.38 15); /* Coral */
+    font-weight: 600;
   }
 
-  /* Digital noise artifact */
-  .digital-noise {
+  /* Animated gradient border */
+  .gradient-border {
     position: relative;
-    overflow: hidden;
+    background: linear-gradient(135deg, rgba(18, 30, 50, 0.6), rgba(25, 20, 50, 0.5));
+    border-radius: 1rem;
+    padding: 1px;
   }
 
-  .digital-noise::after {
+  .gradient-border::before {
     content: '';
     position: absolute;
     top: 0;
     left: 0;
     right: 0;
     bottom: 0;
-    background-image: 
-      url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><filter id="noise"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="4" seed="2" /></filter><rect width="100" height="100" fill="white" filter="url(%23noise)"/></svg>');
-    opacity: 0.02;
-    pointer-events: none;
-    mix-blend-mode: overlay;
+    background: linear-gradient(135deg, rgba(136, 100, 255, 0.3), rgba(255, 100, 150, 0.2), rgba(100, 200, 255, 0.2));
+    border-radius: 1rem;
+    opacity: 0.7;
+    animation: gradientShift 6s ease infinite;
+  }
+
+  @keyframes gradientShift {
+    0% { opacity: 0.5; }
+    50% { opacity: 1; }
+    100% { opacity: 0.5; }
+  }
+
+  /* Floating animation */
+  @keyframes float {
+    0%, 100% { transform: translateY(0px); }
+    50% { transform: translateY(-8px); }
+  }
+
+  .float-animation {
+    animation: float 3s ease-in-out infinite;
+  }
+
+  /* Pulse glow animation */
+  @keyframes pulseGlow {
+    0%, 100% { box-shadow: 0 0 20px rgba(136, 100, 255, 0.3); }
+    50% { box-shadow: 0 0 40px rgba(136, 100, 255, 0.6); }
+  }
+
+  .pulse-glow {
+    animation: pulseGlow 2s ease-in-out infinite;
   }
 }
