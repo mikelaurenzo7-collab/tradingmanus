@@ -63,19 +63,23 @@ export const db = {
 // User queries
 export async function upsertUser(payload: { openId: string; name?: string; email?: string; loginMethod?: string; lastSignedIn?: Date }) {
   const database = await getDb();
-  if (!database) return;
+  if (!database) {
+    console.warn("[Database] Connection not available, skipping upsertUser");
+    return;
+  }
   
   const values: any = { openId: payload.openId };
-  if (payload.name) values.name = payload.name;
-  if (payload.email) values.email = payload.email;
+  if (payload.name !== undefined) values.name = payload.name;
+  if (payload.email !== undefined) values.email = payload.email;
   
   const updates: any = {};
-  if (payload.name) updates.name = payload.name;
-  if (payload.email) updates.email = payload.email;
+  if (payload.name !== undefined) updates.name = payload.name;
+  if (payload.email !== undefined) updates.email = payload.email;
+  if (payload.lastSignedIn !== undefined) updates.lastSignedIn = payload.lastSignedIn;
   
-  // Always include at least one update field
+  // Always include at least one update field to avoid empty update
   if (Object.keys(updates).length === 0) {
-    updates.name = payload.name || null;
+    updates.lastSignedIn = new Date();
   }
   
   try {
@@ -85,6 +89,7 @@ export async function upsertUser(payload: { openId: string; name?: string; email
       .onDuplicateKeyUpdate({ set: updates });
   } catch (error) {
     console.error("[Database] Upsert user failed:", error);
+    // Don't throw - allow auth to proceed even if DB sync fails
   }
 }
 

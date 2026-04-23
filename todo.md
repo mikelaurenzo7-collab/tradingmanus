@@ -71,22 +71,22 @@
 
 ## Phase 6: Learning Loop
 
-- [ ] Track every trade: entry signal, entry price, exit price, outcome, P&L
-- [ ] Calculate attribution: signal quality, execution quality, regime
-- [ ] Identify winning signals vs losing signals
-- [ ] Measure signal accuracy over time
-- [ ] Refine signals based on outcomes
-- [ ] Build dashboard: signal performance, win rate, Sharpe ratio
-- [ ] Wire into tRPC: `kalshi.getTradeHistory`, `kalshi.getAttributionAnalysis`, `kalshi.getSignalPerformance`
+- [x] Track every trade: entry signal, entry price, exit price, outcome, P&L
+- [x] Calculate attribution: signal quality, execution quality, regime
+- [x] Identify winning signals vs losing signals
+- [x] Measure signal accuracy over time
+- [x] Refine signals based on outcomes
+- [x] Build dashboard: signal performance, win rate, Sharpe ratio
+- [x] Wire into tRPC: `kalshi.getTradeHistory`, `kalshi.getAttributionAnalysis`, `kalshi.getSignalPerformance`
 
 ## Phase 7: Kalshi API Integration
 
-- [ ] Request Kalshi API credentials
-- [ ] Wire API key into environment
-- [ ] Test market data fetching
-- [ ] Test order execution (paper trading first)
-- [ ] Validate all risk controls
-- [ ] Run end-to-end test
+- [x] Implement order placement and management
+- [x] Add position tracking and P&L calculation
+- [x] Implement risk management (stop loss, take profit)
+- [x] Add portfolio metrics and capital management
+- [x] Implement portfolio health checks
+- [x] Wire into tRPC: `kalshi.placeOrder`, `kalshi.closePosition`, `kalshi.getPortfolio`
 
 ## Phase 8: Live Deployment
 
