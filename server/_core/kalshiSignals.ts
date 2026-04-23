@@ -50,6 +50,7 @@ export async function generateSignalsForMarket(
   const valueOpportunity = detectValueOpportunity(market, fundamentalProbability ?? 0.5, 0.05);
   if (valueOpportunity) {
     const confidence = Math.min(0.95, Math.abs(fundamentalProbability! - market.impliedProbability) * 2);
+    if (isFinite(confidence) && isFinite(valueOpportunity.expectedValue)) {
     signals.push({
       marketId: market.id,
       signalType: "value_play",
@@ -63,6 +64,7 @@ export async function generateSignalsForMarket(
         fundamentalProbability,
       },
     });
+    }
   }
 
   // Momentum: detect strong directional moves

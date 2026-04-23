@@ -1,4 +1,3 @@
-import { useAuth } from "@/_core/hooks/useAuth";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -21,7 +20,8 @@ import {
 } from "@/components/ui/sidebar";
 import { getLoginUrl } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
-import { LayoutDashboard, LogOut, PanelLeft, Zap, TrendingUp, Shield, FileText, Plug, BookOpen, BarChart3 } from "lucide-react";
+import { useAuth } from "@/_core/hooks/useAuth";
+import { LayoutDashboard, LogOut, PanelLeft, Zap, TrendingUp, Shield, FileText, Plug, BookOpen, BarChart3, Brain, Briefcase, LineChart } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
@@ -34,6 +34,9 @@ const menuItems = [
   { icon: LayoutDashboard, label: "Positions", path: "/positions" },
   { icon: LayoutDashboard, label: "Trades", path: "/trades" },
   { icon: BarChart3, label: "Performance", path: "/performance" },
+  { icon: Brain, label: "Sentiment", path: "/sentiment" },
+  { icon: Briefcase, label: "Portfolio", path: "/portfolio" },
+  { icon: LineChart, label: "Backtest", path: "/backtest" },
   { icon: BookOpen, label: "Training", path: "/training" },
   { icon: Shield, label: "Risk Controls", path: "/risk-controls" },
   { icon: FileText, label: "Audit Log", path: "/audit" },
