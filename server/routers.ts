@@ -6,6 +6,8 @@ import { fetchKalshiMarkets, fetchKalshiMarketDetails } from "./_core/kalshiMark
 import { placeKalshiOrder, cancelKalshiOrder, getKalshiOrderStatus, getKalshiPositions, closeKalshiPosition, activateKalshiKillSwitch } from "./_core/kalshiExecution";
 import { subscribeToMarketFeed, unsubscribeFromMarketFeed, getMarketFeed, getAllMarketFeeds } from "./_core/kalshiMarketFeed";
 import { generateSignalsForMarkets, filterSignalsByConfidence, getTopSignalsForExecution, saveSignals } from "./_core/kalshiSignals";
+import { validateKalshiCredentials, fetchKalshiAccountEquity } from "./_core/kalshiAuth";
+import * as kalshiCredDb from "./db.kalshi-credentials";
 
 import { COOKIE_NAME } from "../shared/const";
 
@@ -378,6 +380,64 @@ export const appRouter = router({
           return [];
         }
       }),
+
+    // Kalshi account connection
+    connectKalshiAccount: protectedProcedure
+      .input(z.object({ apiKey: z.string(), privateKey: z.string() }))
+      .mutation(async ({ input, ctx }) => {
+        try {
+          const validation = await validateKalshiCredentials(input.apiKey, input.privateKey);
+          if (!validation.valid) {
+            return { success: false, error: validation.error || "Invalid credentials" };
+          }
+
+          const equityResult = await fetchKalshiAccountEquity(input.apiKey, input.privateKey);
+          if (equityResult.error) {
+            return { success: false, error: equityResult.error };
+          }
+
+          const userId = ctx.user!.id || 1;
+          await kalshiCredDb.saveKalshiCredentials(userId, input.apiKey, input.privateKey, equityResult.equity);
+          await db.updateKalshiCapital({ currentBalance: equityResult.equity });
+          await db.logAuditEvent("kalshi_account_connected", `Equity: $${equityResult.equity}`, ctx.user!.openId);
+
+          return { success: true, equity: equityResult.equity };
+        } catch (error) {
+          console.error("[Kalshi] Connect account error:", error);
+          return { success: false, error: String(error) };
+        }
+      }),
+
+    getKalshiAccountStatus: protectedProcedure.query(async ({ ctx }) => {
+      try {
+        const userId = ctx.user!.id || 1;
+        const creds = await kalshiCredDb.getKalshiCredentials(userId);
+        if (!creds) {
+          return { connected: false, equity: 0, status: "disconnected" };
+        }
+        return {
+          connected: creds.accountStatus === "connected",
+          equity: creds.accountEquity,
+          status: creds.accountStatus,
+          lastSyncedAt: creds.lastSyncedAt,
+        };
+      } catch (error) {
+        console.error("[Kalshi] Get account status error:", error);
+        return { connected: false, equity: 0, status: "error", error: String(error) };
+      }
+    }),
+
+    disconnectKalshiAccount: protectedProcedure.mutation(async ({ ctx }) => {
+      try {
+        const userId = ctx.user!.id || 1;
+        await kalshiCredDb.deleteKalshiCredentials(userId);
+        await db.logAuditEvent("kalshi_account_disconnected", "", ctx.user!.openId);
+        return { success: true };
+      } catch (error) {
+        console.error("[Kalshi] Disconnect account error:", error);
+        return { success: false, error: String(error) };
+      }
+    }),
   }),
 });
 

@@ -26,6 +26,19 @@ export const auditLog = mysqlTable("auditLog", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
+// Kalshi credentials table
+export const kalshiCredentials = mysqlTable("kalshiCredentials", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  apiKeyEncrypted: text("apiKeyEncrypted").notNull(),
+  privateKeyEncrypted: text("privateKeyEncrypted").notNull(),
+  accountEquity: double("accountEquity").default(0).notNull(),
+  accountStatus: mysqlEnum("accountStatus", ["connected", "disconnected", "error"]).default("disconnected").notNull(),
+  lastSyncedAt: timestamp("lastSyncedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
 // Kalshi tables
 export const kalshiMarkets = mysqlTable("kalshiMarkets", {
   id: int("id").autoincrement().primaryKey(),
