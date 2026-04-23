@@ -1,13 +1,15 @@
-import { trpc } from "@/lib/trpc";
-import { Loader2, TrendingUp, TrendingDown, AlertTriangle, Zap, Sparkles, Activity, CheckCircle2, AlertCircle } from "lucide-react";
+import { Loader2, TrendingUp, TrendingDown, AlertTriangle, Zap, Sparkles, Activity, CheckCircle2, AlertCircle, Plug } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { StartTradingDialog } from "@/components/StartTradingDialog";
 import { useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { useLocation } from "wouter";
+import { trpc } from "@/lib/trpc";
 
 export default function Dashboard() {
   const { user } = useAuth();
+  const [, navigate] = useLocation();
   const [killSwitchConfirm, setKillSwitchConfirm] = useState(false);
   const [showStartTrading, setShowStartTrading] = useState(false);
 
@@ -15,7 +17,7 @@ export default function Dashboard() {
   const overviewQuery = trpc.kalshi.getCapital.useQuery();
   const accountStatusQuery = trpc.kalshi.getKalshiAccountStatus.useQuery();
   const { data: instructions } = trpc.training.getInstructions.useQuery();
-  // const startTradingMutation = trpc.kalshi.startTrading.useMutation();
+  
   const startTradingMutation = {
     mutate: (data: any, callbacks: any) => {
       callbacks?.onSuccess?.();
@@ -37,7 +39,10 @@ export default function Dashboard() {
 
   const overview = overviewQuery.data;
   const accountStatus = accountStatusQuery.data;
-  const equity = accountStatus?.equity || overview?.currentBalance || 0;
+  
+  // Show $0 until Kalshi account is connected
+  const isConnected = accountStatus?.connected || false;
+  const equity = isConnected ? (accountStatus?.equity || 0) : 0;
   const displayEquity = equity;
   const isFunded = equity > 0;
   const hasInstructions = (instructions?.length || 0) > 0;
@@ -71,7 +76,97 @@ export default function Dashboard() {
     );
   };
 
-  // Show funding page if not funded
+  // Show connection required if not connected
+  if (!isConnected) {
+    return (
+      <div className="space-y-8 p-6">
+        <div>
+          <h1 className="text-5xl font-bold gradient-text mb-2">Connect Your Kalshi Account</h1>
+          <p className="text-muted-foreground text-lg">
+            Connect your Kalshi account to start trading and see your real account balance
+          </p>
+        </div>
+
+        <Card className="nexus-card border-violet-500/30 bg-violet-500/5">
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-4 mb-6">
+              <Plug className="w-12 h-12 text-violet-400" />
+              <div>
+                <p className="text-sm text-muted-foreground mb-1">Account Balance</p>
+                <p className="text-3xl font-bold text-violet-400">$0.00</p>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <p className="text-muted-foreground">
+                To start trading on Kalshi prediction markets, connect your Kalshi account first. Your real account balance will appear here once connected.
+              </p>
+              <Button
+                onClick={() => navigate("/connect")}
+                className="nexus-button w-full"
+                size="lg"
+              >
+                <Plug className="w-4 h-4 mr-2" />
+                Connect Kalshi Account
+              </Button>
+              <p className="text-xs text-muted-foreground text-center">
+                Your API key is encrypted and stored securely
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Placeholder metrics showing $0 */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 opacity-50">
+          <Card className="nexus-card">
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-sm text-muted-foreground">GLOBAL EQUITY</p>
+                <Sparkles className="w-4 h-4 text-primary" />
+              </div>
+              <p className="text-3xl font-bold text-muted-foreground">$0.00</p>
+              <p className="text-xs text-muted-foreground mt-2">Connect to see real balance</p>
+            </CardContent>
+          </Card>
+
+          <Card className="nexus-card">
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-sm text-muted-foreground">TOTAL TRADES</p>
+                <TrendingUp className="w-4 h-4 text-lime-400" />
+              </div>
+              <p className="text-3xl font-bold text-muted-foreground">0</p>
+              <p className="text-xs text-muted-foreground mt-2">Winning: 0</p>
+            </CardContent>
+          </Card>
+
+          <Card className="nexus-card">
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-sm text-muted-foreground">WIN RATE</p>
+                <TrendingDown className="w-4 h-4 text-pink-400" />
+              </div>
+              <p className="text-3xl font-bold text-muted-foreground">0.0%</p>
+              <p className="text-xs text-muted-foreground mt-2">Success ratio</p>
+            </CardContent>
+          </Card>
+
+          <Card className="nexus-card">
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-sm text-muted-foreground">SHARPE RATIO</p>
+                <Activity className="w-4 h-4" />
+              </div>
+              <p className="text-3xl font-bold text-muted-foreground">0.00</p>
+              <p className="text-xs text-muted-foreground mt-2">Risk-adjusted returns</p>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
+  // Show funding page if connected but not funded
   if (!isFunded) {
     return (
       <div className="space-y-8 p-6">
@@ -113,13 +208,14 @@ export default function Dashboard() {
     );
   }
 
+  // Funded account - show full dashboard
   return (
     <div className="space-y-8 p-6">
       {/* Header with gradient text */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-5xl font-bold gradient-text mb-2">{user?.name || "NEXUS"}</h1>
-          <p className="text-muted-foreground">Multi-Market Trading Dashboard • Owner: {user?.name}</p>
+          <p className="text-muted-foreground">Kalshi Trading Dashboard • Owner: {user?.name}</p>
         </div>
         <Button
           onClick={handleKillSwitch}
@@ -170,7 +266,7 @@ export default function Dashboard() {
               <Sparkles className="w-4 h-4 text-primary" />
             </div>
             <p className="text-3xl font-bold gradient-text">${displayEquity.toFixed(2)}</p>
-            <p className="text-xs text-muted-foreground mt-2">Starting: $100.00</p>
+            <p className="text-xs text-muted-foreground mt-2">Real Kalshi account balance</p>
           </CardContent>
         </Card>
 
@@ -181,7 +277,7 @@ export default function Dashboard() {
               <Activity className="w-4 h-4 text-cyan-400" />
             </div>
             <p className="text-3xl font-bold text-cyan-400">${displayEquity.toFixed(2)}</p>
-            <p className="text-xs text-muted-foreground mt-2">Starting: $100.00</p>
+            <p className="text-xs text-muted-foreground mt-2">Current account value</p>
           </CardContent>
         </Card>
 
@@ -216,7 +312,7 @@ export default function Dashboard() {
               <p className="text-sm text-muted-foreground">DAILY P&L</p>
               <TrendingUp className="w-4 h-4" />
             </div>
-            <p className="text-2xl font-bold text-pink-400">0.00</p>
+            <p className="text-2xl font-bold text-pink-400">$0.00</p>
           </CardContent>
         </Card>
 

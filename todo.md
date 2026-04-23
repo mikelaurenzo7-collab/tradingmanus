@@ -130,6 +130,13 @@
 - [x] Update Dashboard to show funding status
 - [x] All 42 tests passing with funding flow
 
+## Dashboard & Account Display
+
+- [x] Change dashboard to show $0 until Kalshi account is connected
+- [x] Display only real account equity when connected
+- [x] Update all metrics to reflect real account data
+- [x] Add "Connect Kalshi" CTA when account is disconnected
+
 ## Phase 8: Live Deployment
 
 - [ ] Deploy to production
@@ -164,3 +171,67 @@
 - 42/42 tests passing, 0 TypeScript errors
 - All auth flows fixed and working
 - Simplified Kalshi-focused navigation
+
+## Advanced Features (Phases 1-9)
+
+### Phase 1: Sentiment Analysis
+- [ ] Implement sentiment analysis framework
+- [ ] Integrate news API (NewsAPI or similar)
+- [ ] Add social media sentiment tracking
+- [ ] Wire sentiment into signal generation
+- [ ] Add sentiment dashboard display
+
+### Phase 2: Order-Book & Liquidity
+- [ ] Real-time order-book tracking
+- [ ] Liquidity analysis and depth charts
+- [ ] Spread monitoring and optimization
+- [ ] Volume profile analysis
+- [ ] Liquidity-adjusted signal filtering
+
+### Phase 3: Signal Filtering & Optimization
+- [ ] Advanced signal filtering (multi-factor)
+- [ ] Portfolio optimization (Kelly Criterion)
+- [ ] Correlation analysis between markets
+- [ ] Diversification constraints
+- [ ] Position sizing optimization
+
+### Phase 4: Performance Monitoring
+- [ ] Live P&L tracking
+- [ ] Real-time performance metrics
+- [ ] Adaptive learning from outcomes
+- [ ] Strategy performance attribution
+- [ ] Automated strategy adjustment
+
+### Phase 5: Risk Management
+- [ ] Dynamic position sizing
+- [ ] Volatility-based risk limits
+- [ ] Correlation-aware risk controls
+- [ ] Drawdown monitoring and alerts
+- [ ] Automated risk mitigation
+
+### Phase 6: Backtesting
+- [ ] Historical data collection
+- [ ] Strategy backtesting engine
+- [ ] Monte Carlo simulation
+- [ ] Walk-forward validation
+- [ ] Performance benchmarking
+
+### Phase 7: Frontend Integration
+- [ ] Real-time sentiment dashboard
+- [ ] Order-book visualization
+- [ ] Portfolio optimization UI
+- [ ] Performance attribution charts
+- [ ] Risk monitoring dashboard
+
+### Phase 8: Testing & Verification
+- [ ] Comprehensive test coverage
+- [ ] Integration tests
+- [ ] Performance benchmarks
+- [ ] Edge case handling
+- [ ] Production readiness checks
+
+### Phase 9: Deployment
+- [ ] Final checkpoint
+- [ ] Production deployment
+- [ ] Live monitoring setup
+- [ ] Documentation
