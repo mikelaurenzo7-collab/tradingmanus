@@ -5,6 +5,7 @@
 
 import { KalshiMarket, calculateExpectedValue, detectValueOpportunity, detectMomentumOpportunity, detectContrarianOpportunity } from "./kalshiMarketData";
 import { MarketFeed, calculatePriceMomentum, calculateVolumeMomentum, detectVolatility } from "./kalshiMarketFeed";
+import { detectMispricingArbitrage } from "./kalshiArbitrage";
 import * as db from "../db";
 
 export type SignalType = "value_play" | "momentum" | "contrarian" | "arbitrage" | "sentiment";
@@ -105,6 +106,21 @@ export async function generateSignalsForMarket(
       expectedValue: calculateExpectedValue(contrarianOpportunity.side, contrarianOpportunity.side === "yes" ? market.yesPrice : market.noPrice, 1, 1, market.impliedProbability),
     });
   }
+  // Arbitrage: detect mispricing opportunities
+  const arbitrageOpp = detectMispricingArbitrage(market.id, market.yesPrice, market.noPrice, market.impliedProbability, 0.02);
+  if (arbitrageOpp && arbitrageOpp.confidence >= 0.5) {
+    signals.push({
+      marketId: market.id,
+      signalType: "arbitrage",
+      side: arbitrageOpp.side,
+      confidence: arbitrageOpp.confidence,
+      reasoning: arbitrageOpp.reasoning,
+      impliedProbability: market.impliedProbability,
+      marketPrice: arbitrageOpp.side === "yes" ? market.yesPrice : market.noPrice,
+      expectedValue: arbitrageOpp.expectedProfit,
+    });
+  }
+
 
   return signals;
 }

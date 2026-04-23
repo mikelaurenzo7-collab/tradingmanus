@@ -96,8 +96,31 @@ export const kalshiMarkets = mysqlTable("kalshiMarkets", {
   yesVolume: double("yesVolume").default(0).notNull(),
   noVolume: double("noVolume").default(0).notNull(),
   impliedProbability: double("impliedProbability").default(0.5).notNull(),
+  liquidity: double("liquidity").default(0).notNull(), // Total liquidity in market
   lastUpdated: timestamp("lastUpdated").defaultNow().onUpdateNow().notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export const kalshiMarketSnapshots = mysqlTable("kalshiMarketSnapshots", {
+  id: int("id").autoincrement().primaryKey(),
+  marketId: varchar("marketId", { length: 128 }).notNull(),
+  yesPrice: double("yesPrice").notNull(),
+  noPrice: double("noPrice").notNull(),
+  yesVolume: double("yesVolume").notNull(),
+  noVolume: double("noVolume").notNull(),
+  impliedProbability: double("impliedProbability").notNull(),
+  liquidity: double("liquidity").notNull(),
+  snapshotTime: timestamp("snapshotTime").defaultNow().notNull(),
+});
+
+
+export const kalshiOrderBook = mysqlTable("kalshiOrderBook", {
+  id: int("id").autoincrement().primaryKey(),
+  marketId: varchar("marketId", { length: 128 }).notNull(),
+  side: mysqlEnum("side", ["yes", "no"]).notNull(),
+  price: double("price").notNull(),
+  quantity: double("quantity").notNull(),
+  timestamp: timestamp("timestamp").defaultNow().notNull(),
 });
 
 export const kalshiOrders = mysqlTable("kalshiOrders", {
