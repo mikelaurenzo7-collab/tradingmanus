@@ -42,7 +42,7 @@ export default function ReasoningLog() {
           <Button
             onClick={() => handleGenerateAnalysis('stocks')}
             disabled={false}
-            className="nexus-button"
+            className="laurenzo-button"
           >
             <Lightbulb className="w-4 h-4 mr-2" />
             Analyze Stocks
@@ -50,7 +50,7 @@ export default function ReasoningLog() {
           <Button
             onClick={() => handleGenerateAnalysis('crypto')}
             disabled={false}
-            className="nexus-button"
+            className="laurenzo-button"
           >
             <Lightbulb className="w-4 h-4 mr-2" />
             Analyze Crypto
@@ -58,7 +58,7 @@ export default function ReasoningLog() {
           <Button
             onClick={() => handleGenerateAnalysis('prediction')}
             disabled={false}
-            className="nexus-button"
+            className="laurenzo-button"
           >
             <Lightbulb className="w-4 h-4 mr-2" />
             Analyze Prediction
@@ -67,13 +67,13 @@ export default function ReasoningLog() {
       </div>
 
       {logs.length === 0 ? (
-        <div className="nexus-card text-center py-12">
+        <div className="laurenzo-card text-center py-12">
           <p className="text-muted-foreground">No reasoning logs yet. Generate market analysis to begin.</p>
         </div>
       ) : (
         <div className="space-y-4">
           {logs.map((log: any) => (
-            <div key={log.id} className="nexus-card">
+            <div key={log.id} className="laurenzo-card">
               <div className="flex items-start justify-between mb-3">
                 <div>
                   <h3 className="font-bold tracking-wider">{log.headline}</h3>

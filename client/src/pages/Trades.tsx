@@ -28,12 +28,12 @@ export default function Trades() {
       </div>
 
       {trades.length === 0 ? (
-        <div className="nexus-card text-center py-12">
+        <div className="laurenzo-card text-center py-12">
           <p className="text-muted-foreground">No trades recorded</p>
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="nexus-table">
+          <table className="laurenzo-table">
             <thead>
               <tr>
                 <th>Market ID</th>

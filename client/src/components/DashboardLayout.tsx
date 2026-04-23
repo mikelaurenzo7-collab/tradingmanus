@@ -68,7 +68,7 @@ export default function DashboardLayout({
       <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
         <div className="flex flex-col items-center gap-8 p-8 max-w-md w-full scale-in">
           <div className="flex flex-col items-center gap-6">
-            <div className="text-6xl font-bold gradient-text">NEXUS</div>
+            <div className="text-6xl font-bold gradient-text">LAURENZO</div>
             <h1 className="text-3xl font-bold tracking-tight text-center gradient-text">
               Kalshi Trading
             </h1>
@@ -81,7 +81,7 @@ export default function DashboardLayout({
               window.location.href = getLoginUrl();
             }}
             size="lg"
-            className="w-full shadow-lg hover:shadow-xl transition-all nexus-button"
+            className="w-full shadow-lg hover:shadow-xl transition-all laurenzo-button"
           >
             Sign in with Manus
           </Button>
@@ -104,7 +104,7 @@ export default function DashboardLayout({
       <Sidebar>
         <SidebarHeader className="border-b border-sidebar-border">
           <div className="flex items-center gap-2 px-2 py-4">
-            <div className="text-2xl font-bold gradient-text">NEXUS</div>
+            <div className="text-2xl font-bold gradient-text">LAURENZO</div>
           </div>
         </SidebarHeader>
         <SidebarContent>

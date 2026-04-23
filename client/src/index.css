@@ -206,7 +206,7 @@
   }
 
   /* Glassmorphism card with blur and gradient */
-  .nexus-card {
+  .laurenzo-card {
     @apply text-card-foreground rounded-2xl p-6 backdrop-blur-xl border;
     background: linear-gradient(135deg, rgba(18, 30, 50, 0.6) 0%, rgba(25, 20, 50, 0.5) 100%);
     border-color: rgba(136, 100, 255, 0.2);
@@ -219,7 +219,7 @@
     overflow: hidden;
   }
 
-  .nexus-card::before {
+  .laurenzo-card::before {
     content: '';
     position: absolute;
     top: 0;
@@ -230,7 +230,7 @@
     pointer-events: none;
   }
 
-  .nexus-card:hover {
+  .laurenzo-card:hover {
     border-color: rgba(136, 100, 255, 0.4);
     box-shadow: 
       0 12px 48px rgba(0, 0, 0, 0.4),
@@ -269,7 +269,7 @@
   }
 
   /* Neon glow button with gradient */
-  .nexus-button {
+  .laurenzo-button {
     @apply px-6 py-3 font-bold tracking-wide rounded-xl;
     background: linear-gradient(135deg, oklch(0.88 0.35 280), oklch(0.82 0.36 200));
     color: oklch(0.98 0.01 65);
@@ -282,7 +282,7 @@
     overflow: hidden;
   }
 
-  .nexus-button::before {
+  .laurenzo-button::before {
     content: '';
     position: absolute;
     top: 0;
@@ -293,23 +293,23 @@
     transition: left 0.5s;
   }
 
-  .nexus-button:hover {
+  .laurenzo-button:hover {
     box-shadow: 
       0 8px 30px rgba(136, 100, 255, 0.6),
       inset 0 1px 0 rgba(255, 255, 255, 0.3);
     transform: translateY(-2px);
   }
 
-  .nexus-button:hover::before {
+  .laurenzo-button:hover::before {
     left: 100%;
   }
 
-  .nexus-button:active {
+  .laurenzo-button:active {
     transform: translateY(0) scale(0.98);
   }
 
   /* Kill-switch button (destructive) */
-  .nexus-button-kill {
+  .laurenzo-button-kill {
     @apply px-6 py-3 font-bold tracking-wide rounded-xl;
     background: linear-gradient(135deg, oklch(0.85 0.38 15), oklch(0.80 0.35 20));
     color: oklch(0.98 0.01 65);
@@ -321,7 +321,7 @@
     position: relative;
   }
 
-  .nexus-button-kill:hover {
+  .laurenzo-button-kill:hover {
     box-shadow: 
       0 8px 40px rgba(255, 100, 150, 0.7),
       inset 0 1px 0 rgba(255, 255, 255, 0.3);
@@ -329,27 +329,27 @@
   }
 
   /* Data table styling */
-  .nexus-table {
+  .laurenzo-table {
     @apply w-full border-collapse;
   }
 
-  .nexus-table thead {
+  .laurenzo-table thead {
     @apply border-b;
     border-color: rgba(136, 100, 255, 0.2);
   }
 
-  .nexus-table th {
+  .laurenzo-table th {
     @apply px-4 py-3 text-left font-bold tracking-wide;
     background: linear-gradient(135deg, rgba(136, 100, 255, 0.1), rgba(255, 100, 150, 0.05));
     color: oklch(0.88 0.35 280);
   }
 
-  .nexus-table td {
+  .laurenzo-table td {
     @apply px-4 py-3 border-b;
     border-color: rgba(136, 100, 255, 0.1);
   }
 
-  .nexus-table tbody tr:hover {
+  .laurenzo-table tbody tr:hover {
     background: linear-gradient(135deg, rgba(136, 100, 255, 0.1), rgba(255, 100, 150, 0.05));
   }
 

@@ -97,7 +97,7 @@ export default function Strategies() {
         <Button
           onClick={handleGenerateSignals}
           disabled={isGenerating || marketsQuery.isLoading}
-          className="nexus-button whitespace-nowrap"
+          className="laurenzo-button whitespace-nowrap"
         >
           <BookOpen className="w-5 h-5 mr-2" />
           {isGenerating ? "Generating..." : "Generate Strategies"}

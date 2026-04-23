@@ -39,12 +39,12 @@ export default function Bots() {
       </div>
 
       {bots.length === 0 ? (
-        <div className="nexus-card text-center py-12">
+        <div className="laurenzo-card text-center py-12">
           <p className="text-muted-foreground">No bots configured</p>
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="nexus-table">
+          <table className="laurenzo-table">
             <thead>
               <tr>
                 <th>Bot Name</th>

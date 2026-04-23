@@ -170,7 +170,7 @@ export default function Signals() {
         <Button
           onClick={handleGenerateSignals}
           disabled={isGenerating || generateSignalsMutation.isPending}
-          className="nexus-button whitespace-nowrap"
+          className="laurenzo-button whitespace-nowrap"
         >
           <RefreshCw className={`w-5 h-5 mr-2 ${isGenerating ? "animate-spin" : ""}`} />
           {isGenerating ? "Generating..." : "Generate Signals"}

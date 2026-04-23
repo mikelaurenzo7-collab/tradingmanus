@@ -138,7 +138,7 @@ export function getFundingGuidance(status: FundingStatus): string {
         4. Once funded, you can start trading
         
         Recommended starting amount: $10-$100
-        NEXUS OMEGA works best with at least $1 in your account.
+        LAURENZO OMEGA works best with at least $1 in your account.
       `;
 
     case "low_equity":

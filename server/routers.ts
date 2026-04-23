@@ -9,6 +9,7 @@ import { generateSignalsForMarkets, filterSignalsByConfidence, getTopSignalsForE
 import { validateKalshiCredentials, fetchKalshiAccountEquity } from "./_core/kalshiAuth";
 import * as kalshiCredDb from "./db.kalshi-credentials";
 import { trainingRouter } from "./training.router";
+import { advancedRouter } from "./advanced.router";
 
 import { COOKIE_NAME } from "../shared/const";
 
@@ -32,6 +33,7 @@ export const appRouter = router({
   }),
 
   training: trainingRouter,
+  advanced: advancedRouter,
 
   kalshi: router({
     // Market data

@@ -83,7 +83,7 @@ export default function Training() {
             Define trading instructions and schedules. Your agent learns and applies these rules to every trade.
           </p>
         </div>
-        <Button onClick={() => setShowNewForm(!showNewForm)} className="nexus-button" size="lg">
+        <Button onClick={() => setShowNewForm(!showNewForm)} className="laurenzo-button" size="lg">
           <Plus className="w-5 h-5 mr-2" />
           New Instruction
         </Button>
@@ -91,7 +91,7 @@ export default function Training() {
 
       {/* New Instruction Form */}
       {showNewForm && (
-        <Card className="nexus-card">
+        <Card className="laurenzo-card">
           <CardHeader>
             <CardTitle>Create New Instruction</CardTitle>
             <CardDescription>Define a rule that your agent will follow</CardDescription>
@@ -136,7 +136,7 @@ export default function Training() {
             </div>
 
             <div className="flex gap-3">
-              <Button onClick={handleCreateInstruction} disabled={createMutation.isPending} className="nexus-button flex-1">
+              <Button onClick={handleCreateInstruction} disabled={createMutation.isPending} className="laurenzo-button flex-1">
                 {createMutation.isPending ? (
                   <>
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
@@ -158,7 +158,7 @@ export default function Training() {
       <div className="grid gap-4">
         {instructions && instructions.length > 0 ? (
           instructions.map((instruction: any) => (
-            <Card key={instruction.id} className="nexus-card">
+            <Card key={instruction.id} className="laurenzo-card">
               <CardContent className="pt-6">
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
@@ -203,11 +203,11 @@ export default function Training() {
             </Card>
           ))
         ) : (
-          <Card className="nexus-card">
+          <Card className="laurenzo-card">
             <CardContent className="pt-6 text-center py-12">
               <BookOpen className="w-12 h-12 text-muted-foreground mx-auto mb-4 opacity-50" />
               <p className="text-muted-foreground mb-4">No training instructions yet.</p>
-              <Button onClick={() => setShowNewForm(true)} className="nexus-button">
+              <Button onClick={() => setShowNewForm(true)} className="laurenzo-button">
                 Create Your First Instruction
               </Button>
             </CardContent>
@@ -216,7 +216,7 @@ export default function Training() {
       </div>
 
       {/* Info Section */}
-      <Card className="nexus-card border-cyan-500/30 bg-cyan-500/5">
+      <Card className="laurenzo-card border-cyan-500/30 bg-cyan-500/5">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <AlertCircle className="w-5 h-5 text-cyan-400" />

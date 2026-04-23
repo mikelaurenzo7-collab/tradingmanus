@@ -39,7 +39,7 @@ export function StartTradingDialog({
   return (
     <div className="space-y-6">
       {step === "checklist" && (
-        <Card className="nexus-card">
+        <Card className="laurenzo-card">
           <CardHeader>
             <CardTitle>Pre-Trade Checklist</CardTitle>
             <CardDescription>
@@ -93,7 +93,7 @@ export function StartTradingDialog({
               </AlertDescription>
             </Alert>
 
-            <Button onClick={handleNext} disabled={!canProceed} className="w-full nexus-button">
+            <Button onClick={handleNext} disabled={!canProceed} className="w-full laurenzo-button">
               Continue to Risk Acknowledgment
             </Button>
           </CardContent>
@@ -101,7 +101,7 @@ export function StartTradingDialog({
       )}
 
       {step === "risks" && (
-        <Card className="nexus-card border-pink-500/30 bg-pink-500/5">
+        <Card className="laurenzo-card border-pink-500/30 bg-pink-500/5">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <AlertTriangle className="w-5 h-5 text-pink-400" />
@@ -147,7 +147,7 @@ export function StartTradingDialog({
               <Button onClick={() => setStep("checklist")} variant="outline" className="flex-1">
                 Back
               </Button>
-              <Button onClick={handleNext} disabled={!acknowledged} className="flex-1 nexus-button">
+              <Button onClick={handleNext} disabled={!acknowledged} className="flex-1 laurenzo-button">
                 Continue to Confirmation
               </Button>
             </div>
@@ -156,7 +156,7 @@ export function StartTradingDialog({
       )}
 
       {step === "confirm" && (
-        <Card className="nexus-card border-cyan-500/30 bg-cyan-500/5">
+        <Card className="laurenzo-card border-cyan-500/30 bg-cyan-500/5">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <CheckCircle2 className="w-5 h-5 text-cyan-400" />
@@ -200,7 +200,7 @@ export function StartTradingDialog({
               <Button
                 onClick={handleConfirm}
                 disabled={isLoading || !canProceed}
-                className="flex-1 nexus-button"
+                className="flex-1 laurenzo-button"
                 size="lg"
               >
                 {isLoading ? (

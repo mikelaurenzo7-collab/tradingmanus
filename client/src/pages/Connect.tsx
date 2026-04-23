@@ -64,7 +64,7 @@ export default function Connect() {
 
         <div className="grid gap-6">
           {/* Steps */}
-          <Card className="nexus-card">
+          <Card className="laurenzo-card">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <span className="text-xl">1</span>
@@ -94,7 +94,7 @@ export default function Connect() {
           </Card>
 
           {/* Connection Form */}
-          <Card className="nexus-card">
+          <Card className="laurenzo-card">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Plug className="w-5 h-5" />
@@ -132,7 +132,7 @@ export default function Connect() {
               <Button
                 onClick={handleConnect}
                 disabled={connectMutation.isPending || !apiKey || !privateKey}
-                className="w-full nexus-button"
+                className="w-full laurenzo-button"
                 size="lg"
               >
                 {connectMutation.isPending ? (

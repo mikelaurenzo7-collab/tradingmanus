@@ -46,7 +46,7 @@ export default function Analytics() {
           <Button
             key={market}
             onClick={() => setActiveMarket(market)}
-            className={activeMarket === market ? 'nexus-button' : 'nexus-card'}
+            className={activeMarket === market ? 'laurenzo-button' : 'laurenzo-card'}
             variant={activeMarket === market ? 'default' : 'outline'}
           >
             {market.toUpperCase()}
@@ -57,7 +57,7 @@ export default function Analytics() {
       {/* Analytics Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Win Rate */}
-        <div className="nexus-card">
+        <div className="laurenzo-card">
           <div className="flex items-center justify-between">
             <div>
               <div className="text-xs text-muted-foreground tracking-wider mb-2">
@@ -75,7 +75,7 @@ export default function Analytics() {
         </div>
 
         {/* Sharpe Ratio */}
-        <div className="nexus-card">
+        <div className="laurenzo-card">
           <div className="flex items-center justify-between">
             <div>
               <div className="text-xs text-muted-foreground tracking-wider mb-2">
@@ -93,7 +93,7 @@ export default function Analytics() {
         </div>
 
         {/* Max Drawdown */}
-        <div className="nexus-card">
+        <div className="laurenzo-card">
           <div className="flex items-center justify-between">
             <div>
               <div className="text-xs text-muted-foreground tracking-wider mb-2">
@@ -111,7 +111,7 @@ export default function Analytics() {
       </div>
 
       {/* Equity Curve */}
-      <div className="nexus-card">
+      <div className="laurenzo-card">
         <div className="text-xs text-muted-foreground tracking-wider mb-4">
           <span className="bracket">[</span> EQUITY CURVE <span className="bracket">]</span>
         </div>
@@ -145,7 +145,7 @@ export default function Analytics() {
       </div>
 
       {/* Performance Summary */}
-      <div className="nexus-card">
+      <div className="laurenzo-card">
         <div className="text-xs text-muted-foreground tracking-wider mb-4">
           <span className="bracket">[</span> PERFORMANCE SUMMARY <span className="bracket">]</span>
         </div>

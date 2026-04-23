@@ -29,7 +29,7 @@ export default function Funding() {
       </div>
 
       {/* Current Status */}
-      <Card className={`nexus-card ${isFunded ? "border-cyan-500/30 bg-cyan-500/5" : "border-pink-500/30 bg-pink-500/5"}`}>
+      <Card className={`laurenzo-card ${isFunded ? "border-cyan-500/30 bg-cyan-500/5" : "border-pink-500/30 bg-pink-500/5"}`}>
         <CardContent className="pt-6">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
@@ -58,7 +58,7 @@ export default function Funding() {
       {!isFunded && (
         <>
           {/* Deposit Instructions */}
-          <Card className="nexus-card">
+          <Card className="laurenzo-card">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <DollarSign className="w-5 h-5" />
@@ -83,7 +83,7 @@ export default function Funding() {
                   </p>
                   <Button
                     onClick={() => window.open("https://kalshi.com/account/deposit", "_blank")}
-                    className="nexus-button"
+                    className="laurenzo-button"
                   >
                     Open Kalshi Deposit <ArrowRight className="w-4 h-4 ml-2" />
                   </Button>
@@ -123,7 +123,7 @@ export default function Funding() {
           </Card>
 
           {/* Recommended Amounts */}
-          <Card className="nexus-card">
+          <Card className="laurenzo-card">
             <CardHeader>
               <CardTitle>Recommended Starting Amounts</CardTitle>
               <CardDescription>
@@ -149,7 +149,7 @@ export default function Funding() {
           <Alert>
             <AlertCircle className="h-4 w-4" />
             <AlertDescription>
-              <strong>NEXUS OMEGA Risk Controls:</strong> Even with $100 in your account, we limit max loss to $5 per trade and $10 per day. Your capital is protected.
+              <strong>LAURENZO OMEGA Risk Controls:</strong> Even with $100 in your account, we limit max loss to $5 per trade and $10 per day. Your capital is protected.
             </AlertDescription>
           </Alert>
         </>
@@ -158,7 +158,7 @@ export default function Funding() {
       {isFunded && (
         <>
           {/* Ready to Trade */}
-          <Card className="nexus-card border-cyan-500/30 bg-cyan-500/5">
+          <Card className="laurenzo-card border-cyan-500/30 bg-cyan-500/5">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Zap className="w-5 h-5 text-cyan-400" />
@@ -187,7 +187,7 @@ export default function Funding() {
                   <span>Click <strong>Start Trading</strong> to begin executing signals</span>
                 </li>
               </ol>
-              <Button className="nexus-button w-full mt-6" size="lg">
+              <Button className="laurenzo-button w-full mt-6" size="lg">
                 <Zap className="w-5 h-5 mr-2" />
                 Go to Signals
               </Button>

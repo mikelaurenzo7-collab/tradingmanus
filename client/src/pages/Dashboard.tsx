@@ -87,7 +87,7 @@ export default function Dashboard() {
           </p>
         </div>
 
-        <Card className="nexus-card border-violet-500/30 bg-violet-500/5">
+        <Card className="laurenzo-card border-violet-500/30 bg-violet-500/5">
           <CardContent className="pt-6">
             <div className="flex items-center gap-4 mb-6">
               <Plug className="w-12 h-12 text-violet-400" />
@@ -103,7 +103,7 @@ export default function Dashboard() {
               </p>
               <Button
                 onClick={() => navigate("/connect")}
-                className="nexus-button w-full"
+                className="laurenzo-button w-full"
                 size="lg"
               >
                 <Plug className="w-4 h-4 mr-2" />
@@ -118,7 +118,7 @@ export default function Dashboard() {
 
         {/* Placeholder metrics showing $0 */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 opacity-50">
-          <Card className="nexus-card">
+          <Card className="laurenzo-card">
             <CardContent className="pt-6">
               <div className="flex items-center justify-between mb-2">
                 <p className="text-sm text-muted-foreground">GLOBAL EQUITY</p>
@@ -129,7 +129,7 @@ export default function Dashboard() {
             </CardContent>
           </Card>
 
-          <Card className="nexus-card">
+          <Card className="laurenzo-card">
             <CardContent className="pt-6">
               <div className="flex items-center justify-between mb-2">
                 <p className="text-sm text-muted-foreground">TOTAL TRADES</p>
@@ -140,7 +140,7 @@ export default function Dashboard() {
             </CardContent>
           </Card>
 
-          <Card className="nexus-card">
+          <Card className="laurenzo-card">
             <CardContent className="pt-6">
               <div className="flex items-center justify-between mb-2">
                 <p className="text-sm text-muted-foreground">WIN RATE</p>
@@ -151,7 +151,7 @@ export default function Dashboard() {
             </CardContent>
           </Card>
 
-          <Card className="nexus-card">
+          <Card className="laurenzo-card">
             <CardContent className="pt-6">
               <div className="flex items-center justify-between mb-2">
                 <p className="text-sm text-muted-foreground">SHARPE RATIO</p>
@@ -177,7 +177,7 @@ export default function Dashboard() {
           </p>
         </div>
 
-        <Card className="nexus-card border-pink-500/30 bg-pink-500/5">
+        <Card className="laurenzo-card border-pink-500/30 bg-pink-500/5">
           <CardContent className="pt-6">
             <div className="flex items-center gap-4 mb-6">
               <AlertCircle className="w-12 h-12 text-pink-400" />
@@ -193,7 +193,7 @@ export default function Dashboard() {
               </p>
               <Button
                 onClick={() => window.open("https://kalshi.com/account/deposit", "_blank")}
-                className="nexus-button w-full"
+                className="laurenzo-button w-full"
                 size="lg"
               >
                 Deposit Funds on Kalshi
@@ -214,7 +214,7 @@ export default function Dashboard() {
       {/* Header with gradient text */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-5xl font-bold gradient-text mb-2">{user?.name || "NEXUS"}</h1>
+          <h1 className="text-5xl font-bold gradient-text mb-2">{user?.name || "LAURENZO"}</h1>
           <p className="text-muted-foreground">Kalshi Trading Dashboard • Owner: {user?.name}</p>
         </div>
         <Button
@@ -229,7 +229,7 @@ export default function Dashboard() {
 
       {/* Start Trading Banner */}
       {!showStartTrading && (
-        <Card className="nexus-card border-cyan-500/30 bg-cyan-500/5">
+        <Card className="laurenzo-card border-cyan-500/30 bg-cyan-500/5">
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -239,7 +239,7 @@ export default function Dashboard() {
                   <p className="text-sm text-muted-foreground">Start trading with your agent</p>
                 </div>
               </div>
-              <Button onClick={() => setShowStartTrading(true)} className="nexus-button">
+              <Button onClick={() => setShowStartTrading(true)} className="laurenzo-button">
                 Start Trading
               </Button>
             </div>
@@ -259,7 +259,7 @@ export default function Dashboard() {
 
       {/* Equity Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card className="nexus-card">
+        <Card className="laurenzo-card">
           <CardContent className="pt-6">
             <div className="flex items-center justify-between mb-2">
               <p className="text-sm text-muted-foreground">GLOBAL EQUITY</p>
@@ -270,7 +270,7 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        <Card className="nexus-card">
+        <Card className="laurenzo-card">
           <CardContent className="pt-6">
             <div className="flex items-center justify-between mb-2">
               <p className="text-sm text-muted-foreground">TOTAL EQUITY</p>
@@ -281,7 +281,7 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        <Card className="nexus-card">
+        <Card className="laurenzo-card">
           <CardContent className="pt-6">
             <div className="flex items-center justify-between mb-2">
               <p className="text-sm text-muted-foreground">TOTAL TRADES</p>
@@ -292,7 +292,7 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        <Card className="nexus-card">
+        <Card className="laurenzo-card">
           <CardContent className="pt-6">
             <div className="flex items-center justify-between mb-2">
               <p className="text-sm text-muted-foreground">WIN RATE</p>
@@ -306,7 +306,7 @@ export default function Dashboard() {
 
       {/* Performance Metrics */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card className="nexus-card">
+        <Card className="laurenzo-card">
           <CardContent className="pt-6">
             <div className="flex items-center justify-between mb-2">
               <p className="text-sm text-muted-foreground">DAILY P&L</p>
@@ -316,7 +316,7 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        <Card className="nexus-card">
+        <Card className="laurenzo-card">
           <CardContent className="pt-6">
             <div className="flex items-center justify-between mb-2">
               <p className="text-sm text-muted-foreground">SHARPE RATIO</p>
@@ -327,7 +327,7 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        <Card className="nexus-card">
+        <Card className="laurenzo-card">
           <CardContent className="pt-6">
             <div className="flex items-center justify-between mb-2">
               <p className="text-sm text-muted-foreground">MAX DRAWDOWN</p>
@@ -340,7 +340,7 @@ export default function Dashboard() {
       </div>
 
       {/* Additional Metrics */}
-      <Card className="nexus-card">
+      <Card className="laurenzo-card">
         <CardContent className="pt-6">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
             <div>

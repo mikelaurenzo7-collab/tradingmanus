@@ -48,12 +48,12 @@ export default function Positions() {
       </div>
 
       {positions.length === 0 ? (
-        <div className="nexus-card text-center py-12">
+        <div className="laurenzo-card text-center py-12">
           <p className="text-muted-foreground">No open positions</p>
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="nexus-table">
+          <table className="laurenzo-table">
             <thead>
               <tr>
                 <th>Symbol</th>
@@ -91,7 +91,7 @@ export default function Positions() {
                     <td>
                       <Button
                         size="sm"
-                        className="nexus-button-kill"
+                        className="laurenzo-button-kill"
                         onClick={() => handleClosePosition(position.id, position.marketId, position.currentPrice)}
                         disabled={closingId === position.id}
                       >
