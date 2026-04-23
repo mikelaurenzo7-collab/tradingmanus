@@ -4,12 +4,12 @@
 
 ## Phase 1: Audit & Organize
 
-- [ ] Document all existing adapters (Polygon, Alpha Vantage, Alpaca, Kraken, IB)
-- [ ] Identify what stays (core framework, risk controls, audit logging)
-- [ ] Identify what goes (non-Kalshi market adapters)
-- [ ] Refactor schema to Kalshi-specific tables (markets, orders, fills, signals)
-- [ ] Clean up routers.ts to remove non-Kalshi procedures
-- [ ] Update UI navigation to Kalshi-only pages
+- [x] Document all existing adapters (Polygon, Alpha Vantage, Alpaca, Kraken, IB)
+- [x] Identify what stays (core framework, risk controls, audit logging)
+- [x] Identify what goes (non-Kalshi market adapters)
+- [x] Refactor schema to Kalshi-specific tables (markets, orders, fills, signals)
+- [x] Clean up routers.ts to remove non-Kalshi procedures
+- [x] Update UI navigation to Kalshi-only pages
 
 ## Phase 2: Kalshi Market Data
 
@@ -87,6 +87,16 @@
 - [x] Add portfolio metrics and capital management
 - [x] Implement portfolio health checks
 - [x] Wire into tRPC: `kalshi.placeOrder`, `kalshi.closePosition`, `kalshi.getPortfolio`
+
+## UI Simplification & Onboarding
+
+- [x] Simplify DashboardLayout to show only Kalshi-focused navigation
+- [x] Remove unnecessary tabs (Bots, Reasoning, Analytics, Connectors, Paper Trading, Strategies)
+- [x] Add "Connect Kalshi" as first-priority navigation item
+- [x] Create clear onboarding flow for Kalshi account connection
+- [x] Add Connect page with step-by-step API key setup
+- [x] Improve login screen with Kalshi branding and clear next steps
+- [x] All 42 tests passing with simplified UI
 
 ## Phase 8: Live Deployment
 

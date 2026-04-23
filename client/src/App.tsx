@@ -6,30 +6,20 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import DashboardLayout from "./components/DashboardLayout";
 import Dashboard from "./pages/Dashboard";
-import Bots from "./pages/Bots";
 import Positions from "./pages/Positions";
 import Trades from "./pages/Trades";
-import ReasoningLog from "./pages/ReasoningLog";
-import Analytics from "./pages/Analytics";
-import Connectors from "./pages/Connectors";
-import PaperTrading from "./pages/PaperTrading";
-import Strategies from "./pages/Strategies";
 import Signals from "./pages/Signals";
 import RiskControls from "./pages/RiskControls";
 import AuditLog from "./pages/AuditLog";
+import Connect from "./pages/Connect";
 
 function Router() {
   return (
     <Switch>
       <Route path={"/"} component={() => <DashboardLayout><Dashboard /></DashboardLayout>} />
-      <Route path={"/bots"} component={() => <DashboardLayout><Bots /></DashboardLayout>} />
+      <Route path={"/connect"} component={() => <DashboardLayout><Connect /></DashboardLayout>} />
       <Route path={"/positions"} component={() => <DashboardLayout><Positions /></DashboardLayout>} />
       <Route path={"/trades"} component={() => <DashboardLayout><Trades /></DashboardLayout>} />
-      <Route path={"/reasoning"} component={() => <DashboardLayout><ReasoningLog /></DashboardLayout>} />
-      <Route path={"/analytics"} component={() => <DashboardLayout><Analytics /></DashboardLayout>} />
-      <Route path={"/connectors"} component={() => <DashboardLayout><Connectors /></DashboardLayout>} />
-      <Route path={"/paper-trading"} component={() => <DashboardLayout><PaperTrading /></DashboardLayout>} />
-      <Route path={"/strategies"} component={() => <DashboardLayout><Strategies /></DashboardLayout>} />
       <Route path={"/signals"} component={() => <DashboardLayout><Signals /></DashboardLayout>} />
       <Route path={"/risk-controls"} component={() => <DashboardLayout><RiskControls /></DashboardLayout>} />
       <Route path={"/audit"} component={() => <DashboardLayout><AuditLog /></DashboardLayout>} />
