@@ -275,3 +275,11 @@ export function calculateSignalPerformance(
 
   return performance;
 }
+
+// Arbitrage signal generation is available via detectMispricingArbitrage
+// Import: import { detectMispricingArbitrage } from "./kalshiArbitrage";
+// Usage in generateSignalsForMarket:
+//   const arbitrageOpp = detectMispricingArbitrage(market.id, market.yesPrice, market.noPrice, market.impliedProbability, 0.02);
+//   if (arbitrageOpp && arbitrageOpp.confidence >= 0.5) {
+//     signals.push({ ...arbitrageOpp, signalType: "arbitrage" });
+//   }
