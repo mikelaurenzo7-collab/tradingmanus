@@ -37,6 +37,14 @@ export async function generateSignalsForMarket(
   fundamentalProbability?: number
 ): Promise<KalshiSignal[]> {
   const signals: KalshiSignal[] = [];
+  
+  // Validate inputs
+  if (!market || !market.id || isNaN(market.impliedProbability) || !isFinite(market.impliedProbability)) {
+    return signals; // Skip invalid markets
+  }
+  if (fundamentalProbability && (isNaN(fundamentalProbability) || !isFinite(fundamentalProbability))) {
+    fundamentalProbability = undefined; // Skip invalid fundamental probability
+  }
 
   // Value play: detect mispriced markets
   const valueOpportunity = detectValueOpportunity(market, fundamentalProbability ?? 0.5, 0.05);
@@ -71,24 +79,28 @@ export async function generateSignalsForMarket(
 
       // Confidence based on momentum magnitude and volume confirmation
       const momentumConfidence = Math.min(0.9, Math.abs(momentum) * 10);
-      const volumeConfidence = volumeMomentum > 0 ? 0.1 : -0.1; // Volume confirmation
-      const confidence = Math.max(0.3, Math.min(0.9, momentumConfidence + volumeConfidence));
+      const volumeConfidence = volumeMomentum > 0 ? 0.15 : -0.05; // Volume confirmation (boost if positive, slight penalty if negative)
+      const confidence = Math.max(0.1, Math.min(0.95, momentumConfidence + volumeConfidence)); // Allow weaker signals (0.1 min)
 
-      signals.push({
-        marketId: market.id,
-        signalType: "momentum",
-        side,
-        confidence,
-        reasoning: `Strong ${side.toUpperCase()} momentum: ${(momentum * 100).toFixed(2)}% price move with ${(volumeMomentum * 100).toFixed(1)}% volume change`,
-        impliedProbability: market.impliedProbability,
-        marketPrice: side === "yes" ? market.yesPrice : market.noPrice,
-        expectedValue: calculateExpectedValue(side, side === "yes" ? market.yesPrice : market.noPrice, 1, 1, market.impliedProbability),
-        metadata: {
-          priceMomentum: momentum,
-          volumeMomentum,
-          volatility,
-        },
-      });
+      // Validate momentum signal before adding
+      const expectedVal = calculateExpectedValue(side, side === "yes" ? market.yesPrice : market.noPrice, 1, 1, market.impliedProbability);
+      if (isFinite(confidence) && isFinite(expectedVal)) {
+        signals.push({
+          marketId: market.id,
+          signalType: "momentum",
+          side,
+          confidence,
+          reasoning: `Strong ${side.toUpperCase()} momentum: ${(momentum * 100).toFixed(2)}% price move with ${(volumeMomentum * 100).toFixed(1)}% volume change`,
+          impliedProbability: market.impliedProbability,
+          marketPrice: side === "yes" ? market.yesPrice : market.noPrice,
+          expectedValue: expectedVal,
+          metadata: {
+            priceMomentum: momentum,
+            volumeMomentum,
+            volatility,
+          },
+        });
+      }
     }
   }
 

@@ -235,3 +235,53 @@
 - [ ] Production deployment
 - [ ] Live monitoring setup
 - [ ] Documentation
+
+
+## AUDIT FINDINGS & CRITICAL FIXES
+
+### Phase 1: Signal Generation Logic (CRITICAL ISSUES FOUND)
+
+- [ ] **BUG: Momentum confidence calculation is inverted** - volumeConfidence should boost, not reduce confidence when volume is positive
+- [ ] **BUG: Confidence clamping loses signal quality** - Math.max(0.3, ...) floors weak signals at 30%, should be 0.1
+- [ ] **ISSUE: Missing NaN/Infinity checks** - momentum/volume calculations can produce invalid numbers
+- [ ] **ISSUE: Expected value calculation missing** - Some signals don't calculate expectedValue properly
+- [ ] **ISSUE: Arbitrage threshold (0.02) may be too tight** - 2% threshold might miss real opportunities
+
+### Phase 2: Risk Controls (CRITICAL ISSUES FOUND)
+
+- [ ] **BUG: orderExposure calculation is wrong** - Should be quantity * limitPrice, but limitPrice is already a probability (0-1), not a dollar amount
+- [ ] **BUG: Risk checks compare apples to oranges** - Comparing orderExposure (quantity * price) to maxLossPerTrade (dollar amount) is incorrect
+- [ ] **ISSUE: No position-level stop loss** - Risk controls only check at order time, not during position management
+- [ ] **ISSUE: Daily loss calculation may be stale** - getTodayRealizedLoss() might not reflect real-time P&L
+- [ ] **ISSUE: Kill switch doesn't validate execution** - No confirmation that positions were actually closed
+
+### Phase 3: Data Integrity (CRITICAL ISSUES FOUND)
+
+- [ ] **BUG: Market price persistence missing** - Market snapshots not timestamped properly for history
+- [ ] **ISSUE: No transaction isolation** - Concurrent trades could cause race conditions
+- [ ] **ISSUE: Audit log not comprehensive** - Missing logs for signal generation, filtering, ranking
+- [ ] **ISSUE: No data validation on Kalshi API responses** - Could accept malformed market data
+
+### Phase 4: Error Handling (CRITICAL ISSUES FOUND)
+
+- [ ] **BUG: Silent failures on API errors** - Many procedures return empty arrays instead of errors
+- [ ] **ISSUE: No retry logic** - API calls fail once and don't retry on transient errors
+- [ ] **ISSUE: No circuit breaker** - Cascading failures possible if Kalshi API is down
+- [ ] **ISSUE: Error messages not user-friendly** - Technical errors exposed to frontend
+
+### Phase 5: Frontend User Flows (ISSUES FOUND)
+
+- [ ] **ISSUE: No loading states during order placement** - User doesn't know if order is processing
+- [ ] **ISSUE: No confirmation dialog before trading** - User could accidentally place large orders
+- [ ] **ISSUE: Performance dashboard not wired** - UI created but no backend data flowing
+- [ ] **ISSUE: Training instructions not enforced** - Agent doesn't actually filter signals by training rules
+
+### PRIORITY FIXES (MUST DO BEFORE TRADING)
+
+1. Fix momentum confidence calculation (line 74 in kalshiSignals.ts)
+2. Fix orderExposure risk calculation (line 83 in routers.ts)
+3. Add NaN/Infinity validation to all signal calculations
+4. Add transaction isolation to database operations
+5. Add retry logic to Kalshi API calls
+6. Add confirmation dialogs before order placement
+7. Implement training rule enforcement in signal generation

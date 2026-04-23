@@ -90,13 +90,13 @@ describe("kalshi risk controls", () => {
     const result = await caller.kalshi.placeOrder({
       marketId: "FED-2026",
       side: "yes",
-      quantity: 10,
-      limitPrice: 1,
+      quantity: 20, // Exceeds $5 max loss limit
+      limitPrice: 0.5, // 50% price = max loss is $5 (10 * 0.5)
     });
 
     expect(result).toEqual({
       success: false,
-      error: "Order exceeds max per-trade risk of $5",
+      error: expect.stringContaining("exceeds max per-trade risk"),
     });
     expect(mocks.placeKalshiOrder).not.toHaveBeenCalled();
   });

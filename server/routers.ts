@@ -80,7 +80,8 @@ export const appRouter = router({
           const capital = await db.getKalshiCapital();
           const openPositions = await db.getOpenKalshiPositions();
           const todayRealizedLoss = await db.getTodayRealizedLoss();
-          const orderExposure = Number(input.quantity) * Number(input.limitPrice);
+          // Risk exposure: quantity * limitPrice (limitPrice is 0-1, so max exposure is quantity)
+          const orderExposure = Math.max(Number(input.quantity) * Number(input.limitPrice), Number(input.quantity) * (1 - Number(input.limitPrice)));
 
           if (openPositions.length >= RISK_LIMITS.maxOpenPositions) {
             return {
@@ -89,17 +90,20 @@ export const appRouter = router({
             };
           }
 
-          if (orderExposure > RISK_LIMITS.maxPositionSize) {
+          // Position size check: total capital at risk
+          if (Number(input.quantity) > RISK_LIMITS.maxPositionSize) {
             return {
               success: false,
-              error: `Order exceeds max position size of $${RISK_LIMITS.maxPositionSize}`,
+              error: `Order quantity exceeds max position size of $${RISK_LIMITS.maxPositionSize}`,
             };
           }
 
-          if (orderExposure > RISK_LIMITS.maxLossPerTrade) {
+          // Max loss check: worst-case loss on this trade
+          const maxLossOnTrade = Math.min(orderExposure, Number(input.quantity) * (1 - Number(input.limitPrice)));
+          if (maxLossOnTrade > RISK_LIMITS.maxLossPerTrade) {
             return {
               success: false,
-              error: `Order exceeds max per-trade risk of $${RISK_LIMITS.maxLossPerTrade}`,
+              error: `Order max loss of $${maxLossOnTrade.toFixed(2)} exceeds max per-trade risk of $${RISK_LIMITS.maxLossPerTrade}`,
             };
           }
 
