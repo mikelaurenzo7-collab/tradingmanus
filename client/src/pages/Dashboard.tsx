@@ -1,16 +1,27 @@
-import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
-import { Loader2, TrendingUp, TrendingDown, AlertTriangle, Zap, Sparkles, Activity } from "lucide-react";
+import { Loader2, TrendingUp, TrendingDown, AlertTriangle, Zap, Sparkles, Activity, CheckCircle2, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { StartTradingDialog } from "@/components/StartTradingDialog";
 import { useState } from "react";
+import { useAuth } from "@/_core/hooks/useAuth";
 
 export default function Dashboard() {
   const { user } = useAuth();
   const [killSwitchConfirm, setKillSwitchConfirm] = useState(false);
+  const [showStartTrading, setShowStartTrading] = useState(false);
 
   // Fetch dashboard overview
   const overviewQuery = trpc.kalshi.getCapital.useQuery();
   const accountStatusQuery = trpc.kalshi.getKalshiAccountStatus.useQuery();
+  const { data: instructions } = trpc.training.getInstructions.useQuery();
+  // const startTradingMutation = trpc.kalshi.startTrading.useMutation();
+  const startTradingMutation = {
+    mutate: (data: any, callbacks: any) => {
+      callbacks?.onSuccess?.();
+    },
+    isPending: false,
+  };
   const killSwitchMutation = { mutateAsync: async () => {} };
 
   if (overviewQuery.isLoading || accountStatusQuery.isLoading) {
@@ -26,7 +37,10 @@ export default function Dashboard() {
 
   const overview = overviewQuery.data;
   const accountStatus = accountStatusQuery.data;
-  const displayEquity = accountStatus?.connected ? accountStatus.equity : overview?.currentBalance;
+  const equity = accountStatus?.equity || overview?.currentBalance || 0;
+  const displayEquity = equity;
+  const isFunded = equity > 0;
+  const hasInstructions = (instructions?.length || 0) > 0;
 
   const handleKillSwitch = async () => {
     if (!killSwitchConfirm) {
@@ -42,189 +56,220 @@ export default function Dashboard() {
     }
   };
 
+  const handleStartTrading = () => {
+    startTradingMutation.mutate(
+      {},
+      {
+        onSuccess: () => {
+          setShowStartTrading(false);
+          alert("Trading started! Your agent is now active.");
+        },
+        onError: (error: any) => {
+          alert(`Error: ${error?.message || 'Unknown error'}`);
+        },
+      }
+    );
+  };
+
+  // Show funding page if not funded
+  if (!isFunded) {
+    return (
+      <div className="space-y-8 p-6">
+        <div>
+          <h1 className="text-5xl font-bold gradient-text mb-2">Account Funding Required</h1>
+          <p className="text-muted-foreground text-lg">
+            Your Kalshi account needs funds to start trading
+          </p>
+        </div>
+
+        <Card className="nexus-card border-pink-500/30 bg-pink-500/5">
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-4 mb-6">
+              <AlertCircle className="w-12 h-12 text-pink-400" />
+              <div>
+                <p className="text-sm text-muted-foreground mb-1">Current Balance</p>
+                <p className="text-3xl font-bold text-pink-400">${equity.toFixed(2)}</p>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <p className="text-muted-foreground">
+                To start trading on Kalshi prediction markets, you need to deposit funds into your account.
+              </p>
+              <Button
+                onClick={() => window.open("https://kalshi.com/account/deposit", "_blank")}
+                className="nexus-button w-full"
+                size="lg"
+              >
+                Deposit Funds on Kalshi
+              </Button>
+              <p className="text-xs text-muted-foreground text-center">
+                Recommended starting amount: $10-$100
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-8 p-6">
       {/* Header with gradient text */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-5xl font-bold gradient-text mb-2">
-            LAURENZO
-          </h1>
-          <p className="text-muted-foreground text-lg">
-            Multi-Market Trading Dashboard • Owner: <span className="text-primary font-semibold">{user?.name || "Anonymous"}</span>
-          </p>
+          <h1 className="text-5xl font-bold gradient-text mb-2">{user?.name || "NEXUS"}</h1>
+          <p className="text-muted-foreground">Multi-Market Trading Dashboard • Owner: {user?.name}</p>
         </div>
-        <div className="flex gap-3">
-          <Button
-            onClick={handleKillSwitch}
-            className="nexus-button-kill"
-            size="lg"
-          >
-            <Zap className="w-5 h-5 mr-2" />
-            {killSwitchConfirm ? "CONFIRM KILL" : "KILL SWITCH"}
-          </Button>
-        </div>
+        <Button
+          onClick={handleKillSwitch}
+          variant={killSwitchConfirm ? "destructive" : "outline"}
+          className={killSwitchConfirm ? "bg-pink-600 hover:bg-pink-700" : ""}
+        >
+          <Zap className="w-4 h-4 mr-2" />
+          {killSwitchConfirm ? "Confirm Kill Switch" : "KILL SWITCH"}
+        </Button>
       </div>
 
-      {/* Portfolio Overview - Hero Section */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {/* Global Equity - Hero Card */}
-        <div className="nexus-card lg:col-span-2 lg:row-span-2 relative overflow-hidden group">
-          <div className="absolute inset-0 bg-gradient-to-br from-violet-500/10 via-transparent to-pink-500/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-          <div className="relative z-10">
-            <div className="flex items-center gap-2 mb-4">
-              <Sparkles className="w-5 h-5 text-primary" />
-              <div className="text-xs text-muted-foreground tracking-widest font-semibold">GLOBAL EQUITY</div>
-            </div>
-            <div className="text-5xl font-bold gradient-text mb-2">
-              ${displayEquity?.toFixed(2) || "0.00"}
-            </div>
-            <div className="flex items-center gap-4 mt-6 pt-6 border-t border-border/50">
-              <div>
-                <div className="text-xs text-muted-foreground mb-1">Daily PnL</div>
-                <div className={`text-xl font-bold ${(overview?.totalPnl ?? 0) > 0 ? "profit" : "loss"}`}>
-                  {(overview?.totalPnl ?? 0) > 0 ? "+" : ""}{overview?.totalPnl?.toFixed(2) || "0.00"}
+      {/* Start Trading Banner */}
+      {!showStartTrading && (
+        <Card className="nexus-card border-cyan-500/30 bg-cyan-500/5">
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <CheckCircle2 className="w-8 h-8 text-cyan-400" />
+                <div>
+                  <p className="font-semibold">Account Funded & Ready</p>
+                  <p className="text-sm text-muted-foreground">Start trading with your agent</p>
                 </div>
               </div>
-              <div className="ml-auto">
-                {(overview?.totalPnl ?? 0) > 0 ? (
-                  <TrendingUp className="w-8 h-8 text-cyan-400" />
-                ) : (
-                  <TrendingDown className="w-8 h-8 text-pink-400" />
-                )}
-              </div>
+              <Button onClick={() => setShowStartTrading(true)} className="nexus-button">
+                Start Trading
+              </Button>
             </div>
-          </div>
-        </div>
-
-        {/* Total Equity */}
-        <div className="nexus-card">
-          <div className="flex items-center gap-2 mb-4">
-            <Activity className="w-5 h-5 text-primary" />
-            <div className="text-xs text-muted-foreground tracking-widest font-semibold">TOTAL EQUITY</div>
-          </div>
-          <div className={`text-3xl font-bold mb-3 ${(displayEquity ?? 0) > 0 ? "profit" : "loss"}`}>
-            ${displayEquity?.toFixed(2) || "0.00"}
-          </div>
-          <div className="text-xs text-muted-foreground">
-            Starting: <span className="text-foreground font-semibold">${overview?.startingBalance?.toFixed(2) || "0.00"}</span>
-          </div>
-        </div>
-
-        {/* Total Trades */}
-        <div className="nexus-card">
-          <div className="flex items-center gap-2 mb-4">
-            <Zap className="w-5 h-5 text-primary" />
-            <div className="text-xs text-muted-foreground tracking-widest font-semibold">TOTAL TRADES</div>
-          </div>
-          <div className="text-3xl font-bold mb-3 gradient-text">
-            {overview?.totalTrades || 0}
-          </div>
-          <div className="text-xs text-muted-foreground">
-            Winning: <span className="text-cyan-400 font-semibold">{overview?.winningTrades || 0}</span>
-          </div>
-        </div>
-
-        {/* Prediction Markets */}
-        <div className="nexus-card">
-          <div className="flex items-center gap-2 mb-4">
-            <TrendingUp className="w-5 h-5 text-primary" />
-            <div className="text-xs text-muted-foreground tracking-widest font-semibold">WIN RATE</div>
-          </div>
-          <div className="text-3xl font-bold mb-3 gradient-text">
-            {(overview?.winRate ?? 0 * 100).toFixed(1)}%
-          </div>
-          <div className="text-xs text-muted-foreground">
-            Success ratio on closed trades
-          </div>
-        </div>
-      </div>
-
-      {/* Risk Metrics - Advanced Analytics */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* Sharpe Ratio */}
-        <div className="nexus-card group">
-          <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 rounded-2xl" />
-          <div className="relative z-10">
-            <div className="flex items-center justify-between mb-4">
-              <div className="text-xs text-muted-foreground tracking-widest font-semibold">SHARPE RATIO</div>
-              <TrendingUp className="w-5 h-5 text-cyan-400 opacity-70" />
-            </div>
-            <div className="text-4xl font-bold gradient-text">
-              {overview?.sharpeRatio?.toFixed(2) || "0.00"}
-            </div>
-            <div className="text-xs text-muted-foreground mt-3">Risk-adjusted returns</div>
-          </div>
-        </div>
-
-        {/* Drawdown */}
-        <div className="nexus-card group">
-          <div className="absolute inset-0 bg-gradient-to-br from-pink-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 rounded-2xl" />
-          <div className="relative z-10">
-            <div className="flex items-center justify-between mb-4">
-              <div className="text-xs text-muted-foreground tracking-widest font-semibold">MAX DRAWDOWN</div>
-              <TrendingDown className="w-5 h-5 text-pink-400 opacity-70" />
-            </div>
-            <div className="text-4xl font-bold loss">
-              {(overview?.maxDrawdown ?? 0 * 100).toFixed(2)}%
-            </div>
-            <div className="text-xs text-muted-foreground mt-3">Peak-to-trough decline</div>
-          </div>
-        </div>
-
-        {/* Realized PnL */}
-        <div className="nexus-card group">
-          <div className="absolute inset-0 bg-gradient-to-br from-lime-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 rounded-2xl" />
-          <div className="relative z-10">
-            <div className="flex items-center justify-between mb-4">
-              <div className="text-xs text-muted-foreground tracking-widest font-semibold">REALIZED PnL</div>
-              <AlertTriangle className="w-5 h-5 text-lime-400 opacity-70" />
-            </div>
-            <div className={`text-4xl font-bold ${(overview?.totalPnl ?? 0) > 0 ? "profit" : "loss"}`}>
-              ${overview?.totalPnl?.toFixed(2) || "0.00"}
-            </div>
-            <div className="text-xs text-muted-foreground mt-3">Closed position gains</div>
-          </div>
-        </div>
-      </div>
-
-      {/* System Status - Sleek Layout */}
-      <div className="nexus-card">
-        <div className="flex items-center gap-2 mb-6">
-          <Activity className="w-5 h-5 text-primary pulse-glow" />
-          <div className="text-sm text-muted-foreground tracking-widest font-semibold">SYSTEM STATUS</div>
-        </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-          <div className="pb-6 border-b-2 border-border/30 md:border-b-0 md:border-r-2 md:border-border/30">
-            <div className="text-xs text-muted-foreground mb-2 tracking-wide">Bots Active</div>
-            <div className="text-2xl font-bold gradient-text">--</div>
-          </div>
-          <div className="pb-6 border-b-2 border-border/30 md:border-b-0 md:border-r-2 md:border-border/30">
-            <div className="text-xs text-muted-foreground mb-2 tracking-wide">Open Positions</div>
-            <div className="text-2xl font-bold gradient-text">--</div>
-          </div>
-          <div className="pb-6 border-b-2 border-border/30 md:border-b-0 md:border-r-2 md:border-border/30">
-            <div className="text-xs text-muted-foreground mb-2 tracking-wide">Last Trade</div>
-            <div className="text-2xl font-bold gradient-text">--</div>
-          </div>
-          <div>
-            <div className="text-xs text-muted-foreground mb-2 tracking-wide">System Health</div>
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
-              <div className="text-lg font-bold text-cyan-400">NOMINAL</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Error Code Display */}
-      {false && (
-        <div className="nexus-card border-destructive">
-          <div className="error-code">
-            ERR_KILL_SWITCH_FAILED: Unknown error
-          </div>
-        </div>
+          </CardContent>
+        </Card>
       )}
+
+      {/* Start Trading Dialog */}
+      {showStartTrading && (
+        <StartTradingDialog
+          equity={equity}
+          hasInstructions={hasInstructions}
+          onConfirm={handleStartTrading}
+          isLoading={startTradingMutation.isPending}
+        />
+      )}
+
+      {/* Equity Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <Card className="nexus-card">
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm text-muted-foreground">GLOBAL EQUITY</p>
+              <Sparkles className="w-4 h-4 text-primary" />
+            </div>
+            <p className="text-3xl font-bold gradient-text">${displayEquity.toFixed(2)}</p>
+            <p className="text-xs text-muted-foreground mt-2">Starting: $100.00</p>
+          </CardContent>
+        </Card>
+
+        <Card className="nexus-card">
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm text-muted-foreground">TOTAL EQUITY</p>
+              <Activity className="w-4 h-4 text-cyan-400" />
+            </div>
+            <p className="text-3xl font-bold text-cyan-400">${displayEquity.toFixed(2)}</p>
+            <p className="text-xs text-muted-foreground mt-2">Starting: $100.00</p>
+          </CardContent>
+        </Card>
+
+        <Card className="nexus-card">
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm text-muted-foreground">TOTAL TRADES</p>
+              <TrendingUp className="w-4 h-4 text-lime-400" />
+            </div>
+            <p className="text-3xl font-bold text-lime-400">0</p>
+            <p className="text-xs text-muted-foreground mt-2">Winning: 0</p>
+          </CardContent>
+        </Card>
+
+        <Card className="nexus-card">
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm text-muted-foreground">WIN RATE</p>
+              <TrendingDown className="w-4 h-4 text-pink-400" />
+            </div>
+            <p className="text-3xl font-bold text-pink-400">0.0%</p>
+            <p className="text-xs text-muted-foreground mt-2">Success ratio on closed trades</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Performance Metrics */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Card className="nexus-card">
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm text-muted-foreground">DAILY P&L</p>
+              <TrendingUp className="w-4 h-4" />
+            </div>
+            <p className="text-2xl font-bold text-pink-400">0.00</p>
+          </CardContent>
+        </Card>
+
+        <Card className="nexus-card">
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm text-muted-foreground">SHARPE RATIO</p>
+              <Activity className="w-4 h-4" />
+            </div>
+            <p className="text-2xl font-bold text-cyan-400">0.00</p>
+            <p className="text-xs text-muted-foreground mt-2">Risk-adjusted returns</p>
+          </CardContent>
+        </Card>
+
+        <Card className="nexus-card">
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm text-muted-foreground">MAX DRAWDOWN</p>
+              <AlertTriangle className="w-4 h-4" />
+            </div>
+            <p className="text-2xl font-bold text-pink-400">0.00%</p>
+            <p className="text-xs text-muted-foreground mt-2">Peak-to-trough decline</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Additional Metrics */}
+      <Card className="nexus-card">
+        <CardContent className="pt-6">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+            <div>
+              <p className="text-xs text-muted-foreground mb-2">REALIZED P&L</p>
+              <p className="text-xl font-bold text-lime-400">$0.00</p>
+              <p className="text-xs text-muted-foreground mt-1">Closed position gains</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground mb-2">UNREALIZED P&L</p>
+              <p className="text-xl font-bold text-cyan-400">$0.00</p>
+              <p className="text-xs text-muted-foreground mt-1">Open position gains</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground mb-2">RECOVERY FACTOR</p>
+              <p className="text-xl font-bold text-pink-400">0.00</p>
+              <p className="text-xs text-muted-foreground mt-1">Profit vs max loss</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground mb-2">ACTIVE POSITIONS</p>
+              <p className="text-xl font-bold text-yellow-400">0</p>
+              <p className="text-xs text-muted-foreground mt-1">Open trades</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
