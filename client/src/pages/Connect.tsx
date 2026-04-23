@@ -2,40 +2,40 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { AlertCircle, CheckCircle2, Plug } from "lucide-react";
+import { AlertCircle, CheckCircle2, Plug, Loader2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { trpc } from "@/lib/trpc";
+
 
 export default function Connect() {
   const [apiKey, setApiKey] = useState("");
   const [privateKey, setPrivateKey] = useState("");
   const [connected, setConnected] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+
+  const connectMutation = trpc.kalshi.connectKalshiAccount.useMutation({
+    onSuccess: (data) => {
+      if (data.success) {
+        alert(`Connected! Account equity: $${data.equity?.toFixed(2) || "0.00"}`);
+        setConnected(true);
+        setTimeout(() => {
+          window.location.href = "/";
+        }, 2000);
+      } else {
+        alert(`Connection failed: ${data.error || "Unknown error"}`);
+      }
+    },
+    onError: (error) => {
+      alert(`Error: ${error.message || "Failed to connect account"}`);
+    },
+  });
 
   const handleConnect = async () => {
     if (!apiKey || !privateKey) {
-      setError("Both API key and private key are required");
+      alert("Both API key and private key are required");
       return;
     }
 
-    setLoading(true);
-    setError("");
-
-    try {
-      // In production, this would validate the keys with Kalshi API
-      // For now, we'll just store them locally
-      localStorage.setItem("kalshi_api_key", apiKey);
-      localStorage.setItem("kalshi_private_key", privateKey);
-      
-      setConnected(true);
-      setTimeout(() => {
-        window.location.href = "/";
-      }, 2000);
-    } catch (err) {
-      setError("Failed to connect. Please check your credentials.");
-    } finally {
-      setLoading(false);
-    }
+    connectMutation.mutate({ apiKey, privateKey });
   };
 
   if (connected) {
@@ -101,17 +101,10 @@ export default function Connect() {
                 Connect Account
               </CardTitle>
               <CardDescription>
-                Your credentials are stored securely and never shared
+                Your credentials are encrypted and stored securely on our servers
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              {error && (
-                <Alert variant="destructive">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertDescription>{error}</AlertDescription>
-                </Alert>
-              )}
-
               <div className="space-y-2">
                 <label className="text-sm font-medium">API Key</label>
                 <Input
@@ -120,6 +113,7 @@ export default function Connect() {
                   onChange={(e) => setApiKey(e.target.value)}
                   type="password"
                   className="font-mono text-xs"
+                  disabled={connectMutation.isPending}
                 />
               </div>
 
@@ -131,25 +125,33 @@ export default function Connect() {
                   onChange={(e) => setPrivateKey(e.target.value)}
                   type="password"
                   className="font-mono text-xs"
+                  disabled={connectMutation.isPending}
                 />
               </div>
 
               <Button
                 onClick={handleConnect}
-                disabled={loading || !apiKey || !privateKey}
+                disabled={connectMutation.isPending || !apiKey || !privateKey}
                 className="w-full nexus-button"
                 size="lg"
               >
-                {loading ? "Connecting..." : "Connect Kalshi Account"}
+                {connectMutation.isPending ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Validating credentials...
+                  </>
+                ) : (
+                  "Connect Kalshi Account"
+                )}
               </Button>
             </CardContent>
           </Card>
 
-          {/* Info */}
+          {/* Security Info */}
           <Alert>
             <AlertCircle className="h-4 w-4" />
             <AlertDescription>
-              <strong>Security Note:</strong> Your API credentials are encrypted and stored locally. They are never sent to external servers or logs.
+              <strong>Security:</strong> Your API credentials are encrypted with AES-256 and stored securely. They are never logged or shared.
             </AlertDescription>
           </Alert>
         </div>

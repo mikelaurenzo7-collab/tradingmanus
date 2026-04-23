@@ -10,9 +10,10 @@ export default function Dashboard() {
 
   // Fetch dashboard overview
   const overviewQuery = trpc.kalshi.getCapital.useQuery();
+  const accountStatusQuery = trpc.kalshi.getKalshiAccountStatus.useQuery();
   const killSwitchMutation = { mutateAsync: async () => {} };
 
-  if (overviewQuery.isLoading) {
+  if (overviewQuery.isLoading || accountStatusQuery.isLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="flex flex-col items-center gap-4">
@@ -24,6 +25,8 @@ export default function Dashboard() {
   }
 
   const overview = overviewQuery.data;
+  const accountStatus = accountStatusQuery.data;
+  const displayEquity = accountStatus?.connected ? accountStatus.equity : overview?.currentBalance;
 
   const handleKillSwitch = async () => {
     if (!killSwitchConfirm) {
@@ -74,7 +77,7 @@ export default function Dashboard() {
               <div className="text-xs text-muted-foreground tracking-widest font-semibold">GLOBAL EQUITY</div>
             </div>
             <div className="text-5xl font-bold gradient-text mb-2">
-              ${overview?.currentBalance?.toFixed(2) || "0.00"}
+              ${displayEquity?.toFixed(2) || "0.00"}
             </div>
             <div className="flex items-center gap-4 mt-6 pt-6 border-t border-border/50">
               <div>
@@ -100,8 +103,8 @@ export default function Dashboard() {
             <Activity className="w-5 h-5 text-primary" />
             <div className="text-xs text-muted-foreground tracking-widest font-semibold">TOTAL EQUITY</div>
           </div>
-          <div className={`text-3xl font-bold mb-3 ${(overview?.currentBalance ?? 0) > 0 ? "profit" : "loss"}`}>
-            ${overview?.currentBalance?.toFixed(2) || "0.00"}
+          <div className={`text-3xl font-bold mb-3 ${(displayEquity ?? 0) > 0 ? "profit" : "loss"}`}>
+            ${displayEquity?.toFixed(2) || "0.00"}
           </div>
           <div className="text-xs text-muted-foreground">
             Starting: <span className="text-foreground font-semibold">${overview?.startingBalance?.toFixed(2) || "0.00"}</span>
