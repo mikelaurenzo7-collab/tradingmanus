@@ -27,6 +27,43 @@ export interface KalshiOrderBook {
 
 const KALSHI_API_BASE = "https://api.elections.kalshi.com/trade-api/v2";
 
+function cleanText(value: unknown, fallback: string, maxLength: number): string {
+  const normalized = typeof value === "string" ? value.trim() : String(value ?? fallback).trim();
+  const base = normalized.length > 0 ? normalized : fallback;
+  return base.slice(0, maxLength);
+}
+
+function looksLikeCompositeMarket(rawMarket: any, id: string, normalizedTitle: string): boolean {
+  const joinedSignals = [
+    id,
+    rawMarket?.ticker,
+    rawMarket?.market_id,
+    rawMarket?.event_ticker,
+    rawMarket?.series_ticker,
+    rawMarket?.category,
+    normalizedTitle,
+    rawMarket?.subtitle,
+  ]
+    .filter(Boolean)
+    .map((value) => String(value).toUpperCase())
+    .join(" ");
+
+  if (
+    joinedSignals.includes("KXMVE") ||
+    joinedSignals.includes("CROSSCATEGORY") ||
+    joinedSignals.includes("MULTIVARIATE") ||
+    rawMarket?.multivariate === true
+  ) {
+    return true;
+  }
+
+  const lowerTitle = normalizedTitle.toLowerCase();
+  const hasCompositeJoiners = normalizedTitle.includes(",") || normalizedTitle.includes(";");
+  const looksLikeLegList = lowerTitle.startsWith("yes ") || lowerTitle.startsWith("no ");
+
+  return hasCompositeJoiners && looksLikeLegList;
+}
+
 function parseDollarValue(value: unknown): number {
   if (typeof value === "number" && Number.isFinite(value)) {
     return value;
@@ -55,8 +92,14 @@ function mapMarketStatus(status: unknown): "open" | "closed" | "resolved" {
   }
 }
 
-function normalizeKalshiMarket(rawMarket: any): KalshiMarket {
-  const id = rawMarket.id ?? rawMarket.marketId ?? rawMarket.market_id ?? rawMarket.ticker;
+function normalizeKalshiMarket(rawMarket: any): KalshiMarket | null {
+  const id = cleanText(rawMarket.id ?? rawMarket.marketId ?? rawMarket.market_id ?? rawMarket.ticker, "unknown-market", 128);
+  const normalizedTitle = cleanText(rawMarket.title ?? rawMarket.subtitle ?? id, id, 255);
+
+  if (looksLikeCompositeMarket(rawMarket, id, normalizedTitle)) {
+    return null;
+  }
+
   const yesPrice = parseDollarValue(
     rawMarket.yesPrice ??
       rawMarket.yes_price ??
@@ -77,9 +120,9 @@ function normalizeKalshiMarket(rawMarket: any): KalshiMarket {
 
   return {
     id,
-    title: rawMarket.title ?? rawMarket.subtitle ?? id,
-    category: rawMarket.category ?? rawMarket.series_ticker ?? rawMarket.event_ticker ?? "general",
-    description: rawMarket.description ?? rawMarket.subtitle ?? rawMarket.rules_primary ?? "",
+    title: normalizedTitle,
+    category: cleanText(rawMarket.category ?? rawMarket.series_ticker ?? rawMarket.event_ticker ?? "general", "general", 128),
+    description: cleanText(rawMarket.description ?? rawMarket.subtitle ?? rawMarket.rules_primary ?? "", "", 2000),
     resolutionDate:
       rawMarket.resolutionDate ??
       rawMarket.resolution_date ??
@@ -153,7 +196,7 @@ export async function fetchKalshiMarkets(filters?: {
     const data = await response.json();
     return (data.markets || [])
       .map((market: any) => normalizeKalshiMarket(market))
-      .filter((market: KalshiMarket) => Boolean(market.id))
+      .filter((market: KalshiMarket | null): market is KalshiMarket => Boolean(market?.id))
       .filter((market: KalshiMarket) => isDisplaySafeActionableMarket(market))
       .sort((a: KalshiMarket, b: KalshiMarket) => getMarketActionabilityScore(b) - getMarketActionabilityScore(a));
   } catch (error) {
@@ -181,7 +224,8 @@ export async function fetchKalshiMarketDetails(marketId: string): Promise<Kalshi
 
     const data = await response.json();
     const market = data.market ?? data;
-    return normalizeKalshiMarket(market);
+    const normalized = normalizeKalshiMarket(market);
+    return normalized && isDisplaySafeActionableMarket(normalized) ? normalized : null;
   } catch (error) {
     console.error(`[Kalshi] Market details fetch failed for ${marketId}:`, error);
     return null;

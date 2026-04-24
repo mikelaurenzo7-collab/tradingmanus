@@ -383,3 +383,11 @@ This iteration prioritizes prediction quality by introducing a more independent 
 - [ ] Finalize small-balance live candidate safeguards so autonomous trading uses real actionable candidates and compliant sizing for roughly $73 of equity
 - [ ] Validate the live trading path end-to-end after Full Autonomy is enabled and confirm the resulting execution state
 - [x] Reach the next clean checkpoint only after the live candidate universe is trustworthy enough for full-autonomy dogfood review and candidate-order readiness can be assessed clearly
+- [ ] Improve the signal-selection logic so standard Kalshi markets can produce trustworthy actionable candidates when genuine opportunities exist
+- [ ] Validate candidate-order preparation for the Founders account so any future autonomous order uses real market data, compliant sizing, and execution-ready fields
+- [ ] Reach the next checkpoint only after confirming whether the system has progressed from safe no-candidate autonomy to real candidate-order readiness
+- [ ] Resume from checkpoint bbd75fbc and continue the remaining dogfood-readiness work until the next reviewable checkpoint
+- [ ] Continue improving the signal-selection path so standard Kalshi markets produce trustworthy actionable candidates when real opportunities exist
+- [ ] Continue validating candidate-order preparation and execution readiness for the Founders account under full autonomy without placing a live trade unless a real opportunity emerges
+- [ ] Assess the quantgalore Kalshi trading repository for reusable execution, market-selection, and signal-quality patterns that can strengthen dogfood trading readiness safely
+- [ ] Review the broader GitHub Kalshi API topic resources for reusable execution, market-data, and candidate-selection patterns that can strengthen the current dogfood-trading pipeline safely
