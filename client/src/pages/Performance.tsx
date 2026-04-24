@@ -17,6 +17,39 @@ export default function Performance() {
   const signalPerformance = performanceOverview?.signalPerformance ?? [];
   const hasTradeHistory = (performanceMetrics?.totalTrades ?? 0) > 0;
 
+  const realizedPnL = performanceMetrics?.realizedPnL ?? 0;
+  const unrealizedPnL = performanceMetrics?.unrealizedPnL ?? 0;
+  const dailyPnL = performanceMetrics?.dailyPnL ?? 0;
+  const activePositions = performanceMetrics?.activePositions ?? 0;
+  const attributionCards = [
+    {
+      label: "Realized P&L",
+      value: `$${realizedPnL.toFixed(2)}`,
+      description: "Closed-trade contribution",
+      tone: realizedPnL >= 0 ? "text-green-400" : "text-red-400",
+    },
+    {
+      label: "Unrealized P&L",
+      value: `$${unrealizedPnL.toFixed(2)}`,
+      description: "Open-position contribution",
+      tone: unrealizedPnL >= 0 ? "text-cyan-400" : "text-red-400",
+    },
+    {
+      label: "Daily P&L",
+      value: `$${dailyPnL.toFixed(2)}`,
+      description: "Current trading-day impact",
+      tone: dailyPnL >= 0 ? "text-emerald-400" : "text-orange-400",
+    },
+    {
+      label: "Active Positions",
+      value: activePositions.toString(),
+      description: "Currently contributing live risk",
+      tone: "text-violet-400",
+    },
+  ];
+  const topSignal = signalPerformance[0];
+  const weakestSignal = signalPerformance.at(-1);
+
   const metricCards = [
     {
       label: "Sharpe Ratio",
@@ -90,6 +123,92 @@ export default function Performance() {
             </Card>
           ))}
         </div>
+
+        {/* Attribution Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
+          {attributionCards.map((metric) => (
+            <Card
+              key={metric.label}
+              className="border border-slate-700 bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-xl"
+            >
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-medium text-slate-300">
+                  {metric.label}
+                </CardTitle>
+                <CardDescription>{metric.description}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className={`text-3xl font-bold ${metric.tone}`}>{metric.value}</div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+
+        {(topSignal || weakestSignal) && (
+          <div className="grid gap-4 lg:grid-cols-2 mb-8">
+            <Card className="border border-slate-700 bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-xl">
+              <CardHeader>
+                <CardTitle>Strategy Leaderboard</CardTitle>
+                <CardDescription>
+                  The learning loop ranks signal families by realized quality and confidence.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {topSignal && (
+                  <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4">
+                    <p className="text-xs uppercase tracking-[0.2em] text-emerald-300">Highest Conviction</p>
+                    <p className="mt-2 text-xl font-semibold capitalize text-slate-100">
+                      {topSignal.signalType.replaceAll("_", " ")}
+                    </p>
+                    <p className="mt-1 text-sm text-slate-400">
+                      {topSignal.recommendation.replaceAll("_", " ")} with {(topSignal.successRate * 100).toFixed(1)}% win rate across {topSignal.totalSignals} signals.
+                    </p>
+                  </div>
+                )}
+                {weakestSignal && weakestSignal !== topSignal && (
+                  <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
+                    <p className="text-xs uppercase tracking-[0.2em] text-amber-300">Needs Adjustment</p>
+                    <p className="mt-2 text-xl font-semibold capitalize text-slate-100">
+                      {weakestSignal.signalType.replaceAll("_", " ")}
+                    </p>
+                    <p className="mt-1 text-sm text-slate-400">
+                      Recommendation: {weakestSignal.recommendation.replaceAll("_", " ")} based on ${(weakestSignal.totalPnL).toFixed(2)} realized P&amp;L.
+                    </p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="border border-slate-700 bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-xl">
+              <CardHeader>
+                <CardTitle>Adaptive Learning Status</CardTitle>
+                <CardDescription>
+                  Actionable cues the operator can use to tighten sizing and keep only robust strategies live.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3 text-sm text-slate-300">
+                <div className="rounded-lg border border-slate-700/60 bg-slate-900/40 p-3">
+                  <span className="font-medium text-slate-100">Win-rate posture:</span>{" "}
+                  {hasTradeHistory
+                    ? `${((performanceMetrics?.winRate ?? 0) * 100).toFixed(1)}% win rate with ${(performanceMetrics?.profitFactor ?? 0).toFixed(2)} profit factor.`
+                    : "Awaiting closed trades before adaptive sizing recommendations become statistically useful."}
+                </div>
+                <div className="rounded-lg border border-slate-700/60 bg-slate-900/40 p-3">
+                  <span className="font-medium text-slate-100">Capital efficiency:</span>{" "}
+                  {(performanceMetrics?.maxDrawdown ?? 0) > 0.12
+                    ? "Drawdown has been meaningfully elevated; trim position size or tighten entry selectivity."
+                    : "Drawdown remains contained relative to current realized performance."}
+                </div>
+                <div className="rounded-lg border border-slate-700/60 bg-slate-900/40 p-3">
+                  <span className="font-medium text-slate-100">Operator action:</span>{" "}
+                  {topSignal
+                    ? `Bias new capital toward ${topSignal.signalType.replaceAll("_", " ")} while monitoring weaker families for demotion.`
+                    : "Generate and close more trades to unlock strategy-level promotion and demotion guidance."}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
 
         {/* Signal Performance by Type */}
         {signalPerformance.length > 0 && (

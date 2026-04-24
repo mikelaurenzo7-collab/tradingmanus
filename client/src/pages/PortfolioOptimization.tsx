@@ -1,188 +1,338 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { trpc } from "@/lib/trpc";
-import { Zap, Target, TrendingUp } from "lucide-react";
+import { Shield, Target, TrendingUp, Layers3 } from "lucide-react";
+
+type EditableSignal = {
+  marketId: string;
+  side: string;
+  confidence: number;
+  expectedValue: number;
+};
+
+const INITIAL_SIGNALS: EditableSignal[] = [
+  { marketId: "FED_CUT_JUN", side: "yes", confidence: 0.62, expectedValue: 0.18 },
+  { marketId: "CPI_COOLING", side: "yes", confidence: 0.58, expectedValue: 0.14 },
+  { marketId: "BTC_ABOVE_90K", side: "yes", confidence: 0.54, expectedValue: 0.22 },
+  { marketId: "TESLA_DELIVERY_BEAT", side: "no", confidence: 0.57, expectedValue: 0.11 },
+  { marketId: "ELECTION_SWING_STATE", side: "yes", confidence: 0.6, expectedValue: 0.16 },
+];
+
+function clampProbability(value: number) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(1, value));
+}
+
+function formatPercent(value: number) {
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+function formatSignedPercent(value: number) {
+  const sign = value >= 0 ? "+" : "";
+  return `${sign}${(value * 100).toFixed(1)}%`;
+}
 
 export default function PortfolioOptimization() {
-  const [winProbability, setWinProbability] = useState(0.55);
-  const [odds, setOdds] = useState(1.0);
+  const [equity, setEquity] = useState(2500);
+  const [maxPositions, setMaxPositions] = useState(4);
+  const [signals, setSignals] = useState<EditableSignal[]>(INITIAL_SIGNALS);
+
+  const portfolioQuery = trpc.advanced.portfolio.optimizePortfolio.useQuery(
+    {
+      signals,
+      equity,
+      maxPositions,
+    },
+    {
+      enabled: equity > 0 && signals.length > 0,
+    }
+  );
+
+  const diversificationQuery = trpc.advanced.portfolio.calculateDiversificationScore.useQuery(
+    { signals },
+    {
+      enabled: signals.length > 1,
+    }
+  );
+
+  const leadSignal = useMemo(() => {
+    return [...signals].sort((a, b) => b.confidence - a.confidence)[0] ?? INITIAL_SIGNALS[0];
+  }, [signals]);
 
   const kellyQuery = trpc.advanced.portfolio.calculateKellyFraction.useQuery(
     {
-      winProbability,
-      odds,
+      winProbability: leadSignal?.confidence ?? 0.5,
+      odds: 1,
     },
-    { enabled: true }
+    {
+      enabled: Boolean(leadSignal),
+    }
   );
 
-  const kellyFraction = kellyQuery.data ?? 0;
+  const portfolio = portfolioQuery.data;
+  const diversificationScore = diversificationQuery.data ?? 0;
+  const capitalAllocated = portfolio?.positions.reduce((sum, position) => sum + position.size, 0) ?? 0;
+  const allocationRatio = equity > 0 ? capitalAllocated / equity : 0;
 
-  const getKellyRecommendation = (fraction: number) => {
-    if (fraction <= 0) return { label: "Avoid", color: "text-red-500", bg: "from-red-500 to-pink-500" };
-    if (fraction < 0.05) return { label: "Minimal", color: "text-yellow-500", bg: "from-yellow-500 to-orange-500" };
-    if (fraction < 0.1) return { label: "Conservative", color: "text-blue-500", bg: "from-blue-500 to-cyan-500" };
-    return { label: "Aggressive", color: "text-green-500", bg: "from-green-500 to-emerald-500" };
+  const updateSignal = (index: number, field: keyof EditableSignal, rawValue: string) => {
+    setSignals((current) =>
+      current.map((signal, currentIndex) => {
+        if (currentIndex !== index) return signal;
+
+        if (field === "confidence") {
+          return {
+            ...signal,
+            confidence: clampProbability(Number(rawValue)),
+          };
+        }
+
+        if (field === "expectedValue") {
+          const value = Number(rawValue);
+          return {
+            ...signal,
+            expectedValue: Number.isFinite(value) ? value : 0,
+          };
+        }
+
+        return {
+          ...signal,
+          [field]: rawValue,
+        };
+      })
+    );
   };
-
-  const recommendation = getKellyRecommendation(kellyFraction);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 p-6">
-      <div className="max-w-6xl mx-auto">
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-4xl font-bold bg-gradient-to-r from-violet-400 via-pink-400 to-cyan-400 bg-clip-text text-transparent mb-2">
-            Portfolio Optimization
-          </h1>
-          <p className="text-slate-400">Optimize position sizing using Kelly Criterion</p>
+      <div className="mx-auto max-w-7xl space-y-8">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <h1 className="mb-2 bg-gradient-to-r from-violet-400 via-pink-400 to-cyan-400 bg-clip-text text-4xl font-bold text-transparent">
+              Portfolio Optimization
+            </h1>
+            <p className="max-w-3xl text-slate-400">
+              Turn candidate market edges into a diversified allocation plan with Kelly sizing, correlation-aware filtering,
+              and explicit capital constraints.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap gap-3 rounded-2xl border border-slate-800 bg-slate-900/70 p-4 backdrop-blur-xl">
+            <div>
+              <div className="mb-2 text-xs uppercase tracking-[0.2em] text-slate-500">Account Equity</div>
+              <Input
+                type="number"
+                min="100"
+                step="100"
+                value={equity}
+                onChange={(event) => setEquity(Math.max(0, Number(event.target.value) || 0))}
+                className="w-36 border-slate-700 bg-slate-950 text-slate-100"
+              />
+            </div>
+            <div>
+              <div className="mb-2 text-xs uppercase tracking-[0.2em] text-slate-500">Max Positions</div>
+              <Input
+                type="number"
+                min="1"
+                max="10"
+                step="1"
+                value={maxPositions}
+                onChange={(event) => setMaxPositions(Math.max(1, Number(event.target.value) || 1))}
+                className="w-28 border-slate-700 bg-slate-950 text-slate-100"
+              />
+            </div>
+            <div className="flex items-end">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setSignals(INITIAL_SIGNALS)}
+                className="border-slate-700 bg-slate-950 text-slate-200 hover:bg-slate-900"
+              >
+                Reset Signal Set
+              </Button>
+            </div>
+          </div>
         </div>
 
-        {/* Kelly Fraction Card */}
-        <Card className="mb-8 border border-slate-700 bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-xl">
-          <CardHeader>
-            <CardTitle>Kelly Criterion Calculator</CardTitle>
-            <CardDescription>Optimal position sizing for risk-adjusted returns</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {/* Input: Win Probability */}
-              <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">
-                  Win Probability
-                </label>
-                <div className="flex items-center gap-2">
-                  <Input
-                    type="number"
-                    min="0"
-                    max="1"
-                    step="0.01"
-                    value={winProbability}
-                    onChange={(e) => setWinProbability(parseFloat(e.target.value))}
-                    className="flex-1 bg-slate-800 border-slate-700 text-slate-100"
-                  />
-                  <span className="text-slate-400 font-mono">{(winProbability * 100).toFixed(0)}%</span>
-                </div>
-              </div>
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-base text-slate-100">
+                <Target className="h-5 w-5 text-cyan-400" />
+                Kelly Fraction
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-semibold text-cyan-300">{formatPercent(kellyQuery.data ?? 0)}</div>
+              <p className="mt-2 text-sm text-slate-500">Quarter-Kelly recommendation based on the strongest current signal.</p>
+            </CardContent>
+          </Card>
 
-              {/* Input: Odds */}
-              <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">
-                  Odds (Payoff Ratio)
-                </label>
-                <div className="flex items-center gap-2">
-                  <Input
-                    type="number"
-                    min="0.1"
-                    step="0.1"
-                    value={odds}
-                    onChange={(e) => setOdds(parseFloat(e.target.value))}
-                    className="flex-1 bg-slate-800 border-slate-700 text-slate-100"
-                  />
-                  <span className="text-slate-400 font-mono">x</span>
-                </div>
-              </div>
+          <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-base text-slate-100">
+                <Layers3 className="h-5 w-5 text-fuchsia-400" />
+                Diversification
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-semibold text-fuchsia-300">{formatPercent(diversificationScore)}</div>
+              <p className="mt-2 text-sm text-slate-500">Higher scores indicate lower average pairwise correlation across selected signals.</p>
+            </CardContent>
+          </Card>
 
-              {/* Output: Kelly Fraction */}
-              <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">
-                  Kelly Fraction
-                </label>
-                <div className={`text-3xl font-bold ${recommendation.color} font-mono`}>
-                  {(kellyFraction * 100).toFixed(2)}%
-                </div>
+          <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-base text-slate-100">
+                <TrendingUp className="h-5 w-5 text-emerald-400" />
+                Expected Edge
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-semibold text-emerald-300">
+                {portfolio ? formatSignedPercent(portfolio.expectedReturn) : "--"}
               </div>
-            </div>
-          </CardContent>
-        </Card>
+              <p className="mt-2 text-sm text-slate-500">Aggregate expected return contribution from the optimizer’s selected positions.</p>
+            </CardContent>
+          </Card>
 
-        {/* Recommendation Card */}
-        <Card className="mb-8 border border-slate-700 bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-xl">
-          <CardHeader>
-            <CardTitle>Position Sizing Recommendation</CardTitle>
-            <CardDescription>Based on Kelly Criterion calculation</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center justify-between">
-              <div>
-                <div className={`text-5xl font-bold bg-gradient-to-r ${recommendation.bg} bg-clip-text text-transparent mb-2`}>
-                  {recommendation.label}
-                </div>
-                <p className="text-slate-400 max-w-md">
-                  {recommendation.label === "Avoid" && "This trade has negative expected value. Skip it."}
-                  {recommendation.label === "Minimal" && "Very low edge. Only risk a tiny fraction of capital."}
-                  {recommendation.label === "Conservative" && "Moderate edge. Risk a small fraction of capital."}
-                  {recommendation.label === "Aggressive" && "Strong edge. Risk a larger fraction of capital."}
-                </p>
-              </div>
-              <div className="text-6xl">
-                {recommendation.label === "Avoid" && "❌"}
-                {recommendation.label === "Minimal" && "⚠️"}
-                {recommendation.label === "Conservative" && "✅"}
-                {recommendation.label === "Aggressive" && "🚀"}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+          <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-base text-slate-100">
+                <Shield className="h-5 w-5 text-amber-400" />
+                Capital Use
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-semibold text-amber-300">{formatPercent(allocationRatio)}</div>
+              <p className="mt-2 text-sm text-slate-500">Allocated capital after Kelly sizing and max-position constraints are applied.</p>
+            </CardContent>
+          </Card>
+        </div>
 
-        {/* Kelly Criterion Explanation */}
-        <Card className="border border-slate-700 bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-xl">
-          <CardHeader>
-            <CardTitle>Kelly Criterion Formula</CardTitle>
-            <CardDescription>Mathematical foundation for optimal position sizing</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              <div className="bg-slate-800/50 p-4 rounded-lg border border-slate-700">
-                <p className="text-slate-300 font-mono text-center">
-                  f* = (p × b - q) / b
-                </p>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <h3 className="font-semibold text-slate-300 mb-3">Variables</h3>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">f*:</span>
-                      <span className="text-slate-300">Fraction of capital to risk</span>
+        <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+          <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
+            <CardHeader>
+              <CardTitle>Signal Universe</CardTitle>
+              <CardDescription>
+                Adjust confidence and expected value assumptions, then let the optimizer filter for diversification.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {signals.map((signal, index) => (
+                <div key={signal.marketId} className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+                  <div className="grid gap-4 lg:grid-cols-[1.6fr_0.8fr_0.8fr_0.8fr]">
+                    <div>
+                      <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Market</div>
+                      <div className="mt-2 text-sm font-medium text-slate-100">{signal.marketId}</div>
+                      <div className="mt-1 text-xs text-slate-500">Side: {signal.side.toUpperCase()}</div>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">p:</span>
-                      <span className="text-slate-300">Probability of winning</span>
+                    <div>
+                      <div className="mb-2 text-xs uppercase tracking-[0.2em] text-slate-500">Confidence</div>
+                      <Input
+                        type="number"
+                        min="0"
+                        max="1"
+                        step="0.01"
+                        value={signal.confidence}
+                        onChange={(event) => updateSignal(index, "confidence", event.target.value)}
+                        className="border-slate-700 bg-slate-900 text-slate-100"
+                      />
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">q:</span>
-                      <span className="text-slate-300">Probability of losing (1-p)</span>
+                    <div>
+                      <div className="mb-2 text-xs uppercase tracking-[0.2em] text-slate-500">Expected Value</div>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={signal.expectedValue}
+                        onChange={(event) => updateSignal(index, "expectedValue", event.target.value)}
+                        className="border-slate-700 bg-slate-900 text-slate-100"
+                      />
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">b:</span>
-                      <span className="text-slate-300">Odds (payoff ratio)</span>
+                    <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-3">
+                      <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Edge Score</div>
+                      <div className="mt-2 text-lg font-semibold text-slate-100">
+                        {(signal.confidence * signal.expectedValue).toFixed(3)}
+                      </div>
                     </div>
                   </div>
                 </div>
-                <div>
-                  <h3 className="font-semibold text-slate-300 mb-3">Key Insights</h3>
-                  <div className="space-y-2 text-sm text-slate-400">
-                    <p>• Maximizes long-term geometric growth</p>
-                    <p>• Prevents over-leveraging</p>
-                    <p>• Minimizes risk of ruin</p>
-                    <p>• Works best with consistent edge</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+              ))}
+            </CardContent>
+          </Card>
 
-        {/* Loading State */}
-        {kellyQuery.isLoading && (
-          <Card className="border border-slate-700 bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-xl mt-8">
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-center">
-                <Zap className="animate-spin text-cyan-400 mr-2" />
-                <span className="text-slate-400">Calculating Kelly Fraction...</span>
+          <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
+            <CardHeader>
+              <CardTitle>Recommended Allocation</CardTitle>
+              <CardDescription>
+                The optimizer keeps only the highest-confidence signals that satisfy diversification constraints.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {portfolio?.positions?.length ? (
+                portfolio.positions.map((position) => {
+                  const capitalShare = equity > 0 ? position.size / equity : 0;
+                  return (
+                    <div key={`${position.marketId}-${position.side}`} className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <div className="text-sm font-medium text-slate-100">{position.marketId}</div>
+                          <div className="mt-1 text-xs uppercase tracking-[0.2em] text-slate-500">{position.side} position</div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-lg font-semibold text-emerald-300">${position.size.toFixed(0)}</div>
+                          <div className="text-xs text-slate-500">{formatPercent(capitalShare)} of equity</div>
+                        </div>
+                      </div>
+                      <div className="mt-4 h-2 rounded-full bg-slate-800">
+                        <div
+                          className="h-2 rounded-full bg-gradient-to-r from-cyan-500 via-violet-500 to-fuchsia-500"
+                          style={{ width: `${Math.min(100, capitalShare * 100)}%` }}
+                        />
+                      </div>
+                      <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                        <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3">
+                          <div className="text-slate-500">Expected Return</div>
+                          <div className="mt-1 font-medium text-slate-100">{formatSignedPercent(position.expectedReturn)}</div>
+                        </div>
+                        <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3">
+                          <div className="text-slate-500">Risk Proxy</div>
+                          <div className="mt-1 font-medium text-slate-100">{formatPercent(position.risk)}</div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="rounded-2xl border border-dashed border-slate-800 bg-slate-950/50 p-6 text-sm text-slate-500">
+                  No allocation is available yet. Increase signal quality or relax the portfolio constraints.
+                </div>
+              )}
+
+              <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+                <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Portfolio Risk</div>
+                <div className="mt-2 text-2xl font-semibold text-amber-300">
+                  {portfolio ? formatPercent(portfolio.portfolioRisk) : "--"}
+                </div>
+                <p className="mt-2 text-xs text-slate-500">
+                  This simplified risk proxy rises as the optimizer admits lower-confidence positions.
+                </p>
               </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {portfolioQuery.error && (
+          <Card className="border border-rose-900/60 bg-rose-950/30 backdrop-blur-xl">
+            <CardHeader>
+              <CardTitle className="text-rose-300">Portfolio Optimization Unavailable</CardTitle>
+              <CardDescription className="text-rose-200/80">
+                The optimizer could not produce an allocation with the current request.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-rose-100/90">{portfolioQuery.error.message}</p>
             </CardContent>
           </Card>
         )}

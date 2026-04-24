@@ -6,6 +6,7 @@
 import { KalshiMarket, calculateExpectedValue, detectValueOpportunity, detectMomentumOpportunity, detectContrarianOpportunity } from "./kalshiMarketData";
 import { MarketFeed, calculatePriceMomentum, calculateVolumeMomentum, detectVolatility } from "./kalshiMarketFeed";
 import { detectMispricingArbitrage } from "./kalshiArbitrage";
+import { applySentimentBoost, calculateCompositeSentiment, fetchGdeltTopicSignal, fetchLiveNewsSummary } from "./kalshiSentiment";
 import * as db from "../db";
 
 export type SignalType = "value_play" | "momentum" | "contrarian" | "arbitrage" | "sentiment";
@@ -24,6 +25,102 @@ export interface KalshiSignal {
     volumeMomentum?: number;
     volatility?: number;
     fundamentalProbability?: number;
+    sentimentScore?: number;
+    sentimentConfidence?: number;
+    sentimentContribution?: number;
+    sentimentTopic?: string;
+    liquidityScore?: number;
+    spreadProxy?: number;
+    totalVolume?: number;
+    marketDataQuality?: number;
+  };
+}
+
+export interface MarketSentimentContext {
+  topic?: string;
+  newsSentiment?: number;
+  socialSentiment?: number;
+  marketSentiment?: number;
+}
+
+function clampProbability(value: number): number {
+  if (!Number.isFinite(value)) return 0.5;
+  return Math.max(0.01, Math.min(0.99, value));
+}
+
+function getLiquidityProfile(feed?: MarketFeed) {
+  if (!feed?.currentSnapshot) {
+    return {
+      liquidityScore: 0.5,
+      spreadProxy: 0,
+      totalVolume: 0,
+      marketDataQuality: feed?.dataQualityScore ?? 0.5,
+      isTradable: true,
+    };
+  }
+
+  const snapshot = feed.currentSnapshot;
+  const totalVolume = Math.max(0, snapshot.yesVolume + snapshot.noVolume);
+  const spreadProxy = Math.abs(snapshot.yesPrice + snapshot.noPrice - 1);
+  const volumeScore = Math.max(0, Math.min(1, totalVolume / 20000));
+  const spreadScore = Math.max(0, 1 - Math.min(1, spreadProxy / 0.12));
+  const marketDataQuality = Math.max(0, Math.min(1, feed.dataQualityScore ?? 1));
+  const liquidityScore = Math.max(0, Math.min(1, volumeScore * 0.5 + spreadScore * 0.35 + marketDataQuality * 0.15));
+
+  return {
+    liquidityScore,
+    spreadProxy,
+    totalVolume,
+    marketDataQuality,
+    isTradable: totalVolume >= 250 && spreadProxy <= 0.12 && marketDataQuality >= 0.35,
+  };
+}
+
+function attachLiquidityMetadata(signal: KalshiSignal, feed?: MarketFeed): KalshiSignal {
+  const profile = getLiquidityProfile(feed);
+  const confidencePenalty = profile.isTradable ? 0 : Math.max(0.08, (0.45 - profile.liquidityScore) * 0.5);
+
+  return {
+    ...signal,
+    confidence: Math.max(0.05, Math.min(0.99, signal.confidence - confidencePenalty)),
+    reasoning: profile.isTradable
+      ? signal.reasoning
+      : `${signal.reasoning} | Liquidity caution: thin depth or wide spread reduces execution quality`,
+    metadata: {
+      ...signal.metadata,
+      liquidityScore: profile.liquidityScore,
+      spreadProxy: profile.spreadProxy,
+      totalVolume: profile.totalVolume,
+      marketDataQuality: profile.marketDataQuality,
+    },
+  };
+}
+
+function applySentimentOverlay(
+  signal: KalshiSignal,
+  sentimentScore: number,
+  sentimentConfidence: number,
+  topic?: string
+): KalshiSignal {
+  const aligned = (signal.side === "yes" && sentimentScore >= 0) || (signal.side === "no" && sentimentScore <= 0);
+  const signedSentiment = aligned ? Math.abs(sentimentScore) : -Math.abs(sentimentScore);
+  const confidence = applySentimentBoost(
+    signal.confidence,
+    signedSentiment * Math.max(0.25, sentimentConfidence),
+    0.18
+  );
+
+  return {
+    ...signal,
+    confidence,
+    reasoning: `${signal.reasoning} | Sentiment overlay ${aligned ? "supports" : "pushes against"} this trade (${sentimentScore >= 0 ? "bullish" : "bearish"} ${Math.abs(sentimentScore).toFixed(2)}, confidence ${(sentimentConfidence * 100).toFixed(0)}%)`,
+    metadata: {
+      ...signal.metadata,
+      sentimentScore,
+      sentimentConfidence,
+      sentimentContribution: signedSentiment * Math.max(0.25, sentimentConfidence) * 0.18,
+      sentimentTopic: topic,
+    },
   };
 }
 
@@ -34,9 +131,31 @@ export interface KalshiSignal {
 export async function generateSignalsForMarket(
   market: KalshiMarket,
   feed?: MarketFeed,
-  fundamentalProbability?: number
+  fundamentalProbability?: number,
+  sentimentContext?: MarketSentimentContext
 ): Promise<KalshiSignal[]> {
   const signals: KalshiSignal[] = [];
+
+  let sentimentOverlay: ReturnType<typeof calculateCompositeSentiment> | null = null;
+  if (sentimentContext?.topic) {
+    const [externalSignal, liveNews] = await Promise.all([
+      fetchGdeltTopicSignal(sentimentContext.topic),
+      fetchLiveNewsSummary(sentimentContext.topic),
+    ]);
+    const blendedNewsSentiment = liveNews
+      ? Math.max(-1, Math.min(1, (sentimentContext.newsSentiment ?? 0) * 0.4 + liveNews.derivedSentiment * 0.6))
+      : (sentimentContext.newsSentiment ?? 0);
+
+    sentimentOverlay = calculateCompositeSentiment({
+      newsSentiment: blendedNewsSentiment,
+      socialSentiment: sentimentContext.socialSentiment ?? 0,
+      marketSentiment: sentimentContext.marketSentiment ?? 0,
+      externalSentiment: externalSignal?.normalizedSentiment ?? 0,
+      externalConfidence: externalSignal?.confidence ?? 0,
+      externalSignal,
+      liveNews,
+    });
+  }
   
   // Validate inputs
   if (!market || !market.id || isNaN(market.impliedProbability) || !isFinite(market.impliedProbability)) {
@@ -106,6 +225,49 @@ export async function generateSignalsForMarket(
     }
   }
 
+  if (
+    sentimentOverlay &&
+    sentimentOverlay.confidence >= 0.15 &&
+    Math.abs(sentimentOverlay.overallSentiment) >= 0.2
+  ) {
+    const side: "yes" | "no" = sentimentOverlay.overallSentiment >= 0 ? "yes" : "no";
+    const marketPrice = side === "yes" ? market.yesPrice : market.noPrice;
+    const sentimentProbability = clampProbability(
+      market.impliedProbability + sentimentOverlay.overallSentiment * 0.18
+    );
+    const expectedValue = calculateExpectedValue(
+      side,
+      marketPrice,
+      1,
+      1,
+      sentimentProbability
+    );
+
+    if (Number.isFinite(expectedValue)) {
+      signals.push({
+        marketId: market.id,
+        signalType: "sentiment",
+        side,
+        confidence: Math.max(
+          0.1,
+          Math.min(
+            0.9,
+            Math.abs(sentimentOverlay.overallSentiment) * 0.55 + sentimentOverlay.confidence * 0.45
+          )
+        ),
+        reasoning: `Composite sentiment favors ${side.toUpperCase()} with ${Math.abs(sentimentOverlay.overallSentiment).toFixed(2)} directional strength on topic ${sentimentContext?.topic ?? market.title}`,
+        impliedProbability: market.impliedProbability,
+        marketPrice,
+        expectedValue,
+        metadata: {
+          sentimentScore: sentimentOverlay.overallSentiment,
+          sentimentConfidence: sentimentOverlay.confidence,
+          sentimentTopic: sentimentContext?.topic ?? market.title,
+        },
+      });
+    }
+  }
+
   // Contrarian: detect extreme positions ripe for reversal
   const contrarianOpportunity = detectContrarianOpportunity(market, 0.1);
   if (contrarianOpportunity) {
@@ -136,7 +298,18 @@ export async function generateSignalsForMarket(
   }
 
 
-  return signals;
+  const sentimentAdjustedSignals = sentimentOverlay
+    ? signals.map((signal) =>
+        applySentimentOverlay(
+          signal,
+          sentimentOverlay!.overallSentiment,
+          sentimentOverlay!.confidence,
+          sentimentContext?.topic ?? market.title
+        )
+      )
+    : signals;
+
+  return sentimentAdjustedSignals.map((signal) => attachLiquidityMetadata(signal, feed));
 }
 
 /**
@@ -145,14 +318,16 @@ export async function generateSignalsForMarket(
 export async function generateSignalsForMarkets(
   markets: KalshiMarket[],
   feeds?: Map<string, MarketFeed>,
-  fundamentalProbabilities?: Map<string, number>
+  fundamentalProbabilities?: Map<string, number>,
+  sentimentContexts?: Map<string, MarketSentimentContext>
 ): Promise<KalshiSignal[]> {
   const allSignals: KalshiSignal[] = [];
 
   for (const market of markets) {
     const feed = feeds?.get(market.id);
     const fundamentalProb = fundamentalProbabilities?.get(market.id);
-    const signals = await generateSignalsForMarket(market, feed, fundamentalProb);
+    const sentimentContext = sentimentContexts?.get(market.id);
+    const signals = await generateSignalsForMarket(market, feed, fundamentalProb, sentimentContext);
     allSignals.push(...signals);
   }
 
@@ -164,6 +339,22 @@ export async function generateSignalsForMarkets(
  */
 export function filterSignalsByConfidence(signals: KalshiSignal[], minConfidence: number = 0.5): KalshiSignal[] {
   return signals.filter((s) => s.confidence >= minConfidence);
+}
+
+export function filterSignalsByMarketConditions(
+  signals: KalshiSignal[],
+  feeds?: Map<string, MarketFeed>,
+  minLiquidityScore: number = 0.35
+): KalshiSignal[] {
+  return signals.filter((signal) => {
+    const metadataLiquidity = signal.metadata?.liquidityScore;
+    if (typeof metadataLiquidity === "number") {
+      return metadataLiquidity >= minLiquidityScore;
+    }
+
+    const feed = feeds?.get(signal.marketId);
+    return getLiquidityProfile(feed).liquidityScore >= minLiquidityScore;
+  });
 }
 
 /**

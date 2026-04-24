@@ -25,7 +25,7 @@ export interface KalshiOrderBook {
   no_volume: number;
 }
 
-const KALSHI_API_BASE = "https://api.kalshi.com/trade-api/v2";
+const KALSHI_API_BASE = "https://api.elections.kalshi.com/trade-api/v2";
 
 /**
  * Fetch all Kalshi markets

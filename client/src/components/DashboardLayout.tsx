@@ -37,6 +37,7 @@ const menuItems = [
   { icon: Brain, label: "Sentiment", path: "/sentiment" },
   { icon: Briefcase, label: "Portfolio", path: "/portfolio" },
   { icon: LineChart, label: "Backtest", path: "/backtest" },
+  { icon: BarChart3, label: "Analytics", path: "/analytics" },
   { icon: BookOpen, label: "Training", path: "/training" },
   { icon: Shield, label: "Risk Controls", path: "/risk-controls" },
   { icon: FileText, label: "Audit Log", path: "/audit" },

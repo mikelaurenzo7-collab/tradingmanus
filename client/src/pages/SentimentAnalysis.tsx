@@ -35,13 +35,17 @@ export default function SentimentAnalysis() {
   const overallSentiment = composite?.overallSentiment ?? 0;
   const confidence = composite?.confidence ?? 0;
   const externalSignal = composite?.externalSignal;
+  const liveNews = composite?.liveNews;
+  const liveSocial = composite?.liveSocial;
 
   const sourceCards = useMemo(
     () => [
       {
         key: "news",
         label: "News",
-        description: "Manual directional read from headlines and reporting",
+        description: liveNews
+          ? `Blended manual conviction with ${liveNews.articleCount} live GNews headline${liveNews.articleCount === 1 ? "" : "s"}`
+          : "Manual directional read from headlines and reporting",
         value: composite?.inputs.news ?? newsSentiment,
         weight: composite?.weights.news ?? 0.3,
         contribution: composite?.contributions.news ?? 0,
@@ -50,7 +54,9 @@ export default function SentimentAnalysis() {
       {
         key: "social",
         label: "Social",
-        description: "Crowd positioning and social chatter",
+        description: liveSocial
+          ? `Blended manual crowd read with ${liveSocial.postCount} live Reddit post${liveSocial.postCount === 1 ? "" : "s"} from r/${liveSocial.subreddit}`
+          : "Crowd positioning and social chatter",
         value: composite?.inputs.social ?? socialSentiment,
         weight: composite?.weights.social ?? 0.2,
         contribution: composite?.contributions.social ?? 0,
@@ -124,7 +130,7 @@ export default function SentimentAnalysis() {
               </Button>
             </div>
             <p className="mt-2 text-xs text-slate-500">
-              The external source uses recent Wikimedia pageviews momentum to add a live attention signal to the score.
+              The score now blends live GNews headlines, Reddit crowd pulse, and Wikimedia attention momentum so the stack reacts to event flow, crowd chatter, and public attention.
             </p>
           </div>
         </div>
@@ -169,10 +175,18 @@ export default function SentimentAnalysis() {
                 <div className="rounded-3xl border border-slate-800 bg-slate-950/70 p-6">
                   <div className="flex items-center gap-3 text-slate-300">
                     <Activity className="h-5 w-5 text-emerald-400" />
-                    Avg Daily Views
+                    Live Headline Count
                   </div>
-                  <div className="mt-3 text-4xl font-semibold text-emerald-300">{externalSignal?.articleCount ?? 0}</div>
-                  <p className="mt-2 text-sm text-slate-500">Recent average Wikipedia pageviews supporting the external attention signal.</p>
+                  <div className="mt-3 text-4xl font-semibold text-emerald-300">{liveNews?.articleCount ?? 0}</div>
+                  <p className="mt-2 text-sm text-slate-500">Recent GNews headlines blended into the news component for the selected topic.</p>
+                </div>
+                <div className="rounded-3xl border border-slate-800 bg-slate-950/70 p-6">
+                  <div className="flex items-center gap-3 text-slate-300">
+                    <Activity className="h-5 w-5 text-fuchsia-400" />
+                    Live Social Mentions
+                  </div>
+                  <div className="mt-3 text-4xl font-semibold text-fuchsia-300">{liveSocial?.mentions ?? 0}</div>
+                  <p className="mt-2 text-sm text-slate-500">Topic-matching Reddit posts currently influencing the crowd-pulse component.</p>
                 </div>
               </div>
             </div>
@@ -229,8 +243,8 @@ export default function SentimentAnalysis() {
 
           <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
             <CardHeader>
-              <CardTitle>External Attention Signal</CardTitle>
-              <CardDescription>Independent topic-attention feed from Wikimedia pageviews.</CardDescription>
+              <CardTitle>External Signal Stack</CardTitle>
+              <CardDescription>Independent attention momentum plus live news and crowd-pulse signals for the selected topic.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
@@ -238,10 +252,21 @@ export default function SentimentAnalysis() {
                 <div className="mt-2 text-lg font-medium text-slate-100">{topic}</div>
               </div>
               <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
-                  <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Attention Momentum</div>
+                <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Live News Sentiment</div>
+                <div className="mt-2 text-3xl font-semibold text-blue-300">{formatSigned(liveNews?.derivedSentiment ?? 0)}</div>
+                <p className="mt-2 text-xs text-slate-500">Headline-derived tone from the latest GNews articles for this topic.</p>
+              </div>
+              <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+                <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Reddit Crowd Pulse</div>
+                <div className="mt-2 text-3xl font-semibold text-fuchsia-300">{formatSigned(composite?.inputs.social ?? socialSentiment)}</div>
+                <p className="mt-2 text-xs text-slate-500">Blended from manual crowd bias and live Reddit discussion in the most relevant public subreddit.</p>
+              </div>
+              <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+                <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Attention Momentum</div>
                 <div className="mt-2 text-3xl font-semibold text-emerald-300">{formatSigned(composite?.inputs.external ?? 0)}</div>
                 <p className="mt-2 text-xs text-slate-500">Derived from the change in recent Wikipedia attention for the selected topic.</p>
               </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
                   <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Momentum</div>
@@ -250,6 +275,53 @@ export default function SentimentAnalysis() {
                 <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
                   <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Signal Confidence</div>
                   <div className="mt-2 text-xl font-semibold text-slate-100">{((externalSignal?.confidence ?? 0) * 100).toFixed(0)}%</div>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+                <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Latest Headlines</div>
+                <div className="mt-3 space-y-3">
+                  {liveNews?.headlines?.length ? (
+                    liveNews.headlines.slice(0, 3).map((headline) => (
+                      <a
+                        key={`${headline.url}-${headline.title}`}
+                        href={headline.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="block rounded-xl border border-slate-800 bg-slate-900/60 p-3 transition hover:border-cyan-500/50 hover:bg-slate-900"
+                      >
+                        <div className="text-sm font-medium text-slate-100">{headline.title}</div>
+                        <div className="mt-1 text-xs text-slate-500">{headline.source} · {new Date(headline.publishedAt).toLocaleString()}</div>
+                      </a>
+                    ))
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-slate-800 bg-slate-900/40 p-3 text-sm text-slate-500">
+                      No live headlines available for this topic yet.
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+                <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Reddit Crowd Posts</div>
+                <div className="mt-3 space-y-3">
+                  {liveSocial?.posts?.length ? (
+                    liveSocial.posts.slice(0, 3).map((post) => (
+                      <a
+                        key={`${post.url}-${post.title}`}
+                        href={post.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="block rounded-xl border border-slate-800 bg-slate-900/60 p-3 transition hover:border-fuchsia-500/50 hover:bg-slate-900"
+                      >
+                        <div className="text-sm font-medium text-slate-100">{post.title}</div>
+                        <div className="mt-1 text-xs text-slate-500">r/{post.subreddit} · score {post.score} · comments {post.commentCount}</div>
+                      </a>
+                    ))
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-slate-800 bg-slate-900/40 p-3 text-sm text-slate-500">
+                      No live Reddit crowd posts matched this topic yet.
+                    </div>
+                  )}
                 </div>
               </div>
             </CardContent>
@@ -292,7 +364,7 @@ export default function SentimentAnalysis() {
           <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
             <CardContent className="flex items-center justify-center gap-3 py-10 text-slate-400">
               <Zap className="h-5 w-5 animate-spin text-cyan-400" />
-              Refreshing composite sentiment and external attention signal…
+              Refreshing composite sentiment, live headlines, crowd pulse, and external attention…
             </CardContent>
           </Card>
         )}
@@ -302,7 +374,7 @@ export default function SentimentAnalysis() {
             <CardHeader>
               <CardTitle className="text-rose-300">External Signal Unavailable</CardTitle>
               <CardDescription className="text-rose-200/80">
-                The local sliders still work, but the external topic source could not be refreshed right now.
+                The local sliders still work, but the live headline, crowd-pulse, or attention sources could not be refreshed right now.
               </CardDescription>
             </CardHeader>
             <CardContent>

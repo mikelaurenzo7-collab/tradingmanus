@@ -51,7 +51,7 @@
 - [x] Add signal filtering (only trade high-confidence signals)
 - [x] Wire into tRPC: `kalshi.generateSignals`, `kalshi.getSignalHistory`
 - [x] Implement arbitrage signal detection
-- [ ] Add sentiment analysis (defer or integrate external API)
+- [x] Add sentiment analysis (defer or integrate external API)
 - [x] Wire signal generation into frontend UI with loading/error states
 
 ## Visual Redesign (Complete)
@@ -187,11 +187,12 @@
 ## Advanced Features (Phases 1-9)
 
 ### Phase 1: Sentiment Analysis
-- [ ] Implement sentiment analysis framework
-- [ ] Integrate news API (NewsAPI or similar)
-- [ ] Add social media sentiment tracking
-- [ ] Wire sentiment into signal generation
-- [ ] Add sentiment dashboard display
+- [x] Implement sentiment analysis framework
+- [x] Expand the GNews-driven live news layer for event-specific headline coverage
+- [x] Add social media sentiment tracking
+- [x] Wire sentiment into signal generation
+- [x] Unify the live trading signal pipeline with the GNews plus Wikimedia sentiment flow
+- [x] Add sentiment dashboard display
 
 ### Phase 2: Order-Book & Liquidity
 - [ ] Real-time order-book tracking
@@ -229,18 +230,27 @@
 - [ ] Performance benchmarking
 
 ### Phase 7: Frontend Integration
-- [ ] Real-time sentiment dashboard
+- [x] Real-time sentiment dashboard
 - [ ] Order-book visualization
 - [ ] Portfolio optimization UI
 - [ ] Performance attribution charts
+- [ ] Add router/UI tests and browser verification for Analytics covering loading, error, empty, and success states
+- [x] Implement true liquidity-adjusted filtering in the signal pipeline instead of Analytics-only tradability scoring
+- [ ] Narrow or complete spread optimization beyond spread monitoring proxies
+- [ ] Validate Portfolio Optimization and Backtesting pages end-to-end for protected loading/error/auth states
+- [ ] Decide whether to connect backtesting to persisted/history-backed inputs or explicitly scope it as scenario-based simulation
 - [ ] Risk monitoring dashboard
 
 ### Phase 8: Testing & Verification
 - [ ] Comprehensive test coverage
+- [x] Add/extend tests for generate-signals router flow to prove the GNews plus Wikimedia sentiment overlay reaches the live tRPC trading pipeline
 - [ ] Integration tests
 - [ ] Performance benchmarks
 - [ ] Edge case handling
 - [ ] Production readiness checks
+- [ ] Verify end-to-end that the sentiment dashboard handles loading, success, error, and empty states for live Wikimedia-backed updates
+- [x] Add automated tests for the SentimentAnalysis page or router flow covering live refresh behavior
+- [ ] Rename or narrow the sentiment-framework todo only after real news and social integrations are added
 
 ### Phase 9: Deployment
 - [ ] Final checkpoint
@@ -311,3 +321,18 @@ This iteration prioritizes prediction quality by introducing a more independent 
 - [x] Reproduce the authenticated request path after a clean restart and capture fresh logs proving no malformed `on duplicate key update` SQL is emitted
 - [x] Trace and remove any remaining stale runtime auth upsert path; confirm the deployed server code matches the edited `server/db.ts` logic
 - [x] Add an auth-path-focused Vitest or integration test covering authenticated requests that trigger user sync without name/email fields
+- [x] Keep the live news layer unified around the existing GNews-based ingestion pipeline
+- [x] Remove the in-progress NewsAPI direction and keep the live news layer unified around GNews plus Wikimedia only
+- [ ] Finish the remaining Advanced Features work with batched changes and targeted validation to minimize unnecessary reruns
+- [ ] Wire the static Backtesting page to the existing advanced backtest procedures and replace placeholder metrics with live computed results
+- [ ] Expand the Portfolio Optimization page from a Kelly-only calculator into a full optimizer using correlation, diversification, and position-sizing outputs already available on the backend
+- [ ] Extend the Risk Controls and Performance dashboards to surface advanced risk alerts, attribution, and learning metrics already supported by backend helpers
+- [ ] Add a dedicated order-book and liquidity analytics surface using the existing market-feed foundation, including spread, depth proxies, and liquidity-adjusted signal filtering
+- [ ] Finish the remaining Advanced Features implementation with batched edits and only targeted validation until the final consolidated pass
+- [ ] Keep the remaining implementation strictly focused on Kalshi workflows and remove or defer anything not needed for live Kalshi account testing
+- [ ] Get the app to a state where the user can safely connect and test with their own Kalshi account end to end
+- [x] Route live order, cancel, status, close-position, and kill-switch actions through the connected user’s saved Kalshi credentials
+- [x] Add router-level regression coverage for Kalshi account connection and user-id-based live execution routing
+- [ ] Verify the live Kalshi connection flow, account-linked dashboards, and safety controls before the next handoff
+- [x] Replace the stale `api.kalshi.com` host with the current Kalshi production or demo API base so live market data and account testing work reliably
+- [ ] Save a fresh checkpoint with the latest Kalshi-focused changes so the user can republish the live app with the newest work

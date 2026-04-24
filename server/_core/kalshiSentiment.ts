@@ -3,6 +3,8 @@
  * Integrates news, social media, market action, and external topic attention.
  */
 
+import { callDataApi } from "./dataApi";
+
 export interface SentimentData {
   marketId: string;
   sentiment: number;
@@ -25,6 +27,35 @@ export interface NewsArticle {
   publishedAt: Date;
   sentiment: number;
   relevance: number;
+}
+
+export interface LiveNewsSummary {
+  query: string;
+  articleCount: number;
+  headlines: NewsArticle[];
+  derivedSentiment: number;
+  fetchedAt: Date;
+}
+
+export interface SocialPost {
+  title: string;
+  url: string;
+  subreddit: string;
+  score: number;
+  commentCount: number;
+  createdAt: Date;
+  sentiment: number;
+  relevance: number;
+}
+
+export interface LiveSocialSummary {
+  query: string;
+  subreddit: string;
+  postCount: number;
+  mentions: number;
+  posts: SocialPost[];
+  derivedSentiment: number;
+  fetchedAt: Date;
 }
 
 export interface SentimentWeights {
@@ -61,6 +92,8 @@ export interface CompositeSentimentResult {
     external: number;
   };
   externalSignal: ExternalTopicSignal | null;
+  liveNews: LiveNewsSummary | null;
+  liveSocial: LiveSocialSummary | null;
 }
 
 const DEFAULT_SENTIMENT_WEIGHTS: SentimentWeights = {
@@ -69,6 +102,38 @@ const DEFAULT_SENTIMENT_WEIGHTS: SentimentWeights = {
   market: 0.2,
   external: 0.3,
 };
+
+const POSITIVE_KEYWORDS = [
+  "bullish",
+  "surge",
+  "gain",
+  "breakthrough",
+  "outperform",
+  "rally",
+  "strong",
+  "record",
+  "profit",
+  "success",
+  "beat",
+  "upside",
+  "optimism",
+];
+
+const NEGATIVE_KEYWORDS = [
+  "bearish",
+  "crash",
+  "loss",
+  "decline",
+  "underperform",
+  "weak",
+  "fail",
+  "risk",
+  "concern",
+  "warning",
+  "miss",
+  "downside",
+  "fear",
+];
 
 function clampSentiment(value: number) {
   if (!Number.isFinite(value)) return 0;
@@ -116,6 +181,43 @@ function formatDateForWikimedia(date: Date) {
   return `${year}${month}${day}`;
 }
 
+function scoreKeywordSentiment(text: string) {
+  const value = text.toLowerCase();
+  let sentiment = 0;
+
+  POSITIVE_KEYWORDS.forEach((keyword) => {
+    if (value.includes(keyword)) sentiment += 0.1;
+  });
+
+  NEGATIVE_KEYWORDS.forEach((keyword) => {
+    if (value.includes(keyword)) sentiment -= 0.1;
+  });
+
+  return clampSentiment(sentiment);
+}
+
+function pickSocialSubreddit(topic: string) {
+  const normalized = topic.toLowerCase();
+
+  if (/(election|president|senate|house|poll|vote|campaign|trump|biden)/.test(normalized)) {
+    return "politics";
+  }
+
+  if (/(fed|inflation|cpi|jobs|gdp|rates|recession|economy|tariff)/.test(normalized)) {
+    return "economics";
+  }
+
+  if (/(bitcoin|crypto|ethereum|solana|blockchain)/.test(normalized)) {
+    return "CryptoCurrency";
+  }
+
+  if (/(tesla|apple|nvidia|earnings|stock|market)/.test(normalized)) {
+    return "stocks";
+  }
+
+  return "news";
+}
+
 /**
  * Calculate sentiment score from three local sources.
  */
@@ -143,6 +245,8 @@ export function calculateCompositeSentiment(params: {
   externalConfidence?: number;
   weights?: Partial<SentimentWeights>;
   externalSignal?: ExternalTopicSignal | null;
+  liveNews?: LiveNewsSummary | null;
+  liveSocial?: LiveSocialSummary | null;
 }): CompositeSentimentResult {
   const weights = normalizeWeights({
     ...DEFAULT_SENTIMENT_WEIGHTS,
@@ -183,6 +287,8 @@ export function calculateCompositeSentiment(params: {
     weights,
     contributions,
     externalSignal: params.externalSignal ?? null,
+    liveNews: params.liveNews ?? null,
+    liveSocial: params.liveSocial ?? null,
   };
 }
 
@@ -270,51 +376,169 @@ export async function fetchGdeltTopicSignal(topic: string): Promise<ExternalTopi
 /**
  * Extract sentiment from news articles.
  */
+export async function fetchLiveNewsSummary(topic: string): Promise<LiveNewsSummary | null> {
+  const apiKey = process.env.GNEWS_API_KEY;
+  const cleanTopic = topic.trim();
+
+  if (!apiKey || !cleanTopic) {
+    return null;
+  }
+
+  const url = `https://gnews.io/api/v4/search?q=${encodeURIComponent(cleanTopic)}&lang=en&max=5&apikey=${apiKey}`;
+
+  try {
+    const response = await fetch(url, {
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "nexus-omega-dashboard/1.0 live news sentiment",
+      },
+    });
+
+    if (!response.ok) {
+      return {
+        query: cleanTopic,
+        articleCount: 0,
+        headlines: [],
+        derivedSentiment: 0,
+        fetchedAt: new Date(),
+      };
+    }
+
+    const payload = (await response.json()) as {
+      articles?: Array<{
+        title?: string;
+        url?: string;
+        publishedAt?: string;
+        description?: string;
+        source?: { name?: string };
+      }>;
+    };
+
+    const headlines: NewsArticle[] = Array.isArray(payload.articles)
+      ? payload.articles
+          .map((article) => ({
+            title: article.title?.trim() || "Untitled headline",
+            url: article.url || "",
+            source: article.source?.name?.trim() || "GNews",
+            publishedAt: article.publishedAt ? new Date(article.publishedAt) : new Date(),
+            sentiment: 0,
+            relevance: 1,
+          }))
+          .filter((article) => article.title.length > 0)
+      : [];
+
+    return {
+      query: cleanTopic,
+      articleCount: headlines.length,
+      headlines,
+      derivedSentiment: extractNewsSentiment(headlines),
+      fetchedAt: new Date(),
+    };
+  } catch (error) {
+    console.error("[Sentiment] GNews fetch failed:", error);
+    return null;
+  }
+}
+
 export function extractNewsSentiment(articles: NewsArticle[]): number {
   if (articles.length === 0) return 0;
 
-  const positiveKeywords = [
-    "bullish",
-    "surge",
-    "gain",
-    "breakthrough",
-    "outperform",
-    "rally",
-    "strong",
-    "record",
-    "profit",
-    "success",
-  ];
-  const negativeKeywords = [
-    "bearish",
-    "crash",
-    "loss",
-    "decline",
-    "underperform",
-    "weak",
-    "fail",
-    "risk",
-    "concern",
-    "warning",
-  ];
-
-  let totalSentiment = 0;
-  articles.forEach((article) => {
-    const titleLower = article.title.toLowerCase();
-    let sentiment = 0;
-
-    positiveKeywords.forEach((keyword) => {
-      if (titleLower.includes(keyword)) sentiment += 0.1;
-    });
-
-    negativeKeywords.forEach((keyword) => {
-      if (titleLower.includes(keyword)) sentiment -= 0.1;
-    });
-
-    totalSentiment += clampSentiment(sentiment);
-  });
+  const totalSentiment = articles.reduce(
+    (sum, article) => sum + scoreKeywordSentiment(article.title),
+    0
+  );
 
   return totalSentiment / articles.length;
+}
+
+export function extractSocialSentiment(posts: SocialPost[]): number {
+  if (posts.length === 0) return 0;
+
+  let weightedSentiment = 0;
+  let totalWeight = 0;
+
+  for (const post of posts) {
+    const engagementWeight = 0.5 + clampUnit(Math.log10(post.score + post.commentCount + 1) / 4);
+    weightedSentiment += scoreKeywordSentiment(post.title) * engagementWeight;
+    totalWeight += engagementWeight;
+  }
+
+  return totalWeight > 0 ? weightedSentiment / totalWeight : 0;
+}
+
+export async function fetchLiveSocialSummary(topic: string): Promise<LiveSocialSummary | null> {
+  const cleanTopic = topic.trim();
+  if (!cleanTopic) {
+    return null;
+  }
+
+  const subreddit = pickSocialSubreddit(cleanTopic);
+  const topicTerms = cleanTopic
+    .toLowerCase()
+    .split(/\s+/)
+    .map((term) => term.replace(/[^a-z0-9]/g, ""))
+    .filter((term) => term.length >= 3)
+    .slice(0, 5);
+
+  try {
+    const payload = (await callDataApi("Reddit/AccessAPI", {
+      query: {
+        subreddit,
+        limit: 10,
+      },
+    })) as {
+      posts?: Array<{
+        data?: {
+          title?: string;
+          url?: string;
+          permalink?: string;
+          subreddit?: string;
+          score?: number;
+          num_comments?: number;
+          created_utc?: number;
+        };
+      }>;
+    };
+
+    const posts = Array.isArray(payload.posts)
+      ? payload.posts
+          .map((postWrapper) => {
+            const post = postWrapper?.data;
+            const title = post?.title?.trim() || "Untitled post";
+            const normalizedTitle = title.toLowerCase();
+            const matchedTerms = topicTerms.filter((term) => normalizedTitle.includes(term));
+            const relevance = topicTerms.length > 0 ? matchedTerms.length / topicTerms.length : 0;
+
+            return {
+              title,
+              url: post?.url || (post?.permalink ? `https://www.reddit.com${post.permalink}` : "https://www.reddit.com"),
+              subreddit: post?.subreddit?.trim() || subreddit,
+              score: Math.max(0, Number(post?.score ?? 0)),
+              commentCount: Math.max(0, Number(post?.num_comments ?? 0)),
+              createdAt: post?.created_utc ? new Date(Number(post.created_utc) * 1000) : new Date(),
+              sentiment: scoreKeywordSentiment(title),
+              relevance,
+            } satisfies SocialPost;
+          })
+          .filter((post) => post.title.length > 0)
+      : [];
+
+    const relevantPosts = posts.filter((post) => post.relevance > 0);
+    const selectedPosts = relevantPosts.length > 0 ? relevantPosts : posts.slice(0, 5);
+
+    return {
+      query: cleanTopic,
+      subreddit,
+      postCount: selectedPosts.length,
+      mentions: relevantPosts.length,
+      posts: selectedPosts,
+      derivedSentiment: extractSocialSentiment(selectedPosts),
+      fetchedAt: new Date(),
+    };
+  } catch (error) {
+    console.error("[Sentiment] Reddit social fetch failed:", error);
+    return null;
+  }
 }
 
 /**

@@ -16,6 +16,7 @@ import Performance from "./pages/Performance";
 import SentimentAnalysis from "./pages/SentimentAnalysis";
 import PortfolioOptimization from "./pages/PortfolioOptimization";
 import Backtesting from "./pages/Backtesting";
+import Analytics from "./pages/Analytics";
 
 function Router() {
   return (
@@ -31,6 +32,7 @@ function Router() {
       <Route path={"/sentiment"} component={() => <DashboardLayout><SentimentAnalysis /></DashboardLayout>} />
       <Route path={"/portfolio"} component={() => <DashboardLayout><PortfolioOptimization /></DashboardLayout>} />
       <Route path={"/backtest"} component={() => <DashboardLayout><Backtesting /></DashboardLayout>} />
+      <Route path={"/analytics"} component={() => <DashboardLayout><Analytics /></DashboardLayout>} />
       <Route path={"/404"} component={NotFound} />
       {/* Final fallback route */}
       <Route component={NotFound} />

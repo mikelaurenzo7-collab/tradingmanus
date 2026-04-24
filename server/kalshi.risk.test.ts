@@ -143,6 +143,19 @@ describe("kalshi risk controls", () => {
     expect(mocks.placeKalshiOrder).not.toHaveBeenCalled();
   });
 
+  it("routes live order placement through the authenticated user id", async () => {
+    const caller = appRouter.createCaller(createProtectedContext());
+
+    await caller.kalshi.placeOrder({
+      marketId: "GDP-2026",
+      side: "yes",
+      quantity: 2,
+      limitPrice: 1,
+    });
+
+    expect(mocks.placeKalshiOrder).toHaveBeenCalledWith(1, "GDP-2026", "yes", 2, 1);
+  });
+
   it("returns detailed kill-switch outcomes and logs an audit event", async () => {
     mocks.activateKalshiKillSwitch.mockResolvedValue({
       success: false,
@@ -160,6 +173,7 @@ describe("kalshi risk controls", () => {
     const result = await caller.kalshi.killSwitch();
 
     expect(mocks.activateKalshiKillSwitch).toHaveBeenCalledTimes(1);
+    expect(mocks.activateKalshiKillSwitch).toHaveBeenCalledWith(1);
     expect(mocks.logAuditEvent).toHaveBeenCalledWith(
       "kalshi_kill_switch_activated",
       JSON.stringify({

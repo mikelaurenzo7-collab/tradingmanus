@@ -39,14 +39,27 @@ export const advancedRouter = router({
         })
       )
       .query(async ({ input }: { input: { newsSentiment: number; socialSentiment: number; marketSentiment: number; topic?: string } }) => {
-        const externalSignal = input.topic ? await sentiment.fetchGdeltTopicSignal(input.topic) : null;
+        const [externalSignal, liveNews, liveSocial] = await Promise.all([
+          input.topic ? sentiment.fetchGdeltTopicSignal(input.topic) : Promise.resolve(null),
+          input.topic ? sentiment.fetchLiveNewsSummary(input.topic) : Promise.resolve(null),
+          input.topic ? sentiment.fetchLiveSocialSummary(input.topic) : Promise.resolve(null),
+        ]);
+        const blendedNewsSentiment = liveNews
+          ? Math.max(-1, Math.min(1, input.newsSentiment * 0.4 + liveNews.derivedSentiment * 0.6))
+          : input.newsSentiment;
+        const blendedSocialSentiment = liveSocial
+          ? Math.max(-1, Math.min(1, input.socialSentiment * 0.35 + liveSocial.derivedSentiment * 0.65))
+          : input.socialSentiment;
+
         return sentiment.calculateCompositeSentiment({
-          newsSentiment: input.newsSentiment,
-          socialSentiment: input.socialSentiment,
+          newsSentiment: blendedNewsSentiment,
+          socialSentiment: blendedSocialSentiment,
           marketSentiment: input.marketSentiment,
           externalSentiment: externalSignal?.normalizedSentiment ?? 0,
           externalConfidence: externalSignal?.confidence ?? 0,
           externalSignal,
+          liveNews,
+          liveSocial,
         });
       }),
 

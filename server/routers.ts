@@ -26,6 +26,7 @@ import {
   filterSignalsByConfidence,
   getTopSignalsForExecution,
   saveSignals,
+  filterSignalsByMarketConditions,
 } from "./_core/kalshiSignals";
 import {
   validateKalshiCredentials,
@@ -163,7 +164,7 @@ export const appRouter = router({
           }
 
           const result = await placeKalshiOrder(
-            getKalshiApiKey(),
+            ctx.user!.id || 1,
             input.marketId,
             input.side,
             input.quantity,
@@ -196,7 +197,7 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         try {
           const result = await cancelKalshiOrder(
-            getKalshiApiKey(),
+            ctx.user!.id || 1,
             input.orderId
           );
 
@@ -217,10 +218,10 @@ export const appRouter = router({
 
     getOrderStatus: protectedProcedure
       .input(z.object({ orderId: z.string() }))
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
         try {
           return await getKalshiOrderStatus(
-            getKalshiApiKey(),
+            ctx.user!.id || 1,
             input.orderId
           );
         } catch (error) {
@@ -263,7 +264,7 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         try {
           const result = await closeKalshiPosition(
-            getKalshiApiKey(),
+            ctx.user!.id || 1,
             input.positionId,
             input.marketId,
             input.currentPrice
@@ -334,9 +335,9 @@ export const appRouter = router({
     // Risk controls
     killSwitch: protectedProcedure.mutation(async ({ ctx }) => {
       try {
-        const result = await activateKalshiKillSwitch(
-          getKalshiApiKey()
-        );
+          const result = await activateKalshiKillSwitch(
+            ctx.user!.id || 1
+          );
         await db.logAuditEvent(
           "kalshi_kill_switch_activated",
           JSON.stringify({
@@ -456,14 +457,29 @@ export const appRouter = router({
           const fundamentalProbs = input.fundamentalProbabilities
             ? new Map(Object.entries(input.fundamentalProbabilities))
             : undefined;
+          const sentimentContexts = new Map(
+            validMarkets.map((market) => [
+              market.id,
+              {
+                topic: market.title,
+                marketSentiment: Math.max(-1, Math.min(1, (market.impliedProbability - 0.5) * 2)),
+              },
+            ])
+          );
           const allSignals = await generateSignalsForMarkets(
             validMarkets,
             feeds,
-            fundamentalProbs
+            fundamentalProbs,
+            sentimentContexts
           );
-          const filteredSignals = filterSignalsByConfidence(
+          const confidenceFilteredSignals = filterSignalsByConfidence(
             allSignals,
             input.minConfidence
+          );
+          const filteredSignals = filterSignalsByMarketConditions(
+            confidenceFilteredSignals,
+            feeds,
+            0.35
           );
 
           await saveSignals(filteredSignals);
