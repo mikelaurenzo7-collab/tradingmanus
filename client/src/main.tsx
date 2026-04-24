@@ -9,6 +9,21 @@ import { getLoginUrl } from "./const";
 import "./index.css";
 
 const queryClient = new QueryClient();
+const analyticsEndpoint = import.meta.env.VITE_ANALYTICS_ENDPOINT?.trim();
+const analyticsWebsiteId = import.meta.env.VITE_ANALYTICS_WEBSITE_ID?.trim();
+
+if (analyticsEndpoint && analyticsWebsiteId) {
+  const existingScript = document.querySelector<HTMLScriptElement>(
+    'script[data-website-id]'
+  );
+  if (!existingScript) {
+    const script = document.createElement("script");
+    script.defer = true;
+    script.src = `${analyticsEndpoint.replace(/\/$/, "")}/umami`;
+    script.dataset.websiteId = analyticsWebsiteId;
+    document.head.appendChild(script);
+  }
+}
 
 const redirectToLoginIfUnauthorized = (error: unknown) => {
   if (!(error instanceof TRPCClientError)) return;

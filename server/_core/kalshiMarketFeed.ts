@@ -200,7 +200,13 @@ export function calculatePriceMomentum(
   feed: MarketFeed,
   windowMs: number = 60000 // 1 minute
 ): { yesMomentum: number; noMomentum: number } {
-  const cutoff = Date.now() - windowMs;
+  const latestTimestamp =
+    feed.priceHistory[feed.priceHistory.length - 1]?.timestamp ??
+    feed.currentSnapshot?.timestamp;
+  if (latestTimestamp === undefined) {
+    return { yesMomentum: 0, noMomentum: 0 };
+  }
+  const cutoff = latestTimestamp - windowMs;
   const recentSnapshots = feed.priceHistory.filter((s) => s.timestamp >= cutoff);
 
   if (recentSnapshots.length < 2) {
@@ -223,7 +229,13 @@ export function calculateVolumeMomentum(
   feed: MarketFeed,
   windowMs: number = 60000
 ): { yesVolumeMomentum: number; noVolumeMomentum: number } {
-  const cutoff = Date.now() - windowMs;
+  const latestTimestamp =
+    feed.volumeHistory[feed.volumeHistory.length - 1]?.timestamp ??
+    feed.currentSnapshot?.timestamp;
+  if (latestTimestamp === undefined) {
+    return { yesVolumeMomentum: 0, noVolumeMomentum: 0 };
+  }
+  const cutoff = latestTimestamp - windowMs;
   const recentVolumes = feed.volumeHistory.filter((v) => v.timestamp >= cutoff);
 
   if (recentVolumes.length < 2) {
@@ -243,7 +255,11 @@ export function calculateVolumeMomentum(
  * Detect volatility (price standard deviation)
  */
 export function detectVolatility(feed: MarketFeed, windowMs: number = 300000): number {
-  const cutoff = Date.now() - windowMs;
+  const latestTimestamp =
+    feed.priceHistory[feed.priceHistory.length - 1]?.timestamp ??
+    feed.currentSnapshot?.timestamp;
+  if (latestTimestamp === undefined) return 0;
+  const cutoff = latestTimestamp - windowMs;
   const recentSnapshots = feed.priceHistory.filter((s) => s.timestamp >= cutoff);
 
   if (recentSnapshots.length < 2) return 0;
