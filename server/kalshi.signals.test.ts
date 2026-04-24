@@ -157,6 +157,33 @@ describe("Kalshi Signal Generation", () => {
 
       expect(signals).toHaveLength(0);
     });
+
+    it("should fall back to a neutral baseline when fundamental probability is missing", async () => {
+      const market = {
+        id: "market-5",
+        title: "Mispriced Market",
+        category: "test",
+        description: "Test",
+        resolutionDate: "2025-12-31",
+        status: "open" as const,
+        yesPrice: 0.32,
+        noPrice: 0.68,
+        yesVolume: 1200,
+        noVolume: 900,
+        impliedProbability: 0.32,
+      };
+
+      const signals = await generateSignalsForMarket(market);
+      const valueSignal = signals.find((signal) => signal.signalType === "value_play");
+
+      expect(valueSignal).toBeDefined();
+      expect(valueSignal?.confidence).toBeCloseTo(0.36, 5);
+      expect(valueSignal?.reasoning).toContain("heuristic baseline");
+      expect(valueSignal?.reasoning).toContain("50.0%");
+      expect(valueSignal?.metadata?.fundamentalProbability).toBe(0.5);
+      expect(valueSignal?.metadata?.fundamentalSource).toBe("neutral_fallback");
+      expect(Number.isFinite(valueSignal?.expectedValue)).toBe(true);
+    });
   });
 
   describe("generateSignalsForMarkets", () => {
@@ -433,13 +460,13 @@ describe("Kalshi Signal Generation", () => {
       const signals: KalshiSignal[] = [
         {
           marketId: "m1",
-          signalType: "momentum",
+          signalType: "value_play",
           side: "yes",
           confidence: 0.3,
-          reasoning: "Low",
-          impliedProbability: 0.5,
-          marketPrice: 0.5,
-          expectedValue: 0.01,
+          reasoning: "Low confidence",
+          impliedProbability: 0.3,
+          marketPrice: 0.3,
+          expectedValue: 0.1,
         },
       ];
 
@@ -447,6 +474,51 @@ describe("Kalshi Signal Generation", () => {
 
       expect(top).toHaveLength(0);
     });
+
+    it("excludes heuristic-baseline value plays from execution-ready results", () => {
+      const signals: KalshiSignal[] = [
+        {
+          marketId: "heuristic-m1",
+          signalType: "value_play",
+          side: "yes",
+          confidence: 0.92,
+          reasoning: "Market mispriced (heuristic baseline): YES probability 12.0% vs neutral baseline 50.0%",
+          impliedProbability: 0.12,
+          marketPrice: 0.12,
+          expectedValue: 0.38,
+        },
+        {
+          marketId: "legacy-heuristic-m2",
+          signalType: "value_play",
+          side: "yes",
+          confidence: 0.88,
+          reasoning: "Market mispriced: YES probability 8.8% vs fundamental 50.0%",
+          impliedProbability: 0.088,
+          marketPrice: 0.09,
+          expectedValue: 0.41,
+        },
+        {
+          marketId: "explicit-m3",
+          signalType: "value_play",
+          side: "yes",
+          confidence: 0.84,
+          reasoning: "Market mispriced: YES probability 42.0% vs fundamental 61.0%",
+          impliedProbability: 0.42,
+          marketPrice: 0.42,
+          expectedValue: 0.19,
+          metadata: {
+            fundamentalProbability: 0.61,
+            fundamentalSource: "explicit",
+          },
+        },
+      ];
+
+      const top = getTopSignalsForExecution(signals, 5, 0.6);
+
+      expect(top).toHaveLength(1);
+      expect(top[0].marketId).toBe("explicit-m3");
+    });
+
   });
 
   describe("saveSignals", () => {

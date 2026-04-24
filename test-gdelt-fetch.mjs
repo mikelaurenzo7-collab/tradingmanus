@@ -8,7 +8,7 @@ try {
   const response = await fetch(url, {
     headers: {
       Accept: 'application/json',
-      'User-Agent': 'nexus-omega-dashboard/1.0 (sentiment research)'
+      'User-Agent': 'laurenzo-dashboard/1.0 (sentiment research)'
     },
     signal: controller.signal,
   });

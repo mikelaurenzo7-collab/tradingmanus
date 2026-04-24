@@ -1,14 +1,14 @@
-# NEXUS OMEGA: Founder Roadmap for a Real-Data-Only Trading Venture
+# Laurenzo: Founder Roadmap for a Real-Data-Only Trading Venture
 
 ## Executive Direction
 
-The right objective is **not** to build a machine that promises to “beat the market” every day. The right objective is to build a **disciplined trading intelligence and execution business** that can discover small, repeatable edges, apply them only when the expected payoff exceeds cost and uncertainty, and survive long enough to compound. In practice, that means NEXUS OMEGA should evolve from a visually strong dashboard into a **research, decision-support, paper-trading, and eventually tightly risk-bounded execution platform**.
+The right objective is **not** to build a machine that promises to “beat the market” every day. The right objective is to build a **disciplined trading intelligence and execution business** that can discover small, repeatable edges, apply them only when the expected payoff exceeds cost and uncertainty, and survive long enough to compound. In practice, that means Laurenzo should evolve from a visually strong dashboard into a **research, decision-support, paper-trading, and eventually tightly risk-bounded execution platform**.
 
 The product should therefore be positioned as a **system for controlled alpha discovery and deployment**, not as a hype-driven autonomous day trader. That is the only credible route to a durable business. Public markets are highly competitive, and it is difficult to generate persistent excess returns after costs in liquid markets, particularly without strong process discipline and controls.[1] [2] At the same time, firms using AI or automated decision systems are expected to maintain governance, model validation, data controls, and supervisory processes before relying on them in production.[3] [4]
 
 ## What Must Change Immediately
 
-The first strategic change is philosophical. NEXUS OMEGA should no longer be optimized for looking complete with seeded scenarios. It should be optimized for being **truthful, auditable, and decision-useful**. If a panel has no real data, it should say so plainly. If a model has not earned trust, it should remain advisory. If a signal cannot survive transaction costs, it should not be traded.
+The first strategic change is philosophical. Laurenzo should no longer be optimized for looking complete with seeded scenarios. It should be optimized for being **truthful, auditable, and decision-useful**. If a panel has no real data, it should say so plainly. If a model has not earned trust, it should remain advisory. If a signal cannot survive transaction costs, it should not be traded.
 
 The second change is business-model clarity. There are really three businesses you could build here, and they should be pursued in order rather than simultaneously.
 
@@ -22,7 +22,7 @@ For now, the rational path is to build **Path 1 first**, shape it so it can beco
 
 ## The Core Venture Thesis
 
-The venture thesis should be that most retail and emerging semi-professional traders do not fail because they lack dashboards. They fail because they lack **process**. They chase noise, overfit backtests, ignore costs, change rules mid-stream, and operate without serious controls. NEXUS OMEGA can become valuable if it solves those failure modes better than a generic broker interface.
+The venture thesis should be that most retail and emerging semi-professional traders do not fail because they lack dashboards. They fail because they lack **process**. They chase noise, overfit backtests, ignore costs, change rules mid-stream, and operate without serious controls. Laurenzo can become valuable if it solves those failure modes better than a generic broker interface.
 
 That means your edge as a business is likely to come from a combination of five things: high-quality real data ingestion, disciplined research workflows, regime-aware signal selection, strict risk enforcement, and transparent performance attribution. In other words, the product should answer five questions every day: **What is happening? Why do we think it matters? What is the trade? What is the maximum damage if we are wrong? How do we know whether the system is actually working?**
 
@@ -30,7 +30,7 @@ That means your edge as a business is likely to come from a combination of five 
 
 The most credible near-term position is:
 
-> **NEXUS OMEGA is a real-data trading operating system for regime-aware research, paper execution, and risk-controlled deployment.**
+> **Laurenzo is a real-data trading operating system for regime-aware research, paper execution, and risk-controlled deployment.**
 
 That positioning is strong because it does not require exaggerated performance claims, yet it still leaves room for a premium product. The early product can monetize as a research and operating platform even before it manages real money for others.
 
@@ -47,7 +47,7 @@ Before anything else, the platform must stop presenting synthetic portfolio metr
 | Event logging | Store every model output, order decision, override, and risk event | Needed for attribution, debugging, and trust |
 | Data quality layer | Add stale-data flags, gap detection, and source reconciliation | Prevents trading on broken inputs |
 
-At the end of this stage, NEXUS OMEGA should still be **advisory-first**. It should see reality clearly before it acts on reality.
+At the end of this stage, Laurenzo should still be **advisory-first**. It should see reality clearly before it acts on reality.
 
 ## Stage 2: Build a paper-trading laboratory
 
@@ -195,7 +195,7 @@ As your co-founder-level operating plan, I would structure the work into four ro
 | **Platform / Data lead** | Connectors, pipelines, event store, reliability, observability |
 | **Risk / Ops lead** | Limits, incident reviews, compliance path, deployment readiness |
 
-Right now, NEXUS OMEGA appears strongest in interface and orchestration. The next value creation comes from making it strong in **data truth, validation rigor, and control architecture**.
+Right now, Laurenzo appears strongest in interface and orchestration. The next value creation comes from making it strong in **data truth, validation rigor, and control architecture**.
 
 ## The Hard Truth About Profitability
 
@@ -203,7 +203,7 @@ A profitable venture here is possible, but only if you reject seductive shortcut
 
 > The company should behave as if every promising model is guilty until proven robust.
 
-If you want, I would recommend that the very next execution cycle be structured around three deliverables: a **real-data migration plan**, a **paper-trading experiment framework**, and a **monetization brief** for the first sellable version of NEXUS OMEGA.
+If you want, I would recommend that the very next execution cycle be structured around three deliverables: a **real-data migration plan**, a **paper-trading experiment framework**, and a **monetization brief** for the first sellable version of Laurenzo.
 
 ## My Recommended Next Moves for You
 
@@ -219,7 +219,7 @@ If you want, I would recommend that the very next execution cycle be structured 
 
 ## Bottom Line
 
-You do **not** need a crazy day trader. You need a company that becomes incrementally better at identifying when **not** to trade, when to trade small, and when an edge is real enough to deserve capital. If we build NEXUS OMEGA as a **real-data operating system for disciplined alpha discovery and deployment**, the venture can become profitable without pretending to be omniscient.
+You do **not** need a crazy day trader. You need a company that becomes incrementally better at identifying when **not** to trade, when to trade small, and when an edge is real enough to deserve capital. If we build Laurenzo as a **real-data operating system for disciplined alpha discovery and deployment**, the venture can become profitable without pretending to be omniscient.
 
 The near-term mission should therefore be simple: **replace fiction with truth, replace intuition-only with logged process, replace excitement with validation, and replace performance claims with measured evidence**.
 

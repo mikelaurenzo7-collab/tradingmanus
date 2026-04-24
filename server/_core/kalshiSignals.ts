@@ -25,6 +25,7 @@ export interface KalshiSignal {
     volumeMomentum?: number;
     volatility?: number;
     fundamentalProbability?: number;
+    fundamentalSource?: "explicit" | "neutral_fallback";
     sentimentScore?: number;
     sentimentConfidence?: number;
     sentimentContribution?: number;
@@ -166,23 +167,32 @@ export async function generateSignalsForMarket(
   }
 
   // Value play: detect mispriced markets
-  const valueOpportunity = detectValueOpportunity(market, fundamentalProbability ?? 0.5, 0.05);
+  const usesFallbackFundamental = fundamentalProbability == null;
+  const baselineFundamentalProbability = clampProbability(fundamentalProbability ?? 0.5);
+  const valueOpportunity = detectValueOpportunity(market, baselineFundamentalProbability, 0.05);
   if (valueOpportunity) {
-    const confidence = Math.min(0.95, Math.abs(fundamentalProbability! - market.impliedProbability) * 2);
+    const confidence = Math.min(
+      0.95,
+      Math.abs(baselineFundamentalProbability - market.impliedProbability) * 2
+    );
+    const reasoning = usesFallbackFundamental
+      ? `Market mispriced (heuristic baseline): ${valueOpportunity.side.toUpperCase()} probability ${(market.impliedProbability * 100).toFixed(1)}% vs neutral baseline ${(baselineFundamentalProbability * 100).toFixed(1)}%`
+      : `Market mispriced: ${valueOpportunity.side.toUpperCase()} probability ${(market.impliedProbability * 100).toFixed(1)}% vs fundamental ${(baselineFundamentalProbability * 100).toFixed(1)}%`;
     if (isFinite(confidence) && isFinite(valueOpportunity.expectedValue)) {
-    signals.push({
-      marketId: market.id,
-      signalType: "value_play",
-      side: valueOpportunity.side,
-      confidence,
-      reasoning: `Market mispriced: ${valueOpportunity.side.toUpperCase()} probability ${(market.impliedProbability * 100).toFixed(1)}% vs fundamental ${(fundamentalProbability! * 100).toFixed(1)}%`,
-      impliedProbability: market.impliedProbability,
-      marketPrice: valueOpportunity.side === "yes" ? market.yesPrice : market.noPrice,
-      expectedValue: valueOpportunity.expectedValue,
-      metadata: {
-        fundamentalProbability,
-      },
-    });
+      signals.push({
+        marketId: market.id,
+        signalType: "value_play",
+        side: valueOpportunity.side,
+        confidence,
+        reasoning,
+        impliedProbability: market.impliedProbability,
+        marketPrice: valueOpportunity.side === "yes" ? market.yesPrice : market.noPrice,
+        expectedValue: valueOpportunity.expectedValue,
+        metadata: {
+          fundamentalProbability: baselineFundamentalProbability,
+          fundamentalSource: usesFallbackFundamental ? "neutral_fallback" : "explicit",
+        },
+      });
     }
   }
 
@@ -410,6 +420,15 @@ export function scoreSignalForExecution(signal: KalshiSignal): number {
 /**
  * Rank signals by execution readiness
  */
+function isHeuristicBaselineSignal(signal: KalshiSignal): boolean {
+  return (
+    signal.metadata?.fundamentalSource === "neutral_fallback" ||
+    signal.reasoning.includes("heuristic baseline") ||
+    signal.reasoning.includes("neutral baseline 50.0%") ||
+    (signal.signalType === "value_play" && signal.reasoning.includes("fundamental 50.0%"))
+  );
+}
+
 export function rankSignalsByExecution(signals: KalshiSignal[]): Array<KalshiSignal & { executionScore: number }> {
   return signals
     .map((s) => ({
@@ -423,7 +442,10 @@ export function rankSignalsByExecution(signals: KalshiSignal[]): Array<KalshiSig
  * Get top N signals ready for execution
  */
 export function getTopSignalsForExecution(signals: KalshiSignal[], topN: number = 5, minExecutionScore: number = 0.6): Array<KalshiSignal & { executionScore: number }> {
-  return rankSignalsByExecution(signals).filter((s) => s.executionScore >= minExecutionScore).slice(0, topN);
+  return rankSignalsByExecution(signals)
+    .filter((s) => !isHeuristicBaselineSignal(s))
+    .filter((s) => s.executionScore >= minExecutionScore)
+    .slice(0, topN);
 }
 
 /**

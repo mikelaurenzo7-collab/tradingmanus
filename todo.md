@@ -391,3 +391,8 @@ This iteration prioritizes prediction quality by introducing a more independent 
 - [ ] Continue validating candidate-order preparation and execution readiness for the Founders account under full autonomy without placing a live trade unless a real opportunity emerges
 - [ ] Assess the quantgalore Kalshi trading repository for reusable execution, market-selection, and signal-quality patterns that can strengthen dogfood trading readiness safely
 - [ ] Review the broader GitHub Kalshi API topic resources for reusable execution, market-data, and candidate-selection patterns that can strengthen the current dogfood-trading pipeline safely
+- [x] Fix the generate-signals fallback bug where missing fundamental probabilities make value-play confidence NaN, causing otherwise actionable live markets to produce zero candidates
+- [x] Verify with live Kalshi market scans that the first-page actionable markets can now produce trustworthy non-placeholder signal candidates before any execution-path validation
+- [x] Exclude neutral-baseline heuristic value signals from execution-ready ranking and autonomous eligibility until an independent probability estimate exists
+- [x] Replace any remaining previous branding with Laurenzo across the app, including mobile-visible naming and browser-visible metadata
+- [x] Determine whether the remaining previous-product naming is coming from mutable user-facing site settings or the internal project slug, and switch every user-facing instance to Laurenzo
