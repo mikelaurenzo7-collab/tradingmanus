@@ -163,7 +163,7 @@ export default function DashboardLayout({
             <SidebarTrigger />
           </div>
           <div className="text-sm text-muted-foreground">
-            Kalshi Trading Dashboard
+            Laurenzo Trading Dashboard
           </div>
         </header>
         <main className="flex-1 overflow-auto">

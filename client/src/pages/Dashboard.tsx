@@ -343,7 +343,7 @@ export default function Dashboard() {
             {user?.name || "LAURENZO"}
           </h1>
           <p className="text-muted-foreground">
-            Kalshi Trading Dashboard • Owner: {user?.name}
+            Laurenzo Trading Dashboard • Owner: {user?.name}
           </p>
         </div>
         <Button

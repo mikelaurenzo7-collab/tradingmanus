@@ -418,3 +418,5 @@ This iteration prioritizes prediction quality by introducing a more independent 
 - [x] Persist richer away-from-chat decision details for the latest scheduled review so operators can see the candidate signal, sizing, and exact guardrail outcome rather than only a status label
 - [x] Surface a customer-visible autonomy decision detail panel that explains why Laurenzo traded, stood down, or was blocked during the latest away-from-chat review
 - [x] Add regression coverage for the new autonomy decision-detail semantics so the explanation layer stays truthful over time
+- [x] Remove the remaining stale "Kalshi Trading Dashboard" labels from the dashboard shell so Laurenzo branding is fully consistent in visible navigation chrome and page copy
+- [x] Add regression coverage so the dashboard shell and landing page cannot quietly regress back to the stale Kalshi title copy
