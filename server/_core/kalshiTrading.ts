@@ -175,15 +175,23 @@ export async function getPortfolioMetrics(): Promise<{
   const realizedPnL = closedTrades.reduce((sum: number, t: any) => sum + (t.realizedPnL || 0), 0);
   const unrealizedPnL = positions.reduce((sum: any, p: any) => sum + (p.unrealizedPnL || 0), 0);
   
+  const capitalRecord = await db.getKalshiCapital();
   const totalPnL = realizedPnL + unrealizedPnL;
-  const totalCapital = 100; // Starting capital
-  const currentValue = totalCapital + totalPnL;
+  const totalCapital = Math.max(
+    0,
+    Number(capitalRecord?.startingBalance ?? capitalRecord?.currentBalance ?? 0)
+  );
+  const currentValue = Math.max(
+    0,
+    Number(capitalRecord?.currentBalance ?? totalCapital + totalPnL)
+  );
+  const totalPnLPercent = totalCapital > 0 ? (totalPnL / totalCapital) * 100 : 0;
   
   return {
     totalCapital,
     currentValue,
     totalPnL,
-    totalPnLPercent: (totalPnL / totalCapital) * 100,
+    totalPnLPercent,
     openPositions: positions.length,
     unrealizedPnL,
   };

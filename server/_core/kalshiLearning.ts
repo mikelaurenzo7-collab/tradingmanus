@@ -359,7 +359,9 @@ export async function getPerformanceOverview(): Promise<PerformanceOverview> {
     db.getOpenKalshiPositions(),
   ]);
 
-  const startingBalance = Number(capital?.startingBalance ?? 100);
+  const startingBalance = Number(
+    capital?.startingBalance ?? capital?.currentBalance ?? 0
+  );
   const metrics = calculatePerformanceMetricsFromTrades(trades, {
     startingBalance,
     openPositions,

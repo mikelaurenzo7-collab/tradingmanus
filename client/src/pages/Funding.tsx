@@ -132,9 +132,9 @@ export default function Funding() {
             </CardHeader>
             <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {[
-                { amount: "$1-$5", label: "Minimal", desc: "Test the platform" },
-                { amount: "$10-$50", label: "Conservative", desc: "Steady learning" },
-                { amount: "$100+", label: "Aggressive", desc: "Maximum flexibility" },
+                { amount: "$1-$5", label: "Minimal", desc: "Test the workflow with very small size" },
+                { amount: "$10-$50", label: "Conservative", desc: "Add room for measured live testing" },
+                { amount: "$50+", label: "Flexible", desc: "Support broader sizing and multiple positions" },
               ].map((tier) => (
                 <div key={tier.label} className="p-4 rounded-lg border border-border/50 hover:border-primary/50 transition-colors">
                   <p className="text-2xl font-bold gradient-text mb-1">{tier.amount}</p>
@@ -149,7 +149,7 @@ export default function Funding() {
           <Alert>
             <AlertCircle className="h-4 w-4" />
             <AlertDescription>
-              <strong>LAURENZO OMEGA Risk Controls:</strong> Even with $100 in your account, we limit max loss to $5 per trade and $10 per day. Your capital is protected.
+              <strong>LAURENZO OMEGA Risk Controls:</strong> Risk limits are enforced against your live connected Kalshi balance, including per-trade and daily loss caps. Your dashboard will only size trades from confirmed account equity.
             </AlertDescription>
           </Alert>
         </>

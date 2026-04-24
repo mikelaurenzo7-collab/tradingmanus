@@ -209,11 +209,20 @@ export async function getUserByOpenId(openId: string) {
 export async function upsertKalshiMarket(market: any) {
   const database = await getDb();
   if (!database) return;
+
+  const marketId = market.marketId ?? market.id;
+  if (!marketId) {
+    throw new Error("Kalshi market payload is missing both marketId and id");
+  }
+
+  const liquidity = Number.isFinite(Number(market.liquidity))
+    ? Number(market.liquidity)
+    : Number(market.yesVolume ?? 0) + Number(market.noVolume ?? 0);
   
   await database
     .insert(kalshiMarkets)
     .values({
-      marketId: market.id,
+      marketId,
       title: market.title,
       category: market.category,
       description: market.description,
@@ -224,6 +233,7 @@ export async function upsertKalshiMarket(market: any) {
       yesVolume: market.yesVolume,
       noVolume: market.noVolume,
       impliedProbability: market.impliedProbability,
+      liquidity,
     })
     .onDuplicateKeyUpdate({
       set: {
@@ -232,6 +242,7 @@ export async function upsertKalshiMarket(market: any) {
         yesVolume: market.yesVolume,
         noVolume: market.noVolume,
         impliedProbability: market.impliedProbability,
+        liquidity,
         status: market.status,
         lastUpdated: new Date(),
       },
@@ -439,42 +450,127 @@ export async function getRecentSignals(limit: number = 10) {
 }
 
 // Kalshi capital queries
-export async function initializeKalshiCapital(startingBalance: number = 100) {
+export async function initializeKalshiCapital(startingBalance: number = 0) {
   const database = await getDb();
   if (!database) return;
-  
+
+  const normalizedBalance = Number.isFinite(startingBalance)
+    ? Math.max(0, Number(startingBalance))
+    : 0;
+  const existing = await getKalshiCapital();
+
+  if (existing) {
+    await database
+      .update(kalshiCapital)
+      .set({
+        startingBalance: normalizedBalance,
+        currentBalance: normalizedBalance,
+        updatedAt: new Date(),
+      })
+      .where(eq(kalshiCapital.id, existing.id));
+    return;
+  }
+
   await database.insert(kalshiCapital).values({
-    startingBalance,
-    currentBalance: startingBalance,
+    startingBalance: normalizedBalance,
+    currentBalance: normalizedBalance,
   });
 }
 
 export async function getKalshiCapital() {
   const database = await getDb();
   if (!database) return null;
-  
+
   const result = await database.select().from(kalshiCapital).limit(1);
   return result[0] || null;
+}
+
+export async function syncKalshiCapitalWithLiveEquity(liveEquity: number) {
+  const database = await getDb();
+  if (!database) return null;
+
+  const normalizedEquity = Number.isFinite(liveEquity)
+    ? Math.max(0, Number(liveEquity))
+    : 0;
+  const existing = await getKalshiCapital();
+
+  if (!existing) {
+    await database.insert(kalshiCapital).values({
+      startingBalance: normalizedEquity,
+      currentBalance: normalizedEquity,
+    });
+    return await getKalshiCapital();
+  }
+
+  const shouldResetStartingBalance =
+    Number(existing.totalTrades ?? 0) === 0 &&
+    (
+      !Number.isFinite(Number(existing.startingBalance)) ||
+      Number(existing.startingBalance) <= 0 ||
+      (Number(existing.startingBalance) === 100 && normalizedEquity !== 100)
+    );
+
+  await database
+    .update(kalshiCapital)
+    .set({
+      currentBalance: normalizedEquity,
+      ...(shouldResetStartingBalance ? { startingBalance: normalizedEquity } : {}),
+      updatedAt: new Date(),
+    })
+    .where(eq(kalshiCapital.id, existing.id));
+
+  return await getKalshiCapital();
 }
 
 export async function updateKalshiCapital(updates: any) {
   const database = await getDb();
   if (!database) return;
-  
+
+  const existing = await getKalshiCapital();
+  if (!existing) {
+    const currentBalance = Number.isFinite(Number(updates?.currentBalance))
+      ? Math.max(0, Number(updates.currentBalance))
+      : Number.isFinite(Number(updates?.startingBalance))
+        ? Math.max(0, Number(updates.startingBalance))
+        : 0;
+
+    await database.insert(kalshiCapital).values({
+      startingBalance: Number.isFinite(Number(updates?.startingBalance))
+        ? Math.max(0, Number(updates.startingBalance))
+        : currentBalance,
+      currentBalance,
+      totalPnl: Number(updates?.totalPnl ?? 0),
+      maxDrawdown: Number(updates?.maxDrawdown ?? 0),
+      winRate: Number(updates?.winRate ?? 0),
+      sharpeRatio: Number(updates?.sharpeRatio ?? 0),
+      totalTrades: Number(updates?.totalTrades ?? 0),
+      winningTrades: Number(updates?.winningTrades ?? 0),
+    });
+    return;
+  }
+
   await database
     .update(kalshiCapital)
     .set({ ...updates, updatedAt: new Date() })
-    .limit(1);
+    .where(eq(kalshiCapital.id, existing.id));
 }
 
 // Audit log queries
-export async function logAuditEvent(event: string, details: string, triggeredByOpenId: string) {
+export async function logAuditEvent(
+  eventType: string,
+  details: string,
+  triggeredByOpenId: string,
+  entityType: string = "system",
+  entityId?: number | null,
+) {
   const database = await getDb();
   if (!database) return false;
 
   try {
     await database.insert(auditLog).values({
-      event,
+      eventType,
+      entityType,
+      entityId: entityId ?? null,
       details,
       triggeredByOpenId,
     });

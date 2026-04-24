@@ -96,7 +96,10 @@ function SignalSizingCard({ equity, signal, selected }: { equity: number; signal
 }
 
 export default function PortfolioOptimization() {
-  const [equity, setEquity] = useState(2500);
+  const accountStatusQuery = trpc.kalshi.getKalshiAccountStatus.useQuery();
+  const equity = accountStatusQuery.data?.connected && accountStatusQuery.data?.status === "connected"
+    ? Math.max(0, Number(accountStatusQuery.data.equity ?? 0))
+    : 0;
   const [maxPositions, setMaxPositions] = useState(4);
   const [signals, setSignals] = useState<EditableSignal[]>(INITIAL_SIGNALS);
 
@@ -183,14 +186,18 @@ export default function PortfolioOptimization() {
           <div className="flex flex-wrap gap-3 rounded-2xl border border-slate-800 bg-slate-900/70 p-4 backdrop-blur-xl">
             <div>
               <div className="mb-2 text-xs uppercase tracking-[0.2em] text-slate-500">Account Equity</div>
-              <Input
-                type="number"
-                min="100"
-                step="100"
-                value={equity}
-                onChange={(event) => setEquity(Math.max(0, Number(event.target.value) || 0))}
-                className="w-36 border-slate-700 bg-slate-950 text-slate-100"
-              />
+              <div className="flex min-h-10 w-40 items-center rounded-md border border-slate-700 bg-slate-950 px-3 text-sm font-medium text-slate-100">
+                {accountStatusQuery.isLoading
+                  ? "Loading..."
+                  : accountStatusQuery.data?.connected && accountStatusQuery.data?.status === "connected"
+                    ? formatCurrency(equity)
+                    : "Unavailable"}
+              </div>
+              <p className="mt-2 max-w-40 text-xs text-slate-500">
+                {accountStatusQuery.data?.connected && accountStatusQuery.data?.status === "connected"
+                  ? "Live Kalshi equity snapshot used for sizing."
+                  : "Connect Kalshi to size allocations from confirmed live equity."}
+              </p>
             </div>
             <div>
               <div className="mb-2 text-xs uppercase tracking-[0.2em] text-slate-500">Max Positions</div>

@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   getKalshiCredentials: vi.fn(),
   deleteKalshiCredentials: vi.fn(),
   updateKalshiAccountEquity: vi.fn(),
-  updateKalshiCapital: vi.fn(),
+  syncKalshiCapitalWithLiveEquity: vi.fn(),
   logAuditEvent: vi.fn(),
 }));
 
@@ -23,7 +23,7 @@ vi.mock("./db", () => ({
   getKalshiTradeHistory: vi.fn(async () => []),
   getKalshiMarket: vi.fn(async () => null),
   createKalshiSignal: vi.fn(),
-  updateKalshiCapital: mocks.updateKalshiCapital,
+  syncKalshiCapitalWithLiveEquity: mocks.syncKalshiCapitalWithLiveEquity,
   logAuditEvent: mocks.logAuditEvent,
 }));
 
@@ -125,7 +125,7 @@ describe("kalshi account connection", () => {
     mocks.validateKalshiCredentials.mockResolvedValue({ valid: true, mode: "production" });
     mocks.fetchKalshiAccountEquity.mockResolvedValue({ equity: 123.45, mode: "production" });
     mocks.saveKalshiCredentials.mockResolvedValue(undefined);
-    mocks.updateKalshiCapital.mockResolvedValue(undefined);
+    mocks.syncKalshiCapitalWithLiveEquity.mockResolvedValue(undefined);
     mocks.logAuditEvent.mockResolvedValue(undefined);
 
     const caller = appRouter.createCaller(createProtectedContext());
@@ -148,7 +148,7 @@ describe("kalshi account connection", () => {
       "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----",
       123.45,
     );
-    expect(mocks.updateKalshiCapital).toHaveBeenCalledWith({ currentBalance: 123.45 });
+    expect(mocks.syncKalshiCapitalWithLiveEquity).toHaveBeenCalledWith(123.45);
     expect(mocks.logAuditEvent).toHaveBeenCalledWith(
       "kalshi_account_connected",
       "Equity: $123.45",
@@ -188,7 +188,7 @@ describe("kalshi account connection", () => {
       privateKey: "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----",
     });
 
-    expect(mocks.updateKalshiCapital).not.toHaveBeenCalled();
+    expect(mocks.syncKalshiCapitalWithLiveEquity).not.toHaveBeenCalled();
     expect(mocks.logAuditEvent).not.toHaveBeenCalled();
     expect(result).toEqual({
       success: false,
@@ -201,7 +201,7 @@ describe("kalshi account connection", () => {
     mocks.validateKalshiCredentials.mockResolvedValue({ valid: true, mode: "production" });
     mocks.fetchKalshiAccountEquity.mockResolvedValue({ equity: 78.9, mode: "production" });
     mocks.saveKalshiCredentials.mockResolvedValue(undefined);
-    mocks.updateKalshiCapital.mockResolvedValue(undefined);
+    mocks.syncKalshiCapitalWithLiveEquity.mockResolvedValue(undefined);
     mocks.logAuditEvent.mockResolvedValue(false);
 
     const caller = appRouter.createCaller(createProtectedContext());
@@ -211,7 +211,7 @@ describe("kalshi account connection", () => {
     });
 
     expect(mocks.saveKalshiCredentials).toHaveBeenCalledTimes(1);
-    expect(mocks.updateKalshiCapital).toHaveBeenCalledWith({ currentBalance: 78.9 });
+    expect(mocks.syncKalshiCapitalWithLiveEquity).toHaveBeenCalledWith(78.9);
     expect(mocks.logAuditEvent).toHaveBeenCalledWith(
       "kalshi_account_connected",
       "Equity: $78.9",
@@ -231,14 +231,14 @@ describe("kalshi account connection", () => {
     });
     mocks.fetchKalshiAccountEquity.mockResolvedValue({ equity: 321.09, mode: "production" });
     mocks.updateKalshiAccountEquity.mockResolvedValue(undefined);
-    mocks.updateKalshiCapital.mockResolvedValue(undefined);
+    mocks.syncKalshiCapitalWithLiveEquity.mockResolvedValue(undefined);
 
     const caller = appRouter.createCaller(createProtectedContext());
     const result = await caller.kalshi.getKalshiAccountStatus();
 
     expect(mocks.fetchKalshiAccountEquity).toHaveBeenCalledWith("live-api-key", "private-key");
     expect(mocks.updateKalshiAccountEquity).toHaveBeenCalledWith(7, 321.09);
-    expect(mocks.updateKalshiCapital).toHaveBeenCalledWith({ currentBalance: 321.09 });
+    expect(mocks.syncKalshiCapitalWithLiveEquity).toHaveBeenCalledWith(321.09);
     expect(result.connected).toBe(true);
     expect(result.status).toBe("connected");
     expect(result.equity).toBe(321.09);

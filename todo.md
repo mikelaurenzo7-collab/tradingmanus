@@ -357,3 +357,9 @@ This iteration prioritizes prediction quality by introducing a more independent 
 - [ ] Clarify the landing state when a saved Kalshi account exists but live equity refresh fails, so the user sees a sync issue rather than a misleading disconnected or funded state
 - [x] Fix the blocking Kalshi save-state failure where validated credentials cannot persist the connected account state
 - [x] Preserve and clarify full-PEM private key handling, including the BEGIN and END PRIVATE KEY lines, while fixing the connection save flow
+- [ ] Assess the connected Kalshi account, live signals, and risk posture to determine whether a live trade is currently warranted
+- [ ] Prepare an exact candidate order with safeguards and require explicit user confirmation before any live Kalshi order is submitted
+- [x] Perform a full site-wide audit for any capital, balance, equity, or P&L displays that still show placeholder, stale, or inferred values instead of the connected user's confirmed live Kalshi account data
+- [x] Remove every remaining $100 placeholder and any other hardcoded capital assumption from all pages and shared helpers
+- [x] Ensure each page either shows the connected user's confirmed live Kalshi account values or a clear unavailable/sync-needed state when live values are not confirmed
+- [x] Audit the site-wide trading workflow so no page can imply a funded or tradable state from fake, cached, or disconnected account values

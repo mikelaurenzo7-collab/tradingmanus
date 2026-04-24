@@ -20,9 +20,11 @@ export const users = mysqlTable("users", {
 
 export const auditLog = mysqlTable("auditLog", {
   id: int("id").autoincrement().primaryKey(),
-  event: varchar("event", { length: 128 }).notNull(),
+  eventType: varchar("eventType", { length: 128 }).notNull(),
+  entityType: varchar("entityType", { length: 64 }).notNull(),
+  entityId: int("entityId"),
   details: text("details"),
-  triggeredByOpenId: varchar("triggeredByOpenId", { length: 64 }).notNull(),
+  triggeredByOpenId: varchar("triggeredByOpenId", { length: 64 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
@@ -188,8 +190,8 @@ export const kalshiPerformance = mysqlTable("kalshiPerformance", {
 
 export const kalshiCapital = mysqlTable("kalshiCapital", {
   id: int("id").autoincrement().primaryKey(),
-  startingBalance: double("startingBalance").default(100).notNull(),
-  currentBalance: double("currentBalance").default(100).notNull(),
+  startingBalance: double("startingBalance").default(0).notNull(),
+  currentBalance: double("currentBalance").default(0).notNull(),
   totalPnl: double("totalPnl").default(0).notNull(),
   maxDrawdown: double("maxDrawdown").default(0).notNull(),
   winRate: double("winRate").default(0).notNull(),

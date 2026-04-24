@@ -27,6 +27,75 @@ export interface KalshiOrderBook {
 
 const KALSHI_API_BASE = "https://api.elections.kalshi.com/trade-api/v2";
 
+function parseDollarValue(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  return 0;
+}
+
+function mapMarketStatus(status: unknown): "open" | "closed" | "resolved" {
+  switch (status) {
+    case "settled":
+      return "resolved";
+    case "closed":
+      return "closed";
+    case "paused":
+    case "initialized":
+    case "unopened":
+    case "open":
+    default:
+      return "open";
+  }
+}
+
+function normalizeKalshiMarket(rawMarket: any): KalshiMarket {
+  const id = rawMarket.id ?? rawMarket.marketId ?? rawMarket.market_id ?? rawMarket.ticker;
+  const yesPrice = parseDollarValue(
+    rawMarket.yesPrice ??
+      rawMarket.yes_price ??
+      rawMarket.last_price_dollars ??
+      rawMarket.yes_ask_dollars ??
+      rawMarket.yes_bid_dollars
+  );
+  const noPrice = parseDollarValue(
+    rawMarket.noPrice ??
+      rawMarket.no_price ??
+      rawMarket.no_ask_dollars ??
+      rawMarket.no_bid_dollars ??
+      (yesPrice > 0 ? 1 - yesPrice : 0)
+  );
+  const totalVolume = parseDollarValue(rawMarket.volume_fp ?? rawMarket.volume ?? 0);
+  const yesVolume = parseDollarValue(rawMarket.yesVolume ?? rawMarket.yes_volume ?? totalVolume / 2);
+  const noVolume = parseDollarValue(rawMarket.noVolume ?? rawMarket.no_volume ?? totalVolume / 2);
+
+  return {
+    id,
+    title: rawMarket.title ?? rawMarket.subtitle ?? id,
+    category: rawMarket.category ?? rawMarket.series_ticker ?? rawMarket.event_ticker ?? "general",
+    description: rawMarket.description ?? rawMarket.subtitle ?? rawMarket.rules_primary ?? "",
+    resolutionDate:
+      rawMarket.resolutionDate ??
+      rawMarket.resolution_date ??
+      rawMarket.close_time ??
+      rawMarket.expiration_time ??
+      rawMarket.latest_expiration_time ??
+      new Date().toISOString(),
+    status: mapMarketStatus(rawMarket.status),
+    yesPrice,
+    noPrice,
+    yesVolume,
+    noVolume,
+    impliedProbability: calculateImpliedProbability(yesPrice, noPrice),
+  };
+}
+
 /**
  * Fetch all Kalshi markets
  */
@@ -52,19 +121,9 @@ export async function fetchKalshiMarkets(filters?: {
     }
 
     const data = await response.json();
-    return (data.markets || []).map((m: any) => ({
-      id: m.id,
-      title: m.title,
-      category: m.category,
-      description: m.description,
-      resolutionDate: m.resolution_date,
-      status: m.status,
-      yesPrice: m.yes_price,
-      noPrice: m.no_price,
-      yesVolume: m.yes_volume,
-      noVolume: m.no_volume,
-      impliedProbability: calculateImpliedProbability(Number(m.yes_price ?? 0), Number(m.no_price ?? 0)),
-    }));
+    return (data.markets || [])
+      .map((market: any) => normalizeKalshiMarket(market))
+      .filter((market: KalshiMarket) => Boolean(market.id));
   } catch (error) {
     console.error("[Kalshi] Market fetch failed:", error);
     return [];
@@ -89,20 +148,8 @@ export async function fetchKalshiMarketDetails(marketId: string): Promise<Kalshi
     }
 
     const data = await response.json();
-    const m = data.market;
-    return {
-      id: m.id,
-      title: m.title,
-      category: m.category,
-      description: m.description,
-      resolutionDate: m.resolution_date,
-      status: m.status,
-      yesPrice: m.yes_price,
-      noPrice: m.no_price,
-      yesVolume: m.yes_volume,
-      noVolume: m.no_volume,
-      impliedProbability: calculateImpliedProbability(Number(m.yes_price ?? 0), Number(m.no_price ?? 0)),
-    };
+    const market = data.market ?? data;
+    return normalizeKalshiMarket(market);
   } catch (error) {
     console.error(`[Kalshi] Market details fetch failed for ${marketId}:`, error);
     return null;

@@ -134,7 +134,7 @@ export function calculateBacktestStats(trades: BacktestTrade[]): BacktestResults
  */
 export function calculateEquityCurve(
   trades: BacktestTrade[],
-  startingCapital = 100
+  startingCapital = 0
 ): number[] {
   const equity: number[] = [startingCapital];
   let currentEquity = startingCapital;

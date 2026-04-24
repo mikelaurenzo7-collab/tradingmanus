@@ -70,7 +70,7 @@ describe("kalshi risk controls", () => {
     mocks.placeKalshiOrder.mockResolvedValue({ success: true, orderId: "order-1" });
   });
 
-  it("returns the hard risk limits for the $100 account", async () => {
+  it("returns live-aware risk limits using the synced capital row", async () => {
     const caller = appRouter.createCaller(createProtectedContext());
 
     const result = await caller.kalshi.getRiskLimits();

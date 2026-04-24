@@ -64,7 +64,7 @@ export default function Backtesting() {
   const trades = effectiveMode === "live" ? liveTrades : scenarioTrades;
   const effectiveStartingCapital =
     effectiveMode === "live"
-      ? Math.max(100, Number(capitalQuery.data?.startingBalance ?? initialCapital))
+      ? Math.max(0, Number(capitalQuery.data?.currentBalance ?? capitalQuery.data?.startingBalance ?? 0))
       : initialCapital;
 
   useEffect(() => {

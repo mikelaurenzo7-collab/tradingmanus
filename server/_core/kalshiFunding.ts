@@ -137,8 +137,8 @@ export function getFundingGuidance(status: FundingStatus): string {
         3. Your balance will update automatically
         4. Once funded, you can start trading
         
-        Recommended starting amount: $10-$100
-        LAURENZO OMEGA works best with at least $1 in your account.
+        Recommended starting amount: fund only what matches your risk tolerance.
+        LAURENZO OMEGA works best once at least $1 is available in your account.
       `;
 
     case "low_equity":
@@ -159,7 +159,7 @@ export function getFundingGuidance(status: FundingStatus): string {
         
         Next steps:
         1. Review your trading instructions in the Training tab
-        2. Understand the risk controls ($100 capital limit, $5 max loss per trade)
+        2. Understand the risk controls, including the per-trade and daily loss caps tied to your live account balance
         3. Click "Start Trading" to begin
         4. Monitor your positions and P&L in real-time
       `;

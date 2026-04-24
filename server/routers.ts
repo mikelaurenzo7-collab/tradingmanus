@@ -40,14 +40,26 @@ import { advancedRouter } from "./advanced.router";
 
 import { COOKIE_NAME } from "../shared/const";
 
-// Risk limits (hardcoded for $100 capital)
-const RISK_LIMITS = {
-  maxCapital: 100,
+// Risk limits anchored to live capital plus static guardrails
+const BASE_RISK_LIMITS = {
   maxLossPerTrade: 5,
   maxLossPerDay: 10,
   maxPositionSize: 20,
   maxOpenPositions: 5,
 };
+
+async function getDynamicRiskLimits() {
+  const capital = await db.getKalshiCapital();
+  const maxCapital = Math.max(
+    0,
+    Number(capital?.currentBalance ?? capital?.startingBalance ?? 0)
+  );
+
+  return {
+    maxCapital,
+    ...BASE_RISK_LIMITS,
+  };
+}
 
 export const appRouter = router({
   auth: router({
@@ -113,27 +125,30 @@ export const appRouter = router({
       )
       .mutation(async ({ input, ctx }) => {
         try {
-          const capital = await db.getKalshiCapital();
-          const openPositions = await db.getOpenKalshiPositions();
-          const todayRealizedLoss = await db.getTodayRealizedLoss();
+          const [capital, openPositions, todayRealizedLoss, riskLimits] = await Promise.all([
+            db.getKalshiCapital(),
+            db.getOpenKalshiPositions(),
+            db.getTodayRealizedLoss(),
+            getDynamicRiskLimits(),
+          ]);
           // Risk exposure: quantity * limitPrice (limitPrice is 0-1, so max exposure is quantity)
           const orderExposure = Math.max(
             Number(input.quantity) * Number(input.limitPrice),
             Number(input.quantity) * (1 - Number(input.limitPrice))
           );
 
-          if (openPositions.length >= RISK_LIMITS.maxOpenPositions) {
+          if (openPositions.length >= riskLimits.maxOpenPositions) {
             return {
               success: false,
-              error: `Open position limit reached (${RISK_LIMITS.maxOpenPositions})`,
+              error: `Open position limit reached (${riskLimits.maxOpenPositions})`,
             };
           }
 
           // Position size check: total capital at risk
-          if (Number(input.quantity) > RISK_LIMITS.maxPositionSize) {
+          if (Number(input.quantity) > riskLimits.maxPositionSize) {
             return {
               success: false,
-              error: `Order quantity exceeds max position size of $${RISK_LIMITS.maxPositionSize}`,
+              error: `Order quantity exceeds max position size of $${riskLimits.maxPositionSize}`,
             };
           }
 
@@ -142,17 +157,17 @@ export const appRouter = router({
             orderExposure,
             Number(input.quantity) * (1 - Number(input.limitPrice))
           );
-          if (maxLossOnTrade > RISK_LIMITS.maxLossPerTrade) {
+          if (maxLossOnTrade > riskLimits.maxLossPerTrade) {
             return {
               success: false,
-              error: `Order max loss of $${maxLossOnTrade.toFixed(2)} exceeds max per-trade risk of $${RISK_LIMITS.maxLossPerTrade}`,
+              error: `Order max loss of $${maxLossOnTrade.toFixed(2)} exceeds max per-trade risk of $${riskLimits.maxLossPerTrade}`,
             };
           }
 
-          if (todayRealizedLoss >= RISK_LIMITS.maxLossPerDay) {
+          if (todayRealizedLoss >= riskLimits.maxLossPerDay) {
             return {
               success: false,
-              error: `Daily loss limit reached ($${RISK_LIMITS.maxLossPerDay})`,
+              error: `Daily loss limit reached ($${riskLimits.maxLossPerDay})`,
             };
           }
 
@@ -299,16 +314,12 @@ export const appRouter = router({
           return null;
         }
 
-        await Promise.all([
+        const [, capital] = await Promise.all([
           kalshiCredDb.updateKalshiAccountEquity(userId, equityResult.equity),
-          db.updateKalshiCapital({ currentBalance: equityResult.equity }),
+          db.syncKalshiCapitalWithLiveEquity(equityResult.equity),
         ]);
 
-        const capital = await db.getKalshiCapital();
-        return {
-          ...capital,
-          currentBalance: equityResult.equity,
-        };
+        return capital;
       } catch (error) {
         console.error("[Kalshi] Get capital error:", error);
         return null;
@@ -316,7 +327,7 @@ export const appRouter = router({
     }),
 
     initializeCapital: protectedProcedure
-      .input(z.object({ amount: z.number().default(100) }))
+      .input(z.object({ amount: z.number().default(0) }))
       .mutation(async ({ input, ctx }) => {
         try {
           await db.initializeKalshiCapital(input.amount);
@@ -381,7 +392,7 @@ export const appRouter = router({
       }
     }),
 
-    getRiskLimits: protectedProcedure.query(async () => RISK_LIMITS),
+    getRiskLimits: protectedProcedure.query(async () => getDynamicRiskLimits()),
 
     // Phase 2: Market Feed Subscriptions
     subscribeMarketFeed: protectedProcedure
@@ -604,7 +615,7 @@ export const appRouter = router({
               input.privateKey,
               equityResult.equity
             );
-            await db.updateKalshiCapital({ currentBalance: equityResult.equity });
+            await db.syncKalshiCapitalWithLiveEquity(equityResult.equity);
             await db.logAuditEvent(
               "kalshi_account_connected",
               `Equity: $${equityResult.equity}`,
@@ -666,7 +677,7 @@ export const appRouter = router({
 
         await Promise.all([
           kalshiCredDb.updateKalshiAccountEquity(userId, equityResult.equity),
-          db.updateKalshiCapital({ currentBalance: equityResult.equity }),
+          db.syncKalshiCapitalWithLiveEquity(equityResult.equity),
         ]);
 
         return {

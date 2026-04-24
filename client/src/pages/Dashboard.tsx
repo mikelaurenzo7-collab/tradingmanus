@@ -276,7 +276,7 @@ export default function Dashboard() {
                 Deposit Funds on Kalshi
               </Button>
               <p className="text-xs text-muted-foreground text-center">
-                Recommended starting amount: $10-$100
+                Deposit only the amount that matches your risk tolerance and first-test plan.
               </p>
             </div>
           </CardContent>
