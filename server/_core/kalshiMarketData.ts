@@ -96,6 +96,17 @@ function normalizeKalshiMarket(rawMarket: any): KalshiMarket {
   };
 }
 
+function isDisplaySafeActionableMarket(market: KalshiMarket): boolean {
+  const normalizedTitle = market.title.trim();
+  const lowerTitle = normalizedTitle.toLowerCase();
+  const hasCompositeJoiners = normalizedTitle.includes(",") || normalizedTitle.includes(";");
+  const looksLikeLegList = lowerTitle.startsWith("yes ") || lowerTitle.startsWith("no ");
+  const hasReadableTitle = normalizedTitle.length >= 8 && normalizedTitle.length <= 140;
+  const hasNamedCategory = Boolean(market.category && market.category !== "general");
+
+  return hasReadableTitle && hasNamedCategory && !hasCompositeJoiners && !looksLikeLegList;
+}
+
 function getMarketActionabilityScore(market: KalshiMarket): number {
   const totalVolume = Math.max(0, market.yesVolume + market.noVolume);
   const hasBoundedPricing =
@@ -108,8 +119,9 @@ function getMarketActionabilityScore(market: KalshiMarket): number {
 
   const volumeScore = Math.min(1, totalVolume / 500);
   const balanceScore = 1 - Math.min(1, Math.abs(market.impliedProbability - 0.5) / 0.5);
+  const displaySafetyScore = isDisplaySafeActionableMarket(market) ? 1 : 0;
 
-  return (hasBoundedPricing ? 1 : 0) * 2 + volumeScore + balanceScore * 0.25;
+  return (hasBoundedPricing ? 1 : 0) * 2 + displaySafetyScore * 1.5 + volumeScore + balanceScore * 0.25;
 }
 
 /**
@@ -123,6 +135,7 @@ export async function fetchKalshiMarkets(filters?: {
     const params = new URLSearchParams();
     if (filters?.category) params.append("category", filters.category);
     if (filters?.status) params.append("status", filters.status);
+    params.append("mve_filter", "exclude");
     params.append("limit", "200");
 
     const url = `${KALSHI_API_BASE}/markets?${params.toString()}`;
@@ -141,6 +154,7 @@ export async function fetchKalshiMarkets(filters?: {
     return (data.markets || [])
       .map((market: any) => normalizeKalshiMarket(market))
       .filter((market: KalshiMarket) => Boolean(market.id))
+      .filter((market: KalshiMarket) => isDisplaySafeActionableMarket(market))
       .sort((a: KalshiMarket, b: KalshiMarket) => getMarketActionabilityScore(b) - getMarketActionabilityScore(a));
   } catch (error) {
     console.error("[Kalshi] Market fetch failed:", error);

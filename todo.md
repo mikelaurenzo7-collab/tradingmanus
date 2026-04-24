@@ -378,3 +378,8 @@ This iteration prioritizes prediction quality by introducing a more independent 
 - [x] Add or tighten small-balance safeguards so candidate-order preparation is appropriate for an account with about $73 in starting equity
 - [ ] Validate that any future candidate live order for dogfood testing includes real ticker, side, price, size, and explicit approval gating before submission
 - [x] Test and verify the repaired live-signal and small-balance dogfood flow in preview before recommending a first learning trade
+- [x] Turn the Founders Kalshi account to Full Autonomy mode in the app after explicit user confirmation
+- [x] Verify the connected Founders account state and current live candidate readiness immediately before autonomous live trading proceeds
+- [ ] Finalize small-balance live candidate safeguards so autonomous trading uses real actionable candidates and compliant sizing for roughly $73 of equity
+- [ ] Validate the live trading path end-to-end after Full Autonomy is enabled and confirm the resulting execution state
+- [x] Reach the next clean checkpoint only after the live candidate universe is trustworthy enough for full-autonomy dogfood review and candidate-order readiness can be assessed clearly
