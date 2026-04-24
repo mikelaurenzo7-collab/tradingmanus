@@ -61,6 +61,10 @@ export default function DashboardLayout({
   const { loading, user, logout } = useAuth();
 
   useEffect(() => {
+    document.title = "Laurenzo";
+  }, [user]);
+
+  useEffect(() => {
     localStorage.setItem(SIDEBAR_WIDTH_KEY, sidebarWidth.toString());
   }, [sidebarWidth]);
 

@@ -396,3 +396,4 @@ This iteration prioritizes prediction quality by introducing a more independent 
 - [x] Exclude neutral-baseline heuristic value signals from execution-ready ranking and autonomous eligibility until an independent probability estimate exists
 - [x] Replace any remaining previous branding with Laurenzo across the app, including mobile-visible naming and browser-visible metadata
 - [x] Determine whether the remaining previous-product naming is coming from mutable user-facing site settings or the internal project slug, and switch every user-facing instance to Laurenzo
+- [x] Force the published public-domain browser title to Laurenzo at runtime so platform-managed title injection cannot keep showing the old name on mobile browsers
