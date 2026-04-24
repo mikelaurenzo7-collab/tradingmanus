@@ -403,4 +403,4 @@ This iteration prioritizes prediction quality by introducing a more independent 
 - [x] Build a protected scheduled-trading endpoint on the deployed site so away-from-chat runs can trigger signal generation and execution safely
 - [x] Implement away-from-chat execution gating so scheduled runs only trade non-heuristic execution-ready signals under existing risk controls
 - [x] Add regression coverage for the scheduled trading endpoint and background execution safety behavior
-- [ ] Create the recurring scheduled task that calls the deployed Laurenzo site to scan for trades while the user is away
+- [x] Create the recurring scheduled task that calls the deployed Laurenzo site to scan for trades while the user is away
