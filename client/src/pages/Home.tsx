@@ -4,7 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { trpc } from "@/lib/trpc";
-import { getFastActionItems, getFirstTestReadiness, getLandingBadge } from "@/lib/dashboardLanding";
+import { getFastActionItems, getFirstTestReadiness, getLandingBadge, getVisibleCapital } from "@/lib/dashboardLanding";
 
 function formatCurrency(value: number) {
   return new Intl.NumberFormat("en-US", {
@@ -16,23 +16,30 @@ function formatCurrency(value: number) {
 }
 
 export default function Home() {
-  const capital = trpc.kalshi.getCapital.useQuery();
   const performance = trpc.kalshi.getPerformanceOverview.useQuery();
   const positions = trpc.kalshi.getPositions.useQuery();
   const feeds = trpc.kalshi.getAllMarketFeeds.useQuery();
+  const accountStatus = trpc.kalshi.getKalshiAccountStatus.useQuery(undefined, {
+    refetchInterval: 30000,
+    refetchIntervalInBackground: true,
+  });
 
-  const connected = Boolean(capital.data && capital.data.currentBalance > 0);
+  const connected = accountStatus.data?.connected ?? false;
+  const confirmedEquity = getVisibleCapital({
+    connected: connected && accountStatus.data?.status === "connected",
+    currentBalance: accountStatus.data?.equity ?? 0,
+  });
   const liveFeedCount = (feeds.data ?? []).filter((feed) => feed?.currentSnapshot).length;
   const openPositions = (positions.data ?? []).filter((position: { status?: string }) => position.status === "open");
   const badge = getLandingBadge({
     connected,
-    currentBalance: capital.data?.currentBalance ?? 0,
+    currentBalance: confirmedEquity,
     liveFeedCount,
     maxDrawdown: performance.data?.metrics.maxDrawdown ?? 0,
   });
   const readiness = getFirstTestReadiness({
     connected,
-    currentBalance: capital.data?.currentBalance ?? 0,
+    currentBalance: confirmedEquity,
     liveFeedCount,
     maxDrawdown: performance.data?.metrics.maxDrawdown ?? 0,
   });
@@ -41,8 +48,13 @@ export default function Home() {
   const cards = [
     {
       title: "Tracked Capital",
-      value: formatCurrency(capital.data?.currentBalance ?? 0),
-      description: connected ? "Current balance available to the dashboard" : "Connect Kalshi to sync live account equity",
+      value: connected && accountStatus.data?.status === "connected" ? formatCurrency(confirmedEquity) : "—",
+      description:
+        connected && accountStatus.data?.status === "connected"
+          ? "Live equity confirmed from the connected Kalshi account"
+          : connected
+            ? "Waiting for a fresh live equity confirmation from Kalshi"
+            : "Connect Kalshi to sync live account equity",
       accent: "text-cyan-300",
       icon: Activity,
     },
@@ -73,7 +85,7 @@ export default function Home() {
     <div className="space-y-6 p-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <Badge className={`mb-3 border px-3 py-1 font-mono ${badge.tone === "connected" ? "border-emerald-700 bg-emerald-950/40 text-emerald-300" : "border-cyan-700 bg-cyan-950/40 text-cyan-300"}`}>
+          <Badge className={`mb-3 border px-3 py-1 font-mono ${badge.tone === "connected" ? "border-emerald-700 bg-emerald-950/40 text-emerald-300" : badge.tone === "funding" ? "border-amber-700 bg-amber-950/40 text-amber-300" : "border-cyan-700 bg-cyan-950/40 text-cyan-300"}`}>
             <ShieldCheck className="mr-2 h-3.5 w-3.5" />
             {badge.label}
           </Badge>
@@ -83,6 +95,11 @@ export default function Home() {
           <p className="mt-2 max-w-3xl text-slate-400">
             Use this control surface to confirm account connection, inspect live exposure, and jump into the highest-impact analytics before the next trade decision.
           </p>
+          {readiness.needsFundingReview ? (
+            <p className="mt-3 max-w-3xl text-sm text-amber-300">
+              Your account appears connected but not yet funded. Complete the connection check, then add capital on Kalshi before your first live order.
+            </p>
+          ) : null}
         </div>
         <div className="flex flex-wrap gap-3">
           <Link href="/connect">

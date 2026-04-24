@@ -286,9 +286,29 @@ export const appRouter = router({
       }),
 
     // Capital management
-    getCapital: protectedProcedure.query(async () => {
+    getCapital: protectedProcedure.query(async ({ ctx }) => {
       try {
-        return await db.getKalshiCapital();
+        const userId = ctx.user!.id || 1;
+        const creds = await kalshiCredDb.getKalshiCredentials(userId);
+        if (!creds || creds.accountStatus !== "connected") {
+          return null;
+        }
+
+        const equityResult = await fetchKalshiAccountEquity(creds.apiKey, creds.privateKey);
+        if (equityResult.error) {
+          return null;
+        }
+
+        await Promise.all([
+          kalshiCredDb.updateKalshiAccountEquity(userId, equityResult.equity),
+          db.updateKalshiCapital({ currentBalance: equityResult.equity }),
+        ]);
+
+        const capital = await db.getKalshiCapital();
+        return {
+          ...capital,
+          currentBalance: equityResult.equity,
+        };
       } catch (error) {
         console.error("[Kalshi] Get capital error:", error);
         return null;
@@ -623,11 +643,37 @@ export const appRouter = router({
         if (!creds) {
           return { connected: false, equity: 0, status: "disconnected" };
         }
+
+        if (creds.accountStatus !== "connected") {
+          return {
+            connected: false,
+            equity: 0,
+            status: creds.accountStatus,
+            lastSyncedAt: creds.lastSyncedAt,
+          };
+        }
+
+        const equityResult = await fetchKalshiAccountEquity(creds.apiKey, creds.privateKey);
+        if (equityResult.error) {
+          return {
+            connected: true,
+            equity: 0,
+            status: "error",
+            lastSyncedAt: creds.lastSyncedAt,
+            error: equityResult.error,
+          };
+        }
+
+        await Promise.all([
+          kalshiCredDb.updateKalshiAccountEquity(userId, equityResult.equity),
+          db.updateKalshiCapital({ currentBalance: equityResult.equity }),
+        ]);
+
         return {
-          connected: creds.accountStatus === "connected",
-          equity: creds.accountEquity,
-          status: creds.accountStatus,
-          lastSyncedAt: creds.lastSyncedAt,
+          connected: true,
+          equity: equityResult.equity,
+          status: "connected",
+          lastSyncedAt: new Date(),
         };
       } catch (error) {
         console.error("[Kalshi] Get account status error:", error);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getFastActionItems, getFirstTestReadiness, getLandingBadge } from "./dashboardLanding";
+import { getFastActionItems, getFirstTestReadiness, getLandingBadge, getVisibleCapital } from "./dashboardLanding";
 
 describe("dashboardLanding", () => {
   it("marks disconnected accounts as needing connection before first live testing", () => {
@@ -18,8 +18,8 @@ describe("dashboardLanding", () => {
 
   it("marks connected unfunded accounts as needing funding review", () => {
     expect(getLandingBadge({ connected: true, currentBalance: 0, liveFeedCount: 3, maxDrawdown: 0.04 })).toEqual({
-      label: "Account telemetry active",
-      tone: "connected",
+      label: "Account connected, funding review needed",
+      tone: "funding",
     });
 
     expect(getFirstTestReadiness({ connected: true, currentBalance: 0, liveFeedCount: 3, maxDrawdown: 0.04 })).toEqual({
@@ -28,6 +28,11 @@ describe("dashboardLanding", () => {
       microstructureLabel: "3",
       needsFundingReview: true,
     });
+  });
+
+  it("hides stale capital when the account is not currently connected", () => {
+    expect(getVisibleCapital({ connected: false, currentBalance: 100 })).toBe(0);
+    expect(getVisibleCapital({ connected: true, currentBalance: 100 })).toBe(100);
   });
 
   it("returns the fast-action links for the first live-test workflow", () => {

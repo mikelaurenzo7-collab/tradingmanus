@@ -6,6 +6,13 @@ export type DashboardLandingMetrics = {
 };
 
 export function getLandingBadge(metrics: DashboardLandingMetrics) {
+  if (metrics.connected && metrics.currentBalance <= 0) {
+    return {
+      label: "Account connected, funding review needed",
+      tone: "funding" as const,
+    };
+  }
+
   if (metrics.connected) {
     return {
       label: "Account telemetry active",
@@ -26,6 +33,10 @@ export function getFirstTestReadiness(metrics: DashboardLandingMetrics) {
     microstructureLabel: String(metrics.liveFeedCount),
     needsFundingReview: metrics.connected && metrics.currentBalance <= 0,
   };
+}
+
+export function getVisibleCapital(metrics: Pick<DashboardLandingMetrics, "connected" | "currentBalance">) {
+  return metrics.connected ? metrics.currentBalance : 0;
 }
 
 export function getFastActionItems() {

@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   saveKalshiCredentials: vi.fn(),
   getKalshiCredentials: vi.fn(),
   deleteKalshiCredentials: vi.fn(),
+  updateKalshiAccountEquity: vi.fn(),
   updateKalshiCapital: vi.fn(),
   logAuditEvent: vi.fn(),
 }));
@@ -30,6 +31,7 @@ vi.mock("./db.kalshi-credentials", () => ({
   saveKalshiCredentials: mocks.saveKalshiCredentials,
   getKalshiCredentials: mocks.getKalshiCredentials,
   deleteKalshiCredentials: mocks.deleteKalshiCredentials,
+  updateKalshiAccountEquity: mocks.updateKalshiAccountEquity,
 }));
 
 vi.mock("./_core/kalshiAuth", () => ({
@@ -193,5 +195,39 @@ describe("kalshi account connection", () => {
       error:
         "Your Kalshi credentials were validated, but the dashboard could not save the connection state. Please retry in a moment.",
     });
+  });
+
+  it("refreshes live equity for connected users when account status is requested", async () => {
+    mocks.getKalshiCredentials.mockResolvedValue({
+      userId: 7,
+      apiKey: "live-api-key",
+      privateKey: "private-key",
+      accountEquity: 12,
+      accountStatus: "connected",
+      lastSyncedAt: new Date("2026-04-24T18:00:00Z"),
+    });
+    mocks.fetchKalshiAccountEquity.mockResolvedValue({ equity: 321.09, mode: "production" });
+    mocks.updateKalshiAccountEquity.mockResolvedValue(undefined);
+    mocks.updateKalshiCapital.mockResolvedValue(undefined);
+
+    const caller = appRouter.createCaller(createProtectedContext());
+    const result = await caller.kalshi.getKalshiAccountStatus();
+
+    expect(mocks.fetchKalshiAccountEquity).toHaveBeenCalledWith("live-api-key", "private-key");
+    expect(mocks.updateKalshiAccountEquity).toHaveBeenCalledWith(7, 321.09);
+    expect(mocks.updateKalshiCapital).toHaveBeenCalledWith({ currentBalance: 321.09 });
+    expect(result.connected).toBe(true);
+    expect(result.status).toBe("connected");
+    expect(result.equity).toBe(321.09);
+  });
+
+  it("returns no capital for disconnected users", async () => {
+    mocks.getKalshiCredentials.mockResolvedValue(null);
+
+    const caller = appRouter.createCaller(createProtectedContext());
+    const result = await caller.kalshi.getCapital();
+
+    expect(mocks.fetchKalshiAccountEquity).not.toHaveBeenCalled();
+    expect(result).toBeNull();
   });
 });
