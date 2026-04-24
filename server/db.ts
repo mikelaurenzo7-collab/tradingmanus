@@ -1,4 +1,3 @@
-import { drizzle } from "drizzle-orm/mysql2";
 import {
   users,
   auditLog,
@@ -16,29 +15,127 @@ import { drizzle as drizzleInit } from "drizzle-orm/mysql2";
 import * as mysql from "mysql2/promise";
 
 let _db: any = null;
-let _connection: any = null;
+let _pool: mysql.Pool | null = null;
+let _dbInitPromise: Promise<any> | null = null;
 
-export async function getDb() {
-  if (!_db && ENV.databaseUrl) {
-    try {
-      const url = new URL(ENV.databaseUrl);
-      _connection = await mysql.createConnection({
-        host: url.hostname,
-        user: url.username,
-        password: url.password,
-        database: url.pathname.slice(1),
-        port: parseInt(url.port || "3306"),
-        ssl: {
-          rejectUnauthorized: false,
-        },
-      });
-      _db = drizzleInit(_connection);
-    } catch (error) {
-      console.warn("[Database] Failed to connect:", error);
+function buildMysqlPool() {
+  if (!ENV.databaseUrl) {
+    return null;
+  }
+
+  const url = new URL(ENV.databaseUrl);
+
+  return mysql.createPool({
+    host: url.hostname,
+    user: decodeURIComponent(url.username),
+    password: decodeURIComponent(url.password),
+    database: url.pathname.slice(1),
+    port: parseInt(url.port || "3306", 10),
+    ssl: {
+      rejectUnauthorized: false,
+    },
+    waitForConnections: true,
+    connectionLimit: 10,
+    maxIdle: 10,
+    idleTimeout: 60_000,
+    queueLimit: 0,
+    enableKeepAlive: true,
+    keepAliveInitialDelay: 0,
+  });
+}
+
+async function initializeDb(forceRefresh: boolean = false) {
+  if (!ENV.databaseUrl) {
+    return null;
+  }
+
+  if (_db && _pool && !forceRefresh) {
+    return _db;
+  }
+
+  if (_dbInitPromise && !forceRefresh) {
+    return _dbInitPromise;
+  }
+
+  _dbInitPromise = (async () => {
+    if (forceRefresh && _pool) {
+      try {
+        await _pool.end();
+      } catch (error) {
+        console.warn("[Database] Failed to close stale pool during refresh:", error);
+      }
+      _pool = null;
       _db = null;
     }
+
+    const pool = buildMysqlPool();
+    if (!pool) {
+      return null;
+    }
+
+    try {
+      const connection = await pool.getConnection();
+      try {
+        await connection.ping();
+      } finally {
+        connection.release();
+      }
+
+      _pool = pool;
+      _db = drizzleInit(pool);
+      return _db;
+    } catch (error) {
+      try {
+        await pool.end();
+      } catch (closeError) {
+        console.warn("[Database] Failed to clean up failed pool init:", closeError);
+      }
+      _pool = null;
+      _db = null;
+      throw error;
+    }
+  })();
+
+  try {
+    return await _dbInitPromise;
+  } finally {
+    _dbInitPromise = null;
   }
-  return _db;
+}
+
+async function ensureHealthyDb() {
+  if (!_db || !_pool) {
+    return initializeDb();
+  }
+
+  try {
+    const connection = await _pool.getConnection();
+    try {
+      await connection.ping();
+    } finally {
+      connection.release();
+    }
+
+    return _db;
+  } catch (error) {
+    console.warn("[Database] Existing pool became unhealthy, recreating it:", error);
+    return initializeDb(true);
+  }
+}
+
+export async function getDb() {
+  if (!ENV.databaseUrl) {
+    return null;
+  }
+
+  try {
+    return await ensureHealthyDb();
+  } catch (error) {
+    console.warn("[Database] Failed to connect:", error);
+    _db = null;
+    _pool = null;
+    return null;
+  }
 }
 
 export const db = {

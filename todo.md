@@ -324,6 +324,12 @@ This iteration prioritizes prediction quality by introducing a more independent 
 - [x] Keep the live news layer unified around the existing GNews-based ingestion pipeline
 - [x] Remove the in-progress NewsAPI direction and keep the live news layer unified around GNews plus Wikimedia only
 - [ ] Finish the remaining Advanced Features work with batched changes and targeted validation to minimize unnecessary reruns
+- [x] Diagnose the Founders-account Kalshi key connection error reported on the published app
+- [x] Trace and remove any remaining stale Kalshi API host references causing connection validation failures
+- [x] Fix the database/auth connection-path failure behind Kalshi credential save and validation
+- [x] Add regression coverage for the Kalshi credential-connection failure path and the successful Founders-account flow
+- [x] Ensure users can connect fresh Kalshi keys entered directly in the app without relying on Manus settings for personal credentials
+- [x] Improve the Connect Kalshi onboarding copy and error handling for a laptop-based fresh-key setup flow
 - [ ] Wire the static Backtesting page to the existing advanced backtest procedures and replace placeholder metrics with live computed results
 - [ ] Expand the Portfolio Optimization page from a Kelly-only calculator into a full optimizer using correlation, diversification, and position-sizing outputs already available on the backend
 - [ ] Extend the Risk Controls and Performance dashboards to surface advanced risk alerts, attribution, and learning metrics already supported by backend helpers
@@ -335,4 +341,4 @@ This iteration prioritizes prediction quality by introducing a more independent 
 - [x] Add router-level regression coverage for Kalshi account connection and user-id-based live execution routing
 - [ ] Verify the live Kalshi connection flow, account-linked dashboards, and safety controls before the next handoff
 - [x] Replace the stale `api.kalshi.com` host with the current Kalshi production or demo API base so live market data and account testing work reliably
-- [ ] Save a fresh checkpoint with the latest Kalshi-focused changes so the user can republish the live app with the newest work
+- [x] Save a fresh checkpoint with the latest Kalshi-focused changes so the user can republish the live app with the newest work

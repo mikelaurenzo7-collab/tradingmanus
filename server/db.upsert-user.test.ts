@@ -12,6 +12,15 @@ const mocks = vi.hoisted(() => {
   const set = vi.fn(() => ({ where: updateWhere }));
   const update = vi.fn(() => ({ set }));
 
+  const ping = vi.fn();
+  const release = vi.fn();
+  const getConnection = vi.fn(async () => ({ ping, release }));
+  const end = vi.fn();
+  const pool = {
+    getConnection,
+    end,
+  };
+
   return {
     values,
     insert,
@@ -21,18 +30,23 @@ const mocks = vi.hoisted(() => {
     updateWhere,
     set,
     update,
+    ping,
+    release,
+    getConnection,
+    end,
+    pool,
     database: {
       insert,
       select,
       update,
     },
-    createConnection: vi.fn(),
+    createPool: vi.fn(),
     drizzleInit: vi.fn(),
   };
 });
 
 vi.mock("mysql2/promise", () => ({
-  createConnection: mocks.createConnection,
+  createPool: mocks.createPool,
 }));
 
 vi.mock("drizzle-orm/mysql2", () => ({
@@ -42,7 +56,9 @@ vi.mock("drizzle-orm/mysql2", () => ({
 describe("upsertUser", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.createConnection.mockResolvedValue({});
+    mocks.createPool.mockReturnValue(mocks.pool);
+    mocks.getConnection.mockResolvedValue({ ping: mocks.ping, release: mocks.release });
+    mocks.ping.mockResolvedValue(undefined);
     mocks.drizzleInit.mockReturnValue(mocks.database);
   });
 
@@ -58,6 +74,7 @@ describe("upsertUser", () => {
       lastSignedIn: new Date("2026-04-24T00:00:00.000Z"),
     });
 
+    expect(mocks.createPool).toHaveBeenCalledTimes(1);
     expect(mocks.insert).toHaveBeenCalledTimes(1);
     expect(mocks.values).toHaveBeenCalledWith({ openId: "open-id-only" });
     expect(mocks.update).not.toHaveBeenCalled();
@@ -83,5 +100,26 @@ describe("upsertUser", () => {
       email: "trader@example.com",
     });
     expect(mocks.updateWhere).toHaveBeenCalledTimes(1);
+  });
+
+  it("recreates the client when the existing pool health check fails", async () => {
+    vi.resetModules();
+    mocks.selectWhere.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    mocks.values.mockResolvedValue(undefined);
+    mocks.getConnection
+      .mockResolvedValueOnce({ ping: mocks.ping, release: mocks.release })
+      .mockResolvedValueOnce({
+        ping: vi.fn().mockRejectedValueOnce(new Error("closed state")),
+        release: mocks.release,
+      })
+      .mockResolvedValueOnce({ ping: mocks.ping, release: mocks.release });
+
+    const db = await import("./db");
+
+    await db.upsertUser({ openId: "first-user" });
+    await db.upsertUser({ openId: "second-user" });
+
+    expect(mocks.createPool).toHaveBeenCalledTimes(2);
+    expect(mocks.end).toHaveBeenCalledTimes(1);
   });
 });

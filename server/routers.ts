@@ -558,7 +558,9 @@ export const appRouter = router({
           if (!validation.valid) {
             return {
               success: false,
-              error: validation.error || "Invalid credentials",
+              error:
+                validation.error ||
+                "Kalshi rejected these credentials. Confirm you pasted the API Key ID and the matching private key file contents.",
             };
           }
 
@@ -567,27 +569,50 @@ export const appRouter = router({
             input.privateKey
           );
           if (equityResult.error) {
-            return { success: false, error: equityResult.error };
+            return {
+              success: false,
+              error: `Kalshi accepted the key pair but the account balance check failed: ${equityResult.error}`,
+            };
           }
 
           const userId = ctx.user!.id || 1;
-          await kalshiCredDb.saveKalshiCredentials(
-            userId,
-            input.apiKey,
-            input.privateKey,
-            equityResult.equity
-          );
-          await db.updateKalshiCapital({ currentBalance: equityResult.equity });
-          await db.logAuditEvent(
-            "kalshi_account_connected",
-            `Equity: $${equityResult.equity}`,
-            ctx.user!.openId
-          );
 
-          return { success: true, equity: equityResult.equity };
+          try {
+            await kalshiCredDb.saveKalshiCredentials(
+              userId,
+              input.apiKey,
+              input.privateKey,
+              equityResult.equity
+            );
+            await db.updateKalshiCapital({ currentBalance: equityResult.equity });
+            await db.logAuditEvent(
+              "kalshi_account_connected",
+              `Equity: $${equityResult.equity}`,
+              ctx.user!.openId
+            );
+          } catch (storageError) {
+            console.error("[Kalshi] Failed to persist validated credentials:", storageError);
+            return {
+              success: false,
+              error:
+                "Your Kalshi credentials were validated, but the dashboard could not save the connection state. Please retry in a moment.",
+            };
+          }
+
+          return {
+            success: true,
+            equity: equityResult.equity,
+            mode: equityResult.mode ?? validation.mode,
+          };
         } catch (error) {
           console.error("[Kalshi] Connect account error:", error);
-          return { success: false, error: String(error) };
+          return {
+            success: false,
+            error:
+              error instanceof Error
+                ? error.message
+                : "Unexpected error while connecting your Kalshi account",
+          };
         }
       }),
 
