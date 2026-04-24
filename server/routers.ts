@@ -1,5 +1,6 @@
 import { getSessionCookieOptions } from "./_core/cookies";
 import { publicProcedure, router, protectedProcedure } from "./_core/trpc";
+import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import * as db from "./db";
 import {
@@ -521,29 +522,11 @@ export const appRouter = router({
         return await getPerformanceOverview();
       } catch (error) {
         console.error("[Kalshi] Get performance overview error:", error);
-        return {
-          startingBalance: 100,
-          currentBalance: 100,
-          metrics: {
-            totalTrades: 0,
-            winningTrades: 0,
-            losingTrades: 0,
-            breakevenTrades: 0,
-            winRate: 0,
-            avgWin: 0,
-            avgLoss: 0,
-            profitFactor: 0,
-            totalPnL: 0,
-            dailyPnL: 0,
-            sharpeRatio: 0,
-            maxDrawdown: 0,
-            recoveryFactor: 0,
-            realizedPnL: 0,
-            unrealizedPnL: 0,
-            activePositions: 0,
-          },
-          signalPerformance: [],
-        };
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Unable to load performance overview",
+          cause: error,
+        });
       }
     }),
 
