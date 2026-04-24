@@ -39,7 +39,7 @@ export default function Connect() {
           utils.kalshi.getPositions.invalidate(),
         ]);
         setTimeout(() => {
-          setLocation("/");
+          setLocation("/autonomy");
         }, CONNECT_REDIRECT_DELAY_MS);
         return;
       }
@@ -68,7 +68,7 @@ export default function Connect() {
           <CheckCircle2 className="w-16 h-16 text-green-500" />
           <h1 className="text-2xl font-bold text-center gradient-text">Kalshi Connected</h1>
           <p className="text-sm text-muted-foreground text-center">
-            {connectionMessage || "Your Kalshi account is connected. Redirecting to the dashboard..."}
+            {connectionMessage || "Your Kalshi account is connected. Redirecting to Trading Autonomy so you can choose exactly how autonomous the agent should be..."}
           </p>
         </div>
       </div>
@@ -81,7 +81,7 @@ export default function Connect() {
         <div className="mb-8">
           <h1 className="text-3xl font-bold gradient-text mb-2">Connect Kalshi</h1>
           <p className="text-muted-foreground">
-            Generate fresh Kalshi keys on your laptop, paste them here, and the dashboard will validate and encrypt them for your account.
+            Generate fresh Kalshi keys on your laptop, paste them here, and the dashboard will validate and encrypt them for your account. After connection, the next step is to open Trading Autonomy and decide whether the agent stays manual, requires approval, or can trade more autonomously.
           </p>
         </div>
 

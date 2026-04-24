@@ -35,6 +35,7 @@ import {
 import { getKalshiApiKey } from "./_core/env";
 import { getPerformanceOverview } from "./_core/kalshiLearning";
 import * as kalshiCredDb from "./db.kalshi-credentials";
+import * as tradingPreferencesDb from "./db.trading-preferences";
 import { trainingRouter } from "./training.router";
 import { advancedRouter } from "./advanced.router";
 
@@ -47,6 +48,27 @@ const BASE_RISK_LIMITS = {
   maxPositionSize: 20,
   maxOpenPositions: 5,
 };
+
+const tradingPreferencesInput = z.object({
+  autonomyMode: z.enum([
+    "manual",
+    "approval_required",
+    "semi_autonomous",
+    "fully_autonomous",
+  ]),
+  liveTradingEnabled: z.boolean(),
+  executionCadence: z.enum([
+    "manual_only",
+    "session_assisted",
+    "hourly_watch",
+    "continuous_watch",
+  ]),
+  riskPosture: z.enum(["conservative", "balanced", "aggressive"]),
+  minSignalConfidence: z.number().min(0.5).max(0.99),
+  maxOrderNotional: z.number().min(1).max(250),
+  maxDailyOrders: z.number().int().min(1).max(48),
+  requireApprovalAbove: z.number().min(1).max(500),
+});
 
 async function getDynamicRiskLimits() {
   const capital = await db.getKalshiCapital();
@@ -650,9 +672,17 @@ export const appRouter = router({
     getKalshiAccountStatus: protectedProcedure.query(async ({ ctx }) => {
       try {
         const userId = ctx.user!.id || 1;
-        const creds = await kalshiCredDb.getKalshiCredentials(userId);
+        const [creds, preferences] = await Promise.all([
+          kalshiCredDb.getKalshiCredentials(userId),
+          tradingPreferencesDb.getTradingPreferences(userId),
+        ]);
         if (!creds) {
-          return { connected: false, equity: 0, status: "disconnected" };
+          return {
+            connected: false,
+            equity: 0,
+            status: "disconnected",
+            tradingPreferences: preferences,
+          };
         }
 
         if (creds.accountStatus !== "connected") {
@@ -661,6 +691,7 @@ export const appRouter = router({
             equity: 0,
             status: creds.accountStatus,
             lastSyncedAt: creds.lastSyncedAt,
+            tradingPreferences: preferences,
           };
         }
 
@@ -672,6 +703,7 @@ export const appRouter = router({
             status: "error",
             lastSyncedAt: creds.lastSyncedAt,
             error: equityResult.error,
+            tradingPreferences: preferences,
           };
         }
 
@@ -685,6 +717,7 @@ export const appRouter = router({
           equity: equityResult.equity,
           status: "connected",
           lastSyncedAt: new Date(),
+          tradingPreferences: preferences,
         };
       } catch (error) {
         console.error("[Kalshi] Get account status error:", error);
@@ -693,9 +726,136 @@ export const appRouter = router({
           equity: 0,
           status: "error",
           error: String(error),
+          tradingPreferences: tradingPreferencesDb.DEFAULT_TRADING_PREFERENCES,
         };
       }
     }),
+
+    getTradingPreferences: protectedProcedure.query(async ({ ctx }) => {
+      try {
+        const userId = ctx.user!.id || 1;
+        return await tradingPreferencesDb.getTradingPreferences(userId);
+      } catch (error) {
+        console.error("[Kalshi] Get trading preferences error:", error);
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Unable to load trading preferences",
+          cause: error,
+        });
+      }
+    }),
+
+    updateTradingPreferences: protectedProcedure
+      .input(tradingPreferencesInput)
+      .mutation(async ({ ctx, input }) => {
+        try {
+          const userId = ctx.user!.id || 1;
+          const creds = await kalshiCredDb.getKalshiCredentials(userId);
+          const isConnected = creds?.accountStatus === "connected";
+
+          if (input.liveTradingEnabled && input.autonomyMode !== "manual" && !isConnected) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: "Connect a live Kalshi account before enabling live trading.",
+            });
+          }
+
+          const saved = await tradingPreferencesDb.saveTradingPreferences(userId, input);
+          await db.logAuditEvent(
+            "trading_preferences_updated",
+            JSON.stringify({
+              autonomyMode: saved.autonomyMode,
+              liveTradingEnabled: saved.liveTradingEnabled,
+              executionCadence: saved.executionCadence,
+              riskPosture: saved.riskPosture,
+            }),
+            ctx.user!.openId
+          );
+
+          return {
+            success: true,
+            preferences: saved,
+          };
+        } catch (error) {
+          if (error instanceof TRPCError) {
+            throw error;
+          }
+          console.error("[Kalshi] Update trading preferences error:", error);
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Unable to save trading preferences",
+            cause: error,
+          });
+        }
+      }),
+
+    setTradingActivation: protectedProcedure
+      .input(z.object({ enabled: z.boolean() }))
+      .mutation(async ({ ctx, input }) => {
+        try {
+          const userId = ctx.user!.id || 1;
+          const [creds, preferences] = await Promise.all([
+            kalshiCredDb.getKalshiCredentials(userId),
+            tradingPreferencesDb.getTradingPreferences(userId),
+          ]);
+
+          if (!input.enabled) {
+            const saved = await tradingPreferencesDb.saveTradingPreferences(userId, {
+              ...preferences,
+              liveTradingEnabled: false,
+            });
+            await db.logAuditEvent(
+              "live_trading_disarmed",
+              `Mode: ${saved.autonomyMode}`,
+              ctx.user!.openId
+            );
+            return { success: true, preferences: saved };
+          }
+
+          if (!creds || creds.accountStatus !== "connected") {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: "Connect a live Kalshi account before arming live trading.",
+            });
+          }
+
+          if (Number(creds.accountEquity ?? 0) <= 0) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: "Fund the connected Kalshi account before arming live trading.",
+            });
+          }
+
+          if (preferences.autonomyMode === "manual") {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: "Manual mode keeps live trading disarmed. Choose another autonomy mode first.",
+            });
+          }
+
+          const saved = await tradingPreferencesDb.saveTradingPreferences(userId, {
+            ...preferences,
+            liveTradingEnabled: true,
+          });
+          await db.logAuditEvent(
+            "live_trading_armed",
+            `Mode: ${saved.autonomyMode}`,
+            ctx.user!.openId
+          );
+
+          return { success: true, preferences: saved };
+        } catch (error) {
+          if (error instanceof TRPCError) {
+            throw error;
+          }
+          console.error("[Kalshi] Set trading activation error:", error);
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Unable to update live trading activation",
+            cause: error,
+          });
+        }
+      }),
 
     disconnectKalshiAccount: protectedProcedure.mutation(async ({ ctx }) => {
       try {

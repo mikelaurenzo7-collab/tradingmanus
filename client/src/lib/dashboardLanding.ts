@@ -56,6 +56,11 @@ export function getFastActionItems() {
       body: "Validate and encrypt your new laptop-generated key pair directly inside the app.",
     },
     {
+      href: "/autonomy",
+      title: "Choose autonomy mode",
+      body: "Decide whether the agent should stay manual, require approval, or run in a semi or fully autonomous live-trading mode.",
+    },
+    {
       href: "/risk-controls",
       title: "Review guardrails",
       body: "Check risk budgets, posture warnings, and kill-switch readiness before testing live execution.",
@@ -64,11 +69,6 @@ export function getFastActionItems() {
       href: "/analytics",
       title: "Scan liquidity",
       body: "Inspect spread proxies, depth imbalance, and pressure watchlists before acting on any signal.",
-    },
-    {
-      href: "/backtest",
-      title: "Compare scenarios",
-      body: "Use history-backed analysis or scenario mode to vet setups before the first real trade.",
     },
   ] as const;
 }

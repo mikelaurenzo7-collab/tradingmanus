@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { trpc } from "@/lib/trpc";
 import { getFastActionItems, getFirstTestReadiness, getLandingBadge, getVisibleCapital } from "@/lib/dashboardLanding";
+import { DEFAULT_TRADING_PREFERENCES, getAutonomyStatusSummary } from "@/lib/tradingAutonomy";
 
 function formatCurrency(value: number) {
   return new Intl.NumberFormat("en-US", {
@@ -44,6 +45,8 @@ export default function Home() {
     maxDrawdown: performance.data?.metrics.maxDrawdown ?? 0,
   });
   const actions = getFastActionItems();
+  const tradingPreferences = accountStatus.data?.tradingPreferences ?? DEFAULT_TRADING_PREFERENCES;
+  const autonomyStatus = getAutonomyStatusSummary(tradingPreferences);
 
   const cards = [
     {
@@ -93,7 +96,7 @@ export default function Home() {
             Kalshi Operating Overview
           </h1>
           <p className="mt-2 max-w-3xl text-slate-400">
-            Use this control surface to confirm account connection, inspect live exposure, and jump into the highest-impact analytics before the next trade decision.
+            Use this control surface to confirm account connection, inspect live exposure, and move through the exact steps required to let the agent trade with the autonomy level you choose.
           </p>
           {readiness.needsFundingReview ? (
             <p className="mt-3 max-w-3xl text-sm text-amber-300">
@@ -105,9 +108,9 @@ export default function Home() {
           <Link href="/connect">
             <Button className="laurenzo-button">Connect Kalshi</Button>
           </Link>
-          <Link href="/signals">
+          <Link href="/autonomy">
             <Button variant="outline" className="border-slate-700 bg-slate-900 text-slate-100 hover:bg-slate-800">
-              Review Signals
+              Set Trading Autonomy
             </Button>
           </Link>
         </div>
@@ -132,6 +135,24 @@ export default function Home() {
           );
         })}
       </div>
+
+      <Card className="border-slate-800 bg-slate-950/70">
+        <CardHeader>
+          <CardTitle>Trading mode status</CardTitle>
+          <CardDescription>
+            The autonomy setting below determines whether the agent stays manual, pauses for approval, or can place live orders more autonomously.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <div className={`text-lg font-semibold ${autonomyStatus.tone}`}>{autonomyStatus.title}</div>
+            <p className="mt-2 max-w-3xl text-sm text-slate-400">{autonomyStatus.body}</p>
+          </div>
+          <Link href="/autonomy">
+            <Button className="laurenzo-button">Open Trading Autonomy</Button>
+          </Link>
+        </CardContent>
+      </Card>
 
       <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
         <Card className="border-slate-800 bg-slate-950/70">

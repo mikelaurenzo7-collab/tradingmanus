@@ -218,14 +218,17 @@ export async function upsertKalshiMarket(market: any) {
   const liquidity = Number.isFinite(Number(market.liquidity))
     ? Number(market.liquidity)
     : Number(market.yesVolume ?? 0) + Number(market.noVolume ?? 0);
-  
+  const safeTitle = String(market.title ?? marketId).slice(0, 255);
+  const safeCategory = String(market.category ?? "uncategorized").slice(0, 128);
+  const safeDescription = market.description ? String(market.description) : null;
+
   await database
     .insert(kalshiMarkets)
     .values({
       marketId,
-      title: market.title,
-      category: market.category,
-      description: market.description,
+      title: safeTitle,
+      category: safeCategory,
+      description: safeDescription,
       resolutionDate: market.resolutionDate ? new Date(market.resolutionDate) : null,
       status: market.status,
       yesPrice: market.yesPrice,
@@ -237,6 +240,9 @@ export async function upsertKalshiMarket(market: any) {
     })
     .onDuplicateKeyUpdate({
       set: {
+        title: safeTitle,
+        category: safeCategory,
+        description: safeDescription,
         yesPrice: market.yesPrice,
         noPrice: market.noPrice,
         yesVolume: market.yesVolume,

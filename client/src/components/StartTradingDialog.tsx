@@ -1,221 +1,248 @@
 import { useState } from "react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Loader2, Settings2 } from "lucide-react";
+import {
+  formatConfidence,
+  getAutonomyModeDescription,
+  getAutonomyModeLabel,
+  getExecutionCadenceLabel,
+  getRiskPostureLabel,
+  type TradingPreferences,
+} from "@/lib/tradingAutonomy";
 
 interface StartTradingDialogProps {
   equity: number;
   hasInstructions: boolean;
+  preferences: TradingPreferences;
   onConfirm: () => void;
+  onManageSettings: () => void;
+  onCancel: () => void;
   isLoading?: boolean;
 }
 
 export function StartTradingDialog({
   equity,
   hasInstructions,
+  preferences,
   onConfirm,
+  onManageSettings,
+  onCancel,
   isLoading = false,
 }: StartTradingDialogProps) {
   const [acknowledged, setAcknowledged] = useState(false);
   const [step, setStep] = useState<"checklist" | "risks" | "confirm">("checklist");
 
-  const canProceed = acknowledged && equity > 0;
-
-  const handleNext = () => {
-    if (step === "checklist") {
-      setStep("risks");
-    } else if (step === "risks") {
-      setStep("confirm");
-    }
-  };
-
-  const handleConfirm = () => {
-    if (canProceed) {
-      onConfirm();
-    }
-  };
+  const canContinueChecklist = equity > 0 && preferences.autonomyMode !== "manual";
+  const canConfirm = acknowledged && canContinueChecklist;
 
   return (
     <div className="space-y-6">
-      {step === "checklist" && (
+      {step === "checklist" ? (
         <Card className="laurenzo-card">
           <CardHeader>
-            <CardTitle>Pre-Trade Checklist</CardTitle>
+            <CardTitle>Prepare live trading</CardTitle>
             <CardDescription>
-              Make sure you're ready before starting to trade
+              Review connection, funding, and autonomy policy before live execution is armed.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {/* Account Funded */}
-            <div className="flex items-start gap-3 p-3 rounded-lg border border-border/50">
-              <div className={`flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center ${equity > 0 ? "bg-cyan-500/20 text-cyan-400" : "bg-pink-500/20 text-pink-400"}`}>
-                {equity > 0 ? <CheckCircle2 className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
-              </div>
-              <div className="flex-1">
-                <p className="font-semibold text-sm">Account Funded</p>
-                <p className="text-xs text-muted-foreground">
-                  {equity > 0 ? `✓ $${equity.toFixed(2)} available` : "✗ No funds in account"}
-                </p>
-              </div>
-            </div>
-
-            {/* Training Instructions */}
-            <div className="flex items-start gap-3 p-3 rounded-lg border border-border/50">
-              <div className={`flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center ${hasInstructions ? "bg-cyan-500/20 text-cyan-400" : "bg-yellow-500/20 text-yellow-400"}`}>
-                {hasInstructions ? <CheckCircle2 className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
-              </div>
-              <div className="flex-1">
-                <p className="font-semibold text-sm">Training Instructions</p>
-                <p className="text-xs text-muted-foreground">
-                  {hasInstructions ? "✓ Instructions defined" : "⚠ No instructions (optional)"}
-                </p>
+            <div className="rounded-xl border border-border/60 p-4">
+              <div className="flex items-start gap-3">
+                <div className={`mt-0.5 flex h-6 w-6 items-center justify-center rounded-full ${equity > 0 ? "bg-cyan-500/20 text-cyan-400" : "bg-pink-500/20 text-pink-400"}`}>
+                  {equity > 0 ? <CheckCircle2 className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
+                </div>
+                <div>
+                  <p className="text-sm font-semibold">Funded account</p>
+                  <p className="text-xs text-muted-foreground">
+                    {equity > 0 ? `Live Kalshi equity confirmed: $${equity.toFixed(2)}` : "Fund the connected Kalshi account before arming live trading."}
+                  </p>
+                </div>
               </div>
             </div>
 
-            {/* Risk Limits Understood */}
-            <div className="flex items-start gap-3 p-3 rounded-lg border border-border/50">
-              <div className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center bg-yellow-500/20 text-yellow-400">
-                <AlertTriangle className="w-4 h-4" />
+            <div className="rounded-xl border border-border/60 p-4">
+              <div className="flex items-start gap-3">
+                <div className={`mt-0.5 flex h-6 w-6 items-center justify-center rounded-full ${preferences.autonomyMode !== "manual" ? "bg-cyan-500/20 text-cyan-400" : "bg-yellow-500/20 text-yellow-400"}`}>
+                  {preferences.autonomyMode !== "manual" ? <CheckCircle2 className="h-4 w-4" /> : <Settings2 className="h-4 w-4" />}
+                </div>
+                <div>
+                  <p className="text-sm font-semibold">Autonomy policy</p>
+                  <p className="text-xs text-muted-foreground">
+                    {getAutonomyModeLabel(preferences.autonomyMode)} · {getRiskPostureLabel(preferences.riskPosture)} · {getExecutionCadenceLabel(preferences.executionCadence)}
+                  </p>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    {getAutonomyModeDescription(preferences.autonomyMode)}
+                  </p>
+                </div>
               </div>
-              <div className="flex-1">
-                <p className="font-semibold text-sm">Risk Limits</p>
-                <p className="text-xs text-muted-foreground">
-                  Max $5 loss per trade, $10 per day, $20 per position
-                </p>
+            </div>
+
+            <div className="rounded-xl border border-border/60 p-4">
+              <div className="flex items-start gap-3">
+                <div className={`mt-0.5 flex h-6 w-6 items-center justify-center rounded-full ${hasInstructions ? "bg-cyan-500/20 text-cyan-400" : "bg-yellow-500/20 text-yellow-400"}`}>
+                  {hasInstructions ? <CheckCircle2 className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
+                </div>
+                <div>
+                  <p className="text-sm font-semibold">Training instructions</p>
+                  <p className="text-xs text-muted-foreground">
+                    {hasInstructions
+                      ? "Instructions are available to shape signal selection and execution behavior."
+                      : "No custom instructions are active. You can still trade, but the policy will rely on default signal logic."}
+                  </p>
+                </div>
               </div>
             </div>
 
             <Alert>
               <AlertTriangle className="h-4 w-4" />
               <AlertDescription>
-                Trading involves risk. Your capital is protected by automatic risk controls, but losses are possible.
+                Manual mode cannot arm live trading. If you want the app to submit live orders, switch to Approval Required, Semi-autonomous, or Fully Autonomous first.
               </AlertDescription>
             </Alert>
 
-            <Button onClick={handleNext} disabled={!canProceed} className="w-full laurenzo-button">
-              Continue to Risk Acknowledgment
-            </Button>
+            <div className="flex flex-wrap gap-3">
+              <Button variant="outline" onClick={onManageSettings}>
+                Adjust autonomy settings
+              </Button>
+              <Button variant="outline" onClick={onCancel}>
+                Cancel
+              </Button>
+              <Button
+                className="laurenzo-button ml-auto"
+                disabled={!canContinueChecklist}
+                onClick={() => setStep("risks")}
+              >
+                Continue to risk acknowledgment
+              </Button>
+            </div>
           </CardContent>
         </Card>
-      )}
+      ) : null}
 
-      {step === "risks" && (
+      {step === "risks" ? (
         <Card className="laurenzo-card border-pink-500/30 bg-pink-500/5">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <AlertTriangle className="w-5 h-5 text-pink-400" />
-              Risk Acknowledgment
+              <AlertTriangle className="h-5 w-5 text-pink-400" />
+              Risk acknowledgment
             </CardTitle>
             <CardDescription>
-              Please read and acknowledge the risks
+              Confirm that you understand the implications of arming live trading.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-3 text-sm">
+            <div className="space-y-3 text-sm text-muted-foreground">
               <p>
-                <strong>Trading Risk:</strong> Past performance does not guarantee future results. You may lose some or all of your invested capital.
+                <strong>Capital risk:</strong> Live trading can lose money, including all capital allocated to a strategy or session.
               </p>
               <p>
-                <strong>Market Risk:</strong> Prediction markets can be volatile. Prices may move against your positions quickly.
+                <strong>Execution risk:</strong> Fast price changes, low liquidity, or API delays can lead to worse fills than expected.
               </p>
               <p>
-                <strong>Liquidity Risk:</strong> Some markets may have low liquidity, making it difficult to exit positions.
+                <strong>Model risk:</strong> Even high-confidence signals can be wrong, and autonomous behavior may amplify a bad decision if you configure it too aggressively.
               </p>
               <p>
-                <strong>Technical Risk:</strong> System failures, API errors, or network issues could impact trading.
-              </p>
-              <p>
-                <strong>Agent Risk:</strong> The trading agent makes decisions based on signals. These signals may be wrong.
+                <strong>Operator responsibility:</strong> You decide the autonomy level, and you can disarm live trading at any time from the dashboard or autonomy controls.
               </p>
             </div>
 
-            <div className="flex items-start gap-3 p-4 rounded-lg bg-background/50 border border-border/50">
+            <div className="flex items-start gap-3 rounded-xl border border-border/60 bg-background/50 p-4">
               <input
+                id="live-trading-risk-ack"
                 type="checkbox"
-                id="acknowledge"
                 checked={acknowledged}
-                onChange={(e) => setAcknowledged(e.target.checked)}
+                onChange={(event) => setAcknowledged(event.target.checked)}
                 className="mt-1"
               />
-              <label htmlFor="acknowledge" className="text-sm cursor-pointer">
-                I understand the risks and acknowledge that I may lose money. I have read and agree to the terms.
+              <label htmlFor="live-trading-risk-ack" className="text-sm text-foreground">
+                I understand the risks of live trading and I explicitly approve arming the app under the selected autonomy policy.
               </label>
             </div>
 
             <div className="flex gap-3">
-              <Button onClick={() => setStep("checklist")} variant="outline" className="flex-1">
+              <Button variant="outline" onClick={() => setStep("checklist")}>
                 Back
               </Button>
-              <Button onClick={handleNext} disabled={!acknowledged} className="flex-1 laurenzo-button">
-                Continue to Confirmation
+              <Button
+                className="laurenzo-button ml-auto"
+                disabled={!acknowledged}
+                onClick={() => setStep("confirm")}
+              >
+                Continue to confirmation
               </Button>
             </div>
           </CardContent>
         </Card>
-      )}
+      ) : null}
 
-      {step === "confirm" && (
+      {step === "confirm" ? (
         <Card className="laurenzo-card border-cyan-500/30 bg-cyan-500/5">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <CheckCircle2 className="w-5 h-5 text-cyan-400" />
-              Ready to Start Trading
+              <CheckCircle2 className="h-5 w-5 text-cyan-400" />
+              Final confirmation
             </CardTitle>
             <CardDescription>
-              Your account is configured and ready
+              This final step shows exactly how autonomous the app is allowed to be once live trading is armed.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Account Balance:</span>
-                <span className="font-semibold text-cyan-400">${equity.toFixed(2)}</span>
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="rounded-xl border border-border/60 bg-background/50 p-4 text-sm">
+                <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Mode</div>
+                <div className="mt-2 font-semibold text-foreground">
+                  {getAutonomyModeLabel(preferences.autonomyMode)}
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {getAutonomyModeDescription(preferences.autonomyMode)}
+                </p>
               </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Max Loss/Trade:</span>
-                <span className="font-semibold">$5</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Max Loss/Day:</span>
-                <span className="font-semibold">$10</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Max Position Size:</span>
-                <span className="font-semibold">$20</span>
+              <div className="rounded-xl border border-border/60 bg-background/50 p-4 text-sm">
+                <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Thresholds</div>
+                <div className="mt-2 space-y-1 text-muted-foreground">
+                  <div>Minimum confidence: <strong className="text-foreground">{formatConfidence(preferences.minSignalConfidence)}</strong></div>
+                  <div>Max order notional: <strong className="text-foreground">${preferences.maxOrderNotional.toFixed(2)}</strong></div>
+                  <div>Approval above: <strong className="text-foreground">${preferences.requireApprovalAbove.toFixed(2)}</strong></div>
+                  <div>Daily order cap: <strong className="text-foreground">{preferences.maxDailyOrders}</strong></div>
+                </div>
               </div>
             </div>
 
             <Alert>
               <AlertTriangle className="h-4 w-4" />
               <AlertDescription>
-                Once you start trading, the agent will automatically execute signals based on your instructions and market conditions.
+                Arming live trading does not change your stored risk controls. It only enables the app to execute according to the autonomy mode and thresholds you selected.
               </AlertDescription>
             </Alert>
 
-            <div className="flex gap-3">
-              <Button onClick={() => setStep("risks")} variant="outline" className="flex-1">
+            <div className="flex flex-wrap gap-3">
+              <Button variant="outline" onClick={() => setStep("risks")}>
                 Back
               </Button>
+              <Button variant="outline" onClick={onManageSettings}>
+                Adjust settings
+              </Button>
               <Button
-                onClick={handleConfirm}
-                disabled={isLoading || !canProceed}
-                className="flex-1 laurenzo-button"
+                className="laurenzo-button ml-auto"
+                disabled={isLoading || !canConfirm}
+                onClick={onConfirm}
                 size="lg"
               >
                 {isLoading ? (
                   <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Starting...
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Arming live trading...
                   </>
                 ) : (
-                  "Start Trading Now"
+                  "Arm live trading"
                 )}
               </Button>
             </div>
           </CardContent>
         </Card>
-      )}
+      ) : null}
     </div>
   );
 }

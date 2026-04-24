@@ -363,3 +363,13 @@ This iteration prioritizes prediction quality by introducing a more independent 
 - [x] Remove every remaining $100 placeholder and any other hardcoded capital assumption from all pages and shared helpers
 - [x] Ensure each page either shows the connected user's confirmed live Kalshi account values or a clear unavailable/sync-needed state when live values are not confirmed
 - [x] Audit the site-wide trading workflow so no page can imply a funded or tradable state from fake, cached, or disconnected account values
+- [x] Make it unambiguous in the app how the operator starts AI-guided live trading, including the exact entry point and preconditions
+- [x] Add a dedicated in-app guided live trading flow that explains Connect Kalshi → review readiness → review candidate trade → explicit approval before any live order
+- [x] Ensure no page implies autonomous live trading without the operator explicitly approving a specific order
+- [x] Improve production-readiness messaging and operator guidance for the first live trade workflow
+- [x] Test and verify the updated start-trading flow end-to-end in preview
+- [x] Add an in-app autonomy settings surface where the user chooses manual, approval-required, semi-autonomous, or fully autonomous trading behavior
+- [x] Make it explicit in the app whether fully autonomous live trading is enabled, disabled, or awaiting setup
+- [x] Add robust customization controls for trade autonomy, approval thresholds, execution cadence, and risk posture
+- [x] Clarify how the operator turns autonomous trading on and off from the app
+- [x] Verify that autonomous-mode messaging and safety gating remain consistent across dashboard, connect, training, and trading entry points

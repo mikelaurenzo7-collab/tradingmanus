@@ -201,5 +201,34 @@ export const kalshiCapital = mysqlTable("kalshiCapital", {
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
+export const tradingPreferences = mysqlTable("tradingPreferences", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull().unique(),
+  autonomyMode: mysqlEnum("autonomyMode", [
+    "manual",
+    "approval_required",
+    "semi_autonomous",
+    "fully_autonomous",
+  ]).default("approval_required").notNull(),
+  liveTradingEnabled: int("liveTradingEnabled").default(0).notNull(),
+  executionCadence: mysqlEnum("executionCadence", [
+    "manual_only",
+    "session_assisted",
+    "hourly_watch",
+    "continuous_watch",
+  ]).default("manual_only").notNull(),
+  riskPosture: mysqlEnum("riskPosture", [
+    "conservative",
+    "balanced",
+    "aggressive",
+  ]).default("balanced").notNull(),
+  minSignalConfidence: double("minSignalConfidence").default(0.72).notNull(),
+  maxOrderNotional: double("maxOrderNotional").default(10).notNull(),
+  maxDailyOrders: int("maxDailyOrders").default(3).notNull(),
+  requireApprovalAbove: double("requireApprovalAbove").default(8).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
 // Type exports
 export type User = typeof users.$inferSelect;

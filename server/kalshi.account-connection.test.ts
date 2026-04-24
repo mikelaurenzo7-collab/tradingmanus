@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   updateKalshiAccountEquity: vi.fn(),
   syncKalshiCapitalWithLiveEquity: vi.fn(),
   logAuditEvent: vi.fn(),
+  getTradingPreferences: vi.fn(),
 }));
 
 vi.mock("./db", () => ({
@@ -37,6 +38,21 @@ vi.mock("./db.kalshi-credentials", () => ({
 vi.mock("./_core/kalshiAuth", () => ({
   validateKalshiCredentials: mocks.validateKalshiCredentials,
   fetchKalshiAccountEquity: mocks.fetchKalshiAccountEquity,
+}));
+
+vi.mock("./db.trading-preferences", () => ({
+  DEFAULT_TRADING_PREFERENCES: {
+    autonomyMode: "approval_required",
+    liveTradingEnabled: false,
+    executionCadence: "manual_only",
+    riskPosture: "balanced",
+    minSignalConfidence: 0.72,
+    maxOrderNotional: 10,
+    maxDailyOrders: 3,
+    requireApprovalAbove: 8,
+  },
+  getTradingPreferences: mocks.getTradingPreferences,
+  saveTradingPreferences: vi.fn(),
 }));
 
 vi.mock("./_core/kalshiMarketData", () => ({
@@ -119,6 +135,16 @@ function createProtectedContext(): TrpcContext {
 describe("kalshi account connection", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getTradingPreferences.mockResolvedValue({
+      autonomyMode: "approval_required",
+      liveTradingEnabled: false,
+      executionCadence: "manual_only",
+      riskPosture: "balanced",
+      minSignalConfidence: 0.72,
+      maxOrderNotional: 10,
+      maxDailyOrders: 3,
+      requireApprovalAbove: 8,
+    });
   });
 
   it("validates credentials, syncs equity, and stores them for the authenticated user", async () => {

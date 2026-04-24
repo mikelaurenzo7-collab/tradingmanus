@@ -10,3 +10,10 @@ The Portfolio Optimization page now shows `Account Equity` as a live Kalshi equi
 
 The Performance page preview no longer shows a seeded `$100` baseline. It surfaces zeroed realized and unrealized P&L with live-activity framing, which is appropriate given there are no closed trades yet. A direct navigation to `/funding` currently resolves to the app's 404 screen, indicating that the Funding page component is not presently routed into the active shell even though the file still exists in the codebase. That means the funding-copy cleanup remains useful for future re-enablement, but the page is not part of the current reachable surface area.
 
+## Trading autonomy preview verification — 2026-04-24
+
+The new `/autonomy` page now explicitly answers how to start live trading inside the app: connect Kalshi, choose an autonomy mode, save the policy, and arm live trading. The page visibly exposes four modes — Manual, Approval Required, Semi-autonomous, and Fully Autonomous — and the master-arm card separates policy saving from live-trading activation so the flow is harder to misunderstand.
+
+Preview interaction confirmed that the Fully Autonomous card can be selected in the UI and that the save panel updates to reflect the selected mode. The dashboard home screen also now includes a dedicated Trading Autonomy status card and a sidebar navigation entry, making the control path discoverable without guesswork.
+
+The main dashboard entry point now opens a three-step preparation dialog instead of an ambiguous start command. In preview, clicking **Arm Live Trading** opened a checklist that surfaced funded-account confirmation, the current autonomy policy, instruction status, and a clear warning that manual mode cannot arm live trading. This makes the operator handoff materially clearer before any live execution is enabled.

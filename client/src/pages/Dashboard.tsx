@@ -17,24 +17,38 @@ import { useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
+import { DEFAULT_TRADING_PREFERENCES, getAutonomyModeLabel, getAutonomyStatusSummary } from "@/lib/tradingAutonomy";
 
 export default function Dashboard() {
   const { user } = useAuth();
   const [, navigate] = useLocation();
+  const utils = trpc.useUtils();
   const [killSwitchConfirm, setKillSwitchConfirm] = useState(false);
   const [showStartTrading, setShowStartTrading] = useState(false);
+  const [activationMessage, setActivationMessage] = useState<string | null>(null);
 
   const performanceOverviewQuery =
     trpc.kalshi.getPerformanceOverview.useQuery();
   const accountStatusQuery = trpc.kalshi.getKalshiAccountStatus.useQuery();
   const { data: instructions } = trpc.training.getInstructions.useQuery();
 
-  const startTradingMutation = {
-    mutate: (data: any, callbacks: any) => {
-      callbacks?.onSuccess?.();
+  const startTradingMutation = trpc.kalshi.setTradingActivation.useMutation({
+    onSuccess: async (result) => {
+      setShowStartTrading(false);
+      setActivationMessage(
+        result.preferences.liveTradingEnabled
+          ? `${getAutonomyModeLabel(result.preferences.autonomyMode)} mode is now armed for live trading.`
+          : "Live trading has been disarmed."
+      );
+      await Promise.all([
+        utils.kalshi.getKalshiAccountStatus.invalidate(),
+        utils.kalshi.getTradingPreferences.invalidate(),
+      ]);
     },
-    isPending: false,
-  };
+    onError: (error) => {
+      setActivationMessage(error.message || "Unable to arm live trading.");
+    },
+  });
   const killSwitchMutation = { mutateAsync: async () => {} };
 
   if (performanceOverviewQuery.isLoading || accountStatusQuery.isLoading) {
@@ -89,6 +103,8 @@ export default function Dashboard() {
   const displayEquity = equity;
   const isFunded = equity > 0;
   const hasInstructions = (instructions?.length || 0) > 0;
+  const tradingPreferences = accountStatus?.tradingPreferences ?? DEFAULT_TRADING_PREFERENCES;
+  const autonomyStatus = getAutonomyStatusSummary(tradingPreferences);
   const hasClosedTrades = (metrics?.totalTrades || 0) > 0;
   const winningTrades = metrics?.winningTrades ?? 0;
   const totalTrades = metrics?.totalTrades ?? 0;
@@ -115,18 +131,8 @@ export default function Dashboard() {
   };
 
   const handleStartTrading = () => {
-    startTradingMutation.mutate(
-      {},
-      {
-        onSuccess: () => {
-          setShowStartTrading(false);
-          alert("Trading started! Your agent is now active.");
-        },
-        onError: (error: any) => {
-          alert(`Error: ${error?.message || "Unknown error"}`);
-        },
-      }
-    );
+    setActivationMessage(null);
+    startTradingMutation.mutate({ enabled: true });
   };
 
   // Show connection required if not connected
@@ -308,26 +314,59 @@ export default function Dashboard() {
         </Button>
       </div>
 
+      {activationMessage ? (
+        <Card className="laurenzo-card border-cyan-500/30 bg-cyan-500/5">
+          <CardContent className="pt-6">
+            <p className="text-sm text-cyan-200">{activationMessage}</p>
+          </CardContent>
+        </Card>
+      ) : null}
+
       {/* Start Trading Banner */}
       {!showStartTrading && (
         <Card className="laurenzo-card border-cyan-500/30 bg-cyan-500/5">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <CheckCircle2 className="w-8 h-8 text-cyan-400" />
+          <CardContent className="space-y-5 pt-6">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex items-start gap-3">
+                <CheckCircle2 className="mt-1 w-8 h-8 text-cyan-400" />
                 <div>
-                  <p className="font-semibold">Account Funded & Ready</p>
+                  <p className="font-semibold">Trading autonomy is now explicit</p>
                   <p className="text-sm text-muted-foreground">
-                    Start trading with your agent
+                    {autonomyStatus.title}. Open Trading Autonomy to choose Manual, Approval Required, Semi-autonomous, or Fully Autonomous behavior.
                   </p>
                 </div>
               </div>
-              <Button
-                onClick={() => setShowStartTrading(true)}
-                className="laurenzo-button"
-              >
-                Start Trading
-              </Button>
+              <div className="flex flex-wrap gap-3">
+                <Button onClick={() => navigate("/autonomy")} variant="outline">
+                  Open Trading Autonomy
+                </Button>
+                <Button
+                  onClick={() => setShowStartTrading(true)}
+                  className="laurenzo-button"
+                  disabled={tradingPreferences.autonomyMode === "manual"}
+                >
+                  Arm Live Trading
+                </Button>
+              </div>
+            </div>
+            <div className="grid gap-3 md:grid-cols-3">
+              <div className="rounded-2xl border border-border/60 bg-background/40 p-4">
+                <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Current mode</div>
+                <div className="mt-2 text-lg font-semibold text-foreground">{getAutonomyModeLabel(tradingPreferences.autonomyMode)}</div>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {tradingPreferences.liveTradingEnabled ? "Live trading armed" : "Live trading disarmed"}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-border/60 bg-background/40 p-4">
+                <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Confidence floor</div>
+                <div className="mt-2 text-lg font-semibold text-foreground">{Math.round(tradingPreferences.minSignalConfidence * 100)}%</div>
+                <p className="mt-2 text-xs text-muted-foreground">Minimum signal quality required by the saved policy.</p>
+              </div>
+              <div className="rounded-2xl border border-border/60 bg-background/40 p-4">
+                <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Order limit</div>
+                <div className="mt-2 text-lg font-semibold text-foreground">${tradingPreferences.maxOrderNotional.toFixed(2)}</div>
+                <p className="mt-2 text-xs text-muted-foreground">Maximum notional permitted by the autonomy policy.</p>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -338,7 +377,10 @@ export default function Dashboard() {
         <StartTradingDialog
           equity={equity}
           hasInstructions={hasInstructions}
+          preferences={tradingPreferences}
           onConfirm={handleStartTrading}
+          onManageSettings={() => navigate("/autonomy")}
+          onCancel={() => setShowStartTrading(false)}
           isLoading={startTradingMutation.isPending}
         />
       )}

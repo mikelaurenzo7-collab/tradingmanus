@@ -21,7 +21,7 @@ import {
 import { getLoginUrl } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
 import { useAuth } from "@/_core/hooks/useAuth";
-import { LayoutDashboard, LogOut, PanelLeft, Zap, TrendingUp, Shield, FileText, Plug, BookOpen, BarChart3, Brain, Briefcase, LineChart } from "lucide-react";
+import { LayoutDashboard, LogOut, PanelLeft, Zap, TrendingUp, Shield, FileText, Plug, BookOpen, BarChart3, Brain, Briefcase, LineChart, SlidersHorizontal } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
@@ -30,6 +30,7 @@ import { Button } from "./ui/button";
 const menuItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/" },
   { icon: Plug, label: "Connect Kalshi", path: "/connect" },
+  { icon: SlidersHorizontal, label: "Trading Autonomy", path: "/autonomy" },
   { icon: TrendingUp, label: "Signals", path: "/signals" },
   { icon: LayoutDashboard, label: "Positions", path: "/positions" },
   { icon: LayoutDashboard, label: "Trades", path: "/trades" },

@@ -18,6 +18,7 @@ import SentimentAnalysis from "./pages/SentimentAnalysis";
 import PortfolioOptimization from "./pages/PortfolioOptimization";
 import Backtesting from "./pages/Backtesting";
 import Analytics from "./pages/Analytics";
+import TradingAutonomy from "./pages/TradingAutonomy";
 
 function Router() {
   return (
@@ -25,6 +26,7 @@ function Router() {
       <Route path={"/"} component={() => <DashboardLayout><Home /></DashboardLayout>} />
       <Route path={"/dashboard"} component={() => <DashboardLayout><Dashboard /></DashboardLayout>} />
       <Route path={"/connect"} component={() => <DashboardLayout><Connect /></DashboardLayout>} />
+      <Route path={"/autonomy"} component={() => <DashboardLayout><TradingAutonomy /></DashboardLayout>} />
       <Route path={"/positions"} component={() => <DashboardLayout><Positions /></DashboardLayout>} />
       <Route path={"/trades"} component={() => <DashboardLayout><Trades /></DashboardLayout>} />
       <Route path={"/signals"} component={() => <DashboardLayout><Signals /></DashboardLayout>} />

@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { BookOpen, Plus, Trash2, Loader2, Clock, Filter, AlertCircle } from "lucide-react";
 import { trpc } from "@/lib/trpc";
+import { Link } from "wouter";
 
 export default function Training() {
   const [showNewForm, setShowNewForm] = useState(false);
@@ -88,6 +89,20 @@ export default function Training() {
           New Instruction
         </Button>
       </div>
+
+      <Card className="laurenzo-card border-violet-500/30 bg-violet-500/5">
+        <CardContent className="flex flex-col gap-4 pt-6 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <p className="font-semibold text-foreground">Training shapes behavior. Trading Autonomy decides execution authority.</p>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Use this page to define what the agent should prefer or avoid. Then open Trading Autonomy to decide whether it should stay manual, wait for approval, or execute more autonomously.
+            </p>
+          </div>
+          <Link href="/autonomy">
+            <Button className="laurenzo-button">Open Trading Autonomy</Button>
+          </Link>
+        </CardContent>
+      </Card>
 
       {/* New Instruction Form */}
       {showNewForm && (
