@@ -332,7 +332,7 @@ This iteration prioritizes prediction quality by introducing a more independent 
 - [x] Improve the Connect Kalshi onboarding copy and error handling for a laptop-based fresh-key setup flow
 - [x] Wire the static Backtesting page to the existing advanced backtest procedures and replace placeholder metrics with live computed results
 - [x] Expand the Portfolio Optimization page from a Kelly-only calculator into a full optimizer using correlation, diversification, and position-sizing outputs already available on the backend
-- [ ] Extend the Risk Controls and Performance dashboards to surface advanced risk alerts, attribution, and learning metrics already supported by backend helpers
+- [x] Extend the Risk Controls and Performance dashboards to surface advanced risk alerts, attribution, and learning metrics already supported by backend helpers
 - [ ] Add a dedicated order-book and liquidity analytics surface using the existing market-feed foundation, including spread, depth proxies, and liquidity-adjusted signal filtering
 - [ ] Finish the remaining Advanced Features implementation with batched edits and only targeted validation until the final consolidated pass
 - [ ] Keep the remaining implementation strictly focused on Kalshi workflows and remove or defer anything not needed for live Kalshi account testing
@@ -345,3 +345,4 @@ This iteration prioritizes prediction quality by introducing a more independent 
 - [ ] Continue high-impact Kalshi setup work so the dashboard is more complete and reliable before the user returns to add fresh keys
 - [ ] Prioritize the next highest-impact unfinished Kalshi feature that improves trading readiness before credential retest
 - [x] Prioritize the Portfolio Optimization expansion as the next pre-return setup improvement after the credential and Backtesting hardening work
+- [x] Prioritize the Risk Controls and Performance dashboard expansion as the next pre-return setup improvement after the Portfolio optimizer upgrade

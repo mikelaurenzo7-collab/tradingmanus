@@ -3,7 +3,8 @@ import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { AlertCircle, ShieldAlert, ShieldCheck, Siren, TriangleAlert } from "lucide-react";
+import { AlertCircle, ShieldAlert, ShieldCheck, Siren, TriangleAlert, Gauge, Wallet, Target, Shield } from "lucide-react";
+import { classifyRiskPosture, formatPercent, summarizeRiskBudget } from "@/lib/riskPerformanceDiagnostics";
 
 export default function RiskControls() {
   const [killSwitchResult, setKillSwitchResult] = useState<string | null>(null);
@@ -16,8 +17,7 @@ export default function RiskControls() {
     {
       metrics: {
         volatility: Math.max(
-          Math.abs(performanceOverview.data?.metrics.dailyPnL ?? 0) /
-            Math.max(capital.data?.currentBalance ?? 1, 1),
+          Math.abs(performanceOverview.data?.metrics.dailyPnL ?? 0) / Math.max(capital.data?.currentBalance ?? 1, 1),
           performanceOverview.data?.metrics.maxDrawdown ?? 0,
         ),
         sharpeRatio: performanceOverview.data?.metrics.sharpeRatio ?? 0,
@@ -26,8 +26,7 @@ export default function RiskControls() {
         profitFactor: Number.isFinite(performanceOverview.data?.metrics.profitFactor)
           ? (performanceOverview.data?.metrics.profitFactor ?? 0)
           : 999,
-        riskPerTrade: (riskLimits.data?.maxLossPerTrade ?? 0) /
-          Math.max(capital.data?.currentBalance ?? 1, 1),
+        riskPerTrade: (riskLimits.data?.maxLossPerTrade ?? 0) / Math.max(capital.data?.currentBalance ?? 1, 1),
       },
       limits: {
         maxLossPerTrade: riskLimits.data?.maxLossPerTrade ?? 0,
@@ -49,7 +48,7 @@ export default function RiskControls() {
       setKillSwitchResult(
         result.success
           ? `Kill switch completed. Closed ${result.closedPositions} position(s).`
-          : `Kill switch completed with ${result.failedPositions} failure(s) across ${result.totalPositions} position(s).`
+          : `Kill switch completed with ${result.failedPositions} failure(s) across ${result.totalPositions} position(s).`,
       );
       await Promise.all([
         utils.kalshi.getCapital.invalidate(),
@@ -107,16 +106,20 @@ export default function RiskControls() {
     );
   }
 
+  const riskBudget = summarizeRiskBudget(capitalData.currentBalance, limits.maxLossPerTrade, limits.maxLossPerDay);
+  const riskPosture = classifyRiskPosture(riskAlerts.length, hardStopsHit);
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <h1 className="font-mono text-3xl font-bold text-cyan-400">[ RISK CONTROLS ]</h1>
-          <p className="mt-2 text-gray-400">Capital-protection rules and emergency controls for the $100 Kalshi account.</p>
+          <p className="mt-2 text-gray-400">Capital-protection rules and emergency controls for the live Kalshi operating envelope.</p>
         </div>
         <div className="flex items-center gap-3">
-          <Badge className="border border-cyan-700 bg-cyan-950/40 px-3 py-1 font-mono text-cyan-300">
-            <ShieldCheck className="mr-2 h-3.5 w-3.5" /> Hard Limits Active
+          <Badge className={`border px-3 py-1 font-mono ${riskPosture === "critical" ? "border-red-700 bg-red-950/40 text-red-300" : riskPosture === "elevated" ? "border-amber-700 bg-amber-950/40 text-amber-300" : "border-cyan-700 bg-cyan-950/40 text-cyan-300"}`}>
+            <ShieldCheck className="mr-2 h-3.5 w-3.5" />
+            {riskPosture === "critical" ? "Critical posture" : riskPosture === "elevated" ? "Elevated posture" : "Stable posture"}
           </Badge>
           <Button
             type="button"
@@ -146,7 +149,7 @@ export default function RiskControls() {
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Card className="border-cyan-900 bg-black/50">
           <CardHeader>
-            <CardTitle className="text-cyan-400">Starting Capital</CardTitle>
+            <CardTitle className="flex items-center gap-2 text-cyan-400"><Wallet className="h-4 w-4" />Starting Capital</CardTitle>
             <CardDescription>Initial account size</CardDescription>
           </CardHeader>
           <CardContent>
@@ -155,7 +158,7 @@ export default function RiskControls() {
         </Card>
         <Card className="border-cyan-900 bg-black/50">
           <CardHeader>
-            <CardTitle className="text-cyan-400">Current Capital</CardTitle>
+            <CardTitle className="flex items-center gap-2 text-cyan-400"><Gauge className="h-4 w-4" />Current Capital</CardTitle>
             <CardDescription>Available tracked balance</CardDescription>
           </CardHeader>
           <CardContent>
@@ -164,28 +167,26 @@ export default function RiskControls() {
         </Card>
         <Card className="border-magenta-900 bg-black/50">
           <CardHeader>
-            <CardTitle className="text-magenta-400">Tracked P&amp;L</CardTitle>
-            <CardDescription>Realized plus unrealized summary</CardDescription>
+            <CardTitle className="flex items-center gap-2 text-magenta-400"><Shield className="h-4 w-4" />Risk Per Trade</CardTitle>
+            <CardDescription>Configured budget per position</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className={`font-mono text-2xl ${capitalData.totalPnl >= 0 ? "text-green-400" : "text-red-400"}`}>
-              ${capitalData.totalPnl.toFixed(2)}
-            </div>
+            <div className="font-mono text-2xl text-fuchsia-300">{formatPercent(riskBudget.perTradeUsage)}</div>
           </CardContent>
         </Card>
         <Card className="border-yellow-900 bg-black/50">
           <CardHeader>
-            <CardTitle className="text-yellow-300">Max Drawdown</CardTitle>
-            <CardDescription>Portfolio stress ceiling</CardDescription>
+            <CardTitle className="flex items-center gap-2 text-yellow-300"><Target className="h-4 w-4" />Daily Risk Budget</CardTitle>
+            <CardDescription>Max daily loss as share of balance</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="font-mono text-2xl text-yellow-200">{(capitalData.maxDrawdown * 100).toFixed(1)}%</div>
+            <div className="font-mono text-2xl text-yellow-200">{formatPercent(riskBudget.dailyUsage)}</div>
           </CardContent>
         </Card>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
-        <Card className="border-yellow-900 bg-black/50 md:col-span-1">
+      <div className="grid gap-4 lg:grid-cols-3">
+        <Card className="border-yellow-900 bg-black/50">
           <CardHeader>
             <CardTitle className="font-mono text-yellow-300">[ LIVE RISK POSTURE ]</CardTitle>
             <CardDescription>Operational health from balance, drawdown, and current position load.</CardDescription>
@@ -193,9 +194,7 @@ export default function RiskControls() {
           <CardContent className="space-y-3 text-sm text-gray-300">
             <div className="flex items-center justify-between rounded border border-yellow-950/80 px-3 py-2">
               <span>Daily P&amp;L</span>
-              <span className={(performanceMetrics?.dailyPnL ?? 0) >= 0 ? "text-green-400" : "text-red-400"}>
-                ${(performanceMetrics?.dailyPnL ?? 0).toFixed(2)}
-              </span>
+              <span className={(performanceMetrics?.dailyPnL ?? 0) >= 0 ? "text-green-400" : "text-red-400"}>${(performanceMetrics?.dailyPnL ?? 0).toFixed(2)}</span>
             </div>
             <div className="flex items-center justify-between rounded border border-yellow-950/80 px-3 py-2">
               <span>Active positions</span>
@@ -205,10 +204,16 @@ export default function RiskControls() {
               <span>Hard-stop triggers</span>
               <span className={hardStopsHit > 0 ? "text-red-400" : "text-green-400"}>{hardStopsHit}</span>
             </div>
+            <div className="flex items-center justify-between rounded border border-yellow-950/80 px-3 py-2">
+              <span>Drawdown usage</span>
+              <span className="text-yellow-200">
+                {formatPercent((performanceMetrics?.maxDrawdown ?? 0) / Math.max(capitalData.maxDrawdown || 1, 0.0001))}
+              </span>
+            </div>
           </CardContent>
         </Card>
 
-        <Card className="border-red-900 bg-black/50 md:col-span-2">
+        <Card className="border-red-900 bg-black/50 lg:col-span-2">
           <CardHeader>
             <CardTitle className="font-mono text-red-300">[ RISK ALERTS ]</CardTitle>
             <CardDescription>Procedure-driven warnings derived from current performance and configured risk ceilings.</CardDescription>
@@ -267,21 +272,31 @@ export default function RiskControls() {
 
         <Card className="border-magenta-900 bg-black/50">
           <CardHeader>
-            <CardTitle className="font-mono text-magenta-400">[ OPERATOR NOTES ]</CardTitle>
-            <CardDescription>What the backend now enforces before submitting an order.</CardDescription>
+            <CardTitle className="font-mono text-magenta-400">[ OPERATOR GUIDANCE ]</CardTitle>
+            <CardDescription>What the current backend posture implies before placing the next order.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4 text-sm text-gray-300">
             <div className="flex gap-3 rounded border border-magenta-950/80 px-3 py-3">
               <TriangleAlert className="mt-0.5 h-4 w-4 text-magenta-300" />
-              <p>Orders are rejected when the position count is already at the configured ceiling.</p>
+              <p>
+                {riskPosture === "critical"
+                  ? "At least one hard-stop threshold is effectively reached. Flatten exposure or avoid new risk until the posture resets."
+                  : riskPosture === "elevated"
+                    ? "Alert conditions are building. Favor smaller sizes and only the highest-conviction signals until the warning stack clears."
+                    : "The posture is currently stable. New orders can still be screened against daily and per-trade budgets normally."}
+              </p>
             </div>
             <div className="flex gap-3 rounded border border-magenta-950/80 px-3 py-3">
               <TriangleAlert className="mt-0.5 h-4 w-4 text-magenta-300" />
-              <p>Orders are rejected when the requested exposure exceeds the per-trade or per-position risk budget.</p>
+              <p>
+                Per-trade risk is capped near {formatPercent(riskBudget.perTradeUsage)} of tracked balance, while the daily stop currently represents {formatPercent(riskBudget.dailyUsage)} of balance.
+              </p>
             </div>
             <div className="flex gap-3 rounded border border-magenta-950/80 px-3 py-3">
               <TriangleAlert className="mt-0.5 h-4 w-4 text-magenta-300" />
-              <p>Orders are rejected when realized losses for the current day have already reached the daily stop limit.</p>
+              <p>
+                Orders are rejected when position count is at the configured ceiling or when realized loss has already exhausted the current day’s risk budget.
+              </p>
             </div>
           </CardContent>
         </Card>
