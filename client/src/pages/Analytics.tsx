@@ -1,27 +1,11 @@
 import { useMemo, useState } from "react";
-import { Activity, BarChart3, Loader2, ShieldAlert, Waves } from "lucide-react";
+import { Activity, BarChart3, Gauge, Loader2, ShieldAlert, Waves } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { trpc } from "@/lib/trpc";
+import { buildLiquidityRow, type FeedSnapshot, summarizeLiquidityRows } from "@/lib/liquidityAnalytics";
 
 type MarketView = "all" | "liquid" | "imbalanced";
-
-type FeedSnapshot = {
-  marketId: string;
-  title?: string;
-  currentSnapshot?: {
-    yesPrice: number;
-    noPrice: number;
-    yesVolume: number;
-    noVolume: number;
-    impliedProbability: number;
-    timestamp?: number;
-  };
-  priceHistory?: Array<{ impliedProbability: number; timestamp: number }>;
-  volumeHistory?: Array<{ yesVolume: number; noVolume: number; timestamp: number }>;
-  dataQualityScore?: number;
-  status?: string;
-};
 
 function formatPercent(value: number) {
   return `${(value * 100).toFixed(1)}%`;
@@ -39,34 +23,8 @@ export default function Analytics() {
     const feeds = (feedsQuery.data ?? []) as FeedSnapshot[];
 
     return feeds
-      .filter((feed) => feed?.currentSnapshot)
-      .map((feed) => {
-        const snapshot = feed.currentSnapshot!;
-        const totalVolume = snapshot.yesVolume + snapshot.noVolume;
-        const spreadProxy = Math.abs(snapshot.yesPrice + snapshot.noPrice - 1);
-        const imbalance = totalVolume > 0 ? Math.abs(snapshot.yesVolume - snapshot.noVolume) / totalVolume : 0;
-        const history = feed.priceHistory ?? [];
-        const oldest = history[0]?.impliedProbability ?? snapshot.impliedProbability;
-        const newest = history[history.length - 1]?.impliedProbability ?? snapshot.impliedProbability;
-        const momentum = newest - oldest;
-        const tradabilityScore = Math.max(0, Math.min(1, totalVolume / 25000)) * 0.6 + (1 - Math.min(1, spreadProxy / 0.12)) * 0.4;
-
-        return {
-          marketId: feed.marketId,
-          status: feed.status ?? "unknown",
-          dataQualityScore: feed.dataQualityScore ?? 0,
-          yesPrice: snapshot.yesPrice,
-          noPrice: snapshot.noPrice,
-          impliedProbability: snapshot.impliedProbability,
-          totalVolume,
-          yesVolume: snapshot.yesVolume,
-          noVolume: snapshot.noVolume,
-          spreadProxy,
-          imbalance,
-          momentum,
-          tradabilityScore,
-        };
-      })
+      .map((feed) => buildLiquidityRow(feed))
+      .filter((row): row is NonNullable<typeof row> => Boolean(row))
       .filter((row) => {
         if (activeView === "liquid") return row.totalVolume >= 1500;
         if (activeView === "imbalanced") return row.imbalance >= 0.2;
@@ -75,26 +33,10 @@ export default function Analytics() {
       .sort((a, b) => b.tradabilityScore - a.tradabilityScore);
   }, [activeView, feedsQuery.data]);
 
-  const summary = useMemo(() => {
-    if (rows.length === 0) {
-      return {
-        tracked: 0,
-        avgLiquidity: 0,
-        avgSpread: 0,
-        avgTradability: 0,
-      };
-    }
-
-    return {
-      tracked: rows.length,
-      avgLiquidity: rows.reduce((sum, row) => sum + row.totalVolume, 0) / rows.length,
-      avgSpread: rows.reduce((sum, row) => sum + row.spreadProxy, 0) / rows.length,
-      avgTradability: rows.reduce((sum, row) => sum + row.tradabilityScore, 0) / rows.length,
-    };
-  }, [rows]);
-
+  const summary = useMemo(() => summarizeLiquidityRows(rows), [rows]);
   const topTradable = rows.slice(0, 5);
   const topImbalanced = [...rows].sort((a, b) => b.imbalance - a.imbalance).slice(0, 5);
+  const topPressure = [...rows].sort((a, b) => b.microstructurePressure - a.microstructurePressure).slice(0, 5);
 
   if (feedsQuery.isLoading) {
     return (
@@ -157,7 +99,7 @@ export default function Analytics() {
           </div>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
             <CardHeader className="pb-3">
               <CardTitle className="flex items-center gap-2 text-base text-slate-100">
@@ -209,6 +151,19 @@ export default function Analytics() {
               <p className="mt-2 text-sm text-slate-500">Liquidity-adjusted execution score combining depth and spread quality.</p>
             </CardContent>
           </Card>
+
+          <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-base text-slate-100">
+                <Gauge className="h-5 w-5 text-rose-400" />
+                Pressure Score
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-semibold text-rose-300">{formatPercent(summary.avgPressure)}</div>
+              <p className="mt-2 text-sm text-slate-500">Composite signal for imbalance, price momentum, and depth acceleration.</p>
+            </CardContent>
+          </Card>
         </div>
 
         <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
@@ -216,14 +171,13 @@ export default function Analytics() {
             <CardHeader>
               <CardTitle>Order-Book and Liquidity Surface</CardTitle>
               <CardDescription>
-                Use live YES/NO depth, implied probability, spread proxy, and momentum to decide which markets are actually executable.
+                Use live YES/NO depth, implied probability, spread proxy, momentum, and pressure to decide which markets are actually executable.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               {rows.length ? (
                 rows.map((row) => {
                   const yesShare = row.totalVolume > 0 ? row.yesVolume / row.totalVolume : 0;
-                  const noShare = row.totalVolume > 0 ? row.noVolume / row.totalVolume : 0;
 
                   return (
                     <div key={row.marketId} className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
@@ -232,7 +186,7 @@ export default function Analytics() {
                           <div className="text-sm font-medium text-slate-100">{row.marketId}</div>
                           <div className="mt-1 text-xs uppercase tracking-[0.2em] text-slate-500">{row.status}</div>
                         </div>
-                        <div className="grid gap-3 sm:grid-cols-4">
+                        <div className="grid gap-3 sm:grid-cols-5">
                           <div>
                             <div className="text-xs text-slate-500">Implied Probability</div>
                             <div className="mt-1 font-semibold text-cyan-300">{formatPercent(row.impliedProbability)}</div>
@@ -242,19 +196,25 @@ export default function Analytics() {
                             <div className="mt-1 font-semibold text-fuchsia-300">{formatPercent(row.spreadProxy)}</div>
                           </div>
                           <div>
-                            <div className="text-xs text-slate-500">Momentum</div>
+                            <div className="text-xs text-slate-500">Price Momentum</div>
                             <div className={`mt-1 font-semibold ${row.momentum >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
                               {row.momentum >= 0 ? "+" : ""}{formatPercent(row.momentum)}
                             </div>
                           </div>
                           <div>
-                            <div className="text-xs text-slate-500">Tradability</div>
-                            <div className="mt-1 font-semibold text-amber-300">{formatPercent(row.tradabilityScore)}</div>
+                            <div className="text-xs text-slate-500">Depth Momentum</div>
+                            <div className={`mt-1 font-semibold ${row.depthMomentum >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                              {row.depthMomentum >= 0 ? "+" : ""}{formatPercent(row.depthMomentum)}
+                            </div>
+                          </div>
+                          <div>
+                            <div className="text-xs text-slate-500">Pressure</div>
+                            <div className="mt-1 font-semibold text-rose-300">{formatPercent(row.microstructurePressure)}</div>
                           </div>
                         </div>
                       </div>
 
-                      <div className="mt-4 grid gap-4 md:grid-cols-2">
+                      <div className="mt-4 grid gap-4 md:grid-cols-3">
                         <div>
                           <div className="mb-2 text-xs uppercase tracking-[0.2em] text-slate-500">Depth Split</div>
                           <div className="h-3 overflow-hidden rounded-full bg-slate-800">
@@ -273,7 +233,18 @@ export default function Analytics() {
                           </div>
                           <div className="mt-2 flex justify-between text-xs text-slate-500">
                             <span>Imbalance {formatPercent(row.imbalance)}</span>
-                            <span>Quality {(row.dataQualityScore ?? 0).toFixed(2)}</span>
+                            <span>Quality {row.dataQualityScore.toFixed(2)}</span>
+                          </div>
+                        </div>
+
+                        <div>
+                          <div className="mb-2 text-xs uppercase tracking-[0.2em] text-slate-500">Execution Posture</div>
+                          <div className="h-3 overflow-hidden rounded-full bg-slate-800">
+                            <div className="h-full bg-gradient-to-r from-rose-500 to-amber-400" style={{ width: `${row.microstructurePressure * 100}%` }} />
+                          </div>
+                          <div className="mt-2 flex justify-between text-xs text-slate-500">
+                            <span>Depth {formatNumber(row.totalVolume)}</span>
+                            <span>Tradability {formatPercent(row.tradabilityScore)}</span>
                           </div>
                         </div>
                       </div>
@@ -337,6 +308,32 @@ export default function Analytics() {
                   ))
                 ) : (
                   <div className="text-sm text-slate-500">No imbalanced markets are available yet.</div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
+              <CardHeader>
+                <CardTitle>Pressure Watchlist</CardTitle>
+                <CardDescription>
+                  Composite pressure highlights markets where depth acceleration and imbalance could degrade execution quality quickly.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {topPressure.length ? (
+                  topPressure.map((row, index) => (
+                    <div key={`${row.marketId}-pressure-${index}`} className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-medium text-slate-100">{row.marketId}</div>
+                          <div className="mt-1 text-xs text-slate-500">Momentum {formatPercent(row.momentum)} · Depth {formatPercent(row.depthMomentum)}</div>
+                        </div>
+                        <div className="text-right text-sm font-semibold text-rose-300">{formatPercent(row.microstructurePressure)}</div>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-sm text-slate-500">No pressure outliers are available yet.</div>
                 )}
               </CardContent>
             </Card>

@@ -333,7 +333,7 @@ This iteration prioritizes prediction quality by introducing a more independent 
 - [x] Wire the static Backtesting page to the existing advanced backtest procedures and replace placeholder metrics with live computed results
 - [x] Expand the Portfolio Optimization page from a Kelly-only calculator into a full optimizer using correlation, diversification, and position-sizing outputs already available on the backend
 - [x] Extend the Risk Controls and Performance dashboards to surface advanced risk alerts, attribution, and learning metrics already supported by backend helpers
-- [ ] Add a dedicated order-book and liquidity analytics surface using the existing market-feed foundation, including spread, depth proxies, and liquidity-adjusted signal filtering
+- [x] Add a dedicated order-book and liquidity analytics surface using the existing market-feed foundation, including spread, depth proxies, and liquidity-adjusted signal filtering
 - [ ] Finish the remaining Advanced Features implementation with batched edits and only targeted validation until the final consolidated pass
 - [ ] Keep the remaining implementation strictly focused on Kalshi workflows and remove or defer anything not needed for live Kalshi account testing
 - [ ] Get the app to a state where the user can safely connect and test with their own Kalshi account end to end
@@ -346,3 +346,6 @@ This iteration prioritizes prediction quality by introducing a more independent 
 - [ ] Prioritize the next highest-impact unfinished Kalshi feature that improves trading readiness before credential retest
 - [x] Prioritize the Portfolio Optimization expansion as the next pre-return setup improvement after the credential and Backtesting hardening work
 - [x] Prioritize the Risk Controls and Performance dashboard expansion as the next pre-return setup improvement after the Portfolio optimizer upgrade
+- [x] Prioritize the liquidity and order-book analytics expansion as the next pre-return setup improvement after the Risk Controls and Performance upgrade
+- [ ] Prioritize the remaining end-to-end Kalshi connection and testing readiness gaps as the next pre-return setup improvement after the liquidity analytics upgrade
+- [x] Replace the placeholder home dashboard with a Kalshi-specific operational overview so the post-connect landing experience is ready for first live testing
