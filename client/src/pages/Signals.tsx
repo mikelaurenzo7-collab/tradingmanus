@@ -13,23 +13,57 @@ export default function Signals() {
   const marketsQuery = trpc.kalshi.getMarkets.useQuery({ status: "open" });
   const [isGenerating, setIsGenerating] = useState(false);
 
+  const actionableMarkets = (marketsQuery.data ?? [])
+    .filter((market: any) => {
+      const yesPrice = Number(market.yesPrice ?? 0);
+      const noPrice = Number(market.noPrice ?? 0);
+      const impliedProbability = Number(market.impliedProbability ?? 0.5);
+      const totalVolume = Number(market.yesVolume ?? 0) + Number(market.noVolume ?? 0);
+
+      return (
+        Number.isFinite(yesPrice) &&
+        Number.isFinite(noPrice) &&
+        Number.isFinite(impliedProbability) &&
+        yesPrice > 0.01 &&
+        yesPrice < 0.99 &&
+        noPrice > 0.01 &&
+        noPrice < 0.99 &&
+        impliedProbability > 0.01 &&
+        impliedProbability < 0.99 &&
+        totalVolume >= 25
+      );
+    })
+    .sort((a: any, b: any) => (Number(b.yesVolume ?? 0) + Number(b.noVolume ?? 0)) - (Number(a.yesVolume ?? 0) + Number(a.noVolume ?? 0)));
+
   const handleGenerateSignals = async () => {
     setIsGenerating(true);
     try {
-      if (marketsQuery.data && marketsQuery.data.length > 0) {
-        const marketIds = marketsQuery.data.slice(0, 10).map((m: any) => m.id);
-        const result = await generateSignalsMutation.mutateAsync({
-          marketIds,
-          minConfidence: 0.5,
-        });
+      if (!marketsQuery.data || marketsQuery.data.length === 0) {
+        toast.error("Open markets are still loading");
+        return;
+      }
 
-        if (result.success) {
-          toast.success(`Generated ${result.signals.length} signals`);
-          await signals.refetch();
-          await topSignals.refetch();
-        } else {
-          toast.error(result.error || "Failed to generate signals");
-        }
+      if (actionableMarkets.length === 0) {
+        toast.error("No actionable open markets are available right now. Try again after market data refreshes.");
+        await signals.refetch();
+        await topSignals.refetch();
+        return;
+      }
+
+      const marketIds = actionableMarkets.slice(0, 12).map((m: any) => m.id);
+      const result = await generateSignalsMutation.mutateAsync({
+        marketIds,
+        minConfidence: 0.5,
+      });
+
+      if (result.success) {
+        toast.success(`Generated ${result.signals.length} signals`);
+        await signals.refetch();
+        await topSignals.refetch();
+      } else {
+        toast.error(result.error || "Failed to generate signals");
+        await signals.refetch();
+        await topSignals.refetch();
       }
     } catch (error) {
       console.error("Failed to generate signals:", error);

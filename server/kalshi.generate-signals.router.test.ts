@@ -79,8 +79,8 @@ describe("kalshi.generateSignals router", () => {
       id: "FED-2026",
       title: "Fed cuts rates",
       subtitle: "Will the Fed cut rates this quarter?",
-      yesPrice: 61,
-      noPrice: 39,
+      yesPrice: 0.61,
+      noPrice: 0.39,
       impliedProbability: 0.61,
       volume24h: 22000,
       liquidity: 12000,
@@ -96,7 +96,7 @@ describe("kalshi.generateSignals router", () => {
       confidence: 0.78,
       reasoning: "Composite sentiment favors YES",
       impliedProbability: 0.61,
-      marketPrice: 61,
+      marketPrice: 0.61,
       expectedValue: 0.12,
     };
 
@@ -142,7 +142,7 @@ describe("kalshi.generateSignals router", () => {
     );
   });
 
-  it("returns a soft failure when no requested markets are found", async () => {
+  it("returns a soft failure when no requested markets are actionable", async () => {
     mocks.getKalshiMarket.mockResolvedValue(null);
 
     const caller = appRouter.createCaller(createProtectedContext());
@@ -154,7 +154,32 @@ describe("kalshi.generateSignals router", () => {
     expect(result).toEqual({
       success: false,
       signals: [],
-      error: "No valid markets found",
+      error: "No actionable markets found from the selected set",
+    });
+    expect(mocks.generateSignalsForMarkets).not.toHaveBeenCalled();
+    expect(mocks.saveSignals).not.toHaveBeenCalled();
+  });
+
+  it("rejects zero-priced markets before signal generation", async () => {
+    mocks.getKalshiMarket.mockResolvedValue({
+      id: "BAD-2026",
+      title: "Malformed market",
+      yesPrice: 0,
+      noPrice: 1,
+      impliedProbability: 0,
+      status: "open",
+    });
+
+    const caller = appRouter.createCaller(createProtectedContext());
+    const result = await caller.kalshi.generateSignals({
+      marketIds: ["BAD-2026"],
+      minConfidence: 0.5,
+    });
+
+    expect(result).toEqual({
+      success: false,
+      signals: [],
+      error: "No actionable markets found from the selected set",
     });
     expect(mocks.generateSignalsForMarkets).not.toHaveBeenCalled();
     expect(mocks.saveSignals).not.toHaveBeenCalled();

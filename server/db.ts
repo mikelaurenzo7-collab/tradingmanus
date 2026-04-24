@@ -255,6 +255,33 @@ export async function upsertKalshiMarket(market: any) {
     });
 }
 
+function toKalshiMarketRecord(record: any) {
+  if (!record) return null;
+
+  return {
+    ...record,
+    id: String(record.marketId ?? record.id ?? ""),
+    marketId: String(record.marketId ?? record.id ?? ""),
+    title: String(record.title ?? record.marketId ?? record.id ?? ""),
+    category: String(record.category ?? "general"),
+    description: String(record.description ?? ""),
+    resolutionDate:
+      record.resolutionDate instanceof Date
+        ? record.resolutionDate.toISOString()
+        : String(record.resolutionDate ?? new Date().toISOString()),
+    yesPrice: Number(record.yesPrice ?? 0),
+    noPrice: Number(record.noPrice ?? 0),
+    yesVolume: Number(record.yesVolume ?? 0),
+    noVolume: Number(record.noVolume ?? 0),
+    impliedProbability: Number(record.impliedProbability ?? 0.5),
+    liquidity: Number(record.liquidity ?? 0),
+    status:
+      record.status === "closed" || record.status === "resolved"
+        ? record.status
+        : "open",
+  };
+}
+
 export async function getKalshiMarket(marketId: string) {
   const database = await getDb();
   if (!database) return null;
@@ -263,17 +290,19 @@ export async function getKalshiMarket(marketId: string) {
     .select()
     .from(kalshiMarkets)
     .where(eq(kalshiMarkets.marketId, marketId));
-  return result[0] || null;
+  return toKalshiMarketRecord(result[0]);
 }
 
 export async function getOpenKalshiMarkets() {
   const database = await getDb();
   if (!database) return [];
   
-  return await database
+  const rows = await database
     .select()
     .from(kalshiMarkets)
     .where(eq(kalshiMarkets.status, "open"));
+
+  return rows.map((row: any) => toKalshiMarketRecord(row));
 }
 
 // Kalshi order queries
@@ -448,11 +477,30 @@ export async function getRecentSignals(limit: number = 10) {
   const database = await getDb();
   if (!database) return [];
   
-  return await database
+  const rows = await database
     .select()
     .from(kalshiSignals)
     .orderBy(desc(kalshiSignals.createdAt))
-    .limit(limit);
+    .limit(limit * 5);
+
+  return rows
+    .filter((signal: any) => {
+      const marketPrice = Number(signal.marketPrice ?? 0);
+      const impliedProbability = Number(signal.impliedProbability ?? 0.5);
+      const expectedValue = Number(signal.expectedValue ?? 0);
+
+      return (
+        Number.isFinite(marketPrice) &&
+        Number.isFinite(impliedProbability) &&
+        Number.isFinite(expectedValue) &&
+        marketPrice > 0.01 &&
+        marketPrice < 0.99 &&
+        impliedProbability > 0.01 &&
+        impliedProbability < 0.99 &&
+        expectedValue > 0
+      );
+    })
+    .slice(0, limit);
 }
 
 // Kalshi capital queries

@@ -347,6 +347,26 @@ export function filterSignalsByMarketConditions(
   minLiquidityScore: number = 0.35
 ): KalshiSignal[] {
   return signals.filter((signal) => {
+    const hasFiniteCoreFields =
+      Number.isFinite(signal.marketPrice) &&
+      Number.isFinite(signal.impliedProbability) &&
+      Number.isFinite(signal.expectedValue);
+
+    if (!hasFiniteCoreFields) {
+      return false;
+    }
+
+    const hasActionablePricing =
+      signal.marketPrice > 0.01 &&
+      signal.marketPrice < 0.99 &&
+      signal.impliedProbability > 0.01 &&
+      signal.impliedProbability < 0.99 &&
+      signal.expectedValue > 0;
+
+    if (!hasActionablePricing) {
+      return false;
+    }
+
     const metadataLiquidity = signal.metadata?.liquidityScore;
     if (typeof metadataLiquidity === "number") {
       return metadataLiquidity >= minLiquidityScore;

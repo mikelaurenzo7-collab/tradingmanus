@@ -491,13 +491,31 @@ export const appRouter = router({
           const markets = await Promise.all(
             input.marketIds.map(id => db.getKalshiMarket(id))
           );
-          const validMarkets = markets.filter((m): m is any => m !== null);
+          const validMarkets = markets.filter((m): m is any => {
+            if (!m) return false;
+
+            const yesPrice = Number(m.yesPrice ?? 0);
+            const noPrice = Number(m.noPrice ?? 0);
+            const impliedProbability = Number(m.impliedProbability ?? 0.5);
+
+            return (
+              Number.isFinite(yesPrice) &&
+              Number.isFinite(noPrice) &&
+              Number.isFinite(impliedProbability) &&
+              yesPrice > 0.01 &&
+              yesPrice < 0.99 &&
+              noPrice > 0.01 &&
+              noPrice < 0.99 &&
+              impliedProbability > 0.01 &&
+              impliedProbability < 0.99
+            );
+          });
 
           if (validMarkets.length === 0) {
             return {
               success: false,
               signals: [],
-              error: "No valid markets found",
+              error: "No actionable markets found from the selected set",
             };
           }
 

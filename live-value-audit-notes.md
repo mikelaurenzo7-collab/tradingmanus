@@ -17,3 +17,15 @@ The new `/autonomy` page now explicitly answers how to start live trading inside
 Preview interaction confirmed that the Fully Autonomous card can be selected in the UI and that the save panel updates to reflect the selected mode. The dashboard home screen also now includes a dedicated Trading Autonomy status card and a sidebar navigation entry, making the control path discoverable without guesswork.
 
 The main dashboard entry point now opens a three-step preparation dialog instead of an ambiguous start command. In preview, clicking **Arm Live Trading** opened a checklist that surfaced funded-account confirmation, the current autonomy policy, instruction status, and a clear warning that manual mode cannot arm live trading. This makes the operator handoff materially clearer before any live execution is enabled.
+
+## Signals preview check — 2026-04-24
+
+Generated signals now appear on the Signals page, but the top entries surfaced as contrarian opportunities on markets labeled `1015` and `1055` with `0.0%` implied probability, `$0.00` market price, and `$0.0000` expected value. This does not yet look production-ready for preparing a real candidate order, because the identifiers and price fields appear placeholder-like or insufficiently normalized for operator review.
+
+## Signals preview re-check — 2026-04-24
+
+After normalizing stored market reads, the Signals page still renders recent entries with numeric-looking market IDs such as `1015` and `1055`, plus `0.0%` implied probability and `$0.00` market price. This indicates the old malformed signals are still present in stored signal history and/or fresh signal generation is still inheriting malformed market records elsewhere in the pipeline. Dogfood trading should remain blocked until new signal generation produces trustworthy tickers and prices.
+
+## Signals hardening follow-up — 2026-04-24
+
+After tightening actionable-market filtering in the signal pipeline and excluding malformed stored signal history, the Signals page no longer surfaces the prior zero-price contrarian entries. The current UI now falls back to a safe empty state when no actionable markets are found from the selected open-market set. This is materially safer for dogfood testing, but the next step is to improve market selection so fresh actionable candidates can still be produced instead of only returning an empty registry.
