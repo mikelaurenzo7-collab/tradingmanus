@@ -288,17 +288,26 @@
 - [ ] **ISSUE: Performance dashboard not wired** - UI created but no backend data flowing
 - [ ] **ISSUE: Training instructions not enforced** - Agent doesn't actually filter signals by training rules
 
-- [ ] Add a higher-signal external data source to sentiment scoring
-- [ ] Rebalance sentiment weights to include the new source
-- [ ] Expose the new source in advanced sentiment tRPC procedures
-- [ ] Update the Sentiment dashboard to display the new source and score contribution
-- [ ] Add Vitest coverage for the new multi-source weighting behavior
-- [ ] Validate the upgraded sentiment flow in the running app
+- [x] Add a higher-signal external data source to sentiment scoring
+- [x] Rebalance sentiment weights to include the new source
+- [x] Expose the new source in advanced sentiment tRPC procedures
+- [x] Update the Sentiment dashboard to display the new source and score contribution
+- [x] Add Vitest coverage for the new multi-source weighting behavior
+- [x] Validate the upgraded sentiment flow in the running app
 
 # Current Iteration Note
 
 This iteration prioritizes prediction quality by introducing a more independent signal source into the sentiment stack.
-- [ ] Unblock live sentiment queries from the dashboard despite the current protected context auth failure
-- [ ] Replace the stalled GDELT topic signal with a runtime-accessible Wikimedia pageviews signal
-- [ ] Fix the auth user upsert SQL syntax error so the app is healthy for deployment
-- [ ] Sync the latest GitHub changes into the project before continuing deployment-readiness work
+- [x] Unblock live sentiment queries from the dashboard despite the current protected context auth failure
+- [x] Replace the stalled GDELT topic signal with a runtime-accessible Wikimedia pageviews signal
+- [x] Fix the auth user upsert SQL syntax error so the app is healthy for deployment
+- [x] Sync the latest GitHub changes into the project before continuing deployment-readiness work
+- [x] Verify and fix the actual auth user upsert path so no malformed `on duplicate key update` SQL is emitted after a fresh authenticated request
+- [x] Add a focused Vitest test for `upsertUser` covering the no-name/no-email auth path to prevent empty duplicate-key-update SQL regressions
+- [x] Reproduce the auth flow after a clean server restart and confirm no malformed `on duplicate key update` SQL appears in fresh logs
+- [x] Trace the real runtime auth upsert code path and eliminate any remaining stale/alternate user upsert logic
+- [x] Keep the new `upsertUser` regression test, but add an auth-path-focused verification covering the real authenticated request path
+- [x] Verify end-to-end that the sentiment dashboard populates live Wikimedia-backed signal values and handles loading/error/empty states after the source swap
+- [x] Reproduce the authenticated request path after a clean restart and capture fresh logs proving no malformed `on duplicate key update` SQL is emitted
+- [x] Trace and remove any remaining stale runtime auth upsert path; confirm the deployed server code matches the edited `server/db.ts` logic
+- [x] Add an auth-path-focused Vitest or integration test covering authenticated requests that trigger user sync without name/email fields

@@ -67,27 +67,30 @@ export async function upsertUser(payload: { openId: string; name?: string; email
     console.warn("[Database] Connection not available, skipping upsertUser");
     return;
   }
-  
+
   const values: any = { openId: payload.openId };
   if (payload.name !== undefined) values.name = payload.name;
   if (payload.email !== undefined) values.email = payload.email;
-  
+
   const updates: any = {};
   if (payload.name !== undefined) updates.name = payload.name;
   if (payload.email !== undefined) updates.email = payload.email;
-  if (payload.lastSignedIn !== undefined) updates.lastSignedIn = payload.lastSignedIn;
-  
-  // Always include at least one update field to avoid empty update
-  if (Object.keys(updates).length === 0) {
-    updates.lastSignedIn = new Date();
-  }
-  
+
   try {
-    await database
-      .insert(users)
-      .values(values)
-      .onDuplicateKeyUpdate({ set: updates });
-  } catch (error) {
+    const existingUser = await database.select().from(users).where(eq(users.openId, payload.openId)).then((rows: any[]) => rows[0]);
+
+    if (!existingUser) {
+      await database.insert(users).values(values);
+      return;
+    }
+
+    if (Object.keys(updates).length > 0) {
+      await database.update(users).set(updates).where(eq(users.openId, payload.openId));
+    }
+  } catch (error: any) {
+    if (error?.code === "ER_DUP_ENTRY") {
+      return;
+    }
     console.error("[Database] Upsert user failed:", error);
     // Don't throw - allow auth to proceed even if DB sync fails
   }
