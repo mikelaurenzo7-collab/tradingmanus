@@ -354,7 +354,7 @@ This iteration prioritizes prediction quality by introducing a more independent 
 - [x] Remove any placeholder or stale capital display and only show balance when the connected user's live Kalshi account value has been confirmed
 - [x] Make the displayed capital update live from the connected user's actual Kalshi account value instead of a static snapshot or inferred state
 - [x] Ensure the dashboard refreshes immediately after a successful Kalshi connection so the user sees live account status and equity without manually reloading
-- [ ] Clarify the landing state when a saved Kalshi account exists but live equity refresh fails, so the user sees a sync issue rather than a misleading disconnected or funded state
+- [x] Clarify the landing state when a saved Kalshi account exists but live equity refresh fails, so the user sees a sync issue rather than a misleading disconnected or funded state
 - [x] Fix the blocking Kalshi save-state failure where validated credentials cannot persist the connected account state
 - [x] Preserve and clarify full-PEM private key handling, including the BEGIN and END PRIVATE KEY lines, while fixing the connection save flow
 - [ ] Assess the connected Kalshi account, live signals, and risk posture to determine whether a live trade is currently warranted

@@ -60,6 +60,6 @@ describe("dashboardLanding", () => {
   it("returns the fast-action links for the first live-test workflow", () => {
     const items = getFastActionItems();
     expect(items).toHaveLength(4);
-    expect(items.map((item) => item.href)).toEqual(["/connect", "/risk-controls", "/analytics", "/backtest"]);
+    expect(items.map((item) => item.href)).toEqual(["/connect", "/autonomy", "/risk-controls", "/analytics"]);
   });
 });

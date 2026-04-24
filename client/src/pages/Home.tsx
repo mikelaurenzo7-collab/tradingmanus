@@ -26,9 +26,11 @@ export default function Home() {
   });
 
   const connected = accountStatus.data?.connected ?? false;
+  const syncIssue = connected && accountStatus.data?.status === "error";
   const confirmedEquity = getVisibleCapital({
     connected: connected && accountStatus.data?.status === "connected",
     currentBalance: accountStatus.data?.equity ?? 0,
+    syncIssue,
   });
   const liveFeedCount = (feeds.data ?? []).filter((feed) => feed?.currentSnapshot).length;
   const openPositions = (positions.data ?? []).filter((position: { status?: string }) => position.status === "open");
@@ -37,12 +39,14 @@ export default function Home() {
     currentBalance: confirmedEquity,
     liveFeedCount,
     maxDrawdown: performance.data?.metrics.maxDrawdown ?? 0,
+    syncIssue,
   });
   const readiness = getFirstTestReadiness({
     connected,
     currentBalance: confirmedEquity,
     liveFeedCount,
     maxDrawdown: performance.data?.metrics.maxDrawdown ?? 0,
+    syncIssue,
   });
   const actions = getFastActionItems();
   const tradingPreferences = accountStatus.data?.tradingPreferences ?? DEFAULT_TRADING_PREFERENCES;
@@ -51,13 +55,20 @@ export default function Home() {
   const cards = [
     {
       title: "Tracked Capital",
-      value: connected && accountStatus.data?.status === "connected" ? formatCurrency(confirmedEquity) : "—",
+      value:
+        connected && accountStatus.data?.status === "connected"
+          ? formatCurrency(confirmedEquity)
+          : syncIssue
+            ? "Sync needed"
+            : "—",
       description:
         connected && accountStatus.data?.status === "connected"
           ? "Live equity confirmed from the connected Kalshi account"
-          : connected
-            ? "Waiting for a fresh live equity confirmation from Kalshi"
-            : "Connect Kalshi to sync live account equity",
+          : syncIssue
+            ? "Your account is linked, but the latest live equity refresh from Kalshi failed"
+            : connected
+              ? "Waiting for a fresh live equity confirmation from Kalshi"
+              : "Connect Kalshi to sync live account equity",
       accent: "text-cyan-300",
       icon: Activity,
     },
@@ -101,6 +112,11 @@ export default function Home() {
           {readiness.needsFundingReview ? (
             <p className="mt-3 max-w-3xl text-sm text-amber-300">
               Your account appears connected but not yet funded. Complete the connection check, then add capital on Kalshi before your first live order.
+            </p>
+          ) : null}
+          {readiness.needsSyncReview ? (
+            <p className="mt-3 max-w-3xl text-sm text-amber-300">
+              Your Kalshi account is still linked, but the latest live balance sync failed. Re-open Connect Kalshi to refresh credentials or retry the account check before trusting any capital-based recommendation.
             </p>
           ) : null}
         </div>
