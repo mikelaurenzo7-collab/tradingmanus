@@ -2,14 +2,27 @@ import { describe, expect, it } from "vitest";
 import {
   formatAutonomyActivityTime,
   getAutonomyEventLabel,
+  getAutonomyReadinessSummary,
   getAutonomyReviewSummary,
   type AutonomyActivitySummary,
+  type TradingPreferences,
 } from "../client/src/lib/tradingAutonomy";
 
 const baseActivity: AutonomyActivitySummary = {
   lastRun: null,
   lastOrder: null,
   recentActivity: [],
+};
+
+const basePreferences: TradingPreferences = {
+  autonomyMode: "fully_autonomous",
+  liveTradingEnabled: true,
+  executionCadence: "continuous_watch",
+  riskPosture: "balanced",
+  minSignalConfidence: 0.72,
+  maxOrderNotional: 10,
+  maxDailyOrders: 3,
+  requireApprovalAbove: 8,
 };
 
 describe("trading autonomy activity helpers", () => {
@@ -69,5 +82,23 @@ describe("trading autonomy activity helpers", () => {
       "Not yet recorded"
     );
     expect(formatAutonomyActivityTime(null)).toBe("Not yet recorded");
+  });
+
+  it("marks away-from-chat trading as eligible only when the account, arming, and cadence all support scheduled reviews", () => {
+    const eligible = getAutonomyReadinessSummary({
+      preferences: basePreferences,
+      connected: true,
+      equity: 63.59,
+      lastRunAt: new Date("2026-04-24T14:00:00.000Z"),
+    });
+    const disarmed = getAutonomyReadinessSummary({
+      preferences: { ...basePreferences, liveTradingEnabled: false },
+      connected: true,
+      equity: 63.59,
+      lastRunAt: null,
+    });
+
+    expect(eligible.title).toContain("eligible");
+    expect(disarmed.title).toContain("disarmed");
   });
 });

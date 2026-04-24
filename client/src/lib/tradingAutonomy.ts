@@ -211,6 +211,67 @@ export function getAutonomyReviewSummary(activity: AutonomyActivitySummary | nul
   }
 }
 
+export function getAutonomyReadinessSummary(input: {
+  preferences: TradingPreferences;
+  connected: boolean;
+  equity: number;
+  lastRunAt?: string | Date | null;
+}) {
+  const { preferences, connected, equity, lastRunAt } = input;
+
+  if (!connected) {
+    return {
+      title: "Away-from-chat trading is not ready",
+      body: "Kalshi is not connected yet, so Laurenzo cannot review or place live trades while you are away.",
+      tone: "text-rose-300",
+    };
+  }
+
+  if (equity <= 0) {
+    return {
+      title: "Away-from-chat trading is funded incorrectly",
+      body: "The connected account has no confirmed equity available for live execution.",
+      tone: "text-amber-300",
+    };
+  }
+
+  if (preferences.autonomyMode === "manual") {
+    return {
+      title: "Away-from-chat trading is disabled by mode",
+      body: "Manual mode keeps Laurenzo in research-only operation even if the account is connected.",
+      tone: "text-slate-300",
+    };
+  }
+
+  if (!preferences.liveTradingEnabled) {
+    return {
+      title: "Away-from-chat trading is disarmed",
+      body: "Your autonomy policy is saved, but live trading is currently disarmed.",
+      tone: "text-amber-300",
+    };
+  }
+
+  const supportsAwayScanning =
+    preferences.executionCadence === "hourly_watch" ||
+    preferences.executionCadence === "continuous_watch";
+
+  if (!supportsAwayScanning) {
+    return {
+      title: "Away-from-chat trading is not enabled by cadence",
+      body: "The current cadence limits Laurenzo to supervised sessions rather than scheduled away-from-chat reviews.",
+      tone: "text-amber-300",
+    };
+  }
+
+  return {
+    title: "Away-from-chat trading is eligible",
+    body: lastRunAt
+      ? "Laurenzo is armed for scheduled reviews and has recorded recent away-from-chat activity under the current policy."
+      : "Laurenzo is armed for scheduled reviews, but no away-from-chat review has been recorded yet under the current policy.",
+    tone: "text-emerald-300",
+  };
+}
+
 export function getAutonomyEventLabel(eventType: string) {
   return eventType
     .replace(/^scheduled_autonomy_run_/, "away review ")

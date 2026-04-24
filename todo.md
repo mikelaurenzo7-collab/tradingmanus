@@ -409,3 +409,5 @@ This iteration prioritizes prediction quality by introducing a more independent 
 - [x] Add a server-side autonomy activity summary that parses scheduled review audit events into a trustworthy last-run status for the UI
 - [x] Surface the last scheduled autonomy review outcome, execution eligibility, and recent away-from-chat activity on the Trading Autonomy and Audit Log pages
 - [x] Add regression coverage for the new autonomy activity summary and UI-facing status semantics so the transparency upgrade cannot silently regress
+- [x] Add an autonomy readiness panel that shows whether away-from-chat trading is actually able to execute right now based on account connection, live-trading arming, autonomy mode, cadence, and recent scheduled-review activity
+- [x] Add regression coverage for the new autonomy readiness semantics so the UI cannot overstate whether Laurenzo is truly able to trade while the user is away
