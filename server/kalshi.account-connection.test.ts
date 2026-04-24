@@ -120,8 +120,8 @@ describe("kalshi account connection", () => {
   });
 
   it("validates credentials, syncs equity, and stores them for the authenticated user", async () => {
-    mocks.validateKalshiCredentials.mockResolvedValue({ valid: true });
-    mocks.fetchKalshiAccountEquity.mockResolvedValue({ equity: 123.45 });
+    mocks.validateKalshiCredentials.mockResolvedValue({ valid: true, mode: "production" });
+    mocks.fetchKalshiAccountEquity.mockResolvedValue({ equity: 123.45, mode: "production" });
     mocks.saveKalshiCredentials.mockResolvedValue(undefined);
     mocks.updateKalshiCapital.mockResolvedValue(undefined);
     mocks.logAuditEvent.mockResolvedValue(undefined);
@@ -152,7 +152,7 @@ describe("kalshi account connection", () => {
       "Equity: $123.45",
       "kalshi-open-id",
     );
-    expect(result).toEqual({ success: true, equity: 123.45 });
+    expect(result).toEqual({ success: true, equity: 123.45, mode: "production" });
   });
 
   it("rejects invalid credentials without saving anything", async () => {
@@ -172,6 +172,26 @@ describe("kalshi account connection", () => {
     expect(result).toEqual({
       success: false,
       error: "Invalid Kalshi credentials",
+    });
+  });
+
+  it("returns a clear retry message when validated credentials cannot be persisted", async () => {
+    mocks.validateKalshiCredentials.mockResolvedValue({ valid: true, mode: "production" });
+    mocks.fetchKalshiAccountEquity.mockResolvedValue({ equity: 99, mode: "production" });
+    mocks.saveKalshiCredentials.mockRejectedValue(new Error("closed state"));
+
+    const caller = appRouter.createCaller(createProtectedContext());
+    const result = await caller.kalshi.connectKalshiAccount({
+      apiKey: "live-api-key",
+      privateKey: "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----",
+    });
+
+    expect(mocks.updateKalshiCapital).not.toHaveBeenCalled();
+    expect(mocks.logAuditEvent).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      success: false,
+      error:
+        "Your Kalshi credentials were validated, but the dashboard could not save the connection state. Please retry in a moment.",
     });
   });
 });
