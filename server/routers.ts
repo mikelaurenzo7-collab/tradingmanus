@@ -2,11 +2,35 @@ import { getSessionCookieOptions } from "./_core/cookies";
 import { publicProcedure, router, protectedProcedure } from "./_core/trpc";
 import { z } from "zod";
 import * as db from "./db";
-import { fetchKalshiMarkets, fetchKalshiMarketDetails } from "./_core/kalshiMarketData";
-import { placeKalshiOrder, cancelKalshiOrder, getKalshiOrderStatus, getKalshiPositions, closeKalshiPosition, activateKalshiKillSwitch } from "./_core/kalshiExecution";
-import { subscribeToMarketFeed, unsubscribeFromMarketFeed, getMarketFeed, getAllMarketFeeds } from "./_core/kalshiMarketFeed";
-import { generateSignalsForMarkets, filterSignalsByConfidence, getTopSignalsForExecution, saveSignals } from "./_core/kalshiSignals";
-import { validateKalshiCredentials, fetchKalshiAccountEquity } from "./_core/kalshiAuth";
+import {
+  fetchKalshiMarkets,
+  fetchKalshiMarketDetails,
+} from "./_core/kalshiMarketData";
+import {
+  placeKalshiOrder,
+  cancelKalshiOrder,
+  getKalshiOrderStatus,
+  getKalshiPositions,
+  closeKalshiPosition,
+  activateKalshiKillSwitch,
+} from "./_core/kalshiExecution";
+import {
+  subscribeToMarketFeed,
+  unsubscribeFromMarketFeed,
+  getMarketFeed,
+  getAllMarketFeeds,
+} from "./_core/kalshiMarketFeed";
+import {
+  generateSignalsForMarkets,
+  filterSignalsByConfidence,
+  getTopSignalsForExecution,
+  saveSignals,
+} from "./_core/kalshiSignals";
+import {
+  validateKalshiCredentials,
+  fetchKalshiAccountEquity,
+} from "./_core/kalshiAuth";
+import { getPerformanceOverview } from "./_core/kalshiLearning";
 import * as kalshiCredDb from "./db.kalshi-credentials";
 import { trainingRouter } from "./training.router";
 import { advancedRouter } from "./advanced.router";
@@ -24,7 +48,7 @@ const RISK_LIMITS = {
 
 export const appRouter = router({
   auth: router({
-    me: publicProcedure.query((opts) => opts.ctx.user),
+    me: publicProcedure.query(opts => opts.ctx.user),
     logout: publicProcedure.mutation(({ ctx }) => {
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
@@ -38,11 +62,20 @@ export const appRouter = router({
   kalshi: router({
     // Market data
     getMarkets: protectedProcedure
-      .input(z.object({ category: z.string().optional(), status: z.enum(["open", "closed", "resolved"]).optional() }).optional())
+      .input(
+        z
+          .object({
+            category: z.string().optional(),
+            status: z.enum(["open", "closed", "resolved"]).optional(),
+          })
+          .optional()
+      )
       .query(async ({ input }) => {
         try {
           const markets = await fetchKalshiMarkets(input || {});
-          await Promise.all(markets.map((market) => db.upsertKalshiMarket(market)));
+          await Promise.all(
+            markets.map(market => db.upsertKalshiMarket(market))
+          );
           return markets;
         } catch (error) {
           console.error("[Kalshi] Get markets error:", error);
@@ -81,7 +114,10 @@ export const appRouter = router({
           const openPositions = await db.getOpenKalshiPositions();
           const todayRealizedLoss = await db.getTodayRealizedLoss();
           // Risk exposure: quantity * limitPrice (limitPrice is 0-1, so max exposure is quantity)
-          const orderExposure = Math.max(Number(input.quantity) * Number(input.limitPrice), Number(input.quantity) * (1 - Number(input.limitPrice)));
+          const orderExposure = Math.max(
+            Number(input.quantity) * Number(input.limitPrice),
+            Number(input.quantity) * (1 - Number(input.limitPrice))
+          );
 
           if (openPositions.length >= RISK_LIMITS.maxOpenPositions) {
             return {
@@ -99,7 +135,10 @@ export const appRouter = router({
           }
 
           // Max loss check: worst-case loss on this trade
-          const maxLossOnTrade = Math.min(orderExposure, Number(input.quantity) * (1 - Number(input.limitPrice)));
+          const maxLossOnTrade = Math.min(
+            orderExposure,
+            Number(input.quantity) * (1 - Number(input.limitPrice))
+          );
           if (maxLossOnTrade > RISK_LIMITS.maxLossPerTrade) {
             return {
               success: false,
@@ -121,12 +160,26 @@ export const appRouter = router({
             };
           }
 
-          const result = await placeKalshiOrder(process.env.KALSHI_API_KEY || "", input.marketId, input.side, input.quantity, input.limitPrice);
+          const result = await placeKalshiOrder(
+            process.env.KALSHI_API_KEY || "",
+            input.marketId,
+            input.side,
+            input.quantity,
+            input.limitPrice
+          );
 
           if (result.success) {
-            await db.logAuditEvent("kalshi_order_placed", JSON.stringify(input), ctx.user!.openId);
+            await db.logAuditEvent(
+              "kalshi_order_placed",
+              JSON.stringify(input),
+              ctx.user!.openId
+            );
           } else {
-            await db.logAuditEvent("kalshi_order_blocked_or_failed", JSON.stringify({ ...input, reason: result.error ?? "unknown" }), ctx.user!.openId);
+            await db.logAuditEvent(
+              "kalshi_order_blocked_or_failed",
+              JSON.stringify({ ...input, reason: result.error ?? "unknown" }),
+              ctx.user!.openId
+            );
           }
 
           return result;
@@ -140,10 +193,17 @@ export const appRouter = router({
       .input(z.object({ orderId: z.string() }))
       .mutation(async ({ input, ctx }) => {
         try {
-          const result = await cancelKalshiOrder(process.env.KALSHI_API_KEY || "", input.orderId);
+          const result = await cancelKalshiOrder(
+            process.env.KALSHI_API_KEY || "",
+            input.orderId
+          );
 
           if (result.success) {
-            await db.logAuditEvent("kalshi_order_cancelled", input.orderId, ctx.user!.openId);
+            await db.logAuditEvent(
+              "kalshi_order_cancelled",
+              input.orderId,
+              ctx.user!.openId
+            );
           }
 
           return result;
@@ -157,7 +217,10 @@ export const appRouter = router({
       .input(z.object({ orderId: z.string() }))
       .query(async ({ input }) => {
         try {
-          return await getKalshiOrderStatus(process.env.KALSHI_API_KEY || "", input.orderId);
+          return await getKalshiOrderStatus(
+            process.env.KALSHI_API_KEY || "",
+            input.orderId
+          );
         } catch (error) {
           console.error("[Kalshi] Get order status error:", error);
           return null;
@@ -175,7 +238,9 @@ export const appRouter = router({
     }),
 
     getTradeHistory: protectedProcedure
-      .input(z.object({ limit: z.number().min(1).max(200).optional() }).optional())
+      .input(
+        z.object({ limit: z.number().min(1).max(200).optional() }).optional()
+      )
       .query(async ({ input }) => {
         try {
           return await db.getKalshiTradeHistory(input?.limit ?? 50);
@@ -186,13 +251,28 @@ export const appRouter = router({
       }),
 
     closePosition: protectedProcedure
-      .input(z.object({ positionId: z.number(), marketId: z.string(), currentPrice: z.number() }))
+      .input(
+        z.object({
+          positionId: z.number(),
+          marketId: z.string(),
+          currentPrice: z.number(),
+        })
+      )
       .mutation(async ({ input, ctx }) => {
         try {
-          const result = await closeKalshiPosition(process.env.KALSHI_API_KEY || "", input.positionId, input.marketId, input.currentPrice);
+          const result = await closeKalshiPosition(
+            process.env.KALSHI_API_KEY || "",
+            input.positionId,
+            input.marketId,
+            input.currentPrice
+          );
 
           if (result.success) {
-            await db.logAuditEvent("kalshi_position_closed", JSON.stringify(input), ctx.user!.openId);
+            await db.logAuditEvent(
+              "kalshi_position_closed",
+              JSON.stringify(input),
+              ctx.user!.openId
+            );
           }
 
           return result;
@@ -217,7 +297,11 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         try {
           await db.initializeKalshiCapital(input.amount);
-          await db.logAuditEvent("kalshi_capital_initialized", `$${input.amount}`, ctx.user!.openId);
+          await db.logAuditEvent(
+            "kalshi_capital_initialized",
+            `$${input.amount}`,
+            ctx.user!.openId
+          );
           return { success: true };
         } catch (error) {
           console.error("[Kalshi] Initialize capital error:", error);
@@ -248,7 +332,9 @@ export const appRouter = router({
     // Risk controls
     killSwitch: protectedProcedure.mutation(async ({ ctx }) => {
       try {
-        const result = await activateKalshiKillSwitch(process.env.KALSHI_API_KEY || "");
+        const result = await activateKalshiKillSwitch(
+          process.env.KALSHI_API_KEY || ""
+        );
         await db.logAuditEvent(
           "kalshi_kill_switch_activated",
           JSON.stringify({
@@ -281,10 +367,17 @@ export const appRouter = router({
         try {
           const feed = await subscribeToMarketFeed(input.marketId);
           if (feed) {
-            await db.logAuditEvent("kalshi_market_feed_subscribed", input.marketId, ctx.user!.openId);
+            await db.logAuditEvent(
+              "kalshi_market_feed_subscribed",
+              input.marketId,
+              ctx.user!.openId
+            );
             return { success: true, feed };
           }
-          return { success: false, error: "Failed to subscribe to market feed" };
+          return {
+            success: false,
+            error: "Failed to subscribe to market feed",
+          };
         } catch (error) {
           console.error("[Kalshi] Subscribe market feed error:", error);
           return { success: false, error: String(error) };
@@ -296,7 +389,11 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         try {
           unsubscribeFromMarketFeed(input.marketId);
-          await db.logAuditEvent("kalshi_market_feed_unsubscribed", input.marketId, ctx.user!.openId);
+          await db.logAuditEvent(
+            "kalshi_market_feed_unsubscribed",
+            input.marketId,
+            ctx.user!.openId
+          );
           return { success: true };
         } catch (error) {
           console.error("[Kalshi] Unsubscribe market feed error:", error);
@@ -335,11 +432,17 @@ export const appRouter = router({
       )
       .mutation(async ({ input, ctx }) => {
         try {
-          const markets = await Promise.all(input.marketIds.map((id) => db.getKalshiMarket(id)));
+          const markets = await Promise.all(
+            input.marketIds.map(id => db.getKalshiMarket(id))
+          );
           const validMarkets = markets.filter((m): m is any => m !== null);
 
           if (validMarkets.length === 0) {
-            return { success: false, signals: [], error: "No valid markets found" };
+            return {
+              success: false,
+              signals: [],
+              error: "No valid markets found",
+            };
           }
 
           const feeds = new Map();
@@ -348,12 +451,28 @@ export const appRouter = router({
             if (feed) feeds.set(marketId, feed);
           }
 
-          const fundamentalProbs = input.fundamentalProbabilities ? new Map(Object.entries(input.fundamentalProbabilities)) : undefined;
-          const allSignals = await generateSignalsForMarkets(validMarkets, feeds, fundamentalProbs);
-          const filteredSignals = filterSignalsByConfidence(allSignals, input.minConfidence);
+          const fundamentalProbs = input.fundamentalProbabilities
+            ? new Map(Object.entries(input.fundamentalProbabilities))
+            : undefined;
+          const allSignals = await generateSignalsForMarkets(
+            validMarkets,
+            feeds,
+            fundamentalProbs
+          );
+          const filteredSignals = filterSignalsByConfidence(
+            allSignals,
+            input.minConfidence
+          );
 
           await saveSignals(filteredSignals);
-          await db.logAuditEvent("kalshi_signals_generated", JSON.stringify({ count: filteredSignals.length, minConfidence: input.minConfidence }), ctx.user!.openId);
+          await db.logAuditEvent(
+            "kalshi_signals_generated",
+            JSON.stringify({
+              count: filteredSignals.length,
+              minConfidence: input.minConfidence,
+            }),
+            ctx.user!.openId
+          );
 
           return { success: true, signals: filteredSignals };
         } catch (error) {
@@ -372,7 +491,11 @@ export const appRouter = router({
       .query(async ({ input }) => {
         try {
           const recentSignals = await db.getRecentSignals(50);
-          return getTopSignalsForExecution(recentSignals, input.topN, input.minExecutionScore);
+          return getTopSignalsForExecution(
+            recentSignals,
+            input.topN,
+            input.minExecutionScore
+          );
         } catch (error) {
           console.error("[Kalshi] Get top signals error:", error);
           return [];
@@ -380,7 +503,9 @@ export const appRouter = router({
       }),
 
     getSignalHistory: protectedProcedure
-      .input(z.object({ limit: z.number().min(1).max(200).optional().default(50) }))
+      .input(
+        z.object({ limit: z.number().min(1).max(200).optional().default(50) })
+      )
       .query(async ({ input }) => {
         try {
           return await db.getRecentSignals(input.limit);
@@ -390,25 +515,74 @@ export const appRouter = router({
         }
       }),
 
+    getPerformanceOverview: protectedProcedure.query(async () => {
+      try {
+        return await getPerformanceOverview();
+      } catch (error) {
+        console.error("[Kalshi] Get performance overview error:", error);
+        return {
+          startingBalance: 100,
+          currentBalance: 100,
+          metrics: {
+            totalTrades: 0,
+            winningTrades: 0,
+            losingTrades: 0,
+            breakevenTrades: 0,
+            winRate: 0,
+            avgWin: 0,
+            avgLoss: 0,
+            profitFactor: 0,
+            totalPnL: 0,
+            dailyPnL: 0,
+            sharpeRatio: 0,
+            maxDrawdown: 0,
+            recoveryFactor: 0,
+            realizedPnL: 0,
+            unrealizedPnL: 0,
+            activePositions: 0,
+          },
+          signalPerformance: [],
+        };
+      }
+    }),
+
     // Kalshi account connection
     connectKalshiAccount: protectedProcedure
       .input(z.object({ apiKey: z.string(), privateKey: z.string() }))
       .mutation(async ({ input, ctx }) => {
         try {
-          const validation = await validateKalshiCredentials(input.apiKey, input.privateKey);
+          const validation = await validateKalshiCredentials(
+            input.apiKey,
+            input.privateKey
+          );
           if (!validation.valid) {
-            return { success: false, error: validation.error || "Invalid credentials" };
+            return {
+              success: false,
+              error: validation.error || "Invalid credentials",
+            };
           }
 
-          const equityResult = await fetchKalshiAccountEquity(input.apiKey, input.privateKey);
+          const equityResult = await fetchKalshiAccountEquity(
+            input.apiKey,
+            input.privateKey
+          );
           if (equityResult.error) {
             return { success: false, error: equityResult.error };
           }
 
           const userId = ctx.user!.id || 1;
-          await kalshiCredDb.saveKalshiCredentials(userId, input.apiKey, input.privateKey, equityResult.equity);
+          await kalshiCredDb.saveKalshiCredentials(
+            userId,
+            input.apiKey,
+            input.privateKey,
+            equityResult.equity
+          );
           await db.updateKalshiCapital({ currentBalance: equityResult.equity });
-          await db.logAuditEvent("kalshi_account_connected", `Equity: $${equityResult.equity}`, ctx.user!.openId);
+          await db.logAuditEvent(
+            "kalshi_account_connected",
+            `Equity: $${equityResult.equity}`,
+            ctx.user!.openId
+          );
 
           return { success: true, equity: equityResult.equity };
         } catch (error) {
@@ -432,7 +606,12 @@ export const appRouter = router({
         };
       } catch (error) {
         console.error("[Kalshi] Get account status error:", error);
-        return { connected: false, equity: 0, status: "error", error: String(error) };
+        return {
+          connected: false,
+          equity: 0,
+          status: "error",
+          error: String(error),
+        };
       }
     }),
 
@@ -440,7 +619,11 @@ export const appRouter = router({
       try {
         const userId = ctx.user!.id || 1;
         await kalshiCredDb.deleteKalshiCredentials(userId);
-        await db.logAuditEvent("kalshi_account_disconnected", "", ctx.user!.openId);
+        await db.logAuditEvent(
+          "kalshi_account_disconnected",
+          "",
+          ctx.user!.openId
+        );
         return { success: true };
       } catch (error) {
         console.error("[Kalshi] Disconnect account error:", error);

@@ -6,16 +6,19 @@ const mocks = vi.hoisted(() => ({
   fetchKalshiMarketDetails: vi.fn(),
   upsertKalshiMarket: vi.fn(),
   getKalshiTradeHistory: vi.fn(),
+  getKalshiCapital: vi.fn(),
+  getOpenKalshiPositions: vi.fn(),
+  getRecentSignals: vi.fn(),
 }));
 
 vi.mock("./db", () => ({
   upsertKalshiMarket: mocks.upsertKalshiMarket,
   logAuditEvent: vi.fn(),
-  getKalshiCapital: vi.fn(),
-  getOpenKalshiPositions: vi.fn(async () => []),
+  getKalshiCapital: mocks.getKalshiCapital,
+  getOpenKalshiPositions: mocks.getOpenKalshiPositions,
   getTodayRealizedLoss: vi.fn(async () => 0),
   initializeKalshiCapital: vi.fn(),
-  getRecentSignals: vi.fn(async () => []),
+  getRecentSignals: mocks.getRecentSignals,
   getAuditLog: vi.fn(async () => []),
   getKalshiTradeHistory: mocks.getKalshiTradeHistory,
 }));
@@ -71,6 +74,12 @@ describe("kalshi market-data router", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getKalshiTradeHistory.mockResolvedValue([]);
+    mocks.getKalshiCapital.mockResolvedValue({
+      startingBalance: 100,
+      currentBalance: 100,
+    });
+    mocks.getOpenKalshiPositions.mockResolvedValue([]);
+    mocks.getRecentSignals.mockResolvedValue([]);
   });
 
   it("upserts each market returned by getMarkets", async () => {
@@ -130,7 +139,9 @@ describe("kalshi market-data router", () => {
     mocks.fetchKalshiMarketDetails.mockResolvedValue(market);
 
     const caller = appRouter.createCaller(createProtectedContext());
-    const result = await caller.kalshi.getMarketDetails({ marketId: "JOBS-2026" });
+    const result = await caller.kalshi.getMarketDetails({
+      marketId: "JOBS-2026",
+    });
 
     expect(result).toEqual(market);
     expect(mocks.fetchKalshiMarketDetails).toHaveBeenCalledWith("JOBS-2026");
@@ -159,5 +170,55 @@ describe("kalshi market-data router", () => {
 
     expect(result).toEqual(history);
     expect(mocks.getKalshiTradeHistory).toHaveBeenCalledWith(25);
+  });
+
+  it("returns a truthful performance overview", async () => {
+    mocks.getKalshiCapital.mockResolvedValue({
+      startingBalance: 100,
+      currentBalance: 104,
+    });
+    mocks.getOpenKalshiPositions.mockResolvedValue([{ unrealizedPnl: 1 }]);
+    mocks.getRecentSignals.mockResolvedValue([
+      {
+        marketId: "FED-2026",
+        signalType: "momentum",
+        confidence: 0.75,
+        expectedValue: 0.12,
+      },
+    ]);
+    mocks.getKalshiTradeHistory.mockResolvedValue([
+      {
+        id: 1,
+        marketId: "FED-2026",
+        side: "yes",
+        quantity: 10,
+        entryPrice: 0.4,
+        positionStatus: "closed",
+        realizedPnl: 3,
+        closedAt: new Date("2026-04-24T12:00:00Z"),
+      },
+    ]);
+
+    const caller = appRouter.createCaller(createProtectedContext());
+    const result = await caller.kalshi.getPerformanceOverview();
+
+    expect(result.startingBalance).toBe(100);
+    expect(result.currentBalance).toBe(104);
+    expect(result.metrics).toMatchObject({
+      totalTrades: 1,
+      winningTrades: 1,
+      activePositions: 1,
+      realizedPnL: 3,
+      unrealizedPnL: 1,
+      totalPnL: 4,
+    });
+    expect(result.signalPerformance).toEqual([
+      expect.objectContaining({
+        signalType: "momentum",
+        totalSignals: 1,
+        successfulSignals: 1,
+        totalPnL: 3,
+      }),
+    ]);
   });
 });
