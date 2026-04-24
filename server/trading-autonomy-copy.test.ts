@@ -18,17 +18,29 @@ describe("trading autonomy copy truthfulness", () => {
     requireApprovalAbove: 8,
   };
 
-  it("makes clear that full autonomy alone does not start a background trade-search worker", () => {
+  const armedSessionAssisted: TradingPreferences = {
+    ...armedFullyAutonomous,
+    autonomyMode: "semi_autonomous",
+    executionCadence: "session_assisted",
+  };
+
+  it("describes away-from-chat reviews as a published scheduled capability rather than an unconditional always-on promise", () => {
     expect(getAutonomyModeDescription("fully_autonomous")).toContain(
-      "does not start a background trade-search worker"
+      "scheduled away-from-chat reviews once the latest build is published"
     );
 
     expect(getAutonomyStatusSummary(armedFullyAutonomous).body).toContain(
-      "does not keep searching for trades in the background while you are away"
+      "scheduled reviews can keep evaluating markets while you are away"
+    );
+    expect(getAutonomyStatusSummary(armedFullyAutonomous).body).toContain(
+      "publish the latest build"
     );
   });
 
-  it("labels continuous_watch as a policy label rather than a guaranteed running watcher", () => {
+  it("keeps supervised cadences labeled as active-session execution rather than away-from-chat scanning", () => {
+    expect(getAutonomyStatusSummary(armedSessionAssisted).body).toContain(
+      "selected cadence keeps execution supervised to active sessions"
+    );
     expect(getExecutionCadenceLabel("continuous_watch")).toBe("Continuous review policy");
     expect(getExecutionCadenceLabel("hourly_watch")).toBe("Hourly review policy");
   });

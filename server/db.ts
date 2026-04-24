@@ -357,6 +357,21 @@ export async function getKalshiOrdersByMarket(marketId: string) {
     .where(eq(kalshiOrders.marketId, marketId));
 }
 
+export async function getTodayKalshiOrderCount() {
+  const database = await getDb();
+  if (!database) return 0;
+
+  const startOfDay = new Date();
+  startOfDay.setHours(0, 0, 0, 0);
+
+  const orders = await database
+    .select()
+    .from(kalshiOrders)
+    .where(gte(kalshiOrders.createdAt, startOfDay));
+
+  return orders.length;
+}
+
 // Kalshi position queries
 export async function createKalshiPosition(position: any) {
   const database = await getDb();
@@ -633,6 +648,30 @@ export async function logAuditEvent(
     console.error("[AuditLog] Failed to write audit event:", error);
     return false;
   }
+}
+
+export async function getLatestAuditEventByType(
+  eventType: string,
+  triggeredByOpenId?: string,
+) {
+  const database = await getDb();
+  if (!database) return null;
+
+  const conditions = triggeredByOpenId
+    ? and(
+        eq(auditLog.eventType, eventType),
+        eq(auditLog.triggeredByOpenId, triggeredByOpenId)
+      )
+    : eq(auditLog.eventType, eventType);
+
+  const result = await database
+    .select()
+    .from(auditLog)
+    .where(conditions)
+    .orderBy(desc(auditLog.createdAt), desc(auditLog.id))
+    .limit(1);
+
+  return result[0] || null;
 }
 
 export async function getAuditLog(limitDays: number = 7) {

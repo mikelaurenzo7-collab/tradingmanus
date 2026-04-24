@@ -9,6 +9,8 @@ import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { validateServerEnv } from "./env";
 import { getDb } from "../db";
+import { sdk } from "./sdk";
+import { runScheduledAutonomousTrading } from "./kalshiAutonomy";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -53,6 +55,33 @@ async function startServer() {
   );
   app.get("/api/health", (_req, res) => {
     res.json({ status: "ok" });
+  });
+
+  app.post("/api/scheduled/autonomous-trading", async (req, res) => {
+    try {
+      const user = await sdk.authenticateRequest(req);
+
+      if (!user) {
+        res.status(401).json({ success: false, error: "Authentication required" });
+        return;
+      }
+
+      if (user.role !== "user" && user.role !== "admin") {
+        res.status(403).json({ success: false, error: "Forbidden" });
+        return;
+      }
+
+      const result = await runScheduledAutonomousTrading(user);
+      const statusCode = result.status === "error" ? 500 : 200;
+      res.status(statusCode).json(result);
+    } catch (error) {
+      console.error("[ScheduledAutonomy] Route error:", error);
+      res.status(500).json({
+        success: false,
+        status: "error",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   });
   // development mode uses Vite, production mode uses static files
   if (process.env.NODE_ENV === "development") {

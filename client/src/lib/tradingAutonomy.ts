@@ -62,11 +62,11 @@ export function getAutonomyModeDescription(mode: TradingAutonomyMode) {
     case "manual":
       return "The agent may research and rank setups, but it will not place live orders.";
     case "approval_required":
-      return "The agent prepares candidate trades during active app use, but every live order still needs your explicit approval.";
+      return "The agent may generate candidate trades during active app use or scheduled reviews, but every live order still needs your explicit approval.";
     case "semi_autonomous":
-      return "When an execution flow is actively triggered in the app, the agent may auto-execute smaller trades that meet your thresholds while larger trades still pause for approval.";
+      return "The agent may auto-execute smaller eligible trades within your thresholds, including scheduled away-from-chat reviews, while larger trades still pause for approval.";
     case "fully_autonomous":
-      return "When an eligible execution flow is actively running, the agent may place live orders automatically within your stored guardrails. This setting alone does not start a background trade-search worker.";
+      return "The agent may place live orders automatically within your stored guardrails during eligible in-app flows and scheduled away-from-chat reviews once the latest build is published.";
   }
 }
 
@@ -111,9 +111,15 @@ export function getAutonomyStatusSummary(preferences: TradingPreferences) {
     };
   }
 
+  const usesAwayScanning =
+    preferences.executionCadence === "hourly_watch" ||
+    preferences.executionCadence === "continuous_watch";
+
   return {
     title: `${getAutonomyModeLabel(preferences.autonomyMode)} is armed`,
-    body: "Your live-trading policy is armed for eligible execution flows, but this build does not keep searching for trades in the background while you are away.",
+    body: usesAwayScanning
+      ? "Your live-trading policy is armed for eligible execution flows. After you publish the latest build, scheduled reviews can keep evaluating markets while you are away."
+      : "Your live-trading policy is armed for eligible in-app execution flows, but the selected cadence keeps execution supervised to active sessions.",
     tone: "text-emerald-300",
   };
 }

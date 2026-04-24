@@ -1,0 +1,188 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  DEFAULT_PREFERENCES: {
+    autonomyMode: "fully_autonomous" as const,
+    liveTradingEnabled: true,
+    executionCadence: "continuous_watch" as const,
+    riskPosture: "balanced" as const,
+    minSignalConfidence: 0.72,
+    maxOrderNotional: 10,
+    maxDailyOrders: 3,
+    requireApprovalAbove: 8,
+  },
+  getTradingPreferences: vi.fn(),
+  getKalshiCredentials: vi.fn(),
+  updateKalshiAccountEquity: vi.fn(),
+  fetchKalshiAccountEquity: vi.fn(),
+  fetchKalshiMarkets: vi.fn(),
+  getMarketFeed: vi.fn(),
+  generateSignalsForMarkets: vi.fn(),
+  filterSignalsByConfidence: vi.fn(),
+  filterSignalsByMarketConditions: vi.fn(),
+  getTopSignalsForExecution: vi.fn(),
+  saveSignals: vi.fn(),
+  getLatestAuditEventByType: vi.fn(),
+  getTodayKalshiOrderCount: vi.fn(),
+  getKalshiCapital: vi.fn(),
+  syncKalshiCapitalWithLiveEquity: vi.fn(),
+  getOpenKalshiPositions: vi.fn(),
+  getTodayRealizedLoss: vi.fn(),
+  logAuditEvent: vi.fn(),
+  placeKalshiOrder: vi.fn(),
+}));
+
+vi.mock("./db.trading-preferences", () => ({
+  DEFAULT_TRADING_PREFERENCES: mocks.DEFAULT_PREFERENCES,
+  getTradingPreferences: mocks.getTradingPreferences,
+}));
+
+vi.mock("./db.kalshi-credentials", () => ({
+  getKalshiCredentials: mocks.getKalshiCredentials,
+  updateKalshiAccountEquity: mocks.updateKalshiAccountEquity,
+}));
+
+vi.mock("./db", () => ({
+  getLatestAuditEventByType: mocks.getLatestAuditEventByType,
+  getTodayKalshiOrderCount: mocks.getTodayKalshiOrderCount,
+  getKalshiCapital: mocks.getKalshiCapital,
+  syncKalshiCapitalWithLiveEquity: mocks.syncKalshiCapitalWithLiveEquity,
+  getOpenKalshiPositions: mocks.getOpenKalshiPositions,
+  getTodayRealizedLoss: mocks.getTodayRealizedLoss,
+  logAuditEvent: mocks.logAuditEvent,
+}));
+
+vi.mock("./_core/kalshiAuth", () => ({
+  fetchKalshiAccountEquity: mocks.fetchKalshiAccountEquity,
+}));
+
+vi.mock("./_core/kalshiMarketData", () => ({
+  fetchKalshiMarkets: mocks.fetchKalshiMarkets,
+}));
+
+vi.mock("./_core/kalshiMarketFeed", () => ({
+  getMarketFeed: mocks.getMarketFeed,
+}));
+
+vi.mock("./_core/kalshiSignals", () => ({
+  generateSignalsForMarkets: mocks.generateSignalsForMarkets,
+  filterSignalsByConfidence: mocks.filterSignalsByConfidence,
+  filterSignalsByMarketConditions: mocks.filterSignalsByMarketConditions,
+  getTopSignalsForExecution: mocks.getTopSignalsForExecution,
+  saveSignals: mocks.saveSignals,
+}));
+
+vi.mock("./_core/kalshiExecution", () => ({
+  placeKalshiOrder: mocks.placeKalshiOrder,
+}));
+
+import { runScheduledAutonomousTrading } from "./_core/kalshiAutonomy";
+
+const testUser = {
+  id: 7,
+  openId: "away-open-id",
+  email: "laurenzo@example.com",
+  name: "Laurenzo Operator",
+  loginMethod: "manus",
+  role: "user" as const,
+  createdAt: new Date(),
+  updatedAt: new Date(),
+  lastSignedIn: new Date(),
+};
+
+const candidateSignal = {
+  marketId: "KXTEST-1",
+  signalType: "momentum" as const,
+  side: "yes" as const,
+  confidence: 0.83,
+  reasoning: "Explicit probability edge",
+  impliedProbability: 0.57,
+  marketPrice: 0.43,
+  expectedValue: 0.18,
+  executionScore: 0.84,
+};
+
+describe("scheduled away-from-chat trading", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+
+    mocks.getTradingPreferences.mockResolvedValue(mocks.DEFAULT_PREFERENCES);
+    mocks.getKalshiCredentials.mockResolvedValue({
+      userId: 7,
+      accountStatus: "connected",
+      apiKey: "kalshi-key",
+      privateKey: "kalshi-private-key",
+    });
+    mocks.fetchKalshiAccountEquity.mockResolvedValue({ equity: 100, error: null });
+    mocks.fetchKalshiMarkets.mockResolvedValue([
+      {
+        id: "KXTEST-1",
+        title: "Will demo market resolve yes?",
+        yesPrice: 0.43,
+        noPrice: 0.57,
+        impliedProbability: 0.57,
+      },
+    ]);
+    mocks.getMarketFeed.mockReturnValue(null);
+    mocks.generateSignalsForMarkets.mockResolvedValue([candidateSignal]);
+    mocks.filterSignalsByConfidence.mockImplementation((signals: any[]) => signals);
+    mocks.filterSignalsByMarketConditions.mockImplementation((signals: any[]) => signals);
+    mocks.getTopSignalsForExecution.mockReturnValue([candidateSignal]);
+    mocks.saveSignals.mockResolvedValue(undefined);
+    mocks.getLatestAuditEventByType.mockResolvedValue(null);
+    mocks.getTodayKalshiOrderCount.mockResolvedValue(0);
+    mocks.getKalshiCapital.mockResolvedValue({ currentBalance: 100, startingBalance: 100 });
+    mocks.syncKalshiCapitalWithLiveEquity.mockResolvedValue(undefined);
+    mocks.getOpenKalshiPositions.mockResolvedValue([]);
+    mocks.getTodayRealizedLoss.mockResolvedValue(0);
+    mocks.logAuditEvent.mockResolvedValue(true);
+    mocks.placeKalshiOrder.mockResolvedValue({ success: true, orderId: "order-123" });
+  });
+
+  it("skips hourly scheduled runs that already executed recently", async () => {
+    mocks.getTradingPreferences.mockResolvedValue({
+      ...mocks.DEFAULT_PREFERENCES,
+      executionCadence: "hourly_watch",
+    });
+    mocks.getLatestAuditEventByType.mockResolvedValue({
+      createdAt: new Date(Date.now() - 5 * 60 * 1000),
+    });
+
+    const result = await runScheduledAutonomousTrading(testUser);
+
+    expect(result.status).toBe("skipped");
+    expect(result.reason).toContain("already ran recently");
+    expect(mocks.fetchKalshiAccountEquity).not.toHaveBeenCalled();
+    expect(mocks.placeKalshiOrder).not.toHaveBeenCalled();
+  });
+
+  it("generates and saves signals but never auto-submits in approval-required mode", async () => {
+    mocks.getTradingPreferences.mockResolvedValue({
+      ...mocks.DEFAULT_PREFERENCES,
+      autonomyMode: "approval_required",
+    });
+
+    const result = await runScheduledAutonomousTrading(testUser);
+
+    expect(result.status).toBe("generated_only");
+    expect(result.reason).toContain("approval-required mode");
+    expect(result.executionCandidates).toBe(1);
+    expect(mocks.saveSignals).toHaveBeenCalled();
+    expect(mocks.placeKalshiOrder).not.toHaveBeenCalled();
+  });
+
+  it("places a live order when a fully autonomous scheduled run finds an eligible non-heuristic signal", async () => {
+    const result = await runScheduledAutonomousTrading(testUser);
+
+    expect(result.status).toBe("executed");
+    expect(result.orderPlaced).toBe(true);
+    expect(result.orderId).toBe("order-123");
+    expect(result.executedMarketId).toBe("KXTEST-1");
+    expect(mocks.placeKalshiOrder).toHaveBeenCalledWith(7, "KXTEST-1", "yes", 5, 0.43);
+    expect(mocks.logAuditEvent).toHaveBeenCalledWith(
+      "scheduled_autonomy_order_placed",
+      expect.stringContaining('"marketId":"KXTEST-1"'),
+      "away-open-id"
+    );
+  });
+});
