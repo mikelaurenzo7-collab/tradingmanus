@@ -3,7 +3,7 @@
  * Consolidated tRPC procedures for sentiment, portfolio, risk, and backtesting
  */
 
-import { router, protectedProcedure } from "./_core/trpc.js";
+import { router, protectedProcedure, publicProcedure } from "./_core/trpc.js";
 import { z } from "zod";
 import * as sentiment from "./_core/kalshiSentiment";
 import * as portfolio from "./_core/kalshiPortfolioOptimization";
@@ -13,7 +13,7 @@ import * as backtest from "./_core/kalshiBacktest";
 export const advancedRouter = router({
   // Sentiment Analysis
   sentiment: router({
-    calculateSentiment: protectedProcedure
+    calculateSentiment: publicProcedure
       .input(
         z.object({
           newsSentiment: z.number().min(-1).max(1),
@@ -27,6 +27,27 @@ export const advancedRouter = router({
           input.socialSentiment,
           input.marketSentiment
         );
+      }),
+
+    calculateCompositeSentiment: publicProcedure
+      .input(
+        z.object({
+          newsSentiment: z.number().min(-1).max(1),
+          socialSentiment: z.number().min(-1).max(1),
+          marketSentiment: z.number().min(-1).max(1),
+          topic: z.string().trim().min(2).max(120).optional(),
+        })
+      )
+      .query(async ({ input }: { input: { newsSentiment: number; socialSentiment: number; marketSentiment: number; topic?: string } }) => {
+        const externalSignal = input.topic ? await sentiment.fetchGdeltTopicSignal(input.topic) : null;
+        return sentiment.calculateCompositeSentiment({
+          newsSentiment: input.newsSentiment,
+          socialSentiment: input.socialSentiment,
+          marketSentiment: input.marketSentiment,
+          externalSentiment: externalSignal?.normalizedSentiment ?? 0,
+          externalConfidence: externalSignal?.confidence ?? 0,
+          externalSignal,
+        });
       }),
 
     extractNewsSentiment: protectedProcedure

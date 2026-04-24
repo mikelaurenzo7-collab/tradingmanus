@@ -1,189 +1,314 @@
-import { useState } from "react";
-import { useEffect } from "react";
+import { useMemo, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
 import { trpc } from "@/lib/trpc";
-import { TrendingUp, TrendingDown, Zap } from "lucide-react";
+import { Activity, Radar, TrendingDown, TrendingUp, Zap } from "lucide-react";
+
+function formatSigned(value: number) {
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}`;
+}
 
 export default function SentimentAnalysis() {
-  const [newsSentiment, setNewsSentiment] = useState(0);
-  const [socialSentiment, setSocialSentiment] = useState(0);
-  const [marketSentiment, setMarketSentiment] = useState(0);
+  const [newsSentiment, setNewsSentiment] = useState(0.1);
+  const [socialSentiment, setSocialSentiment] = useState(0.05);
+  const [marketSentiment, setMarketSentiment] = useState(0.15);
+  const [draftTopic, setDraftTopic] = useState("US election");
+  const [topic, setTopic] = useState("US election");
 
-  const sentimentQuery = trpc.advanced.sentiment.calculateSentiment.useQuery(
+  const canApplyTopic = draftTopic.trim().length >= 2;
+
+  const sentimentQuery = trpc.advanced.sentiment.calculateCompositeSentiment.useQuery(
     {
       newsSentiment,
       socialSentiment,
       marketSentiment,
+      topic,
     },
-    { enabled: true }
+    {
+      enabled: topic.trim().length >= 2,
+    }
   );
 
-  const overallSentiment = sentimentQuery.data ?? 0;
+  const composite = sentimentQuery.data;
+  const overallSentiment = composite?.overallSentiment ?? 0;
+  const confidence = composite?.confidence ?? 0;
+  const externalSignal = composite?.externalSignal;
+
+  const sourceCards = useMemo(
+    () => [
+      {
+        key: "news",
+        label: "News",
+        description: "Manual directional read from headlines and reporting",
+        value: composite?.inputs.news ?? newsSentiment,
+        weight: composite?.weights.news ?? 0.3,
+        contribution: composite?.contributions.news ?? 0,
+        color: "text-blue-400",
+      },
+      {
+        key: "social",
+        label: "Social",
+        description: "Crowd positioning and social chatter",
+        value: composite?.inputs.social ?? socialSentiment,
+        weight: composite?.weights.social ?? 0.2,
+        contribution: composite?.contributions.social ?? 0,
+        color: "text-fuchsia-400",
+      },
+      {
+        key: "market",
+        label: "Market",
+        description: "Price-action based directional pressure",
+        value: composite?.inputs.market ?? marketSentiment,
+        weight: composite?.weights.market ?? 0.2,
+        contribution: composite?.contributions.market ?? 0,
+        color: "text-cyan-400",
+      },
+      {
+        key: "external",
+        label: "Wikimedia Attention",
+        description: `External attention momentum for “${topic}”`,
+        value: composite?.inputs.external ?? 0,
+        weight: composite?.weights.external ?? 0.3,
+        contribution: composite?.contributions.external ?? 0,
+        color: "text-emerald-400",
+      },
+    ],
+    [composite, marketSentiment, newsSentiment, socialSentiment, topic]
+  );
 
   const getSentimentColor = (value: number) => {
-    if (value > 0.3) return "from-green-500 to-emerald-500";
-    if (value < -0.3) return "from-red-500 to-pink-500";
-    return "from-yellow-500 to-orange-500";
+    if (value > 0.3) return "from-emerald-400 to-cyan-400";
+    if (value < -0.3) return "from-rose-400 to-orange-400";
+    return "from-amber-400 to-yellow-300";
   };
 
   const getSentimentLabel = (value: number) => {
-    if (value > 0.3) return "Bullish";
-    if (value < -0.3) return "Bearish";
+    if (value > 0.45) return "Strong Bullish";
+    if (value > 0.15) return "Bullish";
+    if (value < -0.45) return "Strong Bearish";
+    if (value < -0.15) return "Bearish";
     return "Neutral";
   };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 p-6">
-      <div className="max-w-6xl mx-auto">
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-4xl font-bold bg-gradient-to-r from-violet-400 via-pink-400 to-cyan-400 bg-clip-text text-transparent mb-2">
-            Sentiment Analysis
-          </h1>
-          <p className="text-slate-400">Monitor market sentiment from multiple sources</p>
+      <div className="max-w-7xl mx-auto space-y-8">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <h1 className="text-4xl font-bold bg-gradient-to-r from-violet-400 via-pink-400 to-cyan-400 bg-clip-text text-transparent mb-2">
+              Sentiment Analysis
+            </h1>
+            <p className="text-slate-400 max-w-3xl">
+              Blend internal conviction with an external topic-tone feed so the trading stack reacts to real-world narrative pressure,
+              not only manual sliders.
+            </p>
+          </div>
+
+          <div className="w-full max-w-xl rounded-2xl border border-slate-800 bg-slate-900/70 p-4 backdrop-blur-xl">
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <Input
+                value={draftTopic}
+                onChange={(event) => setDraftTopic(event.target.value)}
+                placeholder="Enter a market topic, e.g. Fed rates or US election"
+                className="border-slate-700 bg-slate-950 text-slate-100"
+              />
+              <Button
+                type="button"
+                disabled={!canApplyTopic}
+                onClick={() => setTopic(draftTopic.trim())}
+                className="bg-gradient-to-r from-cyan-500 to-violet-500 text-white hover:from-cyan-400 hover:to-violet-400"
+              >
+                Refresh Topic Signal
+              </Button>
+            </div>
+            <p className="mt-2 text-xs text-slate-500">
+              The external source uses recent Wikimedia pageviews momentum to add a live attention signal to the score.
+            </p>
+          </div>
         </div>
 
-        {/* Overall Sentiment Card */}
-        <Card className="mb-8 border border-slate-700 bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-xl">
+        <Card className="border border-slate-800 bg-gradient-to-br from-slate-900/90 to-slate-950/90 backdrop-blur-xl">
           <CardHeader>
-            <CardTitle>Overall Market Sentiment</CardTitle>
-            <CardDescription>Composite sentiment score from all sources</CardDescription>
+            <CardTitle>Composite Sentiment Score</CardTitle>
+            <CardDescription>
+              Weighted view across news, social, market action, and external topic attention.
+            </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="flex items-center justify-between">
-              <div className="flex-1">
-                <div className={`text-5xl font-bold bg-gradient-to-r ${getSentimentColor(overallSentiment)} bg-clip-text text-transparent mb-2`}>
-                  {overallSentiment.toFixed(2)}
+            <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
+              <div className="rounded-3xl border border-slate-800 bg-slate-950/70 p-6">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <div className={`text-6xl font-bold bg-gradient-to-r ${getSentimentColor(overallSentiment)} bg-clip-text text-transparent`}>
+                      {overallSentiment.toFixed(2)}
+                    </div>
+                    <p className="mt-2 text-lg text-slate-300">{getSentimentLabel(overallSentiment)}</p>
+                    <p className="mt-1 text-sm text-slate-500">Current topic: {topic}</p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
+                    {overallSentiment >= 0 ? (
+                      <TrendingUp className="h-12 w-12 text-emerald-400" />
+                    ) : (
+                      <TrendingDown className="h-12 w-12 text-rose-400" />
+                    )}
+                  </div>
                 </div>
-                <p className="text-lg text-slate-400">
-                  {getSentimentLabel(overallSentiment)}
-                </p>
               </div>
-              <div className="text-6xl">
-                {overallSentiment > 0 ? (
-                  <TrendingUp className="text-green-500" />
-                ) : (
-                  <TrendingDown className="text-red-500" />
-                )}
+
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
+                <div className="rounded-3xl border border-slate-800 bg-slate-950/70 p-6">
+                  <div className="flex items-center gap-3 text-slate-300">
+                    <Radar className="h-5 w-5 text-cyan-400" />
+                    Confidence
+                  </div>
+                  <div className="mt-3 text-4xl font-semibold text-cyan-300">{(confidence * 100).toFixed(0)}%</div>
+                  <p className="mt-2 text-sm text-slate-500">Higher when source agreement and external coverage depth improve.</p>
+                </div>
+                <div className="rounded-3xl border border-slate-800 bg-slate-950/70 p-6">
+                  <div className="flex items-center gap-3 text-slate-300">
+                    <Activity className="h-5 w-5 text-emerald-400" />
+                    Avg Daily Views
+                  </div>
+                  <div className="mt-3 text-4xl font-semibold text-emerald-300">{externalSignal?.articleCount ?? 0}</div>
+                  <p className="mt-2 text-sm text-slate-500">Recent average Wikipedia pageviews supporting the external attention signal.</p>
+                </div>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        {/* Sentiment Sliders */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          {/* News Sentiment */}
-          <Card className="border border-slate-700 bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-xl">
+        <div className="grid gap-6 lg:grid-cols-3">
+          <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl lg:col-span-2">
             <CardHeader>
-              <CardTitle className="text-lg">News Sentiment</CardTitle>
-              <CardDescription>Sentiment from news articles</CardDescription>
+              <CardTitle>Manual Source Controls</CardTitle>
+              <CardDescription>Adjust the in-house view and compare it with the external topic signal.</CardDescription>
             </CardHeader>
-            <CardContent>
-              <div className="mb-4">
-                <div className="text-3xl font-bold text-blue-400 mb-2">
-                  {newsSentiment.toFixed(2)}
+            <CardContent className="space-y-8">
+              {[
+                {
+                  label: "News Sentiment",
+                  value: newsSentiment,
+                  onChange: setNewsSentiment,
+                  color: "text-blue-400",
+                },
+                {
+                  label: "Social Sentiment",
+                  value: socialSentiment,
+                  onChange: setSocialSentiment,
+                  color: "text-fuchsia-400",
+                },
+                {
+                  label: "Market Sentiment",
+                  value: marketSentiment,
+                  onChange: setMarketSentiment,
+                  color: "text-cyan-400",
+                },
+              ].map((source) => (
+                <div key={source.label}>
+                  <div className="mb-3 flex items-center justify-between">
+                    <div>
+                      <h3 className="text-sm font-medium text-slate-200">{source.label}</h3>
+                      <p className="text-xs text-slate-500">Range from -1 bearish to +1 bullish.</p>
+                    </div>
+                    <div className={`text-2xl font-semibold ${source.color}`}>{formatSigned(source.value)}</div>
+                  </div>
+                  <Slider
+                    value={[source.value]}
+                    onValueChange={(value) => source.onChange(value[0] ?? 0)}
+                    min={-1}
+                    max={1}
+                    step={0.05}
+                    className="w-full"
+                  />
                 </div>
-                <Slider
-                  value={[newsSentiment]}
-                  onValueChange={(value) => setNewsSentiment(value[0])}
-                  min={-1}
-                  max={1}
-                  step={0.1}
-                  className="w-full"
-                />
-              </div>
-              <p className="text-xs text-slate-500">Range: -1 (Bearish) to +1 (Bullish)</p>
+              ))}
             </CardContent>
           </Card>
 
-          {/* Social Sentiment */}
-          <Card className="border border-slate-700 bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-xl">
+          <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
             <CardHeader>
-              <CardTitle className="text-lg">Social Sentiment</CardTitle>
-              <CardDescription>Sentiment from social media</CardDescription>
+              <CardTitle>External Attention Signal</CardTitle>
+              <CardDescription>Independent topic-attention feed from Wikimedia pageviews.</CardDescription>
             </CardHeader>
-            <CardContent>
-              <div className="mb-4">
-                <div className="text-3xl font-bold text-purple-400 mb-2">
-                  {socialSentiment.toFixed(2)}
-                </div>
-                <Slider
-                  value={[socialSentiment]}
-                  onValueChange={(value) => setSocialSentiment(value[0])}
-                  min={-1}
-                  max={1}
-                  step={0.1}
-                  className="w-full"
-                />
+            <CardContent className="space-y-4">
+              <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+                <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Topic</div>
+                <div className="mt-2 text-lg font-medium text-slate-100">{topic}</div>
               </div>
-              <p className="text-xs text-slate-500">Range: -1 (Bearish) to +1 (Bullish)</p>
-            </CardContent>
-          </Card>
-
-          {/* Market Sentiment */}
-          <Card className="border border-slate-700 bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-xl">
-            <CardHeader>
-              <CardTitle className="text-lg">Market Sentiment</CardTitle>
-              <CardDescription>Sentiment from price action</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="mb-4">
-                <div className="text-3xl font-bold text-cyan-400 mb-2">
-                  {marketSentiment.toFixed(2)}
-                </div>
-                <Slider
-                  value={[marketSentiment]}
-                  onValueChange={(value) => setMarketSentiment(value[0])}
-                  min={-1}
-                  max={1}
-                  step={0.1}
-                  className="w-full"
-                />
+              <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+                  <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Attention Momentum</div>
+                <div className="mt-2 text-3xl font-semibold text-emerald-300">{formatSigned(composite?.inputs.external ?? 0)}</div>
+                <p className="mt-2 text-xs text-slate-500">Derived from the change in recent Wikipedia attention for the selected topic.</p>
               </div>
-              <p className="text-xs text-slate-500">Range: -1 (Bearish) to +1 (Bullish)</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+                  <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Momentum</div>
+                  <div className="mt-2 text-xl font-semibold text-slate-100">{formatSigned(externalSignal?.averageTone ?? 0)}</div>
+                </div>
+                <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+                  <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Signal Confidence</div>
+                  <div className="mt-2 text-xl font-semibold text-slate-100">{((externalSignal?.confidence ?? 0) * 100).toFixed(0)}%</div>
+                </div>
+              </div>
             </CardContent>
           </Card>
         </div>
 
-        {/* Sentiment Breakdown */}
-        <Card className="border border-slate-700 bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-xl">
+        <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
           <CardHeader>
-            <CardTitle>Sentiment Breakdown</CardTitle>
-            <CardDescription>Weighted sentiment analysis from all sources</CardDescription>
+            <CardTitle>Weighted Contribution Breakdown</CardTitle>
+            <CardDescription>See exactly how each source contributes to the final score.</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div>
-                <h3 className="font-semibold text-slate-300 mb-4">News Sentiment</h3>
-                <div className="text-3xl font-bold text-blue-400">{newsSentiment.toFixed(2)}</div>
-                <p className="text-sm text-slate-500 mt-2">Weight: 40%</p>
-              </div>
-              <div>
-                <h3 className="font-semibold text-slate-300 mb-4">Social Sentiment</h3>
-                <div className="text-3xl font-bold text-purple-400">{socialSentiment.toFixed(2)}</div>
-                <p className="text-sm text-slate-500 mt-2">Weight: 30%</p>
-              </div>
-              <div>
-                <h3 className="font-semibold text-slate-300 mb-4">Market Sentiment</h3>
-                <div className="text-3xl font-bold text-cyan-400">{marketSentiment.toFixed(2)}</div>
-                <p className="text-sm text-slate-500 mt-2">Weight: 30%</p>
-              </div>
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              {sourceCards.map((source) => (
+                <div key={source.key} className="rounded-2xl border border-slate-800 bg-slate-950/70 p-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-base font-medium text-slate-100">{source.label}</h3>
+                      <p className="mt-1 text-xs text-slate-500">{source.description}</p>
+                    </div>
+                    <div className={`text-lg font-semibold ${source.color}`}>{formatSigned(source.value)}</div>
+                  </div>
+                  <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                    <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3">
+                      <div className="text-slate-500">Weight</div>
+                      <div className="mt-1 font-medium text-slate-100">{(source.weight * 100).toFixed(0)}%</div>
+                    </div>
+                    <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3">
+                      <div className="text-slate-500">Contribution</div>
+                      <div className="mt-1 font-medium text-slate-100">{formatSigned(source.contribution)}</div>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           </CardContent>
         </Card>
 
-        {/* Loading State */}
         {sentimentQuery.isLoading && (
-          <Card className="border border-slate-700 bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-xl">
-            <CardContent className="pt-6">
-            <div className="flex items-center justify-center">
-              <Zap className="animate-spin text-cyan-400 mr-2" />
-              <span className="text-slate-400">Calculating sentiment...</span>
-            </div>
-          </CardContent>
-        </Card>
+          <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
+            <CardContent className="flex items-center justify-center gap-3 py-10 text-slate-400">
+              <Zap className="h-5 w-5 animate-spin text-cyan-400" />
+              Refreshing composite sentiment and external attention signal…
+            </CardContent>
+          </Card>
+        )}
+
+        {sentimentQuery.error && (
+          <Card className="border border-rose-900/60 bg-rose-950/30 backdrop-blur-xl">
+            <CardHeader>
+              <CardTitle className="text-rose-300">External Signal Unavailable</CardTitle>
+              <CardDescription className="text-rose-200/80">
+                The local sliders still work, but the external topic source could not be refreshed right now.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-rose-100/90">{sentimentQuery.error.message}</p>
+            </CardContent>
+          </Card>
         )}
       </div>
     </div>

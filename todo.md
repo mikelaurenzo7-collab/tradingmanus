@@ -287,3 +287,18 @@
 - [ ] **ISSUE: No confirmation dialog before trading** - User could accidentally place large orders
 - [ ] **ISSUE: Performance dashboard not wired** - UI created but no backend data flowing
 - [ ] **ISSUE: Training instructions not enforced** - Agent doesn't actually filter signals by training rules
+
+- [ ] Add a higher-signal external data source to sentiment scoring
+- [ ] Rebalance sentiment weights to include the new source
+- [ ] Expose the new source in advanced sentiment tRPC procedures
+- [ ] Update the Sentiment dashboard to display the new source and score contribution
+- [ ] Add Vitest coverage for the new multi-source weighting behavior
+- [ ] Validate the upgraded sentiment flow in the running app
+
+# Current Iteration Note
+
+This iteration prioritizes prediction quality by introducing a more independent signal source into the sentiment stack.
+- [ ] Unblock live sentiment queries from the dashboard despite the current protected context auth failure
+- [ ] Replace the stalled GDELT topic signal with a runtime-accessible Wikimedia pageviews signal
+- [ ] Fix the auth user upsert SQL syntax error so the app is healthy for deployment
+- [ ] Sync the latest GitHub changes into the project before continuing deployment-readiness work
