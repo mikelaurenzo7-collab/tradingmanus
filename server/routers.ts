@@ -86,6 +86,48 @@ function parseAuditDetails(details: string | null | undefined) {
   }
 }
 
+function parseDecisionDetails(details: Record<string, unknown> | null): {
+  marketId: string | null;
+  side: "yes" | "no" | null;
+  confidence: number | null;
+  executionScore: number | null;
+  expectedValue: number | null;
+  limitPrice: number | null;
+  quantity: number | null;
+  availableCapital: number | null;
+  maxBudget: number | null;
+  orderExposure: number | null;
+  maxLossOnTrade: number | null;
+  reasoning: string | null;
+  blockedBy: string | null;
+} | null {
+  const decision = details?.decision;
+  if (!decision || typeof decision !== "object") {
+    return null;
+  }
+
+  const raw = decision as Record<string, unknown>;
+  const readNumber = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : null);
+  const readText = (value: unknown) => (typeof value === "string" ? value : null);
+  const side = raw.side === "yes" || raw.side === "no" ? raw.side : null;
+
+  return {
+    marketId: readText(raw.marketId),
+    side,
+    confidence: readNumber(raw.confidence),
+    executionScore: readNumber(raw.executionScore),
+    expectedValue: readNumber(raw.expectedValue),
+    limitPrice: readNumber(raw.limitPrice),
+    quantity: readNumber(raw.quantity),
+    availableCapital: readNumber(raw.availableCapital),
+    maxBudget: readNumber(raw.maxBudget),
+    orderExposure: readNumber(raw.orderExposure),
+    maxLossOnTrade: readNumber(raw.maxLossOnTrade),
+    reasoning: readText(raw.reasoning),
+    blockedBy: readText(raw.blockedBy),
+  };
+}
+
 function buildAutonomyActivitySummary(events: Array<any>) {
   const recentActivity = events
     .filter((event) =>
@@ -118,6 +160,7 @@ function buildAutonomyActivitySummary(events: Array<any>) {
   const lastRunDetails = parseAuditDetails(lastRunEvent?.details);
   const lastScanEvent = events.find((event) => event.eventType === "scheduled_autonomy_scan_completed");
   const lastScanDetails = parseAuditDetails(lastScanEvent?.details);
+  const lastRunDecision = parseDecisionDetails(lastRunDetails) ?? parseDecisionDetails(lastScanDetails);
   const lastOrderEvent = events.find(
     (event) =>
       event.eventType === "scheduled_autonomy_order_placed" ||
@@ -164,6 +207,7 @@ function buildAutonomyActivitySummary(events: Array<any>) {
               : typeof lastScanDetails?.executionCadence === "string"
                 ? lastScanDetails.executionCadence
                 : null,
+          decision: lastRunDecision,
         }
       : null,
     lastOrder: lastOrderEvent
@@ -181,6 +225,30 @@ function buildAutonomyActivitySummary(events: Array<any>) {
               ? lastOrderDetails.executionScore
               : null,
           reason: typeof lastOrderDetails?.reason === "string" ? lastOrderDetails.reason : null,
+          expectedValue:
+            typeof lastOrderDetails?.expectedValue === "number"
+              ? lastOrderDetails.expectedValue
+              : null,
+          reasoning:
+            typeof lastOrderDetails?.reasoning === "string"
+              ? lastOrderDetails.reasoning
+              : null,
+          availableCapital:
+            typeof lastOrderDetails?.availableCapital === "number"
+              ? lastOrderDetails.availableCapital
+              : null,
+          maxBudget:
+            typeof lastOrderDetails?.maxBudget === "number"
+              ? lastOrderDetails.maxBudget
+              : null,
+          orderExposure:
+            typeof lastOrderDetails?.orderExposure === "number"
+              ? lastOrderDetails.orderExposure
+              : null,
+          maxLossOnTrade:
+            typeof lastOrderDetails?.maxLossOnTrade === "number"
+              ? lastOrderDetails.maxLossOnTrade
+              : null,
         }
       : null,
     recentActivity,

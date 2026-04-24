@@ -12,6 +12,7 @@ import {
   RISK_POSTURES,
   formatAutonomyActivityTime,
   formatConfidence,
+  getAutonomyDecisionSummary,
   getAutonomyModeDescription,
   getAutonomyModeLabel,
   getAutonomyReadinessSummary,
@@ -29,6 +30,10 @@ function formatCurrency(value: number) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(value);
+}
+
+function formatContractPrice(value: number) {
+  return `${(value * 100).toFixed(1)}¢`;
 }
 
 export default function TradingAutonomy() {
@@ -92,6 +97,10 @@ export default function TradingAutonomy() {
         lastRunAt: autonomyActivityQuery.data?.lastRun?.createdAt ?? null,
       }),
     [autonomyActivityQuery.data?.lastRun?.createdAt, connected, equity, form]
+  );
+  const decisionSummary = useMemo(
+    () => getAutonomyDecisionSummary(autonomyActivityQuery.data),
+    [autonomyActivityQuery.data]
   );
   const canArm = connected && equity > 0 && form.autonomyMode !== "manual";
   const saveDisabled = saveMutation.isPending || activationMutation.isPending;
@@ -387,6 +396,87 @@ export default function TradingAutonomy() {
                   No scheduled autonomy events have been recorded yet.
                 </div>
               ) : null}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="laurenzo-card border-cyan-500/20 bg-cyan-500/5">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Sparkles className="h-5 w-5 text-cyan-300" />
+            Latest candidate decision detail
+          </CardTitle>
+          <CardDescription>
+            This panel explains the concrete candidate Laurenzo most recently considered during an away-from-chat review.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className={`text-lg font-semibold ${decisionSummary.tone}`}>{decisionSummary.title}</div>
+          <p className="text-sm text-muted-foreground">{decisionSummary.body}</p>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <div className="rounded-xl border border-border/60 bg-background/50 p-3 text-sm">
+              <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Candidate</div>
+              <div className="mt-2 font-semibold text-foreground">
+                {autonomyActivityQuery.data?.lastRun?.decision?.marketId ?? "Not yet recorded"}
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {autonomyActivityQuery.data?.lastRun?.decision?.side
+                  ? `${autonomyActivityQuery.data.lastRun.decision.side.toUpperCase()} side`
+                  : "No candidate side was persisted for the latest review."}
+              </p>
+            </div>
+            <div className="rounded-xl border border-border/60 bg-background/50 p-3 text-sm">
+              <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Signal quality</div>
+              <div className="mt-2 font-semibold text-foreground">
+                {autonomyActivityQuery.data?.lastRun?.decision?.confidence !== null && autonomyActivityQuery.data?.lastRun?.decision?.confidence !== undefined
+                  ? `${formatConfidence(autonomyActivityQuery.data.lastRun.decision.confidence)} confidence`
+                  : "Not yet scored"}
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {autonomyActivityQuery.data?.lastRun?.decision?.executionScore !== null && autonomyActivityQuery.data?.lastRun?.decision?.executionScore !== undefined
+                  ? `${Math.round(autonomyActivityQuery.data.lastRun.decision.executionScore * 100)}% execution score · ${autonomyActivityQuery.data.lastRun.decision.expectedValue !== null && autonomyActivityQuery.data.lastRun.decision.expectedValue !== undefined ? `${(autonomyActivityQuery.data.lastRun.decision.expectedValue * 100).toFixed(1)}¢ expected value` : "expected value unavailable"}`
+                  : "Execution scoring was not persisted for the latest review."}
+              </p>
+            </div>
+            <div className="rounded-xl border border-border/60 bg-background/50 p-3 text-sm">
+              <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Sizing plan</div>
+              <div className="mt-2 font-semibold text-foreground">
+                {autonomyActivityQuery.data?.lastRun?.decision?.quantity !== null && autonomyActivityQuery.data?.lastRun?.decision?.quantity !== undefined
+                  ? `${autonomyActivityQuery.data.lastRun.decision.quantity} contracts at ${autonomyActivityQuery.data.lastRun.decision.limitPrice !== null && autonomyActivityQuery.data.lastRun.decision.limitPrice !== undefined ? formatContractPrice(autonomyActivityQuery.data.lastRun.decision.limitPrice) : "price unavailable"}`
+                  : autonomyActivityQuery.data?.lastRun?.decision?.limitPrice !== null && autonomyActivityQuery.data?.lastRun?.decision?.limitPrice !== undefined
+                    ? `Candidate priced at ${formatContractPrice(autonomyActivityQuery.data.lastRun.decision.limitPrice)}`
+                    : "No sizing plan recorded"}
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {autonomyActivityQuery.data?.lastRun?.decision?.orderExposure !== null && autonomyActivityQuery.data?.lastRun?.decision?.orderExposure !== undefined
+                  ? `Exposure ${formatCurrency(autonomyActivityQuery.data.lastRun.decision.orderExposure)} · max loss ${autonomyActivityQuery.data.lastRun.decision.maxLossOnTrade !== null && autonomyActivityQuery.data.lastRun.decision.maxLossOnTrade !== undefined ? formatCurrency(autonomyActivityQuery.data.lastRun.decision.maxLossOnTrade) : "unknown"}`
+                  : "The latest review did not persist an execution-sized exposure estimate."}
+              </p>
+            </div>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="rounded-xl border border-border/60 bg-background/50 p-3 text-sm">
+              <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Capital context</div>
+              <div className="mt-2 font-semibold text-foreground">
+                {autonomyActivityQuery.data?.lastRun?.decision?.availableCapital !== null && autonomyActivityQuery.data?.lastRun?.decision?.availableCapital !== undefined
+                  ? `${formatCurrency(autonomyActivityQuery.data.lastRun.decision.availableCapital)} available`
+                  : "Not yet recorded"}
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {autonomyActivityQuery.data?.lastRun?.decision?.maxBudget !== null && autonomyActivityQuery.data?.lastRun?.decision?.maxBudget !== undefined
+                  ? `The saved guardrails allowed up to ${formatCurrency(autonomyActivityQuery.data.lastRun.decision.maxBudget)} for this candidate.`
+                  : "No budget envelope was stored for the latest review."}
+              </p>
+            </div>
+            <div className="rounded-xl border border-border/60 bg-background/50 p-3 text-sm">
+              <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Why Laurenzo acted this way</div>
+              <div className="mt-2 font-semibold text-foreground">
+                {autonomyActivityQuery.data?.lastRun?.reason ?? "No run reason recorded yet"}
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {autonomyActivityQuery.data?.lastRun?.decision?.reasoning ?? "No candidate reasoning was persisted for the latest away-from-chat review."}
+              </p>
             </div>
           </div>
         </CardContent>

@@ -415,3 +415,6 @@ This iteration prioritizes prediction quality by introducing a more independent 
 - [x] Add regression coverage for the new dashboard-level autonomy visibility so the home surface keeps reflecting true away-from-chat status
 - [x] Replace the dashboard kill-switch placeholder with a real emergency disarm action that immediately turns off live trading and confirms the result to the operator
 - [x] Add regression coverage or interaction-safe wiring so the dashboard kill switch cannot silently degrade back into a no-op control
+- [x] Persist richer away-from-chat decision details for the latest scheduled review so operators can see the candidate signal, sizing, and exact guardrail outcome rather than only a status label
+- [x] Surface a customer-visible autonomy decision detail panel that explains why Laurenzo traded, stood down, or was blocked during the latest away-from-chat review
+- [x] Add regression coverage for the new autonomy decision-detail semantics so the explanation layer stays truthful over time

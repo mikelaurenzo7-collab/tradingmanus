@@ -161,7 +161,7 @@ describe("scheduled away-from-chat trading", () => {
     );
   });
 
-  it("generates and saves signals but never auto-submits in approval-required mode", async () => {
+  it("generates and saves signals but never auto-submits in approval-required mode while persisting candidate details", async () => {
     mocks.getTradingPreferences.mockResolvedValue({
       ...mocks.DEFAULT_PREFERENCES,
       autonomyMode: "approval_required",
@@ -172,31 +172,51 @@ describe("scheduled away-from-chat trading", () => {
     expect(result.status).toBe("generated_only");
     expect(result.reason).toContain("approval-required mode");
     expect(result.executionCandidates).toBe(1);
+    expect(result.decision).toMatchObject({
+      marketId: "KXTEST-1",
+      side: "yes",
+      confidence: 0.83,
+      executionScore: 0.84,
+      expectedValue: 0.18,
+      limitPrice: 0.43,
+      blockedBy: "approval_required_mode",
+    });
     expect(mocks.saveSignals).toHaveBeenCalled();
     expect(mocks.placeKalshiOrder).not.toHaveBeenCalled();
     expect(mocks.logAuditEvent).toHaveBeenCalledWith(
       "scheduled_autonomy_run_generated_only",
-      expect.stringContaining('"executionCandidates":1'),
+      expect.stringContaining('"decision":{"marketId":"KXTEST-1"'),
       "away-open-id"
     );
   });
 
-  it("places a live order when a fully autonomous scheduled run finds an eligible non-heuristic signal", async () => {
+  it("places a live order when a fully autonomous scheduled run finds an eligible non-heuristic signal and persists the sizing decision", async () => {
     const result = await runScheduledAutonomousTrading(testUser);
 
     expect(result.status).toBe("executed");
     expect(result.orderPlaced).toBe(true);
     expect(result.orderId).toBe("order-123");
     expect(result.executedMarketId).toBe("KXTEST-1");
+    expect(result.decision).toMatchObject({
+      marketId: "KXTEST-1",
+      side: "yes",
+      quantity: 5,
+      limitPrice: 0.43,
+      availableCapital: 100,
+      maxBudget: 5,
+    });
+    expect(result.decision?.orderExposure).toBeCloseTo(2.85, 6);
+    expect(result.decision?.maxLossOnTrade).toBeCloseTo(2.85, 6);
     expect(mocks.placeKalshiOrder).toHaveBeenCalledWith(7, "KXTEST-1", "yes", 5, 0.43);
-    expect(mocks.logAuditEvent).toHaveBeenCalledWith(
+    expect(mocks.logAuditEvent).toHaveBeenNthCalledWith(
+      2,
       "scheduled_autonomy_order_placed",
-      expect.stringContaining('"marketId":"KXTEST-1"'),
+      expect.stringContaining('"orderExposure":2.8500000000000005'),
       "away-open-id"
     );
     expect(mocks.logAuditEvent).toHaveBeenCalledWith(
       "scheduled_autonomy_run_executed",
-      expect.stringContaining('"executedMarketId":"KXTEST-1"'),
+      expect.stringContaining('"decision":{"marketId":"KXTEST-1"'),
       "away-open-id"
     );
   });

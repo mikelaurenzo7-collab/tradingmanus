@@ -136,6 +136,21 @@ export type AutonomyActivitySummary = {
     executedMarketId: string | null;
     autonomyMode: string | null;
     executionCadence: string | null;
+    decision: null | {
+      marketId: string | null;
+      side: "yes" | "no" | null;
+      confidence: number | null;
+      executionScore: number | null;
+      expectedValue: number | null;
+      limitPrice: number | null;
+      quantity: number | null;
+      availableCapital: number | null;
+      maxBudget: number | null;
+      orderExposure: number | null;
+      maxLossOnTrade: number | null;
+      reasoning: string | null;
+      blockedBy: string | null;
+    };
   };
   lastOrder: null | {
     eventType: string;
@@ -147,6 +162,12 @@ export type AutonomyActivitySummary = {
     confidence: number | null;
     executionScore: number | null;
     reason: string | null;
+    expectedValue: number | null;
+    reasoning: string | null;
+    availableCapital: number | null;
+    maxBudget: number | null;
+    orderExposure: number | null;
+    maxLossOnTrade: number | null;
   };
   recentActivity: Array<{
     id: number;
@@ -207,6 +228,76 @@ export function getAutonomyReviewSummary(activity: AutonomyActivitySummary | nul
         title: "Last away review hit an operational error",
         body: lastRun.reason ?? "The scheduled review returned an error before execution could proceed.",
         tone: "text-rose-300",
+      };
+  }
+}
+
+function getDecisionGuardrailLabel(blockedBy: string | null | undefined) {
+  switch (blockedBy) {
+    case "approval_required_mode":
+      return "Approval-required mode held the order for manual review.";
+    case "daily_order_cap":
+      return "The saved daily order cap blocked execution.";
+    case "open_position_limit":
+      return "The open-position limit blocked another away-from-chat trade.";
+    case "autonomy_or_exposure_guardrail":
+      return "The candidate did not satisfy the saved autonomy or exposure guardrails.";
+    case "per_trade_risk_limit":
+      return "The candidate would have exceeded the per-trade risk limit.";
+    case "daily_loss_limit":
+      return "The daily loss limit had already been reached.";
+    case "available_capital":
+      return "Confirmed available capital was below the required exposure.";
+    case "exchange_rejected_or_failed":
+      return "The order reached submission but the exchange or execution path rejected it.";
+    default:
+      return null;
+  }
+}
+
+export function getAutonomyDecisionSummary(activity: AutonomyActivitySummary | null | undefined) {
+  const lastRun = activity?.lastRun;
+  const decision = lastRun?.decision;
+
+  if (!lastRun || !decision?.marketId) {
+    return {
+      title: "No candidate decision details recorded yet",
+      body: "Once a scheduled review evaluates a concrete execution candidate, Laurenzo will show the selected market, sizing plan, and the exact reason it traded or stood down.",
+      tone: "text-slate-300",
+    };
+  }
+
+  const sideLabel = decision.side ? decision.side.toUpperCase() : "UNKNOWN";
+  const confidenceLabel = decision.confidence !== null ? `${Math.round(decision.confidence * 100)}% confidence` : null;
+  const scoreLabel = decision.executionScore !== null ? `${Math.round(decision.executionScore * 100)}% execution score` : null;
+  const edgeLabel = decision.expectedValue !== null ? `${(decision.expectedValue * 100).toFixed(1)}¢ EV` : null;
+  const detailLine = [confidenceLabel, scoreLabel, edgeLabel].filter(Boolean).join(" · ");
+  const guardrailLine = getDecisionGuardrailLabel(decision.blockedBy) ?? lastRun.reason;
+
+  switch (lastRun.status) {
+    case "executed":
+      return {
+        title: `Last away review executed ${decision.marketId} ${sideLabel}`,
+        body: [detailLine, guardrailLine].filter(Boolean).join(". "),
+        tone: "text-emerald-300",
+      };
+    case "blocked":
+      return {
+        title: `Last away review blocked ${decision.marketId} ${sideLabel}`,
+        body: [detailLine, guardrailLine].filter(Boolean).join(". "),
+        tone: "text-amber-300",
+      };
+    case "generated_only":
+      return {
+        title: `Last away review evaluated ${decision.marketId} ${sideLabel} without trading`,
+        body: [detailLine, guardrailLine].filter(Boolean).join(". "),
+        tone: "text-cyan-300",
+      };
+    default:
+      return {
+        title: `Last away review considered ${decision.marketId} ${sideLabel}`,
+        body: [detailLine, guardrailLine].filter(Boolean).join(". "),
+        tone: "text-slate-300",
       };
   }
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   formatAutonomyActivityTime,
+  getAutonomyDecisionSummary,
   getAutonomyEventLabel,
   getAutonomyReadinessSummary,
   getAutonomyReviewSummary,
@@ -40,6 +41,21 @@ describe("trading autonomy activity helpers", () => {
         executedMarketId: null,
         autonomyMode: "fully_autonomous",
         executionCadence: "continuous_watch",
+        decision: {
+          marketId: "KXTEST-1",
+          side: "yes",
+          confidence: 0.83,
+          executionScore: 0.84,
+          expectedValue: 0.18,
+          limitPrice: 0.43,
+          quantity: null,
+          availableCapital: null,
+          maxBudget: null,
+          orderExposure: null,
+          maxLossOnTrade: null,
+          reasoning: "Explicit probability edge",
+          blockedBy: "daily_order_cap",
+        },
       },
     });
 
@@ -62,12 +78,65 @@ describe("trading autonomy activity helpers", () => {
         executedMarketId: "KXTEST-2",
         autonomyMode: "fully_autonomous",
         executionCadence: "continuous_watch",
+        decision: {
+          marketId: "KXTEST-2",
+          side: "no",
+          confidence: 0.78,
+          executionScore: 0.81,
+          expectedValue: 0.14,
+          limitPrice: 0.39,
+          quantity: 5,
+          availableCapital: 63.59,
+          maxBudget: 5,
+          orderExposure: 3.05,
+          maxLossOnTrade: 3.05,
+          reasoning: "Cross-market dislocation remains attractive.",
+          blockedBy: null,
+        },
       },
     });
 
     expect(summary.title).toContain("placed a live order");
     expect(summary.body).toContain("Executed KXTEST-2");
     expect(summary.tone).toBe("text-emerald-300");
+  });
+
+  it("summarizes the latest candidate decision with guardrail context", () => {
+    const summary = getAutonomyDecisionSummary({
+      ...baseActivity,
+      lastRun: {
+        eventType: "scheduled_autonomy_run_generated_only",
+        status: "generated_only",
+        createdAt: new Date("2026-04-24T13:00:00.000Z"),
+        reason: "approval-required mode never auto-submits away-from-chat orders",
+        signalsGenerated: 2,
+        executionCandidates: 1,
+        candidateMarketId: "KXTEST-9",
+        executedMarketId: null,
+        autonomyMode: "approval_required",
+        executionCadence: "continuous_watch",
+        decision: {
+          marketId: "KXTEST-9",
+          side: "yes",
+          confidence: 0.83,
+          executionScore: 0.84,
+          expectedValue: 0.18,
+          limitPrice: 0.43,
+          quantity: null,
+          availableCapital: null,
+          maxBudget: null,
+          orderExposure: null,
+          maxLossOnTrade: null,
+          reasoning: "Explicit probability edge",
+          blockedBy: "approval_required_mode",
+        },
+      },
+    });
+
+    expect(summary.title).toContain("evaluated KXTEST-9 YES without trading");
+    expect(summary.body).toContain("83% confidence");
+    expect(summary.body).toContain("84% execution score");
+    expect(summary.body).toContain("Approval-required mode held the order for manual review");
   });
 
   it("keeps event labels readable for away-from-chat activity rows", () => {

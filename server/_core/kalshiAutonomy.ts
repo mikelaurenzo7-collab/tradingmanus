@@ -26,6 +26,22 @@ const SCHEDULED_SCAN_EVENT = "scheduled_autonomy_scan_completed";
 const HOURLY_SCAN_MIN_INTERVAL_MS = 55 * 60 * 1000;
 const MAX_SCHEDULED_MARKETS = 24;
 
+export type AwayTradingDecisionDetails = {
+  marketId: string | null;
+  side: "yes" | "no" | null;
+  confidence: number | null;
+  executionScore: number | null;
+  expectedValue: number | null;
+  limitPrice: number | null;
+  quantity: number | null;
+  availableCapital: number | null;
+  maxBudget: number | null;
+  orderExposure: number | null;
+  maxLossOnTrade: number | null;
+  reasoning: string | null;
+  blockedBy: string | null;
+};
+
 export type AwayTradingRunResult = {
   success: boolean;
   status:
@@ -43,6 +59,7 @@ export type AwayTradingRunResult = {
   candidateMarketId?: string;
   autonomyMode?: string;
   executionCadence?: string;
+  decision?: AwayTradingDecisionDetails | null;
 };
 
 function clampRiskLimit(value: number, minimum: number, maximum: number) {
@@ -90,6 +107,32 @@ function buildResult(
     candidateMarketId: input.candidateMarketId,
     autonomyMode: input.autonomyMode,
     executionCadence: input.executionCadence,
+    decision: input.decision ?? null,
+  };
+}
+
+function buildDecisionDetails(
+  signal?: (KalshiSignal & { executionScore?: number }) | null,
+  overrides: Partial<AwayTradingDecisionDetails> = {}
+): AwayTradingDecisionDetails | null {
+  if (!signal && !overrides.marketId) {
+    return null;
+  }
+
+  return {
+    marketId: overrides.marketId ?? signal?.marketId ?? null,
+    side: overrides.side ?? signal?.side ?? null,
+    confidence: overrides.confidence ?? signal?.confidence ?? null,
+    executionScore: overrides.executionScore ?? signal?.executionScore ?? null,
+    expectedValue: overrides.expectedValue ?? signal?.expectedValue ?? null,
+    limitPrice: overrides.limitPrice ?? signal?.marketPrice ?? null,
+    quantity: overrides.quantity ?? null,
+    availableCapital: overrides.availableCapital ?? null,
+    maxBudget: overrides.maxBudget ?? null,
+    orderExposure: overrides.orderExposure ?? null,
+    maxLossOnTrade: overrides.maxLossOnTrade ?? null,
+    reasoning: overrides.reasoning ?? signal?.reasoning ?? null,
+    blockedBy: overrides.blockedBy ?? null,
   };
 }
 
@@ -106,6 +149,7 @@ async function persistScheduledResult(user: User, result: AwayTradingRunResult) 
       candidateMarketId: result.candidateMarketId ?? null,
       autonomyMode: result.autonomyMode ?? null,
       executionCadence: result.executionCadence ?? null,
+      decision: result.decision ?? null,
     }),
     user.openId
   );
@@ -287,6 +331,8 @@ export async function runScheduledAutonomousTrading(
     preferences.minSignalConfidence
   );
 
+  const topCandidate = executionCandidates[0] ?? null;
+
   await db.logAuditEvent(
     SCHEDULED_SCAN_EVENT,
     JSON.stringify({
@@ -294,6 +340,7 @@ export async function runScheduledAutonomousTrading(
       executionCandidates: executionCandidates.length,
       autonomyMode: preferences.autonomyMode,
       executionCadence: preferences.executionCadence,
+      decision: buildDecisionDetails(topCandidate),
     }),
     user.openId
   );
@@ -320,6 +367,9 @@ export async function runScheduledAutonomousTrading(
       candidateMarketId: executionCandidates[0]?.marketId,
       autonomyMode: preferences.autonomyMode,
       executionCadence: preferences.executionCadence,
+      decision: buildDecisionDetails(executionCandidates[0], {
+        blockedBy: "approval_required_mode",
+      }),
     });
   }
 
@@ -342,6 +392,9 @@ export async function runScheduledAutonomousTrading(
       candidateMarketId: executionCandidates[0]?.marketId,
       autonomyMode: preferences.autonomyMode,
       executionCadence: preferences.executionCadence,
+      decision: buildDecisionDetails(executionCandidates[0], {
+        blockedBy: "daily_order_cap",
+      }),
     });
   }
 
@@ -355,6 +408,9 @@ export async function runScheduledAutonomousTrading(
       candidateMarketId: executionCandidates[0]?.marketId,
       autonomyMode: preferences.autonomyMode,
       executionCadence: preferences.executionCadence,
+      decision: buildDecisionDetails(executionCandidates[0], {
+        blockedBy: "open_position_limit",
+      }),
     });
   }
 
@@ -397,6 +453,9 @@ export async function runScheduledAutonomousTrading(
       candidateMarketId: executionCandidates[0]?.marketId,
       autonomyMode: preferences.autonomyMode,
       executionCadence: preferences.executionCadence,
+      decision: buildDecisionDetails(executionCandidates[0], {
+        blockedBy: "autonomy_or_exposure_guardrail",
+      }),
     });
   }
 
@@ -422,6 +481,14 @@ export async function runScheduledAutonomousTrading(
       candidateMarketId: eligibleSignal.marketId,
       autonomyMode: preferences.autonomyMode,
       executionCadence: preferences.executionCadence,
+      decision: buildDecisionDetails(eligibleSignal, {
+        quantity,
+        availableCapital,
+        maxBudget,
+        orderExposure,
+        maxLossOnTrade,
+        blockedBy: "per_trade_risk_limit",
+      }),
     });
   }
 
@@ -435,6 +502,14 @@ export async function runScheduledAutonomousTrading(
       candidateMarketId: eligibleSignal.marketId,
       autonomyMode: preferences.autonomyMode,
       executionCadence: preferences.executionCadence,
+      decision: buildDecisionDetails(eligibleSignal, {
+        quantity,
+        availableCapital,
+        maxBudget,
+        orderExposure,
+        maxLossOnTrade,
+        blockedBy: "daily_loss_limit",
+      }),
     });
   }
 
@@ -448,6 +523,14 @@ export async function runScheduledAutonomousTrading(
       candidateMarketId: eligibleSignal.marketId,
       autonomyMode: preferences.autonomyMode,
       executionCadence: preferences.executionCadence,
+      decision: buildDecisionDetails(eligibleSignal, {
+        quantity,
+        availableCapital,
+        maxBudget,
+        orderExposure,
+        maxLossOnTrade,
+        blockedBy: "available_capital",
+      }),
     });
   }
 
@@ -467,6 +550,14 @@ export async function runScheduledAutonomousTrading(
         side: eligibleSignal.side,
         quantity,
         limitPrice,
+        confidence: eligibleSignal.confidence,
+        executionScore: eligibleSignal.executionScore,
+        expectedValue: eligibleSignal.expectedValue,
+        reasoning: eligibleSignal.reasoning,
+        availableCapital,
+        maxBudget,
+        orderExposure,
+        maxLossOnTrade,
         reason: result.error ?? "unknown",
       }),
       user.openId
@@ -481,6 +572,14 @@ export async function runScheduledAutonomousTrading(
       candidateMarketId: eligibleSignal.marketId,
       autonomyMode: preferences.autonomyMode,
       executionCadence: preferences.executionCadence,
+      decision: buildDecisionDetails(eligibleSignal, {
+        quantity,
+        availableCapital,
+        maxBudget,
+        orderExposure,
+        maxLossOnTrade,
+        blockedBy: "exchange_rejected_or_failed",
+      }),
     });
   }
 
@@ -493,6 +592,12 @@ export async function runScheduledAutonomousTrading(
       limitPrice,
       confidence: eligibleSignal.confidence,
       executionScore: eligibleSignal.executionScore,
+      expectedValue: eligibleSignal.expectedValue,
+      reasoning: eligibleSignal.reasoning,
+      availableCapital,
+      maxBudget,
+      orderExposure,
+      maxLossOnTrade,
     }),
     user.openId
   );
@@ -508,5 +613,12 @@ export async function runScheduledAutonomousTrading(
     candidateMarketId: eligibleSignal.marketId,
     autonomyMode: preferences.autonomyMode,
     executionCadence: preferences.executionCadence,
+    decision: buildDecisionDetails(eligibleSignal, {
+      quantity,
+      availableCapital,
+      maxBudget,
+      orderExposure,
+      maxLossOnTrade,
+    }),
   });
 }
