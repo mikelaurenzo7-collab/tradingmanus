@@ -238,7 +238,7 @@
 - [x] Implement true liquidity-adjusted filtering in the signal pipeline instead of Analytics-only tradability scoring
 - [ ] Narrow or complete spread optimization beyond spread monitoring proxies
 - [ ] Validate Portfolio Optimization and Backtesting pages end-to-end for protected loading/error/auth states
-- [ ] Decide whether to connect backtesting to persisted/history-backed inputs or explicitly scope it as scenario-based simulation
+- [x] Decide whether to connect backtesting to persisted/history-backed inputs or explicitly scope it as scenario-based simulation
 - [ ] Risk monitoring dashboard
 
 ### Phase 8: Testing & Verification
@@ -330,7 +330,7 @@ This iteration prioritizes prediction quality by introducing a more independent 
 - [x] Add regression coverage for the Kalshi credential-connection failure path and the successful Founders-account flow
 - [x] Ensure users can connect fresh Kalshi keys entered directly in the app without relying on Manus settings for personal credentials
 - [x] Improve the Connect Kalshi onboarding copy and error handling for a laptop-based fresh-key setup flow
-- [ ] Wire the static Backtesting page to the existing advanced backtest procedures and replace placeholder metrics with live computed results
+- [x] Wire the static Backtesting page to the existing advanced backtest procedures and replace placeholder metrics with live computed results
 - [ ] Expand the Portfolio Optimization page from a Kelly-only calculator into a full optimizer using correlation, diversification, and position-sizing outputs already available on the backend
 - [ ] Extend the Risk Controls and Performance dashboards to surface advanced risk alerts, attribution, and learning metrics already supported by backend helpers
 - [ ] Add a dedicated order-book and liquidity analytics surface using the existing market-feed foundation, including spread, depth proxies, and liquidity-adjusted signal filtering
@@ -342,3 +342,5 @@ This iteration prioritizes prediction quality by introducing a more independent 
 - [ ] Verify the live Kalshi connection flow, account-linked dashboards, and safety controls before the next handoff
 - [x] Replace the stale `api.kalshi.com` host with the current Kalshi production or demo API base so live market data and account testing work reliably
 - [x] Save a fresh checkpoint with the latest Kalshi-focused changes so the user can republish the live app with the newest work
+- [ ] Continue high-impact Kalshi setup work so the dashboard is more complete and reliable before the user returns to add fresh keys
+- [ ] Prioritize the next highest-impact unfinished Kalshi feature that improves trading readiness before credential retest

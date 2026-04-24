@@ -10,6 +10,25 @@ import * as portfolio from "./_core/kalshiPortfolioOptimization";
 import * as risk from "./_core/kalshiAdvancedRisk";
 import * as backtest from "./_core/kalshiBacktest";
 
+const backtestTradeSchema = z.object({
+  marketId: z.string(),
+  entryPrice: z.number(),
+  exitPrice: z.number(),
+  size: z.number(),
+  entryTime: z.number(),
+  exitTime: z.number(),
+  pnl: z.number(),
+  pnlPercent: z.number(),
+  side: z.string(),
+});
+
+const backtestAnalysisInputSchema = z.object({
+  trades: z.array(backtestTradeSchema),
+  startingCapital: z.number().optional(),
+  iterations: z.number().optional(),
+  windowSize: z.number().positive(),
+});
+
 export const advancedRouter = router({
   // Sentiment Analysis
   sentiment: router({
@@ -262,23 +281,7 @@ export const advancedRouter = router({
   // Backtesting
   backtest: router({
     calculateBacktestStats: protectedProcedure
-      .input(
-        z.object({
-          trades: z.array(
-            z.object({
-              marketId: z.string(),
-              entryPrice: z.number(),
-              exitPrice: z.number(),
-              size: z.number(),
-              entryTime: z.number(),
-              exitTime: z.number(),
-              pnl: z.number(),
-              pnlPercent: z.number(),
-              side: z.string(),
-            })
-          ),
-        })
-      )
+      .input(z.object({ trades: z.array(backtestTradeSchema) }))
       .query(({ input }: any) => {
         return backtest.calculateBacktestStats(input.trades);
       }),
@@ -286,19 +289,7 @@ export const advancedRouter = router({
     calculateEquityCurve: protectedProcedure
       .input(
         z.object({
-          trades: z.array(
-            z.object({
-              marketId: z.string(),
-              entryPrice: z.number(),
-              exitPrice: z.number(),
-              size: z.number(),
-              entryTime: z.number(),
-              exitTime: z.number(),
-              pnl: z.number(),
-              pnlPercent: z.number(),
-              side: z.string(),
-            })
-          ),
+          trades: z.array(backtestTradeSchema),
           startingCapital: z.number().optional(),
         })
       )
@@ -312,19 +303,7 @@ export const advancedRouter = router({
     monteCarloSimulation: protectedProcedure
       .input(
         z.object({
-          trades: z.array(
-            z.object({
-              marketId: z.string(),
-              entryPrice: z.number(),
-              exitPrice: z.number(),
-              size: z.number(),
-              entryTime: z.number(),
-              exitTime: z.number(),
-              pnl: z.number(),
-              pnlPercent: z.number(),
-              side: z.string(),
-            })
-          ),
+          trades: z.array(backtestTradeSchema),
           iterations: z.number().optional(),
         })
       )
@@ -335,24 +314,37 @@ export const advancedRouter = router({
     walkForwardValidation: protectedProcedure
       .input(
         z.object({
-          trades: z.array(
-            z.object({
-              marketId: z.string(),
-              entryPrice: z.number(),
-              exitPrice: z.number(),
-              size: z.number(),
-              entryTime: z.number(),
-              exitTime: z.number(),
-              pnl: z.number(),
-              pnlPercent: z.number(),
-              side: z.string(),
-            })
-          ),
+          trades: z.array(backtestTradeSchema),
           windowSize: z.number().positive(),
         })
       )
       .query(({ input }: any) => {
         return backtest.walkForwardValidation(input.trades, input.windowSize);
+      }),
+
+    runAnalysis: protectedProcedure
+      .input(backtestAnalysisInputSchema)
+      .mutation(({ input }: any) => {
+        const stats = backtest.calculateBacktestStats(input.trades);
+        const equityCurve = backtest.calculateEquityCurve(
+          input.trades,
+          input.startingCapital
+        );
+        const monteCarlo = backtest.monteCarloSimulation(
+          input.trades,
+          input.iterations
+        );
+        const walkForward = backtest.walkForwardValidation(
+          input.trades,
+          input.windowSize
+        );
+
+        return {
+          stats,
+          equityCurve,
+          monteCarlo,
+          walkForward,
+        };
       }),
   }),
 });
