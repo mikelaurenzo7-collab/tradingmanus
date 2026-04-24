@@ -375,6 +375,6 @@ This iteration prioritizes prediction quality by introducing a more independent 
 - [x] Verify that autonomous-mode messaging and safety gating remain consistent across dashboard, connect, training, and trading entry points
 - [x] Repair the live signal pipeline so generated signals always show real Kalshi tickers, real market labels, and non-placeholder prices before dogfood testing
 - [ ] Verify that generated signals for dogfood testing use trustworthy probabilities, prices, and expected values derived from real open Kalshi markets
-- [ ] Add or tighten small-balance safeguards so candidate-order preparation is appropriate for an account with about $73 in starting equity
+- [x] Add or tighten small-balance safeguards so candidate-order preparation is appropriate for an account with about $73 in starting equity
 - [ ] Validate that any future candidate live order for dogfood testing includes real ticker, side, price, size, and explicit approval gating before submission
 - [x] Test and verify the repaired live-signal and small-balance dogfood flow in preview before recommending a first learning trade

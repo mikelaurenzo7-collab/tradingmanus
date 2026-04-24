@@ -96,6 +96,22 @@ function normalizeKalshiMarket(rawMarket: any): KalshiMarket {
   };
 }
 
+function getMarketActionabilityScore(market: KalshiMarket): number {
+  const totalVolume = Math.max(0, market.yesVolume + market.noVolume);
+  const hasBoundedPricing =
+    market.yesPrice > 0.01 &&
+    market.yesPrice < 0.99 &&
+    market.noPrice > 0.01 &&
+    market.noPrice < 0.99 &&
+    market.impliedProbability > 0.01 &&
+    market.impliedProbability < 0.99;
+
+  const volumeScore = Math.min(1, totalVolume / 500);
+  const balanceScore = 1 - Math.min(1, Math.abs(market.impliedProbability - 0.5) / 0.5);
+
+  return (hasBoundedPricing ? 1 : 0) * 2 + volumeScore + balanceScore * 0.25;
+}
+
 /**
  * Fetch all Kalshi markets
  */
@@ -107,6 +123,7 @@ export async function fetchKalshiMarkets(filters?: {
     const params = new URLSearchParams();
     if (filters?.category) params.append("category", filters.category);
     if (filters?.status) params.append("status", filters.status);
+    params.append("limit", "200");
 
     const url = `${KALSHI_API_BASE}/markets?${params.toString()}`;
     const response = await fetch(url, {
@@ -123,7 +140,8 @@ export async function fetchKalshiMarkets(filters?: {
     const data = await response.json();
     return (data.markets || [])
       .map((market: any) => normalizeKalshiMarket(market))
-      .filter((market: KalshiMarket) => Boolean(market.id));
+      .filter((market: KalshiMarket) => Boolean(market.id))
+      .sort((a: KalshiMarket, b: KalshiMarket) => getMarketActionabilityScore(b) - getMarketActionabilityScore(a));
   } catch (error) {
     console.error("[Kalshi] Market fetch failed:", error);
     return [];

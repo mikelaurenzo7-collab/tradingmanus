@@ -17,12 +17,12 @@ describe("Kalshi API Integration", () => {
       expect(market).toHaveProperty("noPrice");
       expect(market).toHaveProperty("impliedProbability");
     }
-  });
+  }, 15000);
 
   it("should fetch markets by category", async () => {
     const markets = await fetchKalshiMarkets({ category: "politics" });
     expect(Array.isArray(markets)).toBe(true);
-  });
+  }, 15000);
 
   it("should handle API errors gracefully", async () => {
     // Test with invalid market ID

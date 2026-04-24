@@ -49,6 +49,10 @@ const BASE_RISK_LIMITS = {
   maxOpenPositions: 5,
 };
 
+function clampRiskLimit(value: number, minimum: number, maximum: number) {
+  return Math.max(minimum, Math.min(maximum, Number.isFinite(value) ? value : minimum));
+}
+
 const tradingPreferencesInput = z.object({
   autonomyMode: z.enum([
     "manual",
@@ -77,9 +81,22 @@ async function getDynamicRiskLimits() {
     Number(capital?.currentBalance ?? capital?.startingBalance ?? 0)
   );
 
+  if (maxCapital <= 0) {
+    return {
+      maxCapital,
+      maxLossPerTrade: 0,
+      maxLossPerDay: 0,
+      maxPositionSize: 0,
+      maxOpenPositions: 0,
+    };
+  }
+
   return {
     maxCapital,
-    ...BASE_RISK_LIMITS,
+    maxLossPerTrade: clampRiskLimit(maxCapital * 0.05, 1, BASE_RISK_LIMITS.maxLossPerTrade),
+    maxLossPerDay: clampRiskLimit(maxCapital * 0.1, 2, BASE_RISK_LIMITS.maxLossPerDay),
+    maxPositionSize: clampRiskLimit(maxCapital * 0.2, 2, BASE_RISK_LIMITS.maxPositionSize),
+    maxOpenPositions: BASE_RISK_LIMITS.maxOpenPositions,
   };
 }
 
