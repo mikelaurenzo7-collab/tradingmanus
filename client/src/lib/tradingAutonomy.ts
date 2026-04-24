@@ -124,6 +124,102 @@ export function getAutonomyStatusSummary(preferences: TradingPreferences) {
   };
 }
 
+export type AutonomyActivitySummary = {
+  lastRun: null | {
+    eventType: string;
+    status: string;
+    createdAt: string | Date;
+    reason: string | null;
+    signalsGenerated: number;
+    executionCandidates: number;
+    candidateMarketId: string | null;
+    executedMarketId: string | null;
+    autonomyMode: string | null;
+    executionCadence: string | null;
+  };
+  lastOrder: null | {
+    eventType: string;
+    createdAt: string | Date;
+    marketId: string | null;
+    side: string | null;
+    quantity: number | null;
+    limitPrice: number | null;
+    confidence: number | null;
+    executionScore: number | null;
+    reason: string | null;
+  };
+  recentActivity: Array<{
+    id: number;
+    eventType: string;
+    createdAt: string | Date;
+    details: Record<string, unknown> | null;
+    rawDetails: string | null;
+  }>;
+};
+
+export function formatAutonomyActivityTime(value: string | Date | null | undefined) {
+  if (!value) {
+    return "Not yet recorded";
+  }
+
+  return new Date(value).toLocaleString();
+}
+
+export function getAutonomyReviewSummary(activity: AutonomyActivitySummary | null | undefined) {
+  if (!activity?.lastRun) {
+    return {
+      title: "No scheduled review recorded yet",
+      body: "Once Laurenzo completes an away-from-chat review, the latest outcome will appear here with its execution status and signal counts.",
+      tone: "text-slate-300",
+    };
+  }
+
+  const lastRun = activity.lastRun;
+  const counts = `${lastRun.signalsGenerated} signals · ${lastRun.executionCandidates} execution-ready candidates`;
+
+  switch (lastRun.status) {
+    case "executed":
+      return {
+        title: "Last away review placed a live order",
+        body: `${counts}. ${lastRun.executedMarketId ? `Executed ${lastRun.executedMarketId}. ` : ""}${lastRun.reason ?? "A live order was submitted."}`,
+        tone: "text-emerald-300",
+      };
+    case "blocked":
+      return {
+        title: "Last away review was blocked by guardrails",
+        body: `${counts}. ${lastRun.reason ?? "The autonomy policy or risk rules blocked execution."}`,
+        tone: "text-amber-300",
+      };
+    case "generated_only":
+      return {
+        title: "Last away review generated analysis without trading",
+        body: `${counts}. ${lastRun.reason ?? "Signals were reviewed, but no trade was submitted."}`,
+        tone: "text-cyan-300",
+      };
+    case "skipped":
+      return {
+        title: "Last away review was skipped",
+        body: lastRun.reason ?? "The current autonomy policy skipped the scheduled review.",
+        tone: "text-slate-300",
+      };
+    default:
+      return {
+        title: "Last away review hit an operational error",
+        body: lastRun.reason ?? "The scheduled review returned an error before execution could proceed.",
+        tone: "text-rose-300",
+      };
+  }
+}
+
+export function getAutonomyEventLabel(eventType: string) {
+  return eventType
+    .replace(/^scheduled_autonomy_run_/, "away review ")
+    .replace(/^scheduled_autonomy_/, "away ")
+    .replace(/^live_trading_/, "live trading ")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
 export function formatConfidence(value: number) {
   return `${Math.round(value * 100)}%`;
 }

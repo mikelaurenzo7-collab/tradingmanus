@@ -74,6 +74,119 @@ const tradingPreferencesInput = z.object({
   requireApprovalAbove: z.number().min(1).max(500),
 });
 
+function parseAuditDetails(details: string | null | undefined) {
+  if (!details) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(details) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function buildAutonomyActivitySummary(events: Array<any>) {
+  const recentActivity = events
+    .filter((event) =>
+      event.eventType.startsWith("scheduled_autonomy_") ||
+      event.eventType === "live_trading_armed" ||
+      event.eventType === "live_trading_disarmed" ||
+      event.eventType === "trading_preferences_updated"
+    )
+    .slice(0, 8)
+    .map((event) => ({
+      id: event.id,
+      eventType: event.eventType,
+      createdAt: event.createdAt,
+      details: parseAuditDetails(event.details),
+      rawDetails: event.details,
+    }));
+
+  const lastRunEvent = events.find((event) => event.eventType.startsWith("scheduled_autonomy_run_"));
+  const rawLastRunStatus = lastRunEvent
+    ? String(lastRunEvent.eventType).replace("scheduled_autonomy_run_", "")
+    : null;
+  const lastRunStatus =
+    rawLastRunStatus === "executed" ||
+    rawLastRunStatus === "generated_only" ||
+    rawLastRunStatus === "skipped" ||
+    rawLastRunStatus === "blocked" ||
+    rawLastRunStatus === "error"
+      ? rawLastRunStatus
+      : null;
+  const lastRunDetails = parseAuditDetails(lastRunEvent?.details);
+  const lastScanEvent = events.find((event) => event.eventType === "scheduled_autonomy_scan_completed");
+  const lastScanDetails = parseAuditDetails(lastScanEvent?.details);
+  const lastOrderEvent = events.find(
+    (event) =>
+      event.eventType === "scheduled_autonomy_order_placed" ||
+      event.eventType === "scheduled_autonomy_order_blocked_or_failed"
+  );
+  const lastOrderDetails = parseAuditDetails(lastOrderEvent?.details);
+
+  return {
+    lastRun: lastRunEvent && lastRunStatus
+      ? {
+          eventType: lastRunEvent.eventType,
+          status: lastRunStatus,
+          createdAt: lastRunEvent.createdAt,
+          reason: typeof lastRunDetails?.reason === "string" ? lastRunDetails.reason : null,
+          signalsGenerated:
+            typeof lastRunDetails?.signalsGenerated === "number"
+              ? lastRunDetails.signalsGenerated
+              : typeof lastScanDetails?.signalsGenerated === "number"
+                ? lastScanDetails.signalsGenerated
+                : 0,
+          executionCandidates:
+            typeof lastRunDetails?.executionCandidates === "number"
+              ? lastRunDetails.executionCandidates
+              : typeof lastScanDetails?.executionCandidates === "number"
+                ? lastScanDetails.executionCandidates
+                : 0,
+          candidateMarketId:
+            typeof lastRunDetails?.candidateMarketId === "string"
+              ? lastRunDetails.candidateMarketId
+              : null,
+          executedMarketId:
+            typeof lastRunDetails?.executedMarketId === "string"
+              ? lastRunDetails.executedMarketId
+              : null,
+          autonomyMode:
+            typeof lastRunDetails?.autonomyMode === "string"
+              ? lastRunDetails.autonomyMode
+              : typeof lastScanDetails?.autonomyMode === "string"
+                ? lastScanDetails.autonomyMode
+                : null,
+          executionCadence:
+            typeof lastRunDetails?.executionCadence === "string"
+              ? lastRunDetails.executionCadence
+              : typeof lastScanDetails?.executionCadence === "string"
+                ? lastScanDetails.executionCadence
+                : null,
+        }
+      : null,
+    lastOrder: lastOrderEvent
+      ? {
+          eventType: lastOrderEvent.eventType,
+          createdAt: lastOrderEvent.createdAt,
+          marketId: typeof lastOrderDetails?.marketId === "string" ? lastOrderDetails.marketId : null,
+          side: typeof lastOrderDetails?.side === "string" ? lastOrderDetails.side : null,
+          quantity: typeof lastOrderDetails?.quantity === "number" ? lastOrderDetails.quantity : null,
+          limitPrice: typeof lastOrderDetails?.limitPrice === "number" ? lastOrderDetails.limitPrice : null,
+          confidence:
+            typeof lastOrderDetails?.confidence === "number" ? lastOrderDetails.confidence : null,
+          executionScore:
+            typeof lastOrderDetails?.executionScore === "number"
+              ? lastOrderDetails.executionScore
+              : null,
+          reason: typeof lastOrderDetails?.reason === "string" ? lastOrderDetails.reason : null,
+        }
+      : null,
+    recentActivity,
+  };
+}
+
 async function getDynamicRiskLimits() {
   const capital = await db.getKalshiCapital();
   const maxCapital = Math.max(
@@ -393,12 +506,26 @@ export const appRouter = router({
     }),
 
     // Audit log
-    getAuditLog: protectedProcedure.query(async () => {
+    getAuditLog: protectedProcedure.query(async ({ ctx }) => {
       try {
-        return await db.getAuditLog(7);
+        return await db.getAuditLog(7, ctx.user!.openId);
       } catch (error) {
         console.error("[Kalshi] Get audit log error:", error);
         return [];
+      }
+    }),
+
+    getAutonomyActivity: protectedProcedure.query(async ({ ctx }) => {
+      try {
+        const events = await db.getAuditLog(14, ctx.user!.openId);
+        return buildAutonomyActivitySummary(events);
+      } catch (error) {
+        console.error("[Kalshi] Get autonomy activity error:", error);
+        return {
+          lastRun: null,
+          lastOrder: null,
+          recentActivity: [],
+        };
       }
     }),
 

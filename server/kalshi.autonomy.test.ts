@@ -154,6 +154,11 @@ describe("scheduled away-from-chat trading", () => {
     expect(result.reason).toContain("already ran recently");
     expect(mocks.fetchKalshiAccountEquity).not.toHaveBeenCalled();
     expect(mocks.placeKalshiOrder).not.toHaveBeenCalled();
+    expect(mocks.logAuditEvent).toHaveBeenCalledWith(
+      "scheduled_autonomy_run_skipped",
+      expect.stringContaining('"reason":"hourly review policy already ran recently"'),
+      "away-open-id"
+    );
   });
 
   it("generates and saves signals but never auto-submits in approval-required mode", async () => {
@@ -169,6 +174,11 @@ describe("scheduled away-from-chat trading", () => {
     expect(result.executionCandidates).toBe(1);
     expect(mocks.saveSignals).toHaveBeenCalled();
     expect(mocks.placeKalshiOrder).not.toHaveBeenCalled();
+    expect(mocks.logAuditEvent).toHaveBeenCalledWith(
+      "scheduled_autonomy_run_generated_only",
+      expect.stringContaining('"executionCandidates":1'),
+      "away-open-id"
+    );
   });
 
   it("places a live order when a fully autonomous scheduled run finds an eligible non-heuristic signal", async () => {
@@ -182,6 +192,11 @@ describe("scheduled away-from-chat trading", () => {
     expect(mocks.logAuditEvent).toHaveBeenCalledWith(
       "scheduled_autonomy_order_placed",
       expect.stringContaining('"marketId":"KXTEST-1"'),
+      "away-open-id"
+    );
+    expect(mocks.logAuditEvent).toHaveBeenCalledWith(
+      "scheduled_autonomy_run_executed",
+      expect.stringContaining('"executedMarketId":"KXTEST-1"'),
       "away-open-id"
     );
   });

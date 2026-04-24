@@ -405,3 +405,7 @@ This iteration prioritizes prediction quality by introducing a more independent 
 - [x] Add regression coverage for the scheduled trading endpoint and background execution safety behavior
 - [x] Create the recurring scheduled task that calls the deployed Laurenzo site to scan for trades while the user is away
 - [x] Prepare a detailed state-of-project assessment covering the current Laurenzo autonomous-trading architecture, operational readiness, and the remaining work required before paying users can rely on it as an autonomous trading agent
+- [x] Identify and implement only the highest-leverage purposeful improvements that increase Laurenzo’s trust, clarity, and autonomous-trading readiness without adding unnecessary complexity
+- [x] Add a server-side autonomy activity summary that parses scheduled review audit events into a trustworthy last-run status for the UI
+- [x] Surface the last scheduled autonomy review outcome, execution eligibility, and recent away-from-chat activity on the Trading Autonomy and Audit Log pages
+- [x] Add regression coverage for the new autonomy activity summary and UI-facing status semantics so the transparency upgrade cannot silently regress

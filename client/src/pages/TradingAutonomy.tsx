@@ -10,9 +10,11 @@ import {
   DEFAULT_TRADING_PREFERENCES,
   EXECUTION_CADENCES,
   RISK_POSTURES,
+  formatAutonomyActivityTime,
   formatConfidence,
   getAutonomyModeDescription,
   getAutonomyModeLabel,
+  getAutonomyReviewSummary,
   getAutonomyStatusSummary,
   getExecutionCadenceLabel,
   getRiskPostureLabel,
@@ -33,6 +35,7 @@ export default function TradingAutonomy() {
   const accountStatusQuery = trpc.kalshi.getKalshiAccountStatus.useQuery();
   const instructionsQuery = trpc.training.getInstructions.useQuery();
   const preferencesQuery = trpc.kalshi.getTradingPreferences.useQuery();
+  const autonomyActivityQuery = trpc.kalshi.getAutonomyActivity.useQuery();
   const [form, setForm] = useState<TradingPreferences>(DEFAULT_TRADING_PREFERENCES);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -75,13 +78,18 @@ export default function TradingAutonomy() {
   const equity = accountStatus?.equity ?? 0;
   const hasInstructions = (instructionsQuery.data?.length ?? 0) > 0;
   const status = useMemo(() => getAutonomyStatusSummary(form), [form]);
+  const activitySummary = useMemo(
+    () => getAutonomyReviewSummary(autonomyActivityQuery.data),
+    [autonomyActivityQuery.data]
+  );
   const canArm = connected && equity > 0 && form.autonomyMode !== "manual";
   const saveDisabled = saveMutation.isPending || activationMutation.isPending;
 
   if (
     accountStatusQuery.isLoading ||
     instructionsQuery.isLoading ||
-    preferencesQuery.isLoading
+    preferencesQuery.isLoading ||
+    autonomyActivityQuery.isLoading
   ) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -276,10 +284,76 @@ export default function TradingAutonomy() {
         </CardContent>
       </Card>
 
+      <Card className="laurenzo-card border-emerald-500/20 bg-emerald-500/5">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Zap className="h-5 w-5 text-emerald-300" />
+            Latest away-from-chat activity
+          </CardTitle>
+          <CardDescription>
+            This panel shows the most recent scheduled review outcome recorded by the deployed autonomy loop.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
+          <div className="space-y-3 rounded-2xl border border-border/60 bg-background/40 p-4">
+            <div className={`text-lg font-semibold ${activitySummary.tone}`}>{activitySummary.title}</div>
+            <p className="text-sm text-muted-foreground">{activitySummary.body}</p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-xl border border-border/60 bg-background/50 p-3 text-sm">
+                <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Last review</div>
+                <div className="mt-2 font-semibold text-foreground">
+                  {formatAutonomyActivityTime(autonomyActivityQuery.data?.lastRun?.createdAt)}
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {autonomyActivityQuery.data?.lastRun?.autonomyMode
+                    ? `${autonomyActivityQuery.data.lastRun.autonomyMode} · ${autonomyActivityQuery.data.lastRun.executionCadence ?? "cadence unknown"}`
+                    : "No away-from-chat review has been persisted yet."}
+                </p>
+              </div>
+              <div className="rounded-xl border border-border/60 bg-background/50 p-3 text-sm">
+                <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Last away order event</div>
+                <div className="mt-2 font-semibold text-foreground">
+                  {formatAutonomyActivityTime(autonomyActivityQuery.data?.lastOrder?.createdAt)}
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {autonomyActivityQuery.data?.lastOrder?.marketId
+                    ? `${autonomyActivityQuery.data.lastOrder.marketId} · ${autonomyActivityQuery.data.lastOrder.side?.toUpperCase() ?? "UNKNOWN"} side`
+                    : "No away-from-chat order event is recorded yet."}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-3 rounded-2xl border border-border/60 bg-background/40 p-4">
+            <div>
+              <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Recent autonomy events</div>
+              <p className="mt-2 text-sm text-muted-foreground">
+                The latest persisted events help separate real scheduled reviews from manual arm/disarm actions.
+              </p>
+            </div>
+            <div className="space-y-2">
+              {autonomyActivityQuery.data?.recentActivity.slice(0, 4).map((event) => (
+                <div key={event.id} className="rounded-xl border border-border/60 bg-background/50 p-3 text-sm">
+                  <div className="font-medium text-foreground">{event.eventType.replace(/_/g, " ")}</div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {formatAutonomyActivityTime(event.createdAt)}
+                  </div>
+                </div>
+              ))}
+              {!autonomyActivityQuery.data?.recentActivity.length ? (
+                <div className="rounded-xl border border-dashed border-border/60 p-3 text-sm text-muted-foreground">
+                  No scheduled autonomy events have been recorded yet.
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
       <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
         <Card className="laurenzo-card">
           <CardHeader>
-            <CardTitle>Execution preferences</CardTitle>
+            <CardTitle>Choose your autonomy mode</CardTitle>
             <CardDescription>
               Configure when the agent is allowed to act and how demanding the signal quality threshold should be.
             </CardDescription>

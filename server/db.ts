@@ -674,15 +674,24 @@ export async function getLatestAuditEventByType(
   return result[0] || null;
 }
 
-export async function getAuditLog(limitDays: number = 7) {
+export async function getAuditLog(
+  limitDays: number = 7,
+  triggeredByOpenId?: string,
+) {
   const database = await getDb();
   if (!database) return [];
-  
+
   const cutoffDate = new Date(Date.now() - limitDays * 24 * 60 * 60 * 1000);
-  
+  const conditions = triggeredByOpenId
+    ? and(
+        gte(auditLog.createdAt, cutoffDate),
+        eq(auditLog.triggeredByOpenId, triggeredByOpenId)
+      )
+    : gte(auditLog.createdAt, cutoffDate);
+
   return await database
     .select()
     .from(auditLog)
-    .where(gte(auditLog.createdAt, cutoffDate))
+    .where(conditions)
     .orderBy(desc(auditLog.createdAt));
 }

@@ -93,6 +93,26 @@ function buildResult(
   };
 }
 
+async function persistScheduledResult(user: User, result: AwayTradingRunResult) {
+  await db.logAuditEvent(
+    `scheduled_autonomy_run_${result.status}`,
+    JSON.stringify({
+      reason: result.reason,
+      signalsGenerated: result.signalsGenerated,
+      executionCandidates: result.executionCandidates,
+      orderPlaced: result.orderPlaced,
+      orderId: result.orderId ?? null,
+      executedMarketId: result.executedMarketId ?? null,
+      candidateMarketId: result.candidateMarketId ?? null,
+      autonomyMode: result.autonomyMode ?? null,
+      executionCadence: result.executionCadence ?? null,
+    }),
+    user.openId
+  );
+
+  return result;
+}
+
 function estimateOrderQuantity(maxBudget: number) {
   return Math.max(1, Math.floor(maxBudget));
 }
@@ -215,10 +235,13 @@ export async function runScheduledAutonomousTrading(
 ): Promise<AwayTradingRunResult> {
   const userId = user.id || 1;
   const preferences = await tradingPreferencesDb.getTradingPreferences(userId);
+  const finalize = (
+    input: Omit<AwayTradingRunResult, "success"> & { success?: boolean }
+  ) => persistScheduledResult(user, buildResult(input));
   const skipReason = await shouldSkipScheduledRun(user, preferences);
 
   if (skipReason) {
-    return buildResult({
+    return finalize({
       status: "skipped",
       reason: skipReason,
       signalsGenerated: 0,
@@ -231,7 +254,7 @@ export async function runScheduledAutonomousTrading(
 
   const creds = await kalshiCredDb.getKalshiCredentials(userId);
   if (!creds || creds.accountStatus !== "connected") {
-    return buildResult({
+    return finalize({
       status: "blocked",
       reason: "no connected live Kalshi account is available",
       signalsGenerated: 0,
@@ -244,7 +267,7 @@ export async function runScheduledAutonomousTrading(
 
   const equityResult = await fetchKalshiAccountEquity(creds.apiKey, creds.privateKey);
   if (equityResult.error) {
-    return buildResult({
+    return finalize({
       status: "error",
       reason: `live equity refresh failed: ${equityResult.error}`,
       signalsGenerated: 0,
@@ -276,7 +299,7 @@ export async function runScheduledAutonomousTrading(
   );
 
   if (executionCandidates.length === 0) {
-    return buildResult({
+    return finalize({
       status: "generated_only",
       reason: "no non-heuristic execution-ready signals were found",
       signalsGenerated: savedSignals.length,
@@ -288,7 +311,7 @@ export async function runScheduledAutonomousTrading(
   }
 
   if (preferences.autonomyMode === "approval_required") {
-    return buildResult({
+    return finalize({
       status: "generated_only",
       reason: "approval-required mode never auto-submits away-from-chat orders",
       signalsGenerated: savedSignals.length,
@@ -310,7 +333,7 @@ export async function runScheduledAutonomousTrading(
     ]);
 
   if (todayOrderCount >= preferences.maxDailyOrders) {
-    return buildResult({
+    return finalize({
       status: "blocked",
       reason: "daily order cap reached",
       signalsGenerated: savedSignals.length,
@@ -323,7 +346,7 @@ export async function runScheduledAutonomousTrading(
   }
 
   if (openPositions.length >= riskLimits.maxOpenPositions) {
-    return buildResult({
+    return finalize({
       status: "blocked",
       reason: "open position limit reached",
       signalsGenerated: savedSignals.length,
@@ -365,7 +388,7 @@ export async function runScheduledAutonomousTrading(
   });
 
   if (!eligibleSignal) {
-    return buildResult({
+    return finalize({
       status: "generated_only",
       reason: "execution candidates exist, but none satisfy autonomy and exposure guardrails",
       signalsGenerated: savedSignals.length,
@@ -390,7 +413,7 @@ export async function runScheduledAutonomousTrading(
   const maxLossOnTrade = Math.min(orderExposure, quantity * (1 - limitPrice));
 
   if (maxLossOnTrade > riskLimits.maxLossPerTrade) {
-    return buildResult({
+    return finalize({
       status: "blocked",
       reason: "candidate exceeds per-trade risk limit",
       signalsGenerated: savedSignals.length,
@@ -403,7 +426,7 @@ export async function runScheduledAutonomousTrading(
   }
 
   if (todayRealizedLoss >= riskLimits.maxLossPerDay) {
-    return buildResult({
+    return finalize({
       status: "blocked",
       reason: "daily loss limit reached",
       signalsGenerated: savedSignals.length,
@@ -416,7 +439,7 @@ export async function runScheduledAutonomousTrading(
   }
 
   if (availableCapital < orderExposure) {
-    return buildResult({
+    return finalize({
       status: "blocked",
       reason: "available capital is below the required order exposure",
       signalsGenerated: savedSignals.length,
@@ -449,7 +472,7 @@ export async function runScheduledAutonomousTrading(
       user.openId
     );
 
-    return buildResult({
+    return finalize({
       status: "blocked",
       reason: result.error ?? "order placement failed",
       signalsGenerated: savedSignals.length,
@@ -474,7 +497,7 @@ export async function runScheduledAutonomousTrading(
     user.openId
   );
 
-  return buildResult({
+  return finalize({
     status: "executed",
     reason: "scheduled autonomy found an eligible non-heuristic signal and placed a live order",
     signalsGenerated: savedSignals.length,
