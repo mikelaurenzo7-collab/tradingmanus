@@ -413,3 +413,5 @@ This iteration prioritizes prediction quality by introducing a more independent 
 - [x] Add regression coverage for the new autonomy readiness semantics so the UI cannot overstate whether Laurenzo is truly able to trade while the user is away
 - [x] Surface a compact away-from-chat autonomy status on the main dashboard so the current readiness and latest scheduled-review outcome are visible without opening the Trading Autonomy page
 - [x] Add regression coverage for the new dashboard-level autonomy visibility so the home surface keeps reflecting true away-from-chat status
+- [x] Replace the dashboard kill-switch placeholder with a real emergency disarm action that immediately turns off live trading and confirms the result to the operator
+- [x] Add regression coverage or interaction-safe wiring so the dashboard kill switch cannot silently degrade back into a no-op control

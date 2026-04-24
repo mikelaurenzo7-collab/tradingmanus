@@ -57,7 +57,25 @@ export default function Dashboard() {
       setActivationMessage(error.message || "Unable to arm live trading.");
     },
   });
-  const killSwitchMutation = { mutateAsync: async () => {} };
+  const killSwitchMutation = trpc.kalshi.setTradingActivation.useMutation({
+    onSuccess: async (result) => {
+      setKillSwitchConfirm(false);
+      setActivationMessage(
+        result.preferences.liveTradingEnabled
+          ? `${getAutonomyModeLabel(result.preferences.autonomyMode)} mode is now armed for live trading.`
+          : "Emergency disarm complete. Live trading is now off."
+      );
+      await Promise.all([
+        utils.kalshi.getKalshiAccountStatus.invalidate(),
+        utils.kalshi.getTradingPreferences.invalidate(),
+        utils.kalshi.getAutonomyActivity.invalidate(),
+      ]);
+    },
+    onError: (error) => {
+      setKillSwitchConfirm(false);
+      setActivationMessage(error.message || "Unable to disarm live trading.");
+    },
+  });
 
   if (
     performanceOverviewQuery.isLoading ||
@@ -148,8 +166,7 @@ export default function Dashboard() {
     }
 
     try {
-      await killSwitchMutation.mutateAsync();
-      setKillSwitchConfirm(false);
+      await killSwitchMutation.mutateAsync({ enabled: false });
     } catch (error) {
       console.error("Kill switch activation failed:", error);
     }
