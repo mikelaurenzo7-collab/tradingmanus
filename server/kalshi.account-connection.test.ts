@@ -197,6 +197,29 @@ describe("kalshi account connection", () => {
     });
   });
 
+  it("still succeeds when audit logging fails after credentials are saved", async () => {
+    mocks.validateKalshiCredentials.mockResolvedValue({ valid: true, mode: "production" });
+    mocks.fetchKalshiAccountEquity.mockResolvedValue({ equity: 78.9, mode: "production" });
+    mocks.saveKalshiCredentials.mockResolvedValue(undefined);
+    mocks.updateKalshiCapital.mockResolvedValue(undefined);
+    mocks.logAuditEvent.mockResolvedValue(false);
+
+    const caller = appRouter.createCaller(createProtectedContext());
+    const result = await caller.kalshi.connectKalshiAccount({
+      apiKey: "live-api-key",
+      privateKey: "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----",
+    });
+
+    expect(mocks.saveKalshiCredentials).toHaveBeenCalledTimes(1);
+    expect(mocks.updateKalshiCapital).toHaveBeenCalledWith({ currentBalance: 78.9 });
+    expect(mocks.logAuditEvent).toHaveBeenCalledWith(
+      "kalshi_account_connected",
+      "Equity: $78.9",
+      "kalshi-open-id",
+    );
+    expect(result).toEqual({ success: true, equity: 78.9, mode: "production" });
+  });
+
   it("refreshes live equity for connected users when account status is requested", async () => {
     mocks.getKalshiCredentials.mockResolvedValue({
       userId: 7,

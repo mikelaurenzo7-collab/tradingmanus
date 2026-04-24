@@ -13,6 +13,7 @@ describe("dashboardLanding", () => {
       drawdownUsageLabel: "2.0%",
       microstructureLabel: "0",
       needsFundingReview: false,
+      needsSyncReview: false,
     });
   });
 
@@ -27,12 +28,33 @@ describe("dashboardLanding", () => {
       drawdownUsageLabel: "4.0%",
       microstructureLabel: "3",
       needsFundingReview: true,
+      needsSyncReview: false,
     });
   });
 
-  it("hides stale capital when the account is not currently connected", () => {
-    expect(getVisibleCapital({ connected: false, currentBalance: 100 })).toBe(0);
-    expect(getVisibleCapital({ connected: true, currentBalance: 100 })).toBe(100);
+  it("surfaces linked-account sync issues separately from connection and funding states", () => {
+    expect(
+      getLandingBadge({ connected: true, currentBalance: 250, liveFeedCount: 2, maxDrawdown: 0.01, syncIssue: true })
+    ).toEqual({
+      label: "Account linked, live sync needs attention",
+      tone: "warning",
+    });
+
+    expect(
+      getFirstTestReadiness({ connected: true, currentBalance: 250, liveFeedCount: 2, maxDrawdown: 0.01, syncIssue: true })
+    ).toEqual({
+      connectionLabel: "Sync issue",
+      drawdownUsageLabel: "1.0%",
+      microstructureLabel: "2",
+      needsFundingReview: false,
+      needsSyncReview: true,
+    });
+  });
+
+  it("hides stale capital when the account is not currently connected or the live sync is unhealthy", () => {
+    expect(getVisibleCapital({ connected: false, currentBalance: 100, syncIssue: false })).toBe(0);
+    expect(getVisibleCapital({ connected: true, currentBalance: 100, syncIssue: true })).toBe(0);
+    expect(getVisibleCapital({ connected: true, currentBalance: 100, syncIssue: false })).toBe(100);
   });
 
   it("returns the fast-action links for the first live-test workflow", () => {

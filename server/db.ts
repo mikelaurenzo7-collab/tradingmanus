@@ -470,13 +470,19 @@ export async function updateKalshiCapital(updates: any) {
 // Audit log queries
 export async function logAuditEvent(event: string, details: string, triggeredByOpenId: string) {
   const database = await getDb();
-  if (!database) return;
-  
-  await database.insert(auditLog).values({
-    event,
-    details,
-    triggeredByOpenId,
-  });
+  if (!database) return false;
+
+  try {
+    await database.insert(auditLog).values({
+      event,
+      details,
+      triggeredByOpenId,
+    });
+    return true;
+  } catch (error) {
+    console.error("[AuditLog] Failed to write audit event:", error);
+    return false;
+  }
 }
 
 export async function getAuditLog(limitDays: number = 7) {

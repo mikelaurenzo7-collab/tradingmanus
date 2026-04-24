@@ -3,9 +3,17 @@ export type DashboardLandingMetrics = {
   currentBalance: number;
   liveFeedCount: number;
   maxDrawdown: number;
+  syncIssue?: boolean;
 };
 
 export function getLandingBadge(metrics: DashboardLandingMetrics) {
+  if (metrics.syncIssue) {
+    return {
+      label: "Account linked, live sync needs attention",
+      tone: "warning" as const,
+    };
+  }
+
   if (metrics.connected && metrics.currentBalance <= 0) {
     return {
       label: "Account connected, funding review needed",
@@ -28,15 +36,16 @@ export function getLandingBadge(metrics: DashboardLandingMetrics) {
 
 export function getFirstTestReadiness(metrics: DashboardLandingMetrics) {
   return {
-    connectionLabel: metrics.connected ? "Ready" : "Pending",
+    connectionLabel: metrics.syncIssue ? "Sync issue" : metrics.connected ? "Ready" : "Pending",
     drawdownUsageLabel: `${(metrics.maxDrawdown * 100).toFixed(1)}%`,
     microstructureLabel: String(metrics.liveFeedCount),
-    needsFundingReview: metrics.connected && metrics.currentBalance <= 0,
+    needsFundingReview: metrics.connected && !metrics.syncIssue && metrics.currentBalance <= 0,
+    needsSyncReview: Boolean(metrics.syncIssue),
   };
 }
 
-export function getVisibleCapital(metrics: Pick<DashboardLandingMetrics, "connected" | "currentBalance">) {
-  return metrics.connected ? metrics.currentBalance : 0;
+export function getVisibleCapital(metrics: Pick<DashboardLandingMetrics, "connected" | "currentBalance" | "syncIssue">) {
+  return metrics.connected && !metrics.syncIssue ? metrics.currentBalance : 0;
 }
 
 export function getFastActionItems() {
