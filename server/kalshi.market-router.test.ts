@@ -221,4 +221,15 @@ describe("kalshi market-data router", () => {
       }),
     ]);
   });
+
+  it("surfaces performance overview failures to the client", async () => {
+    mocks.getKalshiTradeHistory.mockRejectedValue(new Error("db unavailable"));
+
+    const caller = appRouter.createCaller(createProtectedContext());
+
+    await expect(caller.kalshi.getPerformanceOverview()).rejects.toMatchObject({
+      code: "INTERNAL_SERVER_ERROR",
+      message: "Unable to load performance overview",
+    });
+  });
 });

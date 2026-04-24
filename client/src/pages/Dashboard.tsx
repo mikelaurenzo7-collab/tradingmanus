@@ -50,6 +50,35 @@ export default function Dashboard() {
     );
   }
 
+  if (performanceOverviewQuery.isError || accountStatusQuery.isError) {
+    const errorMessage =
+      performanceOverviewQuery.error?.message ||
+      accountStatusQuery.error?.message ||
+      "We couldn't load your dashboard data. Please try again.";
+
+    return (
+      <div className="flex items-center justify-center min-h-screen p-6">
+        <Card className="w-full max-w-md">
+          <CardContent className="flex flex-col items-center gap-4 p-6 text-center">
+            <AlertTriangle className="h-12 w-12 text-destructive" />
+            <div className="space-y-2">
+              <h2 className="text-xl font-semibold">Unable to load dashboard</h2>
+              <p className="text-sm text-muted-foreground">{errorMessage}</p>
+            </div>
+            <Button
+              onClick={() => {
+                performanceOverviewQuery.refetch();
+                accountStatusQuery.refetch();
+              }}
+            >
+              Retry
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   const accountStatus = accountStatusQuery.data;
   const performanceOverview = performanceOverviewQuery.data;
   const metrics = performanceOverview?.metrics;

@@ -1,4 +1,3 @@
-import { useState } from "react";
 import {
   Card,
   CardContent,
@@ -10,10 +9,6 @@ import { Button } from "@/components/ui/button";
 import { trpc } from "@/lib/trpc";
 
 export default function Performance() {
-  const [selectedMetric, setSelectedMetric] = useState<
-    "sharpe" | "drawdown" | "winrate" | "pnl"
-  >("sharpe");
-
   const performanceOverviewQuery =
     trpc.kalshi.getPerformanceOverview.useQuery();
 
@@ -74,12 +69,7 @@ export default function Performance() {
           {metricCards.map(metric => (
             <Card
               key={metric.label}
-              className="border border-slate-700 bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-xl hover:border-slate-600 transition-all cursor-pointer"
-              onClick={() =>
-                setSelectedMetric(
-                  metric.label.toLowerCase().replace(" ", "") as any
-                )
-              }
+              className="border border-slate-700 bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-xl hover:border-slate-600 transition-all"
             >
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between">
