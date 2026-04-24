@@ -202,7 +202,8 @@ export function calculatePriceMomentum(
 ): { yesMomentum: number; noMomentum: number } {
   const latestTimestamp =
     feed.priceHistory[feed.priceHistory.length - 1]?.timestamp ??
-    feed.currentSnapshot.timestamp;
+    feed.currentSnapshot?.timestamp ??
+    Date.now();
   const cutoff = latestTimestamp - windowMs;
   const recentSnapshots = feed.priceHistory.filter((s) => s.timestamp >= cutoff);
 
@@ -228,7 +229,8 @@ export function calculateVolumeMomentum(
 ): { yesVolumeMomentum: number; noVolumeMomentum: number } {
   const latestTimestamp =
     feed.volumeHistory[feed.volumeHistory.length - 1]?.timestamp ??
-    feed.currentSnapshot.timestamp;
+    feed.currentSnapshot?.timestamp ??
+    Date.now();
   const cutoff = latestTimestamp - windowMs;
   const recentVolumes = feed.volumeHistory.filter((v) => v.timestamp >= cutoff);
 
@@ -251,7 +253,8 @@ export function calculateVolumeMomentum(
 export function detectVolatility(feed: MarketFeed, windowMs: number = 300000): number {
   const latestTimestamp =
     feed.priceHistory[feed.priceHistory.length - 1]?.timestamp ??
-    feed.currentSnapshot.timestamp;
+    feed.currentSnapshot?.timestamp ??
+    Date.now();
   const cutoff = latestTimestamp - windowMs;
   const recentSnapshots = feed.priceHistory.filter((s) => s.timestamp >= cutoff);
 

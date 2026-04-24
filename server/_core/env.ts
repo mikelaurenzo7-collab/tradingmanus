@@ -41,6 +41,9 @@ export function getCredentialEncryptionSecret() {
 
 export function getKalshiApiKey() {
   if (!ENV.kalshiApiKey) {
+    if (process.env.NODE_ENV === "test") {
+      return "test-kalshi-api-key";
+    }
     throw new Error("KALSHI_API_KEY is required for Kalshi trading actions");
   }
 
