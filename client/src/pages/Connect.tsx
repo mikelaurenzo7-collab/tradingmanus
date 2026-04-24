@@ -1,13 +1,17 @@
 import { useMemo, useState } from "react";
+import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { AlertCircle, CheckCircle2, KeyRound, Laptop, Loader2, ShieldCheck } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { buildKalshiConnectionSuccessMessage, CONNECT_REDIRECT_DELAY_MS } from "@/lib/connectFlow";
 import { trpc } from "@/lib/trpc";
 
 export default function Connect() {
+  const [, setLocation] = useLocation();
+  const utils = trpc.useUtils();
   const [apiKey, setApiKey] = useState("");
   const [privateKey, setPrivateKey] = useState("");
   const [connected, setConnected] = useState(false);
@@ -20,15 +24,23 @@ export default function Connect() {
   }, [trimmedPrivateKey]);
 
   const connectMutation = trpc.kalshi.connectKalshiAccount.useMutation({
-    onSuccess: data => {
+    onSuccess: async data => {
       if (data.success) {
         setConnectionMessage(
-          `Connected successfully${data.mode ? ` in ${data.mode} mode` : ""}. Account equity synced: $${data.equity?.toFixed(2) || "0.00"}. Redirecting to the dashboard...`
+          buildKalshiConnectionSuccessMessage({ equity: data.equity, mode: data.mode })
         );
+        setApiKey("");
+        setPrivateKey("");
         setConnected(true);
+        await Promise.all([
+          utils.kalshi.getKalshiAccountStatus.invalidate(),
+          utils.kalshi.getCapital.invalidate(),
+          utils.kalshi.getPerformanceOverview.invalidate(),
+          utils.kalshi.getPositions.invalidate(),
+        ]);
         setTimeout(() => {
-          window.location.href = "/";
-        }, 1800);
+          setLocation("/");
+        }, CONNECT_REDIRECT_DELAY_MS);
         return;
       }
 
@@ -167,10 +179,11 @@ export default function Connect() {
 
               {connectionMessage ? (
                 <Alert variant={connectMutation.isError ? "destructive" : "default"}>
-                  <AlertCircle className="h-4 w-4" />
+                  {connected ? <CheckCircle2 className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
                   <AlertDescription>{connectionMessage}</AlertDescription>
                 </Alert>
               ) : null}
+
 
               <Button
                 onClick={handleConnect}

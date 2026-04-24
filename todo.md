@@ -349,7 +349,8 @@ This iteration prioritizes prediction quality by introducing a more independent 
 - [x] Prioritize the liquidity and order-book analytics expansion as the next pre-return setup improvement after the Risk Controls and Performance upgrade
 - [ ] Prioritize the remaining end-to-end Kalshi connection and testing readiness gaps as the next pre-return setup improvement after the liquidity analytics upgrade
 - [x] Replace the placeholder home dashboard with a Kalshi-specific operational overview so the post-connect landing experience is ready for first live testing
-- [ ] Fix the root landing state so a connected but unfunded Kalshi account is treated as connected with funding guidance instead of looking disconnected
+- [x] Fix the root landing state so a connected but unfunded Kalshi account is treated as connected with funding guidance instead of looking disconnected
 - [x] Fix the root landing mismatch where the dashboard can show disconnected account status while still displaying stale positive capital
 - [x] Remove any placeholder or stale capital display and only show balance when the connected user's live Kalshi account value has been confirmed
 - [x] Make the displayed capital update live from the connected user's actual Kalshi account value instead of a static snapshot or inferred state
+- [x] Ensure the dashboard refreshes immediately after a successful Kalshi connection so the user sees live account status and equity without manually reloading
