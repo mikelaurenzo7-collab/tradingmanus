@@ -19,9 +19,9 @@ let _db: any = null;
 let _connection: any = null;
 
 export async function getDb() {
-  if (!_db && process.env.DATABASE_URL) {
+  if (!_db && ENV.databaseUrl) {
     try {
-      const url = new URL(process.env.DATABASE_URL);
+      const url = new URL(ENV.databaseUrl);
       _connection = await mysql.createConnection({
         host: url.hostname,
         user: url.username,

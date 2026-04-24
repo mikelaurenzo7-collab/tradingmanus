@@ -30,6 +30,7 @@ import {
   validateKalshiCredentials,
   fetchKalshiAccountEquity,
 } from "./_core/kalshiAuth";
+import { getKalshiApiKey } from "./_core/env";
 import { getPerformanceOverview } from "./_core/kalshiLearning";
 import * as kalshiCredDb from "./db.kalshi-credentials";
 import { trainingRouter } from "./training.router";
@@ -161,7 +162,7 @@ export const appRouter = router({
           }
 
           const result = await placeKalshiOrder(
-            process.env.KALSHI_API_KEY || "",
+            getKalshiApiKey(),
             input.marketId,
             input.side,
             input.quantity,
@@ -194,7 +195,7 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         try {
           const result = await cancelKalshiOrder(
-            process.env.KALSHI_API_KEY || "",
+            getKalshiApiKey(),
             input.orderId
           );
 
@@ -218,7 +219,7 @@ export const appRouter = router({
       .query(async ({ input }) => {
         try {
           return await getKalshiOrderStatus(
-            process.env.KALSHI_API_KEY || "",
+            getKalshiApiKey(),
             input.orderId
           );
         } catch (error) {
@@ -261,7 +262,7 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         try {
           const result = await closeKalshiPosition(
-            process.env.KALSHI_API_KEY || "",
+            getKalshiApiKey(),
             input.positionId,
             input.marketId,
             input.currentPrice
@@ -333,7 +334,7 @@ export const appRouter = router({
     killSwitch: protectedProcedure.mutation(async ({ ctx }) => {
       try {
         const result = await activateKalshiKillSwitch(
-          process.env.KALSHI_API_KEY || ""
+          getKalshiApiKey()
         );
         await db.logAuditEvent(
           "kalshi_kill_switch_activated",

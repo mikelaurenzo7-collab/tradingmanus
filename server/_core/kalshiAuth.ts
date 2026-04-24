@@ -1,16 +1,21 @@
 import crypto from "crypto";
-import { ENV } from "./env";
+import { getCredentialEncryptionSecret } from "./env";
 
-const ENCRYPTION_KEY = ENV.cookieSecret || "default-key-change-in-production";
 const ALGORITHM = "aes-256-cbc";
+
+function getEncryptionKey() {
+  return crypto
+    .createHash("sha256")
+    .update(getCredentialEncryptionSecret())
+    .digest();
+}
 
 /**
  * Encrypt sensitive data (API keys, private keys)
  */
 export function encryptCredential(plaintext: string): string {
   try {
-    // Derive a 32-byte key from the JWT secret
-    const key = crypto.createHash("sha256").update(ENCRYPTION_KEY).digest();
+    const key = getEncryptionKey();
     const iv = crypto.randomBytes(16);
     const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
     
@@ -31,7 +36,10 @@ export function encryptCredential(plaintext: string): string {
 export function decryptCredential(encrypted: string): string {
   try {
     const [ivHex, encryptedHex] = encrypted.split(":");
-    const key = crypto.createHash("sha256").update(ENCRYPTION_KEY).digest();
+    if (!ivHex || !encryptedHex) {
+      throw new Error("Invalid encrypted credential format");
+    }
+    const key = getEncryptionKey();
     const iv = Buffer.from(ivHex, "hex");
     const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
     
