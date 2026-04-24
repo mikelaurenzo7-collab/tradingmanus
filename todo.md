@@ -411,3 +411,5 @@ This iteration prioritizes prediction quality by introducing a more independent 
 - [x] Add regression coverage for the new autonomy activity summary and UI-facing status semantics so the transparency upgrade cannot silently regress
 - [x] Add an autonomy readiness panel that shows whether away-from-chat trading is actually able to execute right now based on account connection, live-trading arming, autonomy mode, cadence, and recent scheduled-review activity
 - [x] Add regression coverage for the new autonomy readiness semantics so the UI cannot overstate whether Laurenzo is truly able to trade while the user is away
+- [x] Surface a compact away-from-chat autonomy status on the main dashboard so the current readiness and latest scheduled-review outcome are visible without opening the Trading Autonomy page
+- [x] Add regression coverage for the new dashboard-level autonomy visibility so the home surface keeps reflecting true away-from-chat status

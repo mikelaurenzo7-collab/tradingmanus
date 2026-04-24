@@ -17,7 +17,14 @@ import { useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
-import { DEFAULT_TRADING_PREFERENCES, getAutonomyModeLabel, getAutonomyStatusSummary } from "@/lib/tradingAutonomy";
+import {
+  DEFAULT_TRADING_PREFERENCES,
+  formatAutonomyActivityTime,
+  getAutonomyModeLabel,
+  getAutonomyReadinessSummary,
+  getAutonomyReviewSummary,
+  getAutonomyStatusSummary,
+} from "@/lib/tradingAutonomy";
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -31,6 +38,7 @@ export default function Dashboard() {
     trpc.kalshi.getPerformanceOverview.useQuery();
   const accountStatusQuery = trpc.kalshi.getKalshiAccountStatus.useQuery();
   const { data: instructions } = trpc.training.getInstructions.useQuery();
+  const autonomyActivityQuery = trpc.kalshi.getAutonomyActivity.useQuery();
 
   const startTradingMutation = trpc.kalshi.setTradingActivation.useMutation({
     onSuccess: async (result) => {
@@ -51,7 +59,11 @@ export default function Dashboard() {
   });
   const killSwitchMutation = { mutateAsync: async () => {} };
 
-  if (performanceOverviewQuery.isLoading || accountStatusQuery.isLoading) {
+  if (
+    performanceOverviewQuery.isLoading ||
+    accountStatusQuery.isLoading ||
+    autonomyActivityQuery.isLoading
+  ) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="flex flex-col items-center gap-4">
@@ -64,10 +76,15 @@ export default function Dashboard() {
     );
   }
 
-  if (performanceOverviewQuery.isError || accountStatusQuery.isError) {
+  if (
+    performanceOverviewQuery.isError ||
+    accountStatusQuery.isError ||
+    autonomyActivityQuery.isError
+  ) {
     const errorMessage =
       performanceOverviewQuery.error?.message ||
       accountStatusQuery.error?.message ||
+      autonomyActivityQuery.error?.message ||
       "We couldn't load your dashboard data. Please try again.";
 
     return (
@@ -105,6 +122,14 @@ export default function Dashboard() {
   const hasInstructions = (instructions?.length || 0) > 0;
   const tradingPreferences = accountStatus?.tradingPreferences ?? DEFAULT_TRADING_PREFERENCES;
   const autonomyStatus = getAutonomyStatusSummary(tradingPreferences);
+  const autonomyReviewSummary = getAutonomyReviewSummary(autonomyActivityQuery.data);
+  const autonomyReadinessSummary = getAutonomyReadinessSummary({
+    preferences: tradingPreferences,
+    connected: isConnected,
+    equity,
+    lastRunAt: autonomyActivityQuery.data?.lastRun?.createdAt ?? null,
+  });
+
   const hasClosedTrades = (metrics?.totalTrades || 0) > 0;
   const winningTrades = metrics?.winningTrades ?? 0;
   const totalTrades = metrics?.totalTrades ?? 0;
@@ -385,8 +410,43 @@ export default function Dashboard() {
         />
       )}
 
+      <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+        <Card className="laurenzo-card border-emerald-500/20 bg-emerald-500/5">
+          <CardContent className="space-y-3 pt-6">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-foreground">Away-from-chat status</p>
+                <p className={`mt-2 text-lg font-semibold ${autonomyReadinessSummary.tone}`}>
+                  {autonomyReadinessSummary.title}
+                </p>
+              </div>
+              <Button variant="outline" onClick={() => navigate("/autonomy")}>
+                Open Trading Autonomy
+              </Button>
+            </div>
+            <p className="text-sm text-muted-foreground">{autonomyReadinessSummary.body}</p>
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="rounded-2xl border border-border/60 bg-background/40 p-4">
+                <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Latest away review</div>
+                <div className={`mt-2 text-base font-semibold ${autonomyReviewSummary.tone}`}>{autonomyReviewSummary.title}</div>
+                <p className="mt-2 text-xs text-muted-foreground">{autonomyReviewSummary.body}</p>
+              </div>
+              <div className="rounded-2xl border border-border/60 bg-background/40 p-4">
+                <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Last recorded review time</div>
+                <div className="mt-2 text-base font-semibold text-foreground">
+                  {formatAutonomyActivityTime(autonomyActivityQuery.data?.lastRun?.createdAt)}
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Mode: {getAutonomyModeLabel(tradingPreferences.autonomyMode)}
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
       {/* Equity Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
         <Card className="laurenzo-card">
           <CardContent className="pt-6">
             <div className="flex items-center justify-between mb-2">
