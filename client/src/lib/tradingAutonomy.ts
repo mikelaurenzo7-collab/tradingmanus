@@ -62,11 +62,11 @@ export function getAutonomyModeDescription(mode: TradingAutonomyMode) {
     case "manual":
       return "The agent may research and rank setups, but it will not place live orders.";
     case "approval_required":
-      return "The agent prepares candidate trades, but every live order still needs your explicit approval.";
+      return "The agent prepares candidate trades during active app use, but every live order still needs your explicit approval.";
     case "semi_autonomous":
-      return "The agent may auto-execute smaller trades that meet your thresholds, while larger trades still pause for approval.";
+      return "When an execution flow is actively triggered in the app, the agent may auto-execute smaller trades that meet your thresholds while larger trades still pause for approval.";
     case "fully_autonomous":
-      return "The agent may place eligible live orders automatically within your stored guardrails while live trading is armed.";
+      return "When an eligible execution flow is actively running, the agent may place live orders automatically within your stored guardrails. This setting alone does not start a background trade-search worker.";
   }
 }
 
@@ -77,9 +77,9 @@ export function getExecutionCadenceLabel(cadence: ExecutionCadence) {
     case "session_assisted":
       return "During guided sessions";
     case "hourly_watch":
-      return "Hourly watch";
+      return "Hourly review policy";
     case "continuous_watch":
-      return "Continuous watch";
+      return "Continuous review policy";
   }
 }
 
@@ -113,7 +113,7 @@ export function getAutonomyStatusSummary(preferences: TradingPreferences) {
 
   return {
     title: `${getAutonomyModeLabel(preferences.autonomyMode)} is armed`,
-    body: "The app may submit live orders according to your stored thresholds and risk posture.",
+    body: "Your live-trading policy is armed for eligible execution flows, but this build does not keep searching for trades in the background while you are away.",
     tone: "text-emerald-300",
   };
 }

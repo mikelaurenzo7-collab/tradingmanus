@@ -389,7 +389,7 @@ This iteration prioritizes prediction quality by introducing a more independent 
 - [ ] Resume from checkpoint bbd75fbc and continue the remaining dogfood-readiness work until the next reviewable checkpoint
 - [ ] Continue improving the signal-selection path so standard Kalshi markets produce trustworthy actionable candidates when real opportunities exist
 - [ ] Continue validating candidate-order preparation and execution readiness for the Founders account under full autonomy without placing a live trade unless a real opportunity emerges
-- [ ] Assess the quantgalore Kalshi trading repository for reusable execution, market-selection, and signal-quality patterns that can strengthen dogfood trading readiness safely
+- [x] Assess the quantgalore Kalshi trading repository for reusable execution, market-selection, and signal-quality patterns that can strengthen dogfood trading readiness safely
 - [ ] Review the broader GitHub Kalshi API topic resources for reusable execution, market-data, and candidate-selection patterns that can strengthen the current dogfood-trading pipeline safely
 - [x] Fix the generate-signals fallback bug where missing fundamental probabilities make value-play confidence NaN, causing otherwise actionable live markets to produce zero candidates
 - [x] Verify with live Kalshi market scans that the first-page actionable markets can now produce trustworthy non-placeholder signal candidates before any execution-path validation
@@ -397,3 +397,6 @@ This iteration prioritizes prediction quality by introducing a more independent 
 - [x] Replace any remaining previous branding with Laurenzo across the app, including mobile-visible naming and browser-visible metadata
 - [x] Determine whether the remaining previous-product naming is coming from mutable user-facing site settings or the internal project slug, and switch every user-facing instance to Laurenzo
 - [x] Force the published public-domain browser title to Laurenzo at runtime so platform-managed title injection cannot keep showing the old name on mobile browsers
+- [x] Add regression coverage proving that arming live trading updates policy state only and does not submit a Kalshi order by itself
+- [x] Verify whether autonomous trading continues searching for trades when the user is inactive, and document the exact current operational limits truthfully
+- [x] Update autonomy and dashboard messaging so the app does not imply continuous background trade searching when no scheduled or persistent search worker exists yet

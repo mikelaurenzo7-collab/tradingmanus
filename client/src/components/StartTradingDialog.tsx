@@ -98,7 +98,7 @@ export function StartTradingDialog({
             <Alert>
               <AlertTriangle className="h-4 w-4" />
               <AlertDescription>
-                Manual mode cannot arm live trading. If you want the app to submit live orders, switch to Approval Required, Semi-autonomous, or Fully Autonomous first.
+                Manual mode cannot arm live trading. If you want the app to submit live orders during eligible in-app execution flows, switch to Approval Required, Semi-autonomous, or Fully Autonomous first.
               </AlertDescription>
             </Alert>
 
@@ -213,7 +213,7 @@ export function StartTradingDialog({
             <Alert>
               <AlertTriangle className="h-4 w-4" />
               <AlertDescription>
-                Arming live trading does not change your stored risk controls. It only enables the app to execute according to the autonomy mode and thresholds you selected.
+                Arming live trading does not change your stored risk controls. It only stores the execution permission used by eligible in-app trading flows; this build does not start a background trade-search process while you are away.
               </AlertDescription>
             </Alert>
 

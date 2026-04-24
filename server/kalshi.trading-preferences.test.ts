@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   saveTradingPreferences: vi.fn(),
   getKalshiCredentials: vi.fn(),
   logAuditEvent: vi.fn(),
+  placeKalshiOrder: vi.fn(),
 }));
 
 vi.mock("./db", () => ({
@@ -57,7 +58,7 @@ vi.mock("./_core/kalshiMarketData", () => ({
 }));
 
 vi.mock("./_core/kalshiExecution", () => ({
-  placeKalshiOrder: vi.fn(),
+  placeKalshiOrder: mocks.placeKalshiOrder,
   cancelKalshiOrder: vi.fn(),
   getKalshiOrderStatus: vi.fn(),
   getKalshiPositions: vi.fn(async () => []),
@@ -221,6 +222,7 @@ describe("kalshi trading preferences", () => {
     const result = await caller.kalshi.setTradingActivation({ enabled: true });
 
     expect(mocks.saveTradingPreferences).toHaveBeenCalledWith(7, armedPreferences);
+    expect(mocks.placeKalshiOrder).not.toHaveBeenCalled();
     expect(mocks.logAuditEvent).toHaveBeenCalledWith(
       "live_trading_armed",
       "Mode: semi_autonomous",
