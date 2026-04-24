@@ -10,7 +10,7 @@ Kalshi-focused trading dashboard for local testing and deployment validation.
 
 ## Environment setup
 
-1. Copy `/home/runner/work/tradingmanus/tradingmanus/.env.example` to `.env`.
+1. Copy `.env.example` to `.env`.
 2. Fill in the required values:
    - `DATABASE_URL`
    - `JWT_SECRET`
