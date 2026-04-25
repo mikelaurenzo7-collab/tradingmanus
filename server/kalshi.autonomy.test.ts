@@ -27,6 +27,8 @@ const mocks = vi.hoisted(() => ({
   getLatestAutonomyRun: vi.fn(),
   getTodayKalshiOrderCount: vi.fn(),
   getKalshiCapital: vi.fn(),
+  getKalshiOrder: vi.fn(),
+  createKalshiOrder: vi.fn(),
   syncKalshiCapitalWithLiveEquity: vi.fn(),
   getOpenKalshiPositions: vi.fn(),
   getTodayRealizedLoss: vi.fn(),
@@ -34,6 +36,8 @@ const mocks = vi.hoisted(() => ({
   createAutonomyRun: vi.fn(),
   updateAutonomyRun: vi.fn(),
   placeKalshiOrder: vi.fn(),
+  syncPendingOrders: vi.fn(),
+  syncLivePositions: vi.fn(),
 }));
 
 vi.mock("./db.trading-preferences", () => ({
@@ -51,6 +55,8 @@ vi.mock("./db", () => ({
   getLatestAutonomyRun: mocks.getLatestAutonomyRun,
   getTodayKalshiOrderCount: mocks.getTodayKalshiOrderCount,
   getKalshiCapital: mocks.getKalshiCapital,
+  getKalshiOrder: mocks.getKalshiOrder,
+  createKalshiOrder: mocks.createKalshiOrder,
   syncKalshiCapitalWithLiveEquity: mocks.syncKalshiCapitalWithLiveEquity,
   getOpenKalshiPositions: mocks.getOpenKalshiPositions,
   getTodayRealizedLoss: mocks.getTodayRealizedLoss,
@@ -85,6 +91,11 @@ vi.mock("./_core/tradingReviewer", () => ({
 
 vi.mock("./_core/kalshiExecution", () => ({
   placeKalshiOrder: mocks.placeKalshiOrder,
+}));
+
+vi.mock("./_core/kalshiOrderSync", () => ({
+  syncPendingOrders: mocks.syncPendingOrders,
+  syncLivePositions: mocks.syncLivePositions,
 }));
 
 vi.mock("./db.training", () => ({
@@ -154,6 +165,8 @@ describe("scheduled away-from-chat trading", () => {
     mocks.getLatestAutonomyRun.mockResolvedValue(null);
     mocks.getTodayKalshiOrderCount.mockResolvedValue(0);
     mocks.getKalshiCapital.mockResolvedValue({ currentBalance: 100, startingBalance: 100 });
+    mocks.getKalshiOrder.mockResolvedValue({ orderId: "order-123", status: "pending" });
+    mocks.createKalshiOrder.mockResolvedValue(undefined);
     mocks.syncKalshiCapitalWithLiveEquity.mockResolvedValue(undefined);
     mocks.getOpenKalshiPositions.mockResolvedValue([]);
     mocks.getTodayRealizedLoss.mockResolvedValue(0);
@@ -161,6 +174,8 @@ describe("scheduled away-from-chat trading", () => {
     mocks.createAutonomyRun.mockResolvedValue({ runId: "run-123" });
     mocks.updateAutonomyRun.mockResolvedValue({ runId: "run-123" });
     mocks.placeKalshiOrder.mockResolvedValue({ success: true, orderId: "order-123" });
+    mocks.syncPendingOrders.mockResolvedValue(undefined);
+    mocks.syncLivePositions.mockResolvedValue(undefined);
   });
 
   it("skips hourly scheduled runs that already executed recently", async () => {
@@ -243,6 +258,8 @@ describe("scheduled away-from-chat trading", () => {
     expect(result.orderPlaced).toBe(true);
     expect(result.orderId).toBe("order-123");
     expect(result.executedMarketId).toBe("KXTEST-1");
+    expect(result.reconciliationStatus).toBe("reconciled");
+    expect(result.reconciliationReason).toContain("synced pending orders");
     expect(result.decision).toMatchObject({
       marketId: "KXTEST-1",
       side: "yes",
@@ -254,6 +271,8 @@ describe("scheduled away-from-chat trading", () => {
     expect(result.decision?.orderExposure).toBeCloseTo(4.73, 6);
     expect(result.decision?.maxLossOnTrade).toBeCloseTo(4.73, 6);
     expect(mocks.placeKalshiOrder).toHaveBeenCalledWith(7, "KXTEST-1", "yes", 11, 0.43);
+    expect(mocks.syncPendingOrders).toHaveBeenCalledWith(7);
+    expect(mocks.syncLivePositions).toHaveBeenCalledWith(7);
     expect(mocks.logAuditEvent).toHaveBeenNthCalledWith(
       2,
       "scheduled_autonomy_order_placed",
@@ -291,11 +310,19 @@ describe("scheduled away-from-chat trading", () => {
 
     expect(result.status).toBe("skipped");
     expect(result.reason).toContain("already in progress or completed");
+    expect(mocks.createAutonomyRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runKey: "scheduled:7:continuous_watch:2026-04-25T08:45:00.000Z",
+      })
+    );
     expect(mocks.fetchKalshiAccountEquity).not.toHaveBeenCalled();
     expect(mocks.updateAutonomyRun).not.toHaveBeenCalled();
   });
 
-  it("records reconciliation-needed executions when the exchange accepts an order but the local ledger write fails", async () => {
+  it("repairs the local order ledger and reconciles the execution when the exchange accepts an order but the local write initially fails", async () => {
+    mocks.getKalshiOrder
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ orderId: "order-123", status: "pending" });
     mocks.placeKalshiOrder.mockResolvedValueOnce({
       success: true,
       orderId: "order-123",
@@ -308,13 +335,13 @@ describe("scheduled away-from-chat trading", () => {
     const result = await runScheduledAutonomousTrading(testUser);
 
     expect(result.status).toBe("executed");
-    expect(result.reconciliationStatus).toBe("pending");
-    expect(result.reconciliationReason).toContain("local order ledger write failed");
-    expect(mocks.updateAutonomyRun).toHaveBeenCalledWith(
-      expect.any(String),
-      7,
+    expect(result.reconciliationStatus).toBe("reconciled");
+    expect(result.reconciliationReason).toContain("repaired the missing local order ledger row");
+    expect(mocks.createKalshiOrder).toHaveBeenCalledWith(
       expect.objectContaining({
-        reconciliationStatus: "pending",
+        userId: 7,
+        orderId: "order-123",
+        marketId: "KXTEST-1",
       })
     );
   });

@@ -18,6 +18,7 @@ import {
 } from "./kalshiSignals";
 import { placeKalshiOrder } from "./kalshiExecution";
 import { calculateKalshiBuyOrderRisk, estimateContractsForRiskBudget } from "./kalshiRisk";
+import { syncPendingOrders, syncLivePositions } from "./kalshiOrderSync";
 import { assertPositiveIntegerUserId } from "./userScope";
 import { reviewSignalsWithTrader } from "./tradingReviewer";
 
@@ -58,6 +59,9 @@ export type AwayTradingCandidateSummary = {
   executionScore: number | null;
   expectedValue: number;
   limitPrice: number;
+  signalType?: string;
+  impliedProbability?: number;
+  reasoning?: string;
 };
 
 export type AwayTradingRejectedCandidate = AwayTradingCandidateSummary & {
@@ -209,13 +213,14 @@ function getRunBucketStart(now: Date) {
 
 function buildRunKey(
   userId: number,
-  triggeredByOpenId: string,
   executionCadence: string,
   now: Date
 ) {
   const bucket = getRunBucketStart(now).toISOString();
-  // Format: scheduled:<userId>:<triggerSource>:<executionCadence>:<bucketStartIso>
-  return `scheduled:${userId}:${buildTriggerSource(triggeredByOpenId)}:${executionCadence}:${bucket}`;
+  // Format: scheduled:<userId>:<executionCadence>:<bucketStartIso>
+  // Trigger source is intentionally excluded so overlapping cron retries,
+  // local schedulers, and authenticated replays share the same cycle key.
+  return `scheduled:${userId}:${executionCadence}:${bucket}`;
 }
 
 function summarizeCandidate(signal: KalshiSignal & { executionScore?: number }): AwayTradingCandidateSummary {
@@ -226,6 +231,139 @@ function summarizeCandidate(signal: KalshiSignal & { executionScore?: number }):
     executionScore: signal.executionScore ?? null,
     expectedValue: signal.expectedValue,
     limitPrice: signal.marketPrice,
+    signalType: signal.signalType,
+    impliedProbability: signal.impliedProbability,
+    reasoning: signal.reasoning,
+  };
+}
+
+async function persistRunProgress(
+  userId: number,
+  runId: string,
+  updates: Record<string, unknown>
+) {
+  await db.updateAutonomyRun(runId, userId, updates);
+}
+
+async function repairMissingLocalOrderLedger(input: {
+  userId: number;
+  orderId: string;
+  marketId: string;
+  side: "yes" | "no";
+  quantity: number;
+  limitPrice: number;
+}) {
+  const existing = await db.getKalshiOrder(input.orderId, input.userId);
+  if (existing) {
+    return {
+      repaired: false,
+      localOrderFound: true,
+      reason: "local order ledger already contained the accepted order",
+    };
+  }
+
+  try {
+    await db.createKalshiOrder({
+      userId: input.userId,
+      orderId: input.orderId,
+      marketId: input.marketId,
+      action: "buy",
+      side: input.side,
+      quantity: input.quantity,
+      limitPrice: input.limitPrice,
+    });
+  } catch (error: any) {
+    if (error?.code !== "23505") {
+      throw error;
+    }
+  }
+
+  const repairedOrder = await db.getKalshiOrder(input.orderId, input.userId);
+  return {
+    repaired: Boolean(repairedOrder),
+    localOrderFound: Boolean(repairedOrder),
+    reason: repairedOrder
+      ? "repaired the missing local order ledger row from the accepted exchange order"
+      : "the exchange order was accepted, but the local order ledger row could not be verified after repair",
+  };
+}
+
+async function reconcileAutonomyExecution(input: {
+  userId: number;
+  orderId: string;
+  marketId: string;
+  side: "yes" | "no";
+  quantity: number;
+  limitPrice: number;
+  orderExposure: number;
+  maxLossOnTrade: number;
+  exchangeAcceptedButLocalWriteFailed: boolean;
+  initialReason?: string | null;
+}) {
+  const steps: string[] = [];
+
+  if (input.exchangeAcceptedButLocalWriteFailed) {
+    const repaired = await repairMissingLocalOrderLedger({
+      userId: input.userId,
+      orderId: input.orderId,
+      marketId: input.marketId,
+      side: input.side,
+      quantity: input.quantity,
+      limitPrice: input.limitPrice,
+    });
+    steps.push(repaired.reason);
+  }
+
+  await syncPendingOrders(input.userId);
+  steps.push("synced pending orders against the exchange");
+
+  await syncLivePositions(input.userId);
+  steps.push("synced live positions against the exchange");
+
+  const refreshedOrder = await db.getKalshiOrder(input.orderId, input.userId);
+  const openPositions = await db.getOpenKalshiPositions(input.userId);
+  const openPosition = openPositions.find((position: any) => String(position.marketId) === input.marketId) ?? null;
+
+  let postTradeCapital = null;
+  try {
+    const creds = await kalshiCredDb.getKalshiCredentials(input.userId);
+    if (creds?.apiKey && creds?.privateKey) {
+      const equity = await fetchKalshiAccountEquity(creds.apiKey, creds.privateKey);
+      if (!equity.error) {
+        await Promise.all([
+          kalshiCredDb.updateKalshiAccountEquity(input.userId, equity.equity),
+          db.syncKalshiCapitalWithLiveEquity(equity.equity, input.userId),
+        ]);
+        postTradeCapital = equity.equity;
+        steps.push("refreshed live capital after execution");
+      } else {
+        steps.push(`capital refresh skipped: ${equity.error}`);
+      }
+    }
+  } catch (error) {
+    steps.push(`capital refresh failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  const reconciliationPending =
+    !refreshedOrder ||
+    (input.exchangeAcceptedButLocalWriteFailed && !refreshedOrder);
+
+  return {
+    status: reconciliationPending ? "pending" as const : "reconciled" as const,
+    reason: reconciliationPending
+      ? input.initialReason ??
+        "the exchange accepted the order, but the local ledger still could not verify the accepted order after repair and sync attempts"
+      : steps.join("; "),
+    summary: {
+      orderId: input.orderId,
+      marketId: input.marketId,
+      localOrderFound: Boolean(refreshedOrder),
+      openPositionFound: Boolean(openPosition),
+      postTradeCapital,
+      orderExposure: input.orderExposure,
+      maxLossOnTrade: input.maxLossOnTrade,
+      steps,
+    },
   };
 }
 
@@ -576,7 +714,7 @@ export async function runScheduledAutonomousTrading(
   const preferences = await tradingPreferencesDb.getTradingPreferences(userId);
   const runRecord = await db.createAutonomyRun({
     runId,
-    runKey: buildRunKey(userId, triggeredByOpenId, preferences.executionCadence, options.now ?? new Date()),
+    runKey: buildRunKey(userId, preferences.executionCadence, options.now ?? new Date()),
     userId,
     triggeredByOpenId,
     triggerSource,
@@ -672,6 +810,14 @@ export async function runScheduledAutonomousTrading(
   const candidateSet = executionCandidates.map(summarizeCandidate);
 
   const topCandidate = executionCandidates[0] ?? null;
+
+  await persistRunProgress(userId, runId, {
+    signalsGenerated: savedSignals.length,
+    executionCandidates: executionCandidates.length,
+    candidateMarketId: topCandidate?.marketId ?? null,
+    candidateSet: safeJsonStringify(candidateSet),
+    decision: safeJsonStringify(buildDecisionDetails(topCandidate)),
+  });
 
   await db.logAuditEvent(
     SCHEDULED_SCAN_EVENT,
@@ -996,6 +1142,48 @@ export async function runScheduledAutonomousTrading(
     });
   }
 
+  const reconciliation = await (async () => {
+    try {
+      return await reconcileAutonomyExecution({
+        userId,
+        orderId: result.orderId!,
+        marketId: eligibleSignal.marketId,
+        side: eligibleSignal.side,
+        quantity,
+        limitPrice,
+        orderExposure,
+        maxLossOnTrade,
+        exchangeAcceptedButLocalWriteFailed: Boolean(result.needsReconciliation),
+        initialReason: result.reconciliationReason ?? null,
+      });
+    } catch (error) {
+      return {
+        status: "pending" as const,
+        reason: `post-order reconciliation failed: ${error instanceof Error ? error.message : String(error)}`,
+        summary: {
+          orderId: result.orderId!,
+          marketId: eligibleSignal.marketId,
+          localOrderFound: false,
+          openPositionFound: false,
+          postTradeCapital: null,
+          orderExposure,
+          maxLossOnTrade,
+          steps: ["post-order reconciliation crashed before completion"],
+        },
+      };
+    }
+  })();
+
+  await persistRunProgress(userId, runId, {
+    reconciliationStatus: reconciliation.status,
+    reconciliationReason: reconciliation.reason,
+    exchangeRequest: safeJsonStringify(result.exchangeRequest ?? null),
+    exchangeResponse: safeJsonStringify({
+      exchange: result.exchangeResponse ?? null,
+      reconciliation: reconciliation.summary,
+    }),
+  });
+
   await db.logAuditEvent(
     "scheduled_autonomy_order_placed",
     JSON.stringify({
@@ -1012,11 +1200,11 @@ export async function runScheduledAutonomousTrading(
       maxBudget,
       orderExposure,
       maxLossOnTrade,
-      reconciliationStatus: result.needsReconciliation ? "pending" : "not_required",
-      reconciliationReason: result.reconciliationReason ?? null,
-    }),
-    triggeredByOpenId
-  );
+        reconciliationStatus: reconciliation.status,
+        reconciliationReason: reconciliation.reason,
+      }),
+      triggeredByOpenId
+    );
 
   return finalize({
     status: "executed",
@@ -1031,8 +1219,8 @@ export async function runScheduledAutonomousTrading(
     candidateMarketId: eligibleSignal.marketId,
     autonomyMode: preferences.autonomyMode,
     executionCadence: preferences.executionCadence,
-    reconciliationStatus: result.needsReconciliation ? "pending" : "not_required",
-    reconciliationReason: result.reconciliationReason ?? null,
+    reconciliationStatus: reconciliation.status,
+    reconciliationReason: reconciliation.reason,
     candidateSet,
     rejectedCandidates,
     decision: buildDecisionDetails(eligibleSignal, {
@@ -1045,7 +1233,10 @@ export async function runScheduledAutonomousTrading(
   }, {
     appliedGuardrails: safeJsonStringify(buildAppliedGuardrails(preferences, riskLimits)),
     exchangeRequest: safeJsonStringify(result.exchangeRequest ?? null),
-    exchangeResponse: safeJsonStringify(result.exchangeResponse ?? null),
+    exchangeResponse: safeJsonStringify({
+      exchange: result.exchangeResponse ?? null,
+      reconciliation: reconciliation.summary,
+    }),
   });
 }
 
