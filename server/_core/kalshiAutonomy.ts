@@ -18,7 +18,7 @@ import {
 import { placeKalshiOrder } from "./kalshiExecution";
 import { calculateKalshiBuyOrderRisk, estimateContractsForRiskBudget } from "./kalshiRisk";
 import { assertPositiveIntegerUserId } from "./userScope";
-import { reviewSignalsWithClaude } from "./claudeTrader";
+import { reviewSignalsWithOpenAi } from "./openaiTrader";
 
 const BASE_RISK_LIMITS = {
   maxLossPerTrade: 5,
@@ -277,9 +277,9 @@ async function generateScheduledSignals(userId: number, minConfidence: number, a
     ? applyInstructionsToSignals(conditionFilteredSignals, activeInstructions)
     : conditionFilteredSignals;
 
-  // Claude acts as the final autonomous trader: vetoes weak candidates and
+  // OpenAI acts as the final autonomous reviewer: vetoes weak candidates and
   // tweaks confidence/EV within tight bounds before any execution decision.
-  const savedSignals = await reviewSignalsWithClaude({
+  const savedSignals = await reviewSignalsWithOpenAi({
     markets: actionableMarkets,
     signals: instructionFilteredSignals,
     maxSignals: 12,

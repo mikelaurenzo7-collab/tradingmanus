@@ -110,7 +110,7 @@ export default function RiskControls() {
         <div>
           <h1 className="text-2xl font-bold">Risk Controls</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Hard limits enforced before every live order. Claude never bypasses these.
+            Hard limits enforced before every live order. OpenAI never bypasses these.
           </p>
         </div>
         <Button
