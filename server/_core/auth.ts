@@ -2,7 +2,7 @@ import crypto from "crypto";
 import { parse as parseCookieHeader } from "cookie";
 import type { IncomingHttpHeaders } from "node:http";
 import { SignJWT, jwtVerify } from "jose";
-import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
+import { COOKIE_NAME, ONE_YEAR_MS } from "../../shared/const";
 import type { User } from "../../drizzle/schema";
 import * as db from "../db";
 import { ENV } from "./env";
