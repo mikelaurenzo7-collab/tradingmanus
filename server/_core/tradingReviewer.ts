@@ -35,13 +35,14 @@ type ProviderReviewResponse = {
 
 const DEFAULT_OPENAI_ENDPOINT = "https://api.openai.com/v1/chat/completions";
 const DEFAULT_MAX_SIGNALS = 12;
+const MAX_REASONING_CHARS = 240;
 
 const reviewSchema = z.object({
   marketId: z.string().min(1),
   approved: z.boolean(),
   confidenceAdjustment: z.number().finite().optional(),
   expectedValueAdjustment: z.number().finite().optional(),
-  reasoning: z.string().trim().max(240).optional(),
+  reasoning: z.string().trim().max(MAX_REASONING_CHARS).optional(),
 });
 
 const reviewResponseSchema = z.union([
@@ -320,7 +321,7 @@ function combineApprovedSignal(
   const reviewerReasoning = providerReviews
     .map(({ provider, review }) => {
       const prefix = provider === "openai" ? "OpenAI" : "Claude";
-      const text = review.reasoning?.trim().slice(0, 240) || `${prefix} approved after conservative review.`;
+      const text = review.reasoning?.trim().slice(0, MAX_REASONING_CHARS) || `${prefix} approved after conservative review.`;
       return `${prefix}: ${text}`;
     })
     .join(" | ");
