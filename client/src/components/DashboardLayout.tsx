@@ -17,16 +17,17 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
-import { getLoginUrl } from "@/const";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { LayoutDashboard, LogOut, TrendingUp, Shield, FileText, Plug, BookOpen, BarChart3, Brain, Briefcase, LineChart, SlidersHorizontal, AlertTriangle, Loader2 } from "lucide-react";
-import { CSSProperties, useEffect, useState } from "react";
+import { CSSProperties, FormEvent, useEffect, useState } from "react";
+import { Link } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { Button } from "./ui/button";
+import { Input } from "./ui/input";
 import { trpc } from "@/lib/trpc";
 
 const menuItems = [
-  { icon: LayoutDashboard, label: "Dashboard", path: "/" },
+  { icon: LayoutDashboard, label: "Dashboard", path: "/dashboard" },
   { icon: Plug, label: "Connect Kalshi", path: "/connect" },
   { icon: SlidersHorizontal, label: "Trading Autonomy", path: "/autonomy" },
   { icon: TrendingUp, label: "Signals", path: "/signals" },
@@ -57,8 +58,19 @@ export default function DashboardLayout({
     return saved ? parseInt(saved, 10) : DEFAULT_WIDTH;
   });
   const { loading, user, logout } = useAuth();
-  const loginUrl = getLoginUrl();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loginError, setLoginError] = useState<string | null>(null);
   const utils = trpc.useUtils();
+  const loginMutation = trpc.auth.login.useMutation({
+    onSuccess: async (loggedInUser) => {
+      utils.auth.me.setData(undefined, loggedInUser);
+      setPassword("");
+      setLoginError(null);
+      await utils.auth.me.invalidate();
+    },
+    onError: (error) => setLoginError(error.message || "Unable to sign in."),
+  });
   const tradingPreferencesQuery = trpc.kalshi.getTradingPreferences.useQuery(undefined, {
     enabled: Boolean(user),
   });
@@ -86,37 +98,56 @@ export default function DashboardLayout({
     return <DashboardLayoutSkeleton />
   }
 
+  const handleLogin = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setLoginError(null);
+    loginMutation.mutate({ email: email.trim(), password });
+  };
+
   if (!user) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
-        <div className="flex flex-col items-center gap-8 p-8 max-w-md w-full scale-in">
+        <form onSubmit={handleLogin} className="flex flex-col items-center gap-8 p-8 max-w-md w-full scale-in">
           <div className="flex flex-col items-center gap-6">
             <div className="text-6xl font-bold gradient-text">LAURENZO</div>
             <h1 className="text-3xl font-bold tracking-tight text-center gradient-text">
               Kalshi Trading
             </h1>
             <p className="text-sm text-muted-foreground text-center max-w-sm">
-              Sign in to access your Kalshi trading dashboard, live signals, and risk controls.
+              Founder-only sign-in for Claude-assisted Kalshi signals, live execution controls, and the audit trail.
             </p>
           </div>
+          <div className="w-full space-y-3">
+            <Input
+              autoComplete="email"
+              inputMode="email"
+              placeholder="Founder email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              disabled={loginMutation.isPending}
+            />
+            <Input
+              autoComplete="current-password"
+              placeholder="Password"
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              disabled={loginMutation.isPending}
+            />
+            {loginError ? <p className="text-sm text-rose-300">{loginError}</p> : null}
+          </div>
           <Button
-            onClick={() => {
-              if (loginUrl) {
-                window.location.href = loginUrl;
-              }
-            }}
-            disabled={!loginUrl}
+            type="submit"
+            disabled={loginMutation.isPending || !email.trim() || !password}
             size="lg"
             className="w-full shadow-lg hover:shadow-xl transition-all laurenzo-button"
           >
-            {loginUrl ? "Sign in" : "Sign-in not configured"}
+            {loginMutation.isPending ? "Signing in..." : "Sign in"}
           </Button>
           <p className="text-xs text-muted-foreground text-center">
-            {loginUrl
-              ? "After signing in: Connect your Kalshi API key to start trading"
-              : "Set VITE_OAUTH_PORTAL_URL and VITE_APP_ID to enable sign-in for this preview."}
+            After signing in, connect Kalshi and set Trading Autonomy before arming live trading.
           </p>
-        </div>
+        </form>
       </div>
     );
   }
@@ -140,10 +171,10 @@ export default function DashboardLayout({
             {menuItems.map((item) => (
               <SidebarMenuItem key={item.path}>
                 <SidebarMenuButton asChild>
-                  <a href={item.path} className="flex items-center gap-2">
+                  <Link href={item.path} className="flex items-center gap-2">
                     <item.icon className="w-4 h-4" />
                     <span>{item.label}</span>
-                  </a>
+                  </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
             ))}

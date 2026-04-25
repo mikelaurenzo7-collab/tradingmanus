@@ -21,16 +21,19 @@ export async function createTrainingInstruction(payload: {
   if (!database) throw new Error("Database not initialized");
 
   try {
-    const result = await database.insert(trainingInstructions).values({
-      userId: payload.userId,
-      title: payload.title,
-      description: payload.description,
-      instructionType: payload.instructionType,
-      priority: payload.priority || 0,
-      isActive: 1,
-    });
+    const [created] = await database
+      .insert(trainingInstructions)
+      .values({
+        userId: payload.userId,
+        title: payload.title,
+        description: payload.description,
+        instructionType: payload.instructionType,
+        priority: payload.priority || 0,
+        isActive: 1,
+      })
+      .returning({ id: trainingInstructions.id });
 
-    return { success: true, instructionId: (result as any).insertId };
+    return { success: true, instructionId: created?.id };
   } catch (error) {
     console.error("[Database] Create training instruction failed:", error);
     throw error;

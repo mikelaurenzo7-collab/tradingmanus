@@ -31,7 +31,8 @@ export async function saveKalshiCredentials(
         accountStatus: "connected",
         lastSyncedAt: new Date(),
       })
-      .onDuplicateKeyUpdate({
+      .onConflictDoUpdate({
+        target: kalshiCredentials.userId,
         set: {
           apiKeyEncrypted: encryptedApiKey,
           privateKeyEncrypted: encryptedPrivateKey,

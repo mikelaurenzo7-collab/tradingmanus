@@ -13,49 +13,19 @@ import {
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 import { eq, and, desc, gte, inArray, ne } from "drizzle-orm";
-import { drizzle as drizzleInit } from "drizzle-orm/mysql2";
-import * as mysql from "mysql2/promise";
-import { readFileSync, readdirSync } from "fs";
-import { join, dirname } from "path";
-import { fileURLToPath } from "url";
+import { neon } from "@neondatabase/serverless";
+import { drizzle as drizzleInit } from "drizzle-orm/neon-http";
 import { assertPositiveIntegerUserId } from "./_core/userScope";
 
 let _db: any = null;
-let _pool: mysql.Pool | null = null;
 let _dbInitPromise: Promise<any> | null = null;
-
-function buildMysqlPool() {
-  if (!ENV.databaseUrl) {
-    return null;
-  }
-
-  const url = new URL(ENV.databaseUrl);
-
-  return mysql.createPool({
-    host: url.hostname,
-    user: decodeURIComponent(url.username),
-    password: decodeURIComponent(url.password),
-    database: url.pathname.slice(1),
-    port: parseInt(url.port || "3306", 10),
-    ssl: {
-      rejectUnauthorized: false,
-    },
-    waitForConnections: true,
-    connectionLimit: 10,
-    maxIdle: 10,
-    idleTimeout: 60_000,
-    queueLimit: 0,
-    enableKeepAlive: true,
-    keepAliveInitialDelay: 0,
-  });
-}
 
 async function initializeDb(forceRefresh: boolean = false) {
   if (!ENV.databaseUrl) {
     return null;
   }
 
-  if (_db && _pool && !forceRefresh) {
+  if (_db && !forceRefresh) {
     return _db;
   }
 
@@ -64,39 +34,15 @@ async function initializeDb(forceRefresh: boolean = false) {
   }
 
   _dbInitPromise = (async () => {
-    if (forceRefresh && _pool) {
-      try {
-        await _pool.end();
-      } catch (error) {
-        console.warn("[Database] Failed to close stale pool during refresh:", error);
-      }
-      _pool = null;
+    if (forceRefresh) {
       _db = null;
     }
 
-    const pool = buildMysqlPool();
-    if (!pool) {
-      return null;
-    }
-
     try {
-      const connection = await pool.getConnection();
-      try {
-        await connection.ping();
-      } finally {
-        connection.release();
-      }
-
-      _pool = pool;
-      _db = drizzleInit(pool);
+      const sql = neon(ENV.databaseUrl);
+      _db = drizzleInit(sql);
       return _db;
     } catch (error) {
-      try {
-        await pool.end();
-      } catch (closeError) {
-        console.warn("[Database] Failed to clean up failed pool init:", closeError);
-      }
-      _pool = null;
       _db = null;
       throw error;
     }
@@ -110,57 +56,11 @@ async function initializeDb(forceRefresh: boolean = false) {
 }
 
 async function ensureHealthyDb() {
-  if (!_db || !_pool) {
+  if (!_db) {
     return initializeDb();
   }
 
-  try {
-    const connection = await _pool.getConnection();
-    try {
-      await connection.ping();
-    } finally {
-      connection.release();
-    }
-
-    return _db;
-  } catch (error) {
-    console.warn("[Database] Existing pool became unhealthy, recreating it:", error);
-    return initializeDb(true);
-  }
-}
-
-async function verifyKalshiUserScopeColumns(connection: mysql.PoolConnection) {
-  const scopedTables = [
-    "kalshiOrders",
-    "kalshiFills",
-    "kalshiPositions",
-    "kalshiSignals",
-    "kalshiPerformance",
-    "kalshiCapital",
-  ];
-  const placeholders = scopedTables.map(() => "?").join(", ");
-  const [rows] = await connection.query(
-    `SELECT TABLE_NAME, COLUMN_DEFAULT, IS_NULLABLE
-       FROM INFORMATION_SCHEMA.COLUMNS
-      WHERE TABLE_SCHEMA = DATABASE()
-        AND COLUMN_NAME = 'userId'
-        AND TABLE_NAME IN (${placeholders})`,
-    scopedTables,
-  );
-  const byTable = new Map((rows as any[]).map((row) => [row.TABLE_NAME, row]));
-
-  for (const tableName of scopedTables) {
-    const column = byTable.get(tableName);
-    if (!column) {
-      throw new Error(`[Migrations] Missing required ${tableName}.userId column`);
-    }
-    if (column.IS_NULLABLE !== "NO") {
-      throw new Error(`[Migrations] ${tableName}.userId must be NOT NULL`);
-    }
-    if (column.COLUMN_DEFAULT !== null) {
-      throw new Error(`[Migrations] ${tableName}.userId must not have a default value`);
-    }
-  }
+  return _db;
 }
 
 function assertNonEmptyOpenId(openId: unknown, context: string = "openId") {
@@ -181,47 +81,14 @@ export async function getDb() {
   } catch (error) {
     console.warn("[Database] Failed to connect:", error);
     _db = null;
-    _pool = null;
     return null;
   }
 }
 
 export async function runMigrations(): Promise<void> {
-  if (!ENV.databaseUrl || !_pool) return;
-
-  const migrationsDir = join(dirname(fileURLToPath(import.meta.url)), "../drizzle/migrations");
-  let files: string[];
-  try {
-    files = readdirSync(migrationsDir).filter((f) => f.endsWith(".sql")).sort();
-  } catch {
-    console.warn("[Migrations] migrations folder not found, skipping");
-    return;
-  }
-
-  const connection = await _pool.getConnection();
-  try {
-    for (const file of files) {
-      const sql = readFileSync(join(migrationsDir, file), "utf-8");
-      const statements = sql
-        .split(";")
-        .map((s) => s.replace(/--.*$/gm, "").trim())
-        .filter((s) => s.length > 0);
-
-      for (const statement of statements) {
-        try {
-          await connection.execute(statement);
-        } catch (err: any) {
-          if (["ER_DUP_FIELDNAME", "ER_DUP_KEYNAME", "ER_TABLE_EXISTS_ERROR"].includes(err.code)) continue;
-          console.error(`[Migrations] Statement failed (${err.code ?? "UNKNOWN"}) in ${file}: ${statement.slice(0, 160)}`);
-          throw err;
-        }
-      }
-    }
-    await verifyKalshiUserScopeColumns(connection);
-    console.log(`[Migrations] Applied ${files.length} migration file(s) successfully`);
-  } finally {
-    connection.release();
-  }
+  // Vercel serverless functions must not mutate schema during cold starts.
+  // Run `corepack pnpm db:push` or `corepack pnpm db:generate && corepack pnpm db:migrate`
+  // against Neon before deploying production traffic.
 }
 
 export const db = {
@@ -271,7 +138,7 @@ export async function upsertUser(payload: { openId: string; name?: string; email
       await database.update(users).set(updates).where(eq(users.openId, payload.openId));
     }
   } catch (error: any) {
-    if (error?.code === "ER_DUP_ENTRY") {
+    if (error?.code === "23505") {
       return;
     }
     console.error("[Database] Upsert user failed:", error);
@@ -353,7 +220,8 @@ export async function upsertKalshiMarket(market: any) {
       impliedProbability: market.impliedProbability,
       liquidity,
     })
-    .onDuplicateKeyUpdate({
+    .onConflictDoUpdate({
+      target: kalshiMarkets.marketId,
       set: {
         title: safeTitle,
         category: safeCategory,

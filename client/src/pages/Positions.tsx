@@ -3,6 +3,28 @@ import { Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
 
+type KalshiPositionRow = {
+  id: number;
+  marketId: string;
+  side: "yes" | "no";
+  quantity: number;
+  entryPrice: number;
+  currentPrice: number;
+  unrealizedPnl: number;
+  realizedPnl: number;
+  positionStatus: "open" | "closing" | "closed";
+  openedAt: string | Date;
+  closedAt: string | Date | null;
+};
+
+function formatPrice(value: number) {
+  return Number.isFinite(value) ? `$${value.toFixed(2)}` : "—";
+}
+
+function formatQuantity(value: number) {
+  return Number.isFinite(value) ? value.toString() : "—";
+}
+
 export default function Positions() {
   const positionsQuery = trpc.kalshi.getPositions.useQuery();
   const closePositionMutation = trpc.kalshi.closePosition.useMutation();
@@ -16,17 +38,23 @@ export default function Positions() {
     );
   }
 
-  const positions = positionsQuery.data || [];
+  const positions = ((positionsQuery.data ?? []) as KalshiPositionRow[]).filter(
+    (position) => position.positionStatus !== "closed"
+  );
 
-  const handleClosePosition = async (positionId: number, marketId: string, markPrice: number) => {
+  const handleClosePosition = async (
+    positionId: number,
+    marketId: string,
+    currentPrice: number
+  ) => {
     setClosingId(positionId);
     try {
       await closePositionMutation.mutateAsync({
         positionId,
         marketId,
-        currentPrice: markPrice,
+        currentPrice,
       });
-      positionsQuery.refetch();
+      await positionsQuery.refetch();
     } catch (error) {
       console.error("Failed to close position:", error);
     } finally {
@@ -37,13 +65,9 @@ export default function Positions() {
   return (
     <div className="space-y-6 p-6">
       <div>
-        <h1 className="text-3xl font-bold tracking-wider">
-          <span className="bracket">[</span>
-          OPEN POSITIONS
-          <span className="bracket">]</span>
-        </h1>
+        <h1 className="text-3xl font-bold tracking-wider gradient-text">Open Positions</h1>
         <p className="text-muted-foreground text-sm mt-1">
-          {positions.length} active position{positions.length !== 1 ? 's' : ''} across all markets
+          {positions.length} active Kalshi position{positions.length !== 1 ? "s" : ""}
         </p>
       </div>
 
@@ -56,46 +80,77 @@ export default function Positions() {
           <table className="laurenzo-table">
             <thead>
               <tr>
-                <th>Symbol</th>
                 <th>Market</th>
                 <th>Side</th>
-                <th>Size</th>
+                <th>Quantity</th>
                 <th>Entry Price</th>
-                <th>Mark Price</th>
-                <th>Unrealized PnL</th>
+                <th>Current Price</th>
+                <th>Unrealized P&amp;L</th>
+                <th>Status</th>
                 <th>Opened</th>
                 <th>Action</th>
               </tr>
             </thead>
             <tbody>
-              {positions.map((position: any) => {
-                const unrealizedPnl = (position.currentPrice - position.entryPrice) * position.quantity;
+              {positions.map((position) => {
+                const entryPrice = Number(position.entryPrice ?? 0);
+                const currentPrice = Number(position.currentPrice ?? 0);
+                const quantity = Number(position.quantity ?? 0);
+                const storedUnrealized = Number(position.unrealizedPnl ?? 0);
+                const computedUnrealized =
+                  position.side === "no"
+                    ? quantity * (entryPrice - currentPrice)
+                    : quantity * (currentPrice - entryPrice);
+                const unrealizedPnl =
+                  Number.isFinite(storedUnrealized) && storedUnrealized !== 0
+                    ? storedUnrealized
+                    : computedUnrealized;
                 const isProfit = unrealizedPnl > 0;
 
                 return (
                   <tr key={position.id}>
-                    <td className="font-mono font-bold">{position.symbol}</td>
-                    <td className="capitalize text-xs">{position.market}</td>
+                    <td className="font-mono font-bold text-xs">{position.marketId}</td>
                     <td>
-                      <span className="capitalize">{position.side}</span>
+                      <span
+                        className={
+                          position.side === "yes"
+                            ? "text-emerald-400 font-semibold uppercase"
+                            : "text-rose-400 font-semibold uppercase"
+                        }
+                      >
+                        {position.side}
+                      </span>
                     </td>
-                    <td className="font-mono">{position.size.toFixed(4)}</td>
-                    <td className="font-mono">${position.entryPrice.toFixed(2)}</td>
-                    <td className="font-mono">${position.markPrice.toFixed(2)}</td>
-                    <td className={`font-mono font-bold ${isProfit ? "profit" : "loss"}`}>
-                      ${unrealizedPnl.toFixed(2)}
+                    <td className="font-mono">{formatQuantity(quantity)}</td>
+                    <td className="font-mono">{formatPrice(entryPrice)}</td>
+                    <td className="font-mono">{formatPrice(currentPrice)}</td>
+                    <td
+                      className={`font-mono font-bold ${
+                        isProfit
+                          ? "text-emerald-400"
+                          : unrealizedPnl < 0
+                            ? "text-rose-400"
+                            : "text-muted-foreground"
+                      }`}
+                    >
+                      {isProfit ? "+" : ""}${unrealizedPnl.toFixed(2)}
                     </td>
+                    <td className="capitalize text-xs">{position.positionStatus}</td>
                     <td className="text-xs text-muted-foreground">
-                      {new Date(position.openedAt).toLocaleString()}
+                      {position.openedAt ? new Date(position.openedAt).toLocaleString() : "—"}
                     </td>
                     <td>
                       <Button
                         size="sm"
-                        className="laurenzo-button-kill"
-                        onClick={() => handleClosePosition(position.id, position.marketId, position.currentPrice)}
-                        disabled={closingId === position.id}
+                        variant="destructive"
+                        onClick={() =>
+                          handleClosePosition(position.id, position.marketId, currentPrice)
+                        }
+                        disabled={
+                          closingId === position.id || position.positionStatus === "closing"
+                        }
                       >
-                        <X className="w-3 h-3" />
+                        <X className="w-3 h-3 mr-1" />
                         {closingId === position.id ? "Closing..." : "Close"}
                       </Button>
                     </td>

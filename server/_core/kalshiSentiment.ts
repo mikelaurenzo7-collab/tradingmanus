@@ -1,9 +1,7 @@
 /**
  * Sentiment Analysis Framework for Kalshi Markets
- * Integrates news, social media, market action, and external topic attention.
+ * Integrates news, market action, and external topic attention.
  */
-
-import { callDataApi } from "./dataApi";
 
 export interface SentimentData {
   marketId: string;
@@ -466,79 +464,12 @@ export function extractSocialSentiment(posts: SocialPost[]): number {
   return totalWeight > 0 ? weightedSentiment / totalWeight : 0;
 }
 
-export async function fetchLiveSocialSummary(topic: string): Promise<LiveSocialSummary | null> {
-  const cleanTopic = topic.trim();
-  if (!cleanTopic) {
-    return null;
-  }
-
-  const subreddit = pickSocialSubreddit(cleanTopic);
-  const topicTerms = cleanTopic
-    .toLowerCase()
-    .split(/\s+/)
-    .map((term) => term.replace(/[^a-z0-9]/g, ""))
-    .filter((term) => term.length >= 3)
-    .slice(0, 5);
-
-  try {
-    const payload = (await callDataApi("Reddit/AccessAPI", {
-      query: {
-        subreddit,
-        limit: 10,
-      },
-    })) as {
-      posts?: Array<{
-        data?: {
-          title?: string;
-          url?: string;
-          permalink?: string;
-          subreddit?: string;
-          score?: number;
-          num_comments?: number;
-          created_utc?: number;
-        };
-      }>;
-    };
-
-    const posts = Array.isArray(payload.posts)
-      ? payload.posts
-          .map((postWrapper) => {
-            const post = postWrapper?.data;
-            const title = post?.title?.trim() || "Untitled post";
-            const normalizedTitle = title.toLowerCase();
-            const matchedTerms = topicTerms.filter((term) => normalizedTitle.includes(term));
-            const relevance = topicTerms.length > 0 ? matchedTerms.length / topicTerms.length : 0;
-
-            return {
-              title,
-              url: post?.url || (post?.permalink ? `https://www.reddit.com${post.permalink}` : "https://www.reddit.com"),
-              subreddit: post?.subreddit?.trim() || subreddit,
-              score: Math.max(0, Number(post?.score ?? 0)),
-              commentCount: Math.max(0, Number(post?.num_comments ?? 0)),
-              createdAt: post?.created_utc ? new Date(Number(post.created_utc) * 1000) : new Date(),
-              sentiment: scoreKeywordSentiment(title),
-              relevance,
-            } satisfies SocialPost;
-          })
-          .filter((post) => post.title.length > 0)
-      : [];
-
-    const relevantPosts = posts.filter((post) => post.relevance > 0);
-    const selectedPosts = relevantPosts.length > 0 ? relevantPosts : posts.slice(0, 5);
-
-    return {
-      query: cleanTopic,
-      subreddit,
-      postCount: selectedPosts.length,
-      mentions: relevantPosts.length,
-      posts: selectedPosts,
-      derivedSentiment: extractSocialSentiment(selectedPosts),
-      fetchedAt: new Date(),
-    };
-  } catch (error) {
-    console.error("[Sentiment] Reddit social fetch failed:", error);
-    return null;
-  }
+export async function fetchLiveSocialSummary(_topic: string): Promise<LiveSocialSummary | null> {
+  // Reddit social ingestion was provided by the Manus DataAPI which is no longer
+  // available on Vercel. Return null so downstream sentiment falls back to news +
+  // market price action only. This can be re-enabled once a hosted Reddit
+  // adapter is wired in.
+  return null;
 }
 
 /**

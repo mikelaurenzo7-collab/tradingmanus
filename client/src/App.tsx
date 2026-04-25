@@ -5,7 +5,6 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import DashboardLayout from "./components/DashboardLayout";
 import Dashboard from "./pages/Dashboard";
-import Home from "./pages/Home";
 import Positions from "./pages/Positions";
 import Trades from "./pages/Trades";
 import Signals from "./pages/Signals";
@@ -24,7 +23,7 @@ import Funding from "./pages/Funding";
 function Router() {
   return (
     <Switch>
-      <Route path={"/"} component={() => <DashboardLayout><Home /></DashboardLayout>} />
+      <Route path={"/"} component={() => <DashboardLayout><Dashboard /></DashboardLayout>} />
       <Route path={"/dashboard"} component={() => <DashboardLayout><Dashboard /></DashboardLayout>} />
       <Route path={"/connect"} component={() => <DashboardLayout><Connect /></DashboardLayout>} />
       <Route path={"/autonomy"} component={() => <DashboardLayout><TradingAutonomy /></DashboardLayout>} />

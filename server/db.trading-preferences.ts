@@ -194,7 +194,8 @@ export async function saveTradingPreferences(
         userId,
         ...toDatabaseValues(merged),
       })
-      .onDuplicateKeyUpdate({
+      .onConflictDoUpdate({
+        target: tradingPreferences.userId,
         set: toDatabaseValues(merged),
       });
 

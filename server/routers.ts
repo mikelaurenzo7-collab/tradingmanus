@@ -3,6 +3,7 @@ import { publicProcedure, router, protectedProcedure } from "./_core/trpc";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import * as db from "./db";
+import { createOwnerSessionToken, ensureOwnerUser, validateOwnerCredentials } from "./_core/auth";
 import {
   fetchKalshiMarkets,
   fetchKalshiMarketDetails,
@@ -27,11 +28,11 @@ import {
   saveSignals,
   filterSignalsByMarketConditions,
 } from "./_core/kalshiSignals";
+import { reviewSignalsWithClaude } from "./_core/claudeTrader";
 import {
   validateKalshiCredentials,
   fetchKalshiAccountEquity,
 } from "./_core/kalshiAuth";
-import { getKalshiApiKey } from "./_core/env";
 import { getPerformanceOverview } from "./_core/kalshiLearning";
 import * as kalshiCredDb from "./db.kalshi-credentials";
 import * as tradingPreferencesDb from "./db.trading-preferences";
@@ -39,7 +40,7 @@ import { trainingRouter } from "./training.router";
 import { advancedRouter } from "./advanced.router";
 import { calculateKalshiBuyOrderRisk, MAX_KALSHI_ORDER_CONTRACTS } from "./_core/kalshiRisk";
 
-import { COOKIE_NAME } from "../shared/const";
+import { COOKIE_NAME, ONE_YEAR_MS } from "../shared/const";
 
 // Risk limits anchored to live capital plus static guardrails
 const BASE_RISK_LIMITS = {
@@ -296,6 +297,23 @@ async function getDynamicRiskLimits(userId: number) {
 export const appRouter = router({
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
+    login: publicProcedure
+      .input(z.object({ email: z.string().email(), password: z.string().min(1) }))
+      .mutation(async ({ input, ctx }) => {
+        const valid = validateOwnerCredentials(input.email, input.password);
+        if (!valid) {
+          throw new TRPCError({
+            code: "UNAUTHORIZED",
+            message: "Invalid email or password.",
+          });
+        }
+
+        const user = await ensureOwnerUser();
+        const sessionToken = await createOwnerSessionToken();
+        const cookieOptions = getSessionCookieOptions(ctx.req);
+        ctx.res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
+        return user;
+      }),
     logout: publicProcedure.mutation(({ ctx }) => {
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
@@ -792,17 +810,25 @@ export const appRouter = router({
             0.35
           );
 
-          await saveSignals(filteredSignals, getRequiredUserId(ctx));
+          // Claude makes the final go/no-go on each candidate before persistence.
+          const reviewedSignals = await reviewSignalsWithClaude({
+            markets: validMarkets,
+            signals: filteredSignals,
+            maxSignals: 12,
+          });
+
+          await saveSignals(reviewedSignals, getRequiredUserId(ctx));
           await db.logAuditEvent(
             "kalshi_signals_generated",
             JSON.stringify({
-              count: filteredSignals.length,
+              count: reviewedSignals.length,
+              heuristicCount: filteredSignals.length,
               minConfidence: input.minConfidence,
             }),
             ctx.user!.openId
           );
 
-          return { success: true, signals: filteredSignals };
+          return { success: true, signals: reviewedSignals };
         } catch (error) {
           console.error("[Kalshi] Generate signals error:", error);
           return { success: false, signals: [], error: String(error) };

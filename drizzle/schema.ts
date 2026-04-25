@@ -1,241 +1,242 @@
 import {
-  double,
-  int,
-  mysqlEnum,
-  mysqlTable,
+  doublePrecision,
+  integer,
+  pgEnum,
+  pgTable,
+  serial,
   text,
   timestamp,
   varchar,
-} from "drizzle-orm/mysql-core";
+} from "drizzle-orm/pg-core";
 
-// Core tables
-export const users = mysqlTable("users", {
-  id: int("id").autoincrement().primaryKey(),
-  openId: varchar("openId", { length: 64 }).notNull().unique(),
+export const userRoleEnum = pgEnum("user_role", ["user", "admin"]);
+export const instructionTypeEnum = pgEnum("instruction_type", ["market_filter", "signal_filter", "position_limit", "time_window", "custom"]);
+export const instructionRuleTypeEnum = pgEnum("instruction_rule_type", ["include", "exclude", "require", "forbid"]);
+export const instructionScheduleTypeEnum = pgEnum("instruction_schedule_type", ["always", "time_window", "day_of_week", "market_condition"]);
+export const kalshiAccountStatusEnum = pgEnum("kalshi_account_status", ["connected", "disconnected", "error"]);
+export const kalshiMarketStatusEnum = pgEnum("kalshi_market_status", ["open", "closed", "resolved"]);
+export const kalshiSideEnum = pgEnum("kalshi_side", ["yes", "no"]);
+export const kalshiOrderActionEnum = pgEnum("kalshi_order_action", ["buy", "sell"]);
+export const kalshiOrderStatusEnum = pgEnum("kalshi_order_status", ["pending", "filled", "cancelled", "rejected"]);
+export const kalshiPositionStatusEnum = pgEnum("kalshi_position_status", ["open", "closing", "closed"]);
+export const kalshiSignalTypeEnum = pgEnum("kalshi_signal_type", ["value_play", "momentum", "contrarian", "arbitrage", "sentiment"]);
+export const kalshiOutcomeEnum = pgEnum("kalshi_outcome", ["win", "loss", "partial"]);
+export const autonomyModeEnum = pgEnum("autonomy_mode", ["manual", "approval_required", "semi_autonomous", "fully_autonomous"]);
+export const executionCadenceEnum = pgEnum("execution_cadence", ["manual_only", "session_assisted", "hourly_watch", "continuous_watch"]);
+export const riskPostureEnum = pgEnum("risk_posture", ["conservative", "balanced", "aggressive"]);
+
+const now = () => new Date();
+const createdAt = () => timestamp("createdAt", { withTimezone: true }).defaultNow().notNull();
+const updatedAt = () => timestamp("updatedAt", { withTimezone: true }).defaultNow().notNull().$onUpdate(now);
+
+export const users = pgTable("users", {
+  id: serial("id").primaryKey(),
+  openId: varchar("openId", { length: 128 }).notNull().unique(),
   name: text("name"),
   email: varchar("email", { length: 320 }),
-  role: mysqlEnum("role", ["user", "admin"]).default("user").notNull(),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  role: userRoleEnum("role").default("user").notNull(),
+  createdAt: createdAt(),
 });
 
-export const auditLog = mysqlTable("auditLog", {
-  id: int("id").autoincrement().primaryKey(),
+export const auditLog = pgTable("auditLog", {
+  id: serial("id").primaryKey(),
   eventType: varchar("eventType", { length: 128 }).notNull(),
   entityType: varchar("entityType", { length: 64 }).notNull(),
-  entityId: int("entityId"),
+  entityId: integer("entityId"),
   details: text("details"),
-  triggeredByOpenId: varchar("triggeredByOpenId", { length: 64 }),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  triggeredByOpenId: varchar("triggeredByOpenId", { length: 128 }),
+  createdAt: createdAt(),
 });
 
-// Training instructions tables
-export const trainingInstructions = mysqlTable("trainingInstructions", {
-  id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull(),
+export const trainingInstructions = pgTable("trainingInstructions", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull(),
   title: varchar("title", { length: 255 }).notNull(),
   description: text("description"),
-  instructionType: mysqlEnum("instructionType", ["market_filter", "signal_filter", "position_limit", "time_window", "custom"]).notNull(),
-  priority: int("priority").default(0).notNull(), // Higher = more important
-  isActive: int("isActive").default(1).notNull(), // 1 = active, 0 = inactive
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  instructionType: instructionTypeEnum("instructionType").notNull(),
+  priority: integer("priority").default(0).notNull(),
+  isActive: integer("isActive").default(1).notNull(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
 });
 
-export const instructionRules = mysqlTable("instructionRules", {
-  id: int("id").autoincrement().primaryKey(),
-  instructionId: int("instructionId").notNull(),
-  ruleType: mysqlEnum("ruleType", ["include", "exclude", "require", "forbid"]).notNull(),
-  ruleKey: varchar("ruleKey", { length: 128 }).notNull(), // e.g., "category", "minConfidence", "dayOfWeek"
-  ruleValue: text("ruleValue").notNull(), // e.g., "politics", "0.75", "1,2,3,4,5"
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
+export const instructionRules = pgTable("instructionRules", {
+  id: serial("id").primaryKey(),
+  instructionId: integer("instructionId").notNull(),
+  ruleType: instructionRuleTypeEnum("ruleType").notNull(),
+  ruleKey: varchar("ruleKey", { length: 128 }).notNull(),
+  ruleValue: text("ruleValue").notNull(),
+  createdAt: createdAt(),
 });
 
-export const instructionSchedules = mysqlTable("instructionSchedules", {
-  id: int("id").autoincrement().primaryKey(),
-  instructionId: int("instructionId").notNull(),
-  scheduleType: mysqlEnum("scheduleType", ["always", "time_window", "day_of_week", "market_condition"]).notNull(),
-  startTime: varchar("startTime", { length: 8 }), // HH:MM format
-  endTime: varchar("endTime", { length: 8 }), // HH:MM format
-  daysOfWeek: varchar("daysOfWeek", { length: 20 }), // "1,2,3,4,5" for Mon-Fri
+export const instructionSchedules = pgTable("instructionSchedules", {
+  id: serial("id").primaryKey(),
+  instructionId: integer("instructionId").notNull(),
+  scheduleType: instructionScheduleTypeEnum("scheduleType").notNull(),
+  startTime: varchar("startTime", { length: 8 }),
+  endTime: varchar("endTime", { length: 8 }),
+  daysOfWeek: varchar("daysOfWeek", { length: 20 }),
   timezone: varchar("timezone", { length: 50 }).default("UTC").notNull(),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  createdAt: createdAt(),
 });
 
-export const instructionHistory = mysqlTable("instructionHistory", {
-  id: int("id").autoincrement().primaryKey(),
-  instructionId: int("instructionId").notNull(),
-  version: int("version").notNull(),
-  previousState: text("previousState"), // JSON snapshot
+export const instructionHistory = pgTable("instructionHistory", {
+  id: serial("id").primaryKey(),
+  instructionId: integer("instructionId").notNull(),
+  version: integer("version").notNull(),
+  previousState: text("previousState"),
   changeReason: text("changeReason"),
-  changedBy: varchar("changedBy", { length: 64 }).notNull(),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  changedBy: varchar("changedBy", { length: 128 }).notNull(),
+  createdAt: createdAt(),
 });
 
-// Kalshi credentials table
-export const kalshiCredentials = mysqlTable("kalshiCredentials", {
-  id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull(),
+export const kalshiCredentials = pgTable("kalshiCredentials", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull().unique(),
   apiKeyEncrypted: text("apiKeyEncrypted").notNull(),
   privateKeyEncrypted: text("privateKeyEncrypted").notNull(),
-  accountEquity: double("accountEquity").default(0).notNull(),
-  accountStatus: mysqlEnum("accountStatus", ["connected", "disconnected", "error"]).default("disconnected").notNull(),
-  lastSyncedAt: timestamp("lastSyncedAt"),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  accountEquity: doublePrecision("accountEquity").default(0).notNull(),
+  accountStatus: kalshiAccountStatusEnum("accountStatus").default("disconnected").notNull(),
+  lastSyncedAt: timestamp("lastSyncedAt", { withTimezone: true }),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
 });
 
-// Kalshi tables
-export const kalshiMarkets = mysqlTable("kalshiMarkets", {
-  id: int("id").autoincrement().primaryKey(),
+export const kalshiMarkets = pgTable("kalshiMarkets", {
+  id: serial("id").primaryKey(),
   marketId: varchar("marketId", { length: 128 }).notNull().unique(),
   title: varchar("title", { length: 255 }).notNull(),
   category: varchar("category", { length: 128 }).notNull(),
   description: text("description"),
-  resolutionDate: timestamp("resolutionDate"),
-  status: mysqlEnum("status", ["open", "closed", "resolved"]).default("open").notNull(),
-  yesPrice: double("yesPrice").default(0).notNull(),
-  noPrice: double("noPrice").default(0).notNull(),
-  yesVolume: double("yesVolume").default(0).notNull(),
-  noVolume: double("noVolume").default(0).notNull(),
-  impliedProbability: double("impliedProbability").default(0.5).notNull(),
-  liquidity: double("liquidity").default(0).notNull(), // Total liquidity in market
-  lastUpdated: timestamp("lastUpdated").defaultNow().onUpdateNow().notNull(),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  resolutionDate: timestamp("resolutionDate", { withTimezone: true }),
+  status: kalshiMarketStatusEnum("status").default("open").notNull(),
+  yesPrice: doublePrecision("yesPrice").default(0).notNull(),
+  noPrice: doublePrecision("noPrice").default(0).notNull(),
+  yesVolume: doublePrecision("yesVolume").default(0).notNull(),
+  noVolume: doublePrecision("noVolume").default(0).notNull(),
+  impliedProbability: doublePrecision("impliedProbability").default(0.5).notNull(),
+  liquidity: doublePrecision("liquidity").default(0).notNull(),
+  lastUpdated: updatedAt(),
+  createdAt: createdAt(),
 });
 
-export const kalshiMarketSnapshots = mysqlTable("kalshiMarketSnapshots", {
-  id: int("id").autoincrement().primaryKey(),
+export const kalshiMarketSnapshots = pgTable("kalshiMarketSnapshots", {
+  id: serial("id").primaryKey(),
   marketId: varchar("marketId", { length: 128 }).notNull(),
-  yesPrice: double("yesPrice").notNull(),
-  noPrice: double("noPrice").notNull(),
-  yesVolume: double("yesVolume").notNull(),
-  noVolume: double("noVolume").notNull(),
-  impliedProbability: double("impliedProbability").notNull(),
-  liquidity: double("liquidity").notNull(),
-  snapshotTime: timestamp("snapshotTime").defaultNow().notNull(),
+  yesPrice: doublePrecision("yesPrice").notNull(),
+  noPrice: doublePrecision("noPrice").notNull(),
+  yesVolume: doublePrecision("yesVolume").notNull(),
+  noVolume: doublePrecision("noVolume").notNull(),
+  impliedProbability: doublePrecision("impliedProbability").notNull(),
+  liquidity: doublePrecision("liquidity").notNull(),
+  snapshotTime: createdAt(),
 });
 
-
-export const kalshiOrderBook = mysqlTable("kalshiOrderBook", {
-  id: int("id").autoincrement().primaryKey(),
+export const kalshiOrderBook = pgTable("kalshiOrderBook", {
+  id: serial("id").primaryKey(),
   marketId: varchar("marketId", { length: 128 }).notNull(),
-  side: mysqlEnum("side", ["yes", "no"]).notNull(),
-  price: double("price").notNull(),
-  quantity: double("quantity").notNull(),
-  timestamp: timestamp("timestamp").defaultNow().notNull(),
+  side: kalshiSideEnum("side").notNull(),
+  price: doublePrecision("price").notNull(),
+  quantity: doublePrecision("quantity").notNull(),
+  timestamp: createdAt(),
 });
 
-export const kalshiOrders = mysqlTable("kalshiOrders", {
-  id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull(),
+export const kalshiOrders = pgTable("kalshiOrders", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull(),
   orderId: varchar("orderId", { length: 128 }).notNull().unique(),
   marketId: varchar("marketId", { length: 128 }).notNull(),
-  action: mysqlEnum("orderAction", ["buy", "sell"]).default("buy").notNull(),
-  side: mysqlEnum("side", ["yes", "no"]).notNull(),
-  quantity: double("quantity").notNull(),
-  limitPrice: double("limitPrice").notNull(),
-  status: mysqlEnum("orderStatus", ["pending", "filled", "cancelled", "rejected"]).default("pending").notNull(),
-  filledQuantity: double("filledQuantity").default(0).notNull(),
-  averagePrice: double("averagePrice").default(0).notNull(),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  filledAt: timestamp("filledAt"),
-  cancelledAt: timestamp("cancelledAt"),
+  action: kalshiOrderActionEnum("action").default("buy").notNull(),
+  side: kalshiSideEnum("side").notNull(),
+  quantity: doublePrecision("quantity").notNull(),
+  limitPrice: doublePrecision("limitPrice").notNull(),
+  status: kalshiOrderStatusEnum("status").default("pending").notNull(),
+  filledQuantity: doublePrecision("filledQuantity").default(0).notNull(),
+  averagePrice: doublePrecision("averagePrice").default(0).notNull(),
+  createdAt: createdAt(),
+  filledAt: timestamp("filledAt", { withTimezone: true }),
+  cancelledAt: timestamp("cancelledAt", { withTimezone: true }),
 });
 
-export const kalshiFills = mysqlTable("kalshiFills", {
-  id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull(),
+export const kalshiFills = pgTable("kalshiFills", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull(),
   orderId: varchar("orderId", { length: 128 }).notNull(),
   marketId: varchar("marketId", { length: 128 }).notNull(),
-  fillPrice: double("fillPrice").notNull(),
-  fillQuantity: double("fillQuantity").notNull(),
-  fillTime: timestamp("fillTime").defaultNow().notNull(),
+  fillPrice: doublePrecision("fillPrice").notNull(),
+  fillQuantity: doublePrecision("fillQuantity").notNull(),
+  fillTime: createdAt(),
 });
 
-export const kalshiPositions = mysqlTable("kalshiPositions", {
-  id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull(),
+export const kalshiPositions = pgTable("kalshiPositions", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull(),
   marketId: varchar("marketId", { length: 128 }).notNull(),
-  side: mysqlEnum("positionSide", ["yes", "no"]).notNull(),
-  quantity: double("quantity").notNull(),
-  entryPrice: double("entryPrice").notNull(),
-  currentPrice: double("currentPrice").notNull(),
-  unrealizedPnl: double("unrealizedPnl").default(0).notNull(),
-  realizedPnl: double("realizedPnl").default(0).notNull(),
-  positionStatus: mysqlEnum("positionStatus", ["open", "closing", "closed"]).default("open").notNull(),
-  openedAt: timestamp("openedAt").defaultNow().notNull(),
-  closedAt: timestamp("closedAt"),
+  side: kalshiSideEnum("side").notNull(),
+  quantity: doublePrecision("quantity").notNull(),
+  entryPrice: doublePrecision("entryPrice").notNull(),
+  currentPrice: doublePrecision("currentPrice").notNull(),
+  unrealizedPnl: doublePrecision("unrealizedPnl").default(0).notNull(),
+  realizedPnl: doublePrecision("realizedPnl").default(0).notNull(),
+  positionStatus: kalshiPositionStatusEnum("positionStatus").default("open").notNull(),
+  openedAt: createdAt(),
+  closedAt: timestamp("closedAt", { withTimezone: true }),
 });
 
-export const kalshiSignals = mysqlTable("kalshiSignals", {
-  id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull(),
+export const kalshiSignals = pgTable("kalshiSignals", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull(),
   marketId: varchar("marketId", { length: 128 }).notNull(),
-  signalType: mysqlEnum("signalType", ["value_play", "momentum", "contrarian", "arbitrage", "sentiment"]).notNull(),
-  side: mysqlEnum("signalSide", ["yes", "no"]).notNull(),
-  confidence: double("confidence").notNull(),
+  signalType: kalshiSignalTypeEnum("signalType").notNull(),
+  side: kalshiSideEnum("side").notNull(),
+  confidence: doublePrecision("confidence").notNull(),
   reasoning: text("reasoning").notNull(),
-  impliedProbability: double("impliedProbability").notNull(),
-  marketPrice: double("marketPrice").notNull(),
-  expectedValue: double("expectedValue").notNull(),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  impliedProbability: doublePrecision("impliedProbability").notNull(),
+  marketPrice: doublePrecision("marketPrice").notNull(),
+  expectedValue: doublePrecision("expectedValue").notNull(),
+  createdAt: createdAt(),
 });
 
-export const kalshiPerformance = mysqlTable("kalshiPerformance", {
-  id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull(),
-  signalId: int("signalId").notNull(),
+export const kalshiPerformance = pgTable("kalshiPerformance", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull(),
+  signalId: integer("signalId").notNull(),
   marketId: varchar("marketId", { length: 128 }).notNull(),
-  outcome: mysqlEnum("outcome", ["win", "loss", "partial"]).notNull(),
-  pnl: double("pnl").notNull(),
-  roi: double("roi").notNull(),
-  accuracy: double("accuracy").notNull(),
-  executionQuality: double("executionQuality").notNull(),
-  resolvedAt: timestamp("resolvedAt").defaultNow().notNull(),
+  outcome: kalshiOutcomeEnum("outcome").notNull(),
+  pnl: doublePrecision("pnl").notNull(),
+  roi: doublePrecision("roi").notNull(),
+  accuracy: doublePrecision("accuracy").notNull(),
+  executionQuality: doublePrecision("executionQuality").notNull(),
+  resolvedAt: createdAt(),
 });
 
-export const kalshiCapital = mysqlTable("kalshiCapital", {
-  id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull().unique(),
-  startingBalance: double("startingBalance").default(0).notNull(),
-  currentBalance: double("currentBalance").default(0).notNull(),
-  totalPnl: double("totalPnl").default(0).notNull(),
-  maxDrawdown: double("maxDrawdown").default(0).notNull(),
-  winRate: double("winRate").default(0).notNull(),
-  sharpeRatio: double("sharpeRatio").default(0).notNull(),
-  totalTrades: int("totalTrades").default(0).notNull(),
-  winningTrades: int("winningTrades").default(0).notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+export const kalshiCapital = pgTable("kalshiCapital", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull().unique(),
+  startingBalance: doublePrecision("startingBalance").default(0).notNull(),
+  currentBalance: doublePrecision("currentBalance").default(0).notNull(),
+  totalPnl: doublePrecision("totalPnl").default(0).notNull(),
+  maxDrawdown: doublePrecision("maxDrawdown").default(0).notNull(),
+  winRate: doublePrecision("winRate").default(0).notNull(),
+  sharpeRatio: doublePrecision("sharpeRatio").default(0).notNull(),
+  totalTrades: integer("totalTrades").default(0).notNull(),
+  winningTrades: integer("winningTrades").default(0).notNull(),
+  updatedAt: updatedAt(),
 });
 
-export const tradingPreferences = mysqlTable("tradingPreferences", {
-  id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull().unique(),
-  autonomyMode: mysqlEnum("autonomyMode", [
-    "manual",
-    "approval_required",
-    "semi_autonomous",
-    "fully_autonomous",
-  ]).default("approval_required").notNull(),
-  liveTradingEnabled: int("liveTradingEnabled").default(0).notNull(),
-  executionCadence: mysqlEnum("executionCadence", [
-    "manual_only",
-    "session_assisted",
-    "hourly_watch",
-    "continuous_watch",
-  ]).default("manual_only").notNull(),
-  riskPosture: mysqlEnum("riskPosture", [
-    "conservative",
-    "balanced",
-    "aggressive",
-  ]).default("balanced").notNull(),
-  minSignalConfidence: double("minSignalConfidence").default(0.72).notNull(),
-  maxOrderNotional: double("maxOrderNotional").default(10).notNull(),
-  maxDailyOrders: int("maxDailyOrders").default(3).notNull(),
-  requireApprovalAbove: double("requireApprovalAbove").default(8).notNull(),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+export const tradingPreferences = pgTable("tradingPreferences", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull().unique(),
+  autonomyMode: autonomyModeEnum("autonomyMode").default("approval_required").notNull(),
+  liveTradingEnabled: integer("liveTradingEnabled").default(0).notNull(),
+  executionCadence: executionCadenceEnum("executionCadence").default("manual_only").notNull(),
+  riskPosture: riskPostureEnum("riskPosture").default("balanced").notNull(),
+  minSignalConfidence: doublePrecision("minSignalConfidence").default(0.72).notNull(),
+  maxOrderNotional: doublePrecision("maxOrderNotional").default(10).notNull(),
+  maxDailyOrders: integer("maxDailyOrders").default(3).notNull(),
+  requireApprovalAbove: doublePrecision("requireApprovalAbove").default(8).notNull(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
 });
 
-// Type exports
 export type User = typeof users.$inferSelect;

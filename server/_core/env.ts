@@ -1,24 +1,25 @@
 const normalize = (value: string | undefined) => value?.trim() ?? "";
 
 export const ENV = {
-  appId: normalize(process.env.VITE_APP_ID),
   cookieSecret: normalize(process.env.JWT_SECRET),
   credentialEncryptionSecret: normalize(process.env.CREDENTIAL_ENCRYPTION_SECRET),
   databaseUrl: normalize(process.env.DATABASE_URL),
-  oAuthServerUrl: normalize(process.env.OAUTH_SERVER_URL),
-  ownerOpenId: normalize(process.env.OWNER_OPEN_ID),
+  ownerEmail: normalize(process.env.OWNER_EMAIL),
+  ownerPassword: normalize(process.env.OWNER_PASSWORD),
+  cronSecret: normalize(process.env.CRON_SECRET),
+  anthropicApiKey: normalize(process.env.ANTHROPIC_API_KEY),
+  anthropicModel: normalize(process.env.ANTHROPIC_MODEL) || "claude-3-5-sonnet-latest",
   kalshiApiKey: normalize(process.env.KALSHI_API_KEY),
   isProduction: process.env.NODE_ENV === "production",
-  forgeApiUrl: normalize(process.env.BUILT_IN_FORGE_API_URL),
-  forgeApiKey: normalize(process.env.BUILT_IN_FORGE_API_KEY),
   gnewsApiKey: normalize(process.env.GNEWS_API_KEY),
 };
 
 const REQUIRED_SERVER_ENV = [
-  ["VITE_APP_ID", ENV.appId],
   ["JWT_SECRET", ENV.cookieSecret],
+  ["CREDENTIAL_ENCRYPTION_SECRET", ENV.credentialEncryptionSecret],
   ["DATABASE_URL", ENV.databaseUrl],
-  ["OAUTH_SERVER_URL", ENV.oAuthServerUrl],
+  ["OWNER_EMAIL", ENV.ownerEmail],
+  ["OWNER_PASSWORD", ENV.ownerPassword],
 ] as const;
 
 export function validateServerEnv() {
@@ -36,8 +37,12 @@ export function validateServerEnv() {
     throw new Error("JWT_SECRET must be at least 32 characters in production");
   }
 
-  if (ENV.isProduction && getCredentialEncryptionSecret().length < 32) {
+  if (ENV.isProduction && ENV.credentialEncryptionSecret.length < 32) {
     throw new Error("CREDENTIAL_ENCRYPTION_SECRET must be at least 32 characters in production");
+  }
+
+  if (ENV.isProduction && ENV.ownerPassword.length < 12) {
+    throw new Error("OWNER_PASSWORD must be at least 12 characters in production");
   }
 }
 
