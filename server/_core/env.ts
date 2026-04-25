@@ -7,8 +7,8 @@ export const ENV = {
   ownerEmail: normalize(process.env.OWNER_EMAIL),
   ownerPassword: normalize(process.env.OWNER_PASSWORD),
   cronSecret: normalize(process.env.CRON_SECRET),
-  anthropicApiKey: normalize(process.env.ANTHROPIC_API_KEY),
-  anthropicModel: normalize(process.env.ANTHROPIC_MODEL) || "claude-sonnet-4-5",
+  openAiApiKey: normalize(process.env.OPENAI_API_KEY),
+  openAiModel: normalize(process.env.OPENAI_MODEL) || "gpt-4.1-mini",
   kalshiApiKey: normalize(process.env.KALSHI_API_KEY),
   isProduction: process.env.NODE_ENV === "production",
   gnewsApiKey: normalize(process.env.GNEWS_API_KEY),
@@ -50,6 +50,10 @@ export function validateServerEnv() {
   // 401s on every scheduled tick — autonomous trading would never run.
   if (ENV.isProduction && ENV.cronSecret.length < 16) {
     throw new Error("CRON_SECRET must be set (16+ chars) in production for Vercel cron auth");
+  }
+
+  if (ENV.isProduction && ENV.openAiApiKey.length === 0) {
+    throw new Error("OPENAI_API_KEY must be set in production for autonomous signal review");
   }
 }
 
