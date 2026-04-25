@@ -125,4 +125,26 @@ export const trainingRouter = router({
         return { success: false, error: String(error) };
       }
     }),
+
+  // Delete a rule
+  deleteRule: protectedProcedure
+    .input(z.object({ ruleId: z.number() }))
+    .mutation(async ({ input }) => {
+      try {
+        return await trainingDb.deleteInstructionRule(input.ruleId);
+      } catch (error) {
+        return { success: false, error: String(error) };
+      }
+    }),
+
+  // Delete a schedule
+  deleteSchedule: protectedProcedure
+    .input(z.object({ scheduleId: z.number() }))
+    .mutation(async ({ input }) => {
+      try {
+        return await trainingDb.deleteInstructionSchedule(input.scheduleId);
+      } catch (error) {
+        return { success: false, error: String(error) };
+      }
+    }),
 });

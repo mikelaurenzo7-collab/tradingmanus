@@ -5,43 +5,71 @@
 
 import { db } from "../db";
 import { kalshiOrders, kalshiPositions } from "../../drizzle/schema";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { getKalshiOrderStatus, createPositionFromFill } from "./kalshiExecution";
 import * as kalshiCredDb from "../db.kalshi-credentials";
+
+// Guards against two concurrent sync intervals processing the same pending orders
+let _syncRunning = false;
 
 /**
  * Check all locally-pending orders for the user; mark filled ones and
  * create position records from any newly-filled orders.
+ * Idempotent: skips if a position for the same market is already open.
  */
 export async function syncPendingOrders(userId: number): Promise<void> {
-  const creds = await kalshiCredDb.getKalshiCredentials(userId);
-  if (!creds?.apiKey || !creds?.privateKey) return;
+  if (_syncRunning) return;
+  _syncRunning = true;
 
-  const pending = await db
-    .select()
-    .from(kalshiOrders)
-    .where(eq(kalshiOrders.status, "pending"));
+  try {
+    const creds = await kalshiCredDb.getKalshiCredentials(userId);
+    if (!creds || !creds.apiKey || !creds.privateKey) return;
 
-  for (const order of pending) {
-    try {
-      const updated = await getKalshiOrderStatus(userId, order.orderId);
-      if (!updated) continue;
+    const pending = await db
+      .select()
+      .from(kalshiOrders)
+      .where(eq(kalshiOrders.status, "pending"));
 
-      if (updated.status === "filled" && updated.filledQuantity > 0) {
-        const fillPrice =
-          updated.averagePrice > 0 ? updated.averagePrice : order.limitPrice;
+    for (const order of pending) {
+      try {
+        const updated = await getKalshiOrderStatus(userId, order.orderId);
+        if (!updated) continue;
 
-        await createPositionFromFill(
-          order.orderId,
-          order.marketId,
-          order.side as "yes" | "no",
-          updated.filledQuantity,
-          fillPrice,
-        );
+        if (updated.status === "filled" && updated.filledQuantity > 0) {
+          // Idempotency guard: skip if an open position already exists for this market
+          const existingOpen = await db
+            .select()
+            .from(kalshiPositions)
+            .where(
+              and(
+                eq(kalshiPositions.marketId, order.marketId),
+                eq(kalshiPositions.positionStatus, "open"),
+              ),
+            )
+            .then((rows: any[]) => rows[0]);
+
+          if (existingOpen) {
+            console.log(`[OrderSync] Position for ${order.marketId} already exists, skipping`);
+            continue;
+          }
+
+          const fillPrice =
+            updated.averagePrice > 0 ? updated.averagePrice : order.limitPrice;
+
+          await createPositionFromFill(
+            order.orderId,
+            order.marketId,
+            order.side as "yes" | "no",
+            updated.filledQuantity,
+            fillPrice,
+          );
+        }
+      } catch (err) {
+        console.error(`[OrderSync] Failed to sync order ${order.orderId}:`, err);
       }
-    } catch (err) {
-      console.error(`[OrderSync] Failed to sync order ${order.orderId}:`, err);
     }
+  } finally {
+    _syncRunning = false;
   }
 }
 
@@ -51,7 +79,7 @@ export async function syncPendingOrders(userId: number): Promise<void> {
  */
 export async function syncLivePositions(userId: number): Promise<void> {
   const creds = await kalshiCredDb.getKalshiCredentials(userId);
-  if (!creds?.apiKey || !creds?.privateKey) return;
+  if (!creds || !creds.apiKey || !creds.privateKey) return;
 
   try {
     const KALSHI_ENVIRONMENTS = [
@@ -62,7 +90,7 @@ export async function syncLivePositions(userId: number): Promise<void> {
     const crypto = await import("crypto");
     const { URL } = await import("url");
 
-    function normalizeKey(raw: string) {
+    const normalizeKey = (raw: string) => {
       const trimmed = raw.trim();
       if (trimmed.includes("BEGIN") && trimmed.includes("PRIVATE KEY")) {
         return trimmed;
@@ -73,9 +101,9 @@ export async function syncLivePositions(userId: number): Promise<void> {
         .replace(/\s+/g, "");
       const wrapped = body.match(/.{1,64}/g)?.join("\n") ?? body;
       return `-----BEGIN PRIVATE KEY-----\n${wrapped}\n-----END PRIVATE KEY-----`;
-    }
+    };
 
-    function buildHeaders(url: string) {
+    const buildHeaders = (url: string) => {
       const ts = Date.now().toString();
       const path = new URL(url).pathname;
       const sig = crypto.sign(
@@ -96,7 +124,7 @@ export async function syncLivePositions(userId: number): Promise<void> {
         "KALSHI-ACCESS-SIGNATURE": sig.toString("base64"),
         "KALSHI-ACCESS-TIMESTAMP": ts,
       };
-    }
+    };
 
     let livePositions: any[] | null = null;
 
@@ -138,7 +166,7 @@ export async function syncLivePositions(userId: number): Promise<void> {
         .select()
         .from(kalshiPositions)
         .where(eq(kalshiPositions.marketId, marketId))
-        .then((rows) => rows.find((r: any) => r.positionStatus === "open"));
+        .then((rows: any[]) => rows.find((r: any) => r.positionStatus === "open"));
 
       if (existing) {
         await db

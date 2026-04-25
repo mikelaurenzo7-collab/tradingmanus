@@ -15,6 +15,9 @@ import { ENV } from "./_core/env";
 import { eq, and, desc, gte, inArray, ne } from "drizzle-orm";
 import { drizzle as drizzleInit } from "drizzle-orm/mysql2";
 import * as mysql from "mysql2/promise";
+import { readFileSync, readdirSync } from "fs";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
 
 let _db: any = null;
 let _pool: mysql.Pool | null = null;
@@ -137,6 +140,42 @@ export async function getDb() {
     _db = null;
     _pool = null;
     return null;
+  }
+}
+
+export async function runMigrations(): Promise<void> {
+  if (!ENV.databaseUrl || !_pool) return;
+
+  const migrationsDir = join(dirname(fileURLToPath(import.meta.url)), "../drizzle/migrations");
+  let files: string[];
+  try {
+    files = readdirSync(migrationsDir).filter((f) => f.endsWith(".sql")).sort();
+  } catch {
+    console.warn("[Migrations] migrations folder not found, skipping");
+    return;
+  }
+
+  const connection = await _pool.getConnection();
+  try {
+    for (const file of files) {
+      const sql = readFileSync(join(migrationsDir, file), "utf-8");
+      const statements = sql
+        .split(";")
+        .map((s) => s.replace(/--.*$/gm, "").trim())
+        .filter((s) => s.length > 0);
+
+      for (const statement of statements) {
+        try {
+          await connection.execute(statement);
+        } catch (err: any) {
+          if (["ER_DUP_KEYNAME", "ER_TABLE_EXISTS_ERROR"].includes(err.code)) continue;
+          console.warn(`[Migrations] Statement skipped (${err.code}): ${statement.slice(0, 80)}`);
+        }
+      }
+    }
+    console.log(`[Migrations] Applied ${files.length} migration file(s) successfully`);
+  } finally {
+    connection.release();
   }
 }
 

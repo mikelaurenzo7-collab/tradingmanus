@@ -8,7 +8,7 @@ import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { validateServerEnv } from "./env";
-import { getDb, getUsersEligibleForAutomaticScheduledTrading } from "../db";
+import { getDb, runMigrations, getUsersEligibleForAutomaticScheduledTrading } from "../db";
 import { sdk } from "./sdk";
 import { runScheduledAutonomousTrading, runScheduledAutonomousTradingBatch } from "./kalshiAutonomy";
 import { syncPendingOrders, syncLivePositions } from "./kalshiOrderSync";
@@ -38,6 +38,7 @@ async function startServer() {
   if (!database) {
     throw new Error("Database connection failed during startup");
   }
+  await runMigrations();
 
   const app = express();
   const server = createServer(app);

@@ -195,6 +195,26 @@ export async function deleteTrainingInstruction(instructionId: number, userId: s
 }
 
 /**
+ * Delete a rule
+ */
+export async function deleteInstructionRule(ruleId: number) {
+  const database = await getDb();
+  if (!database) throw new Error("Database not initialized");
+  await database.delete(instructionRules).where(eq(instructionRules.id, ruleId));
+  return { success: true };
+}
+
+/**
+ * Delete a schedule
+ */
+export async function deleteInstructionSchedule(scheduleId: number) {
+  const database = await getDb();
+  if (!database) throw new Error("Database not initialized");
+  await database.delete(instructionSchedules).where(eq(instructionSchedules.id, scheduleId));
+  return { success: true };
+}
+
+/**
  * Check if instruction is active at current time
  */
 export function isInstructionActiveNow(instruction: any): boolean {

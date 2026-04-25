@@ -2,74 +2,84 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { BookOpen, Plus, Trash2, Loader2, Clock, Filter, AlertCircle } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { BookOpen, Plus, Trash2, Loader2, Clock, Filter, AlertCircle, ChevronDown, ChevronUp, X } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { Link } from "wouter";
+import { toast } from "sonner";
+
+const RULE_KEYS: Record<string, { label: string; placeholder: string; keys: string[] }> = {
+  market_filter: { label: "Market rule", placeholder: "politics, sports, crypto…", keys: ["category", "title"] },
+  signal_filter: { label: "Signal rule", placeholder: "0.75 or momentum", keys: ["minConfidence", "signalType", "side"] },
+  position_limit: { label: "Position rule", placeholder: "5 or 3", keys: ["maxNotional", "maxOpenPositions"] },
+  time_window: { label: "Time rule", placeholder: "category keyword", keys: ["category"] },
+  custom: { label: "Custom rule", placeholder: "any value", keys: ["category", "signalType", "side", "minConfidence"] },
+};
 
 export default function Training() {
   const [showNewForm, setShowNewForm] = useState(false);
-  const [formData, setFormData] = useState({
-    title: "",
-    description: "",
-    instructionType: "market_filter" as const,
+  const [expanded, setExpanded] = useState<number | null>(null);
+  const [addingRule, setAddingRule] = useState<number | null>(null);
+  const [addingSchedule, setAddingSchedule] = useState<number | null>(null);
+
+  const [formData, setFormData] = useState({ title: "", description: "", instructionType: "market_filter" as const });
+  const [ruleForm, setRuleForm] = useState({ ruleType: "exclude" as const, ruleKey: "category", ruleValue: "" });
+  const [scheduleForm, setScheduleForm] = useState<{
+    scheduleType: "always" | "time_window" | "day_of_week" | "market_condition";
+    startTime: string;
+    endTime: string;
+    daysOfWeek: string;
+    timezone: string;
+  }>({
+    scheduleType: "time_window",
+    startTime: "09:00",
+    endTime: "17:00",
+    daysOfWeek: "1,2,3,4,5",
+    timezone: "UTC",
   });
 
   const { data: instructions, isLoading, refetch } = trpc.training.getInstructions.useQuery();
+
   const createMutation = trpc.training.createInstruction.useMutation({
-    onSuccess: () => {
-      setFormData({ title: "", description: "", instructionType: "market_filter" });
-      setShowNewForm(false);
-      refetch();
-    },
+    onSuccess: () => { setFormData({ title: "", description: "", instructionType: "market_filter" }); setShowNewForm(false); refetch(); toast.success("Instruction created"); },
+    onError: () => toast.error("Failed to create instruction"),
   });
-
-  const updateStatusMutation = trpc.training.updateStatus.useMutation({
-    onSuccess: () => refetch(),
-  });
-
+  const updateStatusMutation = trpc.training.updateStatus.useMutation({ onSuccess: () => refetch() });
   const deleteMutation = trpc.training.deleteInstruction.useMutation({
-    onSuccess: () => refetch(),
+    onSuccess: () => { refetch(); toast.success("Instruction deleted"); },
   });
+  const addRuleMutation = trpc.training.addRule.useMutation({
+    onSuccess: () => { setAddingRule(null); setRuleForm({ ruleType: "exclude", ruleKey: "category", ruleValue: "" }); refetch(); toast.success("Rule added"); },
+    onError: () => toast.error("Failed to add rule"),
+  });
+  const deleteRuleMutation = trpc.training.deleteRule.useMutation({ onSuccess: () => refetch() });
+  const addScheduleMutation = trpc.training.addSchedule.useMutation({
+    onSuccess: () => { setAddingSchedule(null); refetch(); toast.success("Schedule added"); },
+    onError: () => toast.error("Failed to add schedule"),
+  });
+  const deleteScheduleMutation = trpc.training.deleteSchedule.useMutation({ onSuccess: () => refetch() });
 
-  const handleCreateInstruction = () => {
-    if (!formData.title) {
-      alert("Title is required");
-      return;
-    }
-    createMutation.mutate(formData);
+  const getIcon = (type: string) => {
+    if (type === "market_filter") return <Filter className="w-4 h-4" />;
+    if (type === "signal_filter") return <AlertCircle className="w-4 h-4" />;
+    if (type === "time_window") return <Clock className="w-4 h-4" />;
+    return <BookOpen className="w-4 h-4" />;
   };
 
-  const getInstructionIcon = (type: string) => {
-    switch (type) {
-      case "market_filter":
-        return <Filter className="w-4 h-4" />;
-      case "signal_filter":
-        return <AlertCircle className="w-4 h-4" />;
-      case "time_window":
-        return <Clock className="w-4 h-4" />;
-      default:
-        return <BookOpen className="w-4 h-4" />;
-    }
+  const typeLabel: Record<string, string> = {
+    market_filter: "Market Filter", signal_filter: "Signal Filter",
+    position_limit: "Position Limit", time_window: "Time Window", custom: "Custom",
   };
 
-  const getInstructionTypeLabel = (type: string) => {
-    const labels: Record<string, string> = {
-      market_filter: "Market Filter",
-      signal_filter: "Signal Filter",
-      position_limit: "Position Limit",
-      time_window: "Time Window",
-      custom: "Custom Rule",
-    };
-    return labels[type] || type;
+  const ruleTypeBadge: Record<string, string> = {
+    exclude: "bg-red-500/20 text-red-400", forbid: "bg-red-500/20 text-red-400",
+    include: "bg-cyan-500/20 text-cyan-400", require: "bg-cyan-500/20 text-cyan-400",
   };
 
   if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
-        <div className="flex flex-col items-center gap-4">
-          <Loader2 className="animate-spin w-12 h-12 text-primary" />
-          <p className="text-muted-foreground">Loading training instructions...</p>
-        </div>
+        <Loader2 className="animate-spin w-12 h-12 text-primary" />
       </div>
     );
   }
@@ -81,7 +91,7 @@ export default function Training() {
         <div>
           <h1 className="text-5xl font-bold gradient-text mb-2">Agent Training</h1>
           <p className="text-muted-foreground text-lg">
-            Define trading instructions and schedules. Your agent learns and applies these rules to every trade.
+            Define trading instructions and rules. Your agent applies these to every autonomous scan.
           </p>
         </div>
         <Button onClick={() => setShowNewForm(!showNewForm)} className="laurenzo-button" size="lg">
@@ -95,7 +105,7 @@ export default function Training() {
           <div>
             <p className="font-semibold text-foreground">Training shapes behavior. Trading Autonomy decides execution authority.</p>
             <p className="mt-2 text-sm text-muted-foreground">
-              Use this page to define what the agent should prefer or avoid. Then open Trading Autonomy to decide whether it should stay manual, wait for approval, or execute more autonomously.
+              Use this page to define what the agent should prefer or avoid. Then open Trading Autonomy to decide whether it should execute autonomously.
             </p>
           </div>
           <Link href="/autonomy">
@@ -109,61 +119,36 @@ export default function Training() {
         <Card className="laurenzo-card">
           <CardHeader>
             <CardTitle>Create New Instruction</CardTitle>
-            <CardDescription>Define a rule that your agent will follow</CardDescription>
+            <CardDescription>Define a rule set that your agent will follow. You can add specific rules after creating the instruction.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div>
               <label className="text-sm font-medium mb-2 block">Title</label>
-              <Input
-                placeholder="e.g., Only trade politics markets"
-                value={formData.title}
-                onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-              />
+              <Input placeholder="e.g., Only trade politics markets" value={formData.title}
+                onChange={(e) => setFormData({ ...formData, title: e.target.value })} />
             </div>
-
             <div>
-              <label className="text-sm font-medium mb-2 block">Description</label>
-              <Input
-                placeholder="Why is this rule important?"
-                value={formData.description}
-                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-              />
+              <label className="text-sm font-medium mb-2 block">Description (optional)</label>
+              <Input placeholder="Why is this rule important?" value={formData.description}
+                onChange={(e) => setFormData({ ...formData, description: e.target.value })} />
             </div>
-
             <div>
-              <label className="text-sm font-medium mb-2 block">Instruction Type</label>
-              <select
-                value={formData.instructionType}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    instructionType: e.target.value as any,
-                  })
-                }
-                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-foreground"
-              >
-                <option value="market_filter">Market Filter (include/exclude markets)</option>
-                <option value="signal_filter">Signal Filter (confidence, type)</option>
-                <option value="position_limit">Position Limit (max size, count)</option>
-                <option value="time_window">Time Window (trading hours)</option>
+              <label className="text-sm font-medium mb-2 block">Type</label>
+              <select value={formData.instructionType}
+                onChange={(e) => setFormData({ ...formData, instructionType: e.target.value as any })}
+                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-foreground">
+                <option value="market_filter">Market Filter — include/exclude market categories</option>
+                <option value="signal_filter">Signal Filter — confidence thresholds, signal types</option>
+                <option value="position_limit">Position Limit — max size or count</option>
+                <option value="time_window">Time Window — restrict to specific hours/days</option>
                 <option value="custom">Custom Rule</option>
               </select>
             </div>
-
             <div className="flex gap-3">
-              <Button onClick={handleCreateInstruction} disabled={createMutation.isPending} className="laurenzo-button flex-1">
-                {createMutation.isPending ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Creating...
-                  </>
-                ) : (
-                  "Create Instruction"
-                )}
+              <Button onClick={() => createMutation.mutate(formData)} disabled={createMutation.isPending} className="laurenzo-button flex-1">
+                {createMutation.isPending ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Creating...</> : "Create Instruction"}
               </Button>
-              <Button onClick={() => setShowNewForm(false)} variant="outline">
-                Cancel
-              </Button>
+              <Button onClick={() => setShowNewForm(false)} variant="outline">Cancel</Button>
             </div>
           </CardContent>
         </Card>
@@ -175,45 +160,206 @@ export default function Training() {
           instructions.map((instruction: any) => (
             <Card key={instruction.id} className="laurenzo-card">
               <CardContent className="pt-6">
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3 mb-2">
-                      {getInstructionIcon(instruction.instructionType)}
+                {/* Card Header Row */}
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-3 mb-1 flex-wrap">
+                      {getIcon(instruction.instructionType)}
                       <h3 className="text-lg font-bold gradient-text">{instruction.title}</h3>
-                      <span className={`text-xs px-2 py-1 rounded-full ${instruction.isActive ? "bg-cyan-500/20 text-cyan-400" : "bg-muted text-muted-foreground"}`}>
+                      <Badge className={instruction.isActive ? "bg-cyan-500/20 text-cyan-400 border-0" : "bg-muted text-muted-foreground border-0"}>
                         {instruction.isActive ? "Active" : "Inactive"}
-                      </span>
+                      </Badge>
+                      <Badge variant="outline" className="text-xs">{typeLabel[instruction.instructionType]}</Badge>
                     </div>
-
-                    {instruction.description && <p className="text-sm text-muted-foreground mb-3">{instruction.description}</p>}
-
-                    <div className="text-xs text-muted-foreground">
-                      <p>Type: {getInstructionTypeLabel(instruction.instructionType)}</p>
-                      <p>Priority: {instruction.priority}</p>
-                      {instruction.rules && instruction.rules.length > 0 && <p>Rules: {instruction.rules.length}</p>}
-                      {instruction.schedules && instruction.schedules.length > 0 && <p>Schedules: {instruction.schedules.length}</p>}
+                    {instruction.description && (
+                      <p className="text-sm text-muted-foreground mb-2">{instruction.description}</p>
+                    )}
+                    <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                      <span>{instruction.rules?.length ?? 0} rule{(instruction.rules?.length ?? 0) !== 1 ? "s" : ""}</span>
+                      <span>{instruction.schedules?.length ?? 0} schedule{(instruction.schedules?.length ?? 0) !== 1 ? "s" : ""}</span>
                     </div>
                   </div>
 
-                  <div className="flex gap-2">
-                    <Button
-                      onClick={() => updateStatusMutation.mutate({ instructionId: instruction.id, isActive: !instruction.isActive })}
-                      disabled={updateStatusMutation.isPending}
-                      variant={instruction.isActive ? "default" : "outline"}
-                      size="sm"
-                    >
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Button onClick={() => setExpanded(expanded === instruction.id ? null : instruction.id)}
+                      variant="outline" size="sm">
+                      {expanded === instruction.id ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                    </Button>
+                    <Button onClick={() => updateStatusMutation.mutate({ instructionId: instruction.id, isActive: !instruction.isActive })}
+                      disabled={updateStatusMutation.isPending} variant={instruction.isActive ? "default" : "outline"} size="sm">
                       {instruction.isActive ? "Disable" : "Enable"}
                     </Button>
-                    <Button
-                      onClick={() => deleteMutation.mutate({ instructionId: instruction.id })}
-                      disabled={deleteMutation.isPending}
-                      variant="destructive"
-                      size="sm"
-                    >
+                    <Button onClick={() => deleteMutation.mutate({ instructionId: instruction.id })}
+                      disabled={deleteMutation.isPending} variant="destructive" size="sm">
                       <Trash2 className="w-4 h-4" />
                     </Button>
                   </div>
                 </div>
+
+                {/* Expanded Rule/Schedule Management */}
+                {expanded === instruction.id && (
+                  <div className="mt-6 space-y-6 border-t border-border pt-6">
+
+                    {/* Rules Section */}
+                    <div>
+                      <div className="flex items-center justify-between mb-3">
+                        <h4 className="text-sm font-semibold text-foreground">Rules</h4>
+                        <Button size="sm" variant="outline" onClick={() => setAddingRule(addingRule === instruction.id ? null : instruction.id)}>
+                          <Plus className="w-3 h-3 mr-1" />Add Rule
+                        </Button>
+                      </div>
+
+                      {/* Existing Rules */}
+                      <div className="space-y-2">
+                        {instruction.rules && instruction.rules.length > 0 ? (
+                          instruction.rules.map((rule: any) => (
+                            <div key={rule.id} className="flex items-center gap-3 bg-slate-900/50 rounded-lg px-3 py-2 text-sm">
+                              <Badge className={`${ruleTypeBadge[rule.ruleType] ?? "bg-muted text-muted-foreground"} border-0 text-xs shrink-0`}>
+                                {rule.ruleType}
+                              </Badge>
+                              <span className="text-muted-foreground font-mono text-xs">{rule.ruleKey}</span>
+                              <span className="text-foreground font-medium flex-1 truncate">{rule.ruleValue}</span>
+                              <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
+                                onClick={() => deleteRuleMutation.mutate({ ruleId: rule.id })}>
+                                <X className="w-3 h-3" />
+                              </Button>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="text-xs text-muted-foreground">No rules yet — add one below.</p>
+                        )}
+                      </div>
+
+                      {/* Add Rule Form */}
+                      {addingRule === instruction.id && (
+                        <div className="mt-3 p-4 rounded-lg border border-border bg-slate-900/30 space-y-3">
+                          <p className="text-xs text-muted-foreground font-medium">New rule</p>
+                          <div className="grid grid-cols-3 gap-3">
+                            <div>
+                              <label className="text-xs text-muted-foreground block mb-1">Action</label>
+                              <select value={ruleForm.ruleType}
+                                onChange={(e) => setRuleForm({ ...ruleForm, ruleType: e.target.value as any })}
+                                className="w-full text-sm px-2 py-1.5 rounded border border-border bg-background text-foreground">
+                                <option value="exclude">exclude</option>
+                                <option value="forbid">forbid</option>
+                                <option value="include">include (only)</option>
+                                <option value="require">require</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-xs text-muted-foreground block mb-1">Field</label>
+                              <select value={ruleForm.ruleKey}
+                                onChange={(e) => setRuleForm({ ...ruleForm, ruleKey: e.target.value })}
+                                className="w-full text-sm px-2 py-1.5 rounded border border-border bg-background text-foreground">
+                                <option value="category">category</option>
+                                <option value="title">title keyword</option>
+                                <option value="signalType">signalType</option>
+                                <option value="side">side (yes/no)</option>
+                                <option value="minConfidence">minConfidence</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-xs text-muted-foreground block mb-1">Value</label>
+                              <Input className="h-8 text-sm" placeholder="e.g., politics"
+                                value={ruleForm.ruleValue}
+                                onChange={(e) => setRuleForm({ ...ruleForm, ruleValue: e.target.value })} />
+                            </div>
+                          </div>
+                          <div className="flex gap-2">
+                            <Button size="sm" className="laurenzo-button" disabled={!ruleForm.ruleValue || addRuleMutation.isPending}
+                              onClick={() => addRuleMutation.mutate({ instructionId: instruction.id, ...ruleForm })}>
+                              {addRuleMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : "Add"}
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={() => setAddingRule(null)}>Cancel</Button>
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            Example: <code>exclude · category · sports</code> — agent will skip sports markets.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Schedules Section */}
+                    <div>
+                      <div className="flex items-center justify-between mb-3">
+                        <h4 className="text-sm font-semibold text-foreground">Schedules</h4>
+                        <Button size="sm" variant="outline" onClick={() => setAddingSchedule(addingSchedule === instruction.id ? null : instruction.id)}>
+                          <Plus className="w-3 h-3 mr-1" />Add Schedule
+                        </Button>
+                      </div>
+
+                      {/* Existing Schedules */}
+                      <div className="space-y-2">
+                        {instruction.schedules && instruction.schedules.length > 0 ? (
+                          instruction.schedules.map((sched: any) => (
+                            <div key={sched.id} className="flex items-center gap-3 bg-slate-900/50 rounded-lg px-3 py-2 text-sm">
+                              <Badge variant="outline" className="text-xs shrink-0">{sched.scheduleType}</Badge>
+                              {sched.startTime && <span className="text-muted-foreground text-xs">{sched.startTime}–{sched.endTime}</span>}
+                              {sched.daysOfWeek && <span className="text-muted-foreground text-xs">Days: {sched.daysOfWeek}</span>}
+                              <span className="text-xs text-muted-foreground flex-1">{sched.timezone}</span>
+                              <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
+                                onClick={() => deleteScheduleMutation.mutate({ scheduleId: sched.id })}>
+                                <X className="w-3 h-3" />
+                              </Button>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="text-xs text-muted-foreground">No schedules — instruction is always active.</p>
+                        )}
+                      </div>
+
+                      {/* Add Schedule Form */}
+                      {addingSchedule === instruction.id && (
+                        <div className="mt-3 p-4 rounded-lg border border-border bg-slate-900/30 space-y-3">
+                          <p className="text-xs text-muted-foreground font-medium">New schedule</p>
+                          <div>
+                            <label className="text-xs text-muted-foreground block mb-1">Schedule type</label>
+                            <select value={scheduleForm.scheduleType}
+                              onChange={(e) => setScheduleForm({ ...scheduleForm, scheduleType: e.target.value as any })}
+                              className="w-full text-sm px-2 py-1.5 rounded border border-border bg-background text-foreground">
+                              <option value="always">Always active</option>
+                              <option value="time_window">Time window (HH:MM–HH:MM)</option>
+                              <option value="day_of_week">Days of week</option>
+                            </select>
+                          </div>
+                          {scheduleForm.scheduleType === "time_window" && (
+                            <div className="grid grid-cols-3 gap-3">
+                              <div>
+                                <label className="text-xs text-muted-foreground block mb-1">Start (HH:MM)</label>
+                                <Input className="h-8 text-sm" value={scheduleForm.startTime}
+                                  onChange={(e) => setScheduleForm({ ...scheduleForm, startTime: e.target.value })} />
+                              </div>
+                              <div>
+                                <label className="text-xs text-muted-foreground block mb-1">End (HH:MM)</label>
+                                <Input className="h-8 text-sm" value={scheduleForm.endTime}
+                                  onChange={(e) => setScheduleForm({ ...scheduleForm, endTime: e.target.value })} />
+                              </div>
+                              <div>
+                                <label className="text-xs text-muted-foreground block mb-1">Timezone</label>
+                                <Input className="h-8 text-sm" value={scheduleForm.timezone}
+                                  onChange={(e) => setScheduleForm({ ...scheduleForm, timezone: e.target.value })} />
+                              </div>
+                            </div>
+                          )}
+                          {scheduleForm.scheduleType === "day_of_week" && (
+                            <div>
+                              <label className="text-xs text-muted-foreground block mb-1">Days (0=Sun, 1=Mon … 6=Sat, comma-separated)</label>
+                              <Input className="h-8 text-sm" placeholder="1,2,3,4,5" value={scheduleForm.daysOfWeek}
+                                onChange={(e) => setScheduleForm({ ...scheduleForm, daysOfWeek: e.target.value })} />
+                            </div>
+                          )}
+                          <div className="flex gap-2">
+                            <Button size="sm" className="laurenzo-button" disabled={addScheduleMutation.isPending}
+                              onClick={() => addScheduleMutation.mutate({ instructionId: instruction.id, ...scheduleForm })}>
+                              {addScheduleMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : "Add"}
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={() => setAddingSchedule(null)}>Cancel</Button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
           ))
@@ -221,7 +367,10 @@ export default function Training() {
           <Card className="laurenzo-card">
             <CardContent className="pt-6 text-center py-12">
               <BookOpen className="w-12 h-12 text-muted-foreground mx-auto mb-4 opacity-50" />
-              <p className="text-muted-foreground mb-4">No training instructions yet.</p>
+              <p className="text-muted-foreground mb-2">No training instructions yet.</p>
+              <p className="text-sm text-muted-foreground mb-6">
+                Create an instruction to tell your agent what markets to trade, what to avoid, or when to trade.
+              </p>
               <Button onClick={() => setShowNewForm(true)} className="laurenzo-button">
                 Create Your First Instruction
               </Button>
@@ -230,30 +379,21 @@ export default function Training() {
         )}
       </div>
 
-      {/* Info Section */}
+      {/* Reference */}
       <Card className="laurenzo-card border-cyan-500/30 bg-cyan-500/5">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <AlertCircle className="w-5 h-5 text-cyan-400" />
-            How Training Works
+          <CardTitle className="flex items-center gap-2 text-base">
+            <AlertCircle className="w-4 h-4 text-cyan-400" />
+            Rule Reference
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-3 text-sm">
-          <p>
-            <strong>Market Filters:</strong> Tell your agent which markets to trade (e.g., "only politics", "exclude sports").
-          </p>
-          <p>
-            <strong>Signal Filters:</strong> Define signal quality requirements (e.g., "minimum 0.75 confidence", "only momentum signals").
-          </p>
-          <p>
-            <strong>Time Windows:</strong> Restrict trading to specific hours or days (e.g., "weekdays 9am-5pm EST").
-          </p>
-          <p>
-            <strong>Position Limits:</strong> Control position sizing (e.g., "max $20 per trade", "max 3 open positions").
-          </p>
-          <p>
-            Your agent applies these rules to every signal it generates, learning and improving over time based on outcomes.
-          </p>
+        <CardContent className="text-sm space-y-2 text-muted-foreground">
+          <p><span className="text-red-400 font-mono">exclude / forbid</span> — skip markets or signals matching this value</p>
+          <p><span className="text-cyan-400 font-mono">include / require</span> — only trade markets or signals matching this value</p>
+          <p><strong>category</strong> examples: <code>politics</code>, <code>sports</code>, <code>crypto</code>, <code>economics</code></p>
+          <p><strong>signalType</strong> examples: <code>value_play</code>, <code>momentum</code>, <code>contrarian</code></p>
+          <p><strong>minConfidence</strong>: numeric 0–1, e.g. <code>0.80</code></p>
+          <p><strong>side</strong>: <code>yes</code> or <code>no</code></p>
         </CardContent>
       </Card>
     </div>
