@@ -309,10 +309,10 @@ export default function TradingAutonomy() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Shield className="h-5 w-5 text-emerald-300" />
-              Away-from-chat readiness
+              Autonomous trading readiness
             </CardTitle>
             <CardDescription>
-              This status answers whether Laurenzo is actually configured to review and, when guardrails allow, trade while you are away.
+              This status answers whether Laurenzo is actually configured to trade directly for you, within guardrails, while you are away.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -326,7 +326,7 @@ export default function TradingAutonomy() {
                 </div>
               </div>
               <div className="rounded-xl border border-border/60 bg-background/50 p-3 text-sm">
-                <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Last recorded review</div>
+                <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Last autonomous trading cycle</div>
                 <div className="mt-2 font-semibold text-foreground">
                   {formatAutonomyActivityTime(autonomyActivityQuery.data?.lastRun?.createdAt)}
                 </div>
@@ -339,10 +339,10 @@ export default function TradingAutonomy() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Zap className="h-5 w-5 text-emerald-300" />
-              Latest away-from-chat activity
+              Latest autonomous trading activity
             </CardTitle>
             <CardDescription>
-              This panel shows the most recent scheduled review outcome recorded by the deployed autonomy loop.
+              This panel shows the most recent autonomous trading outcome recorded for your account.
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
@@ -358,18 +358,18 @@ export default function TradingAutonomy() {
                 <p className="mt-2 text-xs text-muted-foreground">
                   {autonomyActivityQuery.data?.lastRun?.autonomyMode
                     ? `${autonomyActivityQuery.data.lastRun.autonomyMode} · ${autonomyActivityQuery.data.lastRun.executionCadence ?? "cadence unknown"}`
-                    : "No away-from-chat review has been persisted yet."}
+                    : "No autonomous trading cycle has been persisted yet."}
                 </p>
               </div>
               <div className="rounded-xl border border-border/60 bg-background/50 p-3 text-sm">
-                <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Last away order event</div>
+                <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Last autonomous order event</div>
                 <div className="mt-2 font-semibold text-foreground">
                   {formatAutonomyActivityTime(autonomyActivityQuery.data?.lastOrder?.createdAt)}
                 </div>
                 <p className="mt-2 text-xs text-muted-foreground">
                   {autonomyActivityQuery.data?.lastOrder?.marketId
                     ? `${autonomyActivityQuery.data.lastOrder.marketId} · ${autonomyActivityQuery.data.lastOrder.side?.toUpperCase() ?? "UNKNOWN"} side`
-                    : "No away-from-chat order event is recorded yet."}
+                    : "No autonomous order event is recorded yet."}
                 </p>
               </div>
             </div>
@@ -379,7 +379,8 @@ export default function TradingAutonomy() {
             <div>
               <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Recent autonomy events</div>
               <p className="mt-2 text-sm text-muted-foreground">
-                The latest persisted events help separate real scheduled reviews from manual arm/disarm actions.
+                  The latest persisted events help separate real autonomous trading cycles from manual arm/disarm actions.
+
               </p>
             </div>
             <div className="space-y-2">
@@ -393,7 +394,7 @@ export default function TradingAutonomy() {
               ))}
               {!autonomyActivityQuery.data?.recentActivity.length ? (
                 <div className="rounded-xl border border-dashed border-border/60 p-3 text-sm text-muted-foreground">
-                  No scheduled autonomy events have been recorded yet.
+                  No autonomous trading events have been recorded yet.
                 </div>
               ) : null}
             </div>
@@ -408,7 +409,7 @@ export default function TradingAutonomy() {
             Latest candidate decision detail
           </CardTitle>
           <CardDescription>
-            This panel explains the concrete candidate Laurenzo most recently considered during an away-from-chat review.
+            This panel explains the concrete candidate Laurenzo most recently considered during the latest autonomous trading cycle.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -423,7 +424,7 @@ export default function TradingAutonomy() {
               <p className="mt-2 text-xs text-muted-foreground">
                 {autonomyActivityQuery.data?.lastRun?.decision?.side
                   ? `${autonomyActivityQuery.data.lastRun.decision.side.toUpperCase()} side`
-                  : "No candidate side was persisted for the latest review."}
+                  : "No candidate side was persisted for the latest autonomous trading cycle."}
               </p>
             </div>
             <div className="rounded-xl border border-border/60 bg-background/50 p-3 text-sm">
@@ -436,7 +437,7 @@ export default function TradingAutonomy() {
               <p className="mt-2 text-xs text-muted-foreground">
                 {autonomyActivityQuery.data?.lastRun?.decision?.executionScore !== null && autonomyActivityQuery.data?.lastRun?.decision?.executionScore !== undefined
                   ? `${Math.round(autonomyActivityQuery.data.lastRun.decision.executionScore * 100)}% execution score · ${autonomyActivityQuery.data.lastRun.decision.expectedValue !== null && autonomyActivityQuery.data.lastRun.decision.expectedValue !== undefined ? `${(autonomyActivityQuery.data.lastRun.decision.expectedValue * 100).toFixed(1)}¢ expected value` : "expected value unavailable"}`
-                  : "Execution scoring was not persisted for the latest review."}
+                  : "Execution scoring was not persisted for the latest autonomous trading cycle."}
               </p>
             </div>
             <div className="rounded-xl border border-border/60 bg-background/50 p-3 text-sm">
@@ -451,7 +452,7 @@ export default function TradingAutonomy() {
               <p className="mt-2 text-xs text-muted-foreground">
                 {autonomyActivityQuery.data?.lastRun?.decision?.orderExposure !== null && autonomyActivityQuery.data?.lastRun?.decision?.orderExposure !== undefined
                   ? `Exposure ${formatCurrency(autonomyActivityQuery.data.lastRun.decision.orderExposure)} · max loss ${autonomyActivityQuery.data.lastRun.decision.maxLossOnTrade !== null && autonomyActivityQuery.data.lastRun.decision.maxLossOnTrade !== undefined ? formatCurrency(autonomyActivityQuery.data.lastRun.decision.maxLossOnTrade) : "unknown"}`
-                  : "The latest review did not persist an execution-sized exposure estimate."}
+                  : "The latest autonomous trading cycle did not persist an execution-sized exposure estimate."}
               </p>
             </div>
           </div>
@@ -466,7 +467,7 @@ export default function TradingAutonomy() {
               <p className="mt-2 text-xs text-muted-foreground">
                 {autonomyActivityQuery.data?.lastRun?.decision?.maxBudget !== null && autonomyActivityQuery.data?.lastRun?.decision?.maxBudget !== undefined
                   ? `The saved guardrails allowed up to ${formatCurrency(autonomyActivityQuery.data.lastRun.decision.maxBudget)} for this candidate.`
-                  : "No budget envelope was stored for the latest review."}
+                  : "No budget envelope was stored for the latest autonomous trading cycle."}
               </p>
             </div>
             <div className="rounded-xl border border-border/60 bg-background/50 p-3 text-sm">
@@ -475,7 +476,7 @@ export default function TradingAutonomy() {
                 {autonomyActivityQuery.data?.lastRun?.reason ?? "No run reason recorded yet"}
               </div>
               <p className="mt-2 text-xs text-muted-foreground">
-                {autonomyActivityQuery.data?.lastRun?.decision?.reasoning ?? "No candidate reasoning was persisted for the latest away-from-chat review."}
+                {autonomyActivityQuery.data?.lastRun?.decision?.reasoning ?? "No candidate reasoning was persisted for the latest autonomous trading cycle."}
               </p>
             </div>
           </div>
@@ -510,8 +511,8 @@ export default function TradingAutonomy() {
                           : cadence === "session_assisted"
                             ? "Stay active while you are guiding the session inside the app."
                             : cadence === "hourly_watch"
-                              ? "Prefer scheduled reviews and controlled periodic scans."
-                              : "Use the most proactive monitoring posture available to the execution loop."}
+                              ? "Prefer direct autonomous trading on a controlled hourly cadence."
+                              : "Use the most proactive direct-autonomous-trading posture available to the execution loop."}
                       </div>
                     </button>
                   );

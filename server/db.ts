@@ -8,9 +8,11 @@ import {
   kalshiSignals,
   kalshiPerformance,
   kalshiCapital,
+  kalshiCredentials,
+  tradingPreferences,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
-import { eq, and, desc, gte } from "drizzle-orm";
+import { eq, and, desc, gte, inArray, ne } from "drizzle-orm";
 import { drizzle as drizzleInit } from "drizzle-orm/mysql2";
 import * as mysql from "mysql2/promise";
 
@@ -203,6 +205,35 @@ export async function getUser(openId: string) {
 
 export async function getUserByOpenId(openId: string) {
   return getUser(openId);
+}
+
+export async function getUsersEligibleForAutomaticScheduledTrading() {
+  const database = await getDb();
+  if (!database) return [];
+
+  return database
+    .select({
+      id: users.id,
+      openId: users.openId,
+      name: users.name,
+      email: users.email,
+      role: users.role,
+      createdAt: users.createdAt,
+    })
+    .from(users)
+    .innerJoin(tradingPreferences, eq(users.id, tradingPreferences.userId))
+    .innerJoin(kalshiCredentials, eq(users.id, kalshiCredentials.userId))
+    .where(
+      and(
+        inArray(users.role, ["user", "admin"]),
+        eq(tradingPreferences.liveTradingEnabled, 1),
+        inArray(tradingPreferences.autonomyMode, ["semi_autonomous", "fully_autonomous"]),
+        inArray(tradingPreferences.executionCadence, ["hourly_watch", "continuous_watch"]),
+        eq(kalshiCredentials.accountStatus, "connected"),
+        ne(kalshiCredentials.apiKeyEncrypted, ""),
+        ne(kalshiCredentials.privateKeyEncrypted, "")
+      )
+    );
 }
 
 // Kalshi market queries

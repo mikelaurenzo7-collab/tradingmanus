@@ -76,7 +76,10 @@ vi.mock("./_core/kalshiExecution", () => ({
   placeKalshiOrder: mocks.placeKalshiOrder,
 }));
 
-import { runScheduledAutonomousTrading } from "./_core/kalshiAutonomy";
+import {
+  runScheduledAutonomousTrading,
+  runScheduledAutonomousTradingBatch,
+} from "./_core/kalshiAutonomy";
 
 const testUser = {
   id: 7,
@@ -219,5 +222,84 @@ describe("scheduled away-from-chat trading", () => {
       expect.stringContaining('"decision":{"marketId":"KXTEST-1"'),
       "away-open-id"
     );
+  });
+
+  it("summarizes automatic-review outcomes across all eligible users in a single batch", async () => {
+    const secondUser = {
+      ...testUser,
+      id: 8,
+      openId: "second-open-id",
+      email: "second@example.com",
+      name: "Second User",
+    };
+
+    const batch = await runScheduledAutonomousTradingBatch(
+      [testUser, secondUser],
+      "scheduler-open-id",
+      async (user) => {
+        if (user.id === 7) {
+          return {
+            success: true,
+            status: "executed",
+            reason: "placed a live order",
+            signalsGenerated: 3,
+            executionCandidates: 1,
+            orderPlaced: true,
+            orderId: "order-123",
+            executedMarketId: "KXTEST-1",
+            candidateMarketId: "KXTEST-1",
+            autonomyMode: "fully_autonomous",
+            executionCadence: "continuous_watch",
+            decision: null,
+          };
+        }
+
+        return {
+          success: true,
+          status: "blocked",
+          reason: "daily order cap reached",
+          signalsGenerated: 2,
+          executionCandidates: 1,
+          orderPlaced: false,
+          candidateMarketId: "KXTEST-2",
+          autonomyMode: "semi_autonomous",
+          executionCadence: "hourly_watch",
+          decision: null,
+        };
+      }
+    );
+
+    expect(batch).toMatchObject({
+      success: true,
+      mode: "eligible_users_batch",
+      triggeredByOpenId: "scheduler-open-id",
+      eligibleUsers: 2,
+      processedUsers: 2,
+      executedUsers: 1,
+      blockedUsers: 1,
+      generatedOnlyUsers: 0,
+      skippedUsers: 0,
+      errorUsers: 0,
+    });
+    expect(batch.results).toEqual([
+      {
+        userId: 7,
+        openId: "away-open-id",
+        status: "executed",
+        reason: "placed a live order",
+        orderPlaced: true,
+        executedMarketId: "KXTEST-1",
+        candidateMarketId: "KXTEST-1",
+      },
+      {
+        userId: 8,
+        openId: "second-open-id",
+        status: "blocked",
+        reason: "daily order cap reached",
+        orderPlaced: false,
+        executedMarketId: undefined,
+        candidateMarketId: "KXTEST-2",
+      },
+    ]);
   });
 });

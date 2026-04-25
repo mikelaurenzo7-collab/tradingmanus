@@ -274,6 +274,28 @@ async function shouldSkipScheduledRun(
   return null;
 }
 
+export type ScheduledAutonomyBatchSummary = {
+  success: boolean;
+  mode: "eligible_users_batch";
+  triggeredByOpenId: string;
+  eligibleUsers: number;
+  processedUsers: number;
+  executedUsers: number;
+  blockedUsers: number;
+  generatedOnlyUsers: number;
+  skippedUsers: number;
+  errorUsers: number;
+  results: Array<{
+    userId: number;
+    openId: string;
+    status: AwayTradingRunResult["status"];
+    reason: string;
+    orderPlaced: boolean;
+    executedMarketId?: string;
+    candidateMarketId?: string;
+  }>;
+};
+
 export async function runScheduledAutonomousTrading(
   user: User
 ): Promise<AwayTradingRunResult> {
@@ -621,4 +643,39 @@ export async function runScheduledAutonomousTrading(
       maxLossOnTrade,
     }),
   });
+}
+
+export async function runScheduledAutonomousTradingBatch(
+  users: User[],
+  triggeredByOpenId: string,
+  runOne: (user: User) => Promise<AwayTradingRunResult> = runScheduledAutonomousTrading
+): Promise<ScheduledAutonomyBatchSummary> {
+  const results: ScheduledAutonomyBatchSummary["results"] = [];
+
+  for (const user of users) {
+    const result = await runOne(user);
+    results.push({
+      userId: user.id,
+      openId: user.openId,
+      status: result.status,
+      reason: result.reason,
+      orderPlaced: result.orderPlaced,
+      executedMarketId: result.executedMarketId,
+      candidateMarketId: result.candidateMarketId,
+    });
+  }
+
+  return {
+    success: true,
+    mode: "eligible_users_batch",
+    triggeredByOpenId,
+    eligibleUsers: users.length,
+    processedUsers: results.length,
+    executedUsers: results.filter((result) => result.status === "executed").length,
+    blockedUsers: results.filter((result) => result.status === "blocked").length,
+    generatedOnlyUsers: results.filter((result) => result.status === "generated_only").length,
+    skippedUsers: results.filter((result) => result.status === "skipped").length,
+    errorUsers: results.filter((result) => result.status === "error").length,
+    results,
+  };
 }

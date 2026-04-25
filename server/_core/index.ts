@@ -8,9 +8,9 @@ import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { validateServerEnv } from "./env";
-import { getDb } from "../db";
+import { getDb, getUsersEligibleForAutomaticScheduledTrading } from "../db";
 import { sdk } from "./sdk";
-import { runScheduledAutonomousTrading } from "./kalshiAutonomy";
+import { runScheduledAutonomousTrading, runScheduledAutonomousTradingBatch } from "./kalshiAutonomy";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -59,21 +59,26 @@ async function startServer() {
 
   app.post("/api/scheduled/autonomous-trading", async (req, res) => {
     try {
-      const user = await sdk.authenticateRequest(req);
+      const requester = await sdk.authenticateRequest(req);
 
-      if (!user) {
+      if (!requester) {
         res.status(401).json({ success: false, error: "Authentication required" });
         return;
       }
 
-      if (user.role !== "user" && user.role !== "admin") {
+      if (requester.role !== "user" && requester.role !== "admin") {
         res.status(403).json({ success: false, error: "Forbidden" });
         return;
       }
 
-      const result = await runScheduledAutonomousTrading(user);
-      const statusCode = result.status === "error" ? 500 : 200;
-      res.status(statusCode).json(result);
+      const eligibleUsers = await getUsersEligibleForAutomaticScheduledTrading();
+      const summary = await runScheduledAutonomousTradingBatch(
+        eligibleUsers as any,
+        requester.openId
+      );
+
+      const statusCode = summary.errorUsers > 0 && summary.processedUsers === summary.errorUsers ? 500 : 200;
+      res.status(statusCode).json(summary);
     } catch (error) {
       console.error("[ScheduledAutonomy] Route error:", error);
       res.status(500).json({

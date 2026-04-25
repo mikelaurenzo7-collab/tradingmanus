@@ -62,11 +62,11 @@ export function getAutonomyModeDescription(mode: TradingAutonomyMode) {
     case "manual":
       return "The agent may research and rank setups, but it will not place live orders.";
     case "approval_required":
-      return "The agent may generate candidate trades during active app use or scheduled reviews, but every live order still needs your explicit approval.";
+      return "The agent may identify trades continuously, but every live order still needs your explicit approval before submission.";
     case "semi_autonomous":
-      return "The agent may auto-execute smaller eligible trades within your thresholds, including scheduled away-from-chat reviews, while larger trades still pause for approval.";
+      return "The agent may place smaller eligible live trades automatically within your thresholds, while larger trades still pause for approval.";
     case "fully_autonomous":
-      return "The agent may place live orders automatically within your stored guardrails during eligible in-app flows and scheduled away-from-chat reviews once the latest build is published.";
+      return "The agent may place live orders automatically within your stored guardrails whenever your account settings allow direct autonomous trading.";
   }
 }
 
@@ -77,9 +77,9 @@ export function getExecutionCadenceLabel(cadence: ExecutionCadence) {
     case "session_assisted":
       return "During guided sessions";
     case "hourly_watch":
-      return "Hourly review policy";
+      return "Hourly autonomous trading";
     case "continuous_watch":
-      return "Continuous review policy";
+      return "Continuous autonomous trading";
   }
 }
 
@@ -117,9 +117,10 @@ export function getAutonomyStatusSummary(preferences: TradingPreferences) {
 
   return {
     title: `${getAutonomyModeLabel(preferences.autonomyMode)} is armed`,
-    body: usesAwayScanning
-      ? "Your live-trading policy is armed for eligible execution flows. After you publish the latest build, scheduled reviews can keep evaluating markets while you are away."
+      body: usesAwayScanning
+      ? "Your live-trading policy is armed for eligible autonomous execution. Laurenzo can place trades automatically under your saved account guardrails while you are away."
       : "Your live-trading policy is armed for eligible in-app execution flows, but the selected cadence keeps execution supervised to active sessions.",
+
     tone: "text-emerald-300",
   };
 }
@@ -189,8 +190,8 @@ export function formatAutonomyActivityTime(value: string | Date | null | undefin
 export function getAutonomyReviewSummary(activity: AutonomyActivitySummary | null | undefined) {
   if (!activity?.lastRun) {
     return {
-      title: "No scheduled review recorded yet",
-      body: "Once Laurenzo completes an away-from-chat review, the latest outcome will appear here with its execution status and signal counts.",
+      title: "No autonomous trading activity recorded yet",
+      body: "Once Laurenzo completes a direct autonomous trading cycle for your account, the latest outcome will appear here with its execution status and signal counts.",
       tone: "text-slate-300",
     };
   }
@@ -201,32 +202,32 @@ export function getAutonomyReviewSummary(activity: AutonomyActivitySummary | nul
   switch (lastRun.status) {
     case "executed":
       return {
-        title: "Last away review placed a live order",
+        title: "Last autonomous trading cycle placed a live order",
         body: `${counts}. ${lastRun.executedMarketId ? `Executed ${lastRun.executedMarketId}. ` : ""}${lastRun.reason ?? "A live order was submitted."}`,
         tone: "text-emerald-300",
       };
     case "blocked":
       return {
-        title: "Last away review was blocked by guardrails",
+        title: "Last autonomous trading cycle was blocked by guardrails",
         body: `${counts}. ${lastRun.reason ?? "The autonomy policy or risk rules blocked execution."}`,
         tone: "text-amber-300",
       };
     case "generated_only":
       return {
-        title: "Last away review generated analysis without trading",
+        title: "Last autonomous trading cycle generated analysis without trading",
         body: `${counts}. ${lastRun.reason ?? "Signals were reviewed, but no trade was submitted."}`,
         tone: "text-cyan-300",
       };
     case "skipped":
       return {
-        title: "Last away review was skipped",
-        body: lastRun.reason ?? "The current autonomy policy skipped the scheduled review.",
+        title: "Last autonomous trading cycle was skipped",
+        body: lastRun.reason ?? "The current autonomy policy skipped direct autonomous trading.",
         tone: "text-slate-300",
       };
     default:
       return {
-        title: "Last away review hit an operational error",
-        body: lastRun.reason ?? "The scheduled review returned an error before execution could proceed.",
+        title: "Last autonomous trading cycle hit an operational error",
+        body: lastRun.reason ?? "The direct autonomous trading cycle returned an error before execution could proceed.",
         tone: "text-rose-300",
       };
   }
@@ -239,7 +240,7 @@ function getDecisionGuardrailLabel(blockedBy: string | null | undefined) {
     case "daily_order_cap":
       return "The saved daily order cap blocked execution.";
     case "open_position_limit":
-      return "The open-position limit blocked another away-from-chat trade.";
+      return "The open-position limit blocked another autonomous trade.";
     case "autonomy_or_exposure_guardrail":
       return "The candidate did not satisfy the saved autonomy or exposure guardrails.";
     case "per_trade_risk_limit":

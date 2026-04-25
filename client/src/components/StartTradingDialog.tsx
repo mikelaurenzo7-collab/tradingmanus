@@ -98,7 +98,7 @@ export function StartTradingDialog({
             <Alert>
               <AlertTriangle className="h-4 w-4" />
               <AlertDescription>
-                Manual mode cannot arm live trading. If you want the app to submit live orders during eligible in-app flows or scheduled away-from-chat reviews, switch to Approval Required, Semi-autonomous, or Fully Autonomous first.
+                Manual mode cannot arm live trading. If you want Laurenzo to submit live orders directly under your saved autonomy settings, switch to Approval Required, Semi-autonomous, or Fully Autonomous first.
               </AlertDescription>
             </Alert>
 
@@ -213,7 +213,7 @@ export function StartTradingDialog({
             <Alert>
               <AlertTriangle className="h-4 w-4" />
               <AlertDescription>
-                Arming live trading does not change your stored risk controls. After you publish the latest build, eligible hourly or continuous review policies can run scheduled away-from-chat scans, but approval thresholds, daily caps, and other guardrails still apply.
+                Arming live trading does not change your stored risk controls. When direct autonomous trading is enabled for your account, Laurenzo still follows your saved autonomy mode, approval threshold, daily caps, and the rest of your guardrails before any live order can be submitted.
               </AlertDescription>
             </Alert>
 
