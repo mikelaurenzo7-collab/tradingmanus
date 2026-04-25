@@ -89,6 +89,18 @@ The app is hardened for a single deployment serving multiple authenticated users
 
 For future team or organization accounts, add an explicit organization/tenant model and scope admin roles to that tenant before allowing shared-team administration. The current production boundary is authenticated-user isolation.
 
+## Future prediction-market platforms
+
+Launch v1 should stay Kalshi-first. The current backend, database tables, router namespace, and UI copy are intentionally optimized for Kalshi live trading, API-key credentials, and regulated real-money account controls.
+
+Other platforms need an adapter sprint rather than a small patch:
+
+- Polymarket has a materially different wallet/signing and CLOB integration model.
+- Manifold has public APIs, but its market mechanics and play-money/social use case do not map directly to Kalshi live-cash risk controls.
+- PredictIt and similar legacy venues require fresh legal/API verification before any integration plan.
+
+Before adding another exchange, introduce a platform adapter boundary with typed operations for credentials, account equity, market discovery, order placement, order sync, positions, and risk normalization. Then either add platform-aware generic ledgers or explicit platform columns/indexes so every order, fill, position, signal, audit event, and capital record remains user-scoped and exchange-scoped. The frontend should move from direct `kalshi` assumptions to a platform selector and capability-aware copy.
+
 ## Notes
 
 - Optional analytics only load when both analytics environment variables are set.

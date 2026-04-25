@@ -170,6 +170,28 @@ describe("scheduled away-from-chat trading", () => {
     );
   });
 
+  it("skips autonomous runs immediately after a manual order", async () => {
+    mocks.getLatestAuditEventByType.mockImplementation(async (eventType: string) => {
+      if (eventType === "kalshi_order_placed") {
+        return { createdAt: new Date(Date.now() - 60 * 1000) };
+      }
+
+      return null;
+    });
+
+    const result = await runScheduledAutonomousTrading(testUser);
+
+    expect(result.status).toBe("skipped");
+    expect(result.reason).toContain("recent manual order");
+    expect(mocks.fetchKalshiAccountEquity).not.toHaveBeenCalled();
+    expect(mocks.placeKalshiOrder).not.toHaveBeenCalled();
+    expect(mocks.logAuditEvent).toHaveBeenCalledWith(
+      "scheduled_autonomy_run_skipped",
+      expect.stringContaining('"reason":"recent manual order detected; autonomy will wait for the next cycle"'),
+      "away-open-id"
+    );
+  });
+
   it("generates and saves signals but never auto-submits in approval-required mode while persisting candidate details", async () => {
     mocks.getTradingPreferences.mockResolvedValue({
       ...mocks.DEFAULT_PREFERENCES,

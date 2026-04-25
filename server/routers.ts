@@ -624,12 +624,12 @@ export const appRouter = router({
     killSwitch: protectedProcedure.mutation(async ({ ctx }) => {
       try {
         const userId = getRequiredUserId(ctx);
-        const result = await activateKalshiKillSwitch(userId);
         const preferences = await tradingPreferencesDb.getTradingPreferences(userId);
         await tradingPreferencesDb.saveTradingPreferences(userId, {
           ...preferences,
           liveTradingEnabled: false,
         });
+        const result = await activateKalshiKillSwitch(userId);
         await db.logAuditEvent(
           "kalshi_kill_switch_activated",
           JSON.stringify({

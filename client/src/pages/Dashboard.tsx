@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   AlertCircle,
   Plug,
+  RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -25,6 +26,28 @@ import {
   getAutonomyReviewSummary,
   getAutonomyStatusSummary,
 } from "@/lib/tradingAutonomy";
+
+const DATA_STALE_AFTER_MS = 5 * 60 * 1000;
+
+function getTimestampMs(value: Date | string | null | undefined) {
+  if (!value) return null;
+  const timestamp = value instanceof Date ? value.getTime() : new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function formatFreshnessLabel(value: Date | string | null | undefined) {
+  const timestamp = getTimestampMs(value);
+  if (!timestamp) return "not synced yet";
+
+  const ageMs = Math.max(0, Date.now() - timestamp);
+  if (ageMs < 60 * 1000) return "just now";
+
+  const ageMinutes = Math.floor(ageMs / (60 * 1000));
+  if (ageMinutes < 60) return `${ageMinutes}m ago`;
+
+  const ageHours = Math.floor(ageMinutes / 60);
+  return `${ageHours}h ago`;
+}
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -119,6 +142,7 @@ export default function Dashboard() {
               onClick={() => {
                 performanceOverviewQuery.refetch();
                 accountStatusQuery.refetch();
+                autonomyActivityQuery.refetch();
               }}
             >
               Retry
@@ -148,6 +172,13 @@ export default function Dashboard() {
     equity,
     lastRunAt: autonomyActivityQuery.data?.lastRun?.createdAt ?? null,
   });
+  const lastAccountSyncAt = accountStatus?.lastSyncedAt ?? null;
+  const lastAccountSyncMs = getTimestampMs(lastAccountSyncAt);
+  const accountSyncAgeMs = lastAccountSyncMs ? Date.now() - lastAccountSyncMs : Number.POSITIVE_INFINITY;
+  const isAccountDataStale = isConnected && accountSyncAgeMs > DATA_STALE_AFTER_MS;
+  const dashboardRefreshedAt = performanceOverviewQuery.dataUpdatedAt
+    ? new Date(performanceOverviewQuery.dataUpdatedAt)
+    : null;
 
   const hasClosedTrades = (metrics?.totalTrades || 0) > 0;
   const winningTrades = metrics?.winningTrades ?? 0;
@@ -176,6 +207,12 @@ export default function Dashboard() {
   const handleStartTrading = () => {
     setActivationMessage(null);
     startTradingMutation.mutate({ enabled: true });
+  };
+
+  const handleRefreshDashboard = () => {
+    performanceOverviewQuery.refetch();
+    accountStatusQuery.refetch();
+    autonomyActivityQuery.refetch();
   };
 
   // Show connection required if not connected
@@ -347,15 +384,51 @@ export default function Dashboard() {
             Laurenzo Trading Dashboard • Owner: {user?.name}
           </p>
         </div>
-        <Button
-          onClick={handleKillSwitch}
-          variant={killSwitchConfirm ? "destructive" : "outline"}
-          className={killSwitchConfirm ? "bg-pink-600 hover:bg-pink-700" : ""}
-        >
-          <Zap className="w-4 h-4 mr-2" />
-          {killSwitchConfirm ? "Confirm Kill Switch" : "KILL SWITCH"}
-        </Button>
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          <Button
+            onClick={handleRefreshDashboard}
+            variant="outline"
+            disabled={
+              performanceOverviewQuery.isFetching ||
+              accountStatusQuery.isFetching ||
+              autonomyActivityQuery.isFetching
+            }
+          >
+            <RefreshCw
+              className={`w-4 h-4 mr-2 ${
+                performanceOverviewQuery.isFetching ||
+                accountStatusQuery.isFetching ||
+                autonomyActivityQuery.isFetching
+                  ? "animate-spin"
+                  : ""
+              }`}
+            />
+            Refresh
+          </Button>
+          <Button
+            onClick={handleKillSwitch}
+            variant={killSwitchConfirm ? "destructive" : "outline"}
+            className={killSwitchConfirm ? "bg-pink-600 hover:bg-pink-700" : ""}
+          >
+            <Zap className="w-4 h-4 mr-2" />
+            {killSwitchConfirm ? "Confirm Kill Switch" : "KILL SWITCH"}
+          </Button>
+        </div>
       </div>
+
+      <Card className={`laurenzo-card ${isAccountDataStale ? "border-yellow-500/30 bg-yellow-500/5" : "border-cyan-500/20 bg-cyan-500/5"}`}>
+        <CardContent className="flex flex-col gap-3 pt-6 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className="text-sm font-semibold text-foreground">Live data freshness</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Kalshi equity synced {formatFreshnessLabel(lastAccountSyncAt)}. Dashboard refreshed {formatFreshnessLabel(dashboardRefreshedAt)}.
+            </p>
+          </div>
+          <div className={`rounded-full border px-3 py-1 text-xs font-semibold ${isAccountDataStale ? "border-yellow-500/40 text-yellow-300" : "border-cyan-500/40 text-cyan-300"}`}>
+            {isAccountDataStale ? "Refresh before trading decisions" : "Fresh enough for monitoring"}
+          </div>
+        </CardContent>
+      </Card>
 
       {activationMessage ? (
         <Card className="laurenzo-card border-cyan-500/30 bg-cyan-500/5">

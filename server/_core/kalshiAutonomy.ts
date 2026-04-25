@@ -28,6 +28,7 @@ const BASE_RISK_LIMITS = {
 
 const SCHEDULED_SCAN_EVENT = "scheduled_autonomy_scan_completed";
 const HOURLY_SCAN_MIN_INTERVAL_MS = 55 * 60 * 1000;
+const RECENT_MANUAL_ORDER_COOLDOWN_MS = 5 * 60 * 1000;
 const MAX_SCHEDULED_MARKETS = 24;
 
 export type AwayTradingDecisionDetails = {
@@ -319,6 +320,18 @@ async function shouldSkipScheduledRun(
       if (Date.now() - lastRunTime < HOURLY_SCAN_MIN_INTERVAL_MS) {
         return "hourly review policy already ran recently";
       }
+    }
+  }
+
+  const latestManualOrder = await db.getLatestAuditEventByType(
+    "kalshi_order_placed",
+    user.openId
+  );
+
+  if (latestManualOrder?.createdAt) {
+    const latestManualOrderTime = new Date(latestManualOrder.createdAt).getTime();
+    if (Date.now() - latestManualOrderTime < RECENT_MANUAL_ORDER_COOLDOWN_MS) {
+      return "recent manual order detected; autonomy will wait for the next cycle";
     }
   }
 
