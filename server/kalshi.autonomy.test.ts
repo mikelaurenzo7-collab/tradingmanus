@@ -24,12 +24,15 @@ const mocks = vi.hoisted(() => ({
   saveSignals: vi.fn(),
   reviewSignalsWithTrader: vi.fn(),
   getLatestAuditEventByType: vi.fn(),
+  getLatestAutonomyRun: vi.fn(),
   getTodayKalshiOrderCount: vi.fn(),
   getKalshiCapital: vi.fn(),
   syncKalshiCapitalWithLiveEquity: vi.fn(),
   getOpenKalshiPositions: vi.fn(),
   getTodayRealizedLoss: vi.fn(),
   logAuditEvent: vi.fn(),
+  createAutonomyRun: vi.fn(),
+  updateAutonomyRun: vi.fn(),
   placeKalshiOrder: vi.fn(),
 }));
 
@@ -45,12 +48,15 @@ vi.mock("./db.kalshi-credentials", () => ({
 
 vi.mock("./db", () => ({
   getLatestAuditEventByType: mocks.getLatestAuditEventByType,
+  getLatestAutonomyRun: mocks.getLatestAutonomyRun,
   getTodayKalshiOrderCount: mocks.getTodayKalshiOrderCount,
   getKalshiCapital: mocks.getKalshiCapital,
   syncKalshiCapitalWithLiveEquity: mocks.syncKalshiCapitalWithLiveEquity,
   getOpenKalshiPositions: mocks.getOpenKalshiPositions,
   getTodayRealizedLoss: mocks.getTodayRealizedLoss,
   logAuditEvent: mocks.logAuditEvent,
+  createAutonomyRun: mocks.createAutonomyRun,
+  updateAutonomyRun: mocks.updateAutonomyRun,
 }));
 
 vi.mock("./_core/kalshiAuth", () => ({
@@ -145,12 +151,15 @@ describe("scheduled away-from-chat trading", () => {
     mocks.getTopSignalsForExecution.mockReturnValue([candidateSignal]);
     mocks.saveSignals.mockResolvedValue(undefined);
     mocks.getLatestAuditEventByType.mockResolvedValue(null);
+    mocks.getLatestAutonomyRun.mockResolvedValue(null);
     mocks.getTodayKalshiOrderCount.mockResolvedValue(0);
     mocks.getKalshiCapital.mockResolvedValue({ currentBalance: 100, startingBalance: 100 });
     mocks.syncKalshiCapitalWithLiveEquity.mockResolvedValue(undefined);
     mocks.getOpenKalshiPositions.mockResolvedValue([]);
     mocks.getTodayRealizedLoss.mockResolvedValue(0);
     mocks.logAuditEvent.mockResolvedValue(true);
+    mocks.createAutonomyRun.mockResolvedValue({ runId: "run-123" });
+    mocks.updateAutonomyRun.mockResolvedValue({ runId: "run-123" });
     mocks.placeKalshiOrder.mockResolvedValue({ success: true, orderId: "order-123" });
   });
 
@@ -159,8 +168,8 @@ describe("scheduled away-from-chat trading", () => {
       ...mocks.DEFAULT_PREFERENCES,
       executionCadence: "hourly_watch",
     });
-    mocks.getLatestAuditEventByType.mockResolvedValue({
-      createdAt: new Date(Date.now() - 5 * 60 * 1000),
+    mocks.getLatestAutonomyRun.mockResolvedValue({
+      startedAt: new Date(Date.now() - 5 * 60 * 1000),
     });
 
     const result = await runScheduledAutonomousTrading(testUser);
@@ -270,6 +279,44 @@ describe("scheduled away-from-chat trading", () => {
     expect(result.executionCandidates).toBe(0);
     expect(mocks.saveSignals).toHaveBeenCalledWith([], 7);
     expect(mocks.placeKalshiOrder).not.toHaveBeenCalled();
+  });
+
+  it("skips duplicate scheduled invocations for the same time bucket before re-running the autonomy flow", async () => {
+    mocks.createAutonomyRun.mockResolvedValueOnce(null);
+
+    const result = await runScheduledAutonomousTrading(testUser, {
+      triggeredByOpenId: "vercel_cron",
+      now: new Date("2026-04-25T08:45:00Z"),
+    });
+
+    expect(result.status).toBe("skipped");
+    expect(result.reason).toContain("already in progress or completed");
+    expect(mocks.fetchKalshiAccountEquity).not.toHaveBeenCalled();
+    expect(mocks.updateAutonomyRun).not.toHaveBeenCalled();
+  });
+
+  it("records reconciliation-needed executions when the exchange accepts an order but the local ledger write fails", async () => {
+    mocks.placeKalshiOrder.mockResolvedValueOnce({
+      success: true,
+      orderId: "order-123",
+      needsReconciliation: true,
+      reconciliationReason: "exchange accepted the order but the local order ledger write failed",
+      exchangeRequest: { marketId: "KXTEST-1" },
+      exchangeResponse: { orderId: "order-123" },
+    });
+
+    const result = await runScheduledAutonomousTrading(testUser);
+
+    expect(result.status).toBe("executed");
+    expect(result.reconciliationStatus).toBe("pending");
+    expect(result.reconciliationReason).toContain("local order ledger write failed");
+    expect(mocks.updateAutonomyRun).toHaveBeenCalledWith(
+      expect.any(String),
+      7,
+      expect.objectContaining({
+        reconciliationStatus: "pending",
+      })
+    );
   });
 
   it("summarizes automatic-review outcomes across all eligible users in a single batch", async () => {

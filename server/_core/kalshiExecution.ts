@@ -192,15 +192,24 @@ export async function placeKalshiOrder(
   quantity: number,
   limitPrice: number,
   privateKey?: string,
-): Promise<{ success: boolean; orderId?: string; error?: string }> {
+): Promise<{
+  success: boolean;
+  orderId?: string;
+  error?: string;
+  needsReconciliation?: boolean;
+  reconciliationReason?: string;
+  exchangeRequest?: Record<string, unknown>;
+  exchangeResponse?: Record<string, unknown>;
+}> {
   try {
     const risk = calculateKalshiBuyOrderRisk({ quantity, limitPrice });
     const priceCents = toCents(risk.limitPrice);
     const scopedUserId = getScopedUserId(userId);
+    const clientOrderId = `nexus-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     const body = {
       ticker: marketId,
       type: "limit",
-      client_order_id: `nexus-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+      client_order_id: clientOrderId,
       action: "buy",
       side,
       count: risk.quantity,
@@ -221,12 +230,40 @@ export async function placeKalshiOrder(
 
     if (!result.ok) {
       console.error("[Kalshi] Order placement failed:", result.error);
-      return { success: false, error: result.error };
+      return {
+        success: false,
+        error: result.error,
+        exchangeRequest: {
+          marketId,
+          action: "buy",
+          side,
+          quantity: risk.quantity,
+          limitPrice: risk.limitPrice,
+          clientOrderId,
+        },
+        exchangeResponse: {
+          error: result.error,
+        },
+      };
     }
 
     const orderId = result.data.order?.order_id || result.data.order?.id;
     if (!orderId) {
-      return { success: false, error: "Kalshi order created without an order ID" };
+      return {
+        success: false,
+        error: "Kalshi order created without an order ID",
+        exchangeRequest: {
+          marketId,
+          action: "buy",
+          side,
+          quantity: risk.quantity,
+          limitPrice: risk.limitPrice,
+          clientOrderId,
+        },
+        exchangeResponse: {
+          order: result.data.order ?? null,
+        },
+      };
     }
 
     try {
@@ -251,13 +288,50 @@ export async function placeKalshiOrder(
         success: true,
         orderId,
         error: "Kalshi accepted the order, but the local ledger write failed. Verify the order on Kalshi before retrying.",
+        needsReconciliation: true,
+        reconciliationReason: "exchange accepted the order but the local order ledger write failed",
+        exchangeRequest: {
+          marketId,
+          action: "buy",
+          side,
+          quantity: risk.quantity,
+          limitPrice: risk.limitPrice,
+          clientOrderId,
+        },
+        exchangeResponse: {
+          orderId,
+          order: result.data.order ?? null,
+        },
       };
     }
 
-    return { success: true, orderId };
+    return {
+      success: true,
+      orderId,
+      needsReconciliation: false,
+      reconciliationReason: undefined,
+      exchangeRequest: {
+        marketId,
+        action: "buy",
+        side,
+        quantity: risk.quantity,
+        limitPrice: risk.limitPrice,
+        clientOrderId,
+      },
+      exchangeResponse: {
+        orderId,
+        order: result.data.order ?? null,
+      },
+    };
   } catch (error) {
     console.error("[Kalshi] Order placement error:", error);
-    return { success: false, error: String(error) };
+    return {
+      success: false,
+      error: String(error),
+      exchangeResponse: {
+        error: String(error),
+      },
+    };
   }
 }
 

@@ -165,11 +165,11 @@
 
 ## Production Status
 
-✅ **PRODUCTION READY** - All core features implemented and tested
+⚠️ **OPERATOR-GRADE ALPHA** - Core features work, but the next phase is autonomy hardening rather than feature expansion
 - Real Kalshi account connection with encrypted credentials
-- 100% test coverage for signal generation, risk controls, and advanced analytics
+- Strong automated coverage around signal generation, risk controls, scheduling, and advanced analytics
 - Advanced dashboards for sentiment, portfolio optimization, and backtesting
-- Ready to deploy and start live trading
+- Safe for controlled/operator-managed live experimentation, not yet a polished paid autonomy product
 - Live equity fetching and display
 - Market subscriptions (5s polling, 1-hour history)
 - Signal generation (value play, momentum, contrarian, arbitrage)
@@ -179,8 +179,9 @@
 - Agent training system with scheduling
 - Funding detection & Start Trading flow
 - Risk controls ($100 limits, kill switch)
+- First-class autonomy run ledger and reconciliation-aware scheduled execution
 - Bold visual design (glassmorphism, gradients)
-- 42/42 tests passing, 0 TypeScript errors
+- Current validation target: `corepack pnpm test`, `corepack pnpm check`, `corepack pnpm build`
 - All auth flows fixed and working
 - Simplified Kalshi-focused navigation
 

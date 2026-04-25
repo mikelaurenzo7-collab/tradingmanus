@@ -24,6 +24,8 @@ export const kalshiOutcomeEnum = pgEnum("kalshi_outcome", ["win", "loss", "parti
 export const autonomyModeEnum = pgEnum("autonomy_mode", ["manual", "approval_required", "semi_autonomous", "fully_autonomous"]);
 export const executionCadenceEnum = pgEnum("execution_cadence", ["manual_only", "session_assisted", "hourly_watch", "continuous_watch"]);
 export const riskPostureEnum = pgEnum("risk_posture", ["conservative", "balanced", "aggressive"]);
+export const autonomyRunStatusEnum = pgEnum("autonomy_run_status", ["in_progress", "executed", "generated_only", "skipped", "blocked", "error"]);
+export const reconciliationStatusEnum = pgEnum("reconciliation_status", ["not_required", "pending", "reconciled"]);
 
 const now = () => new Date();
 const createdAt = () => timestamp("createdAt", { withTimezone: true }).defaultNow().notNull();
@@ -236,6 +238,36 @@ export const tradingPreferences = pgTable("tradingPreferences", {
   maxDailyOrders: integer("maxDailyOrders").default(3).notNull(),
   requireApprovalAbove: doublePrecision("requireApprovalAbove").default(8).notNull(),
   createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+export const autonomyRuns = pgTable("autonomyRuns", {
+  id: serial("id").primaryKey(),
+  runId: varchar("runId", { length: 40 }).notNull().unique(),
+  runKey: varchar("runKey", { length: 160 }).notNull().unique(),
+  userId: integer("userId").notNull(),
+  triggeredByOpenId: varchar("triggeredByOpenId", { length: 128 }).notNull(),
+  triggerSource: varchar("triggerSource", { length: 32 }).notNull(),
+  status: autonomyRunStatusEnum("status").default("in_progress").notNull(),
+  autonomyMode: autonomyModeEnum("autonomyMode").notNull(),
+  executionCadence: executionCadenceEnum("executionCadence").notNull(),
+  reason: text("reason"),
+  signalsGenerated: integer("signalsGenerated").default(0).notNull(),
+  executionCandidates: integer("executionCandidates").default(0).notNull(),
+  orderPlaced: integer("orderPlaced").default(0).notNull(),
+  orderId: varchar("orderId", { length: 128 }),
+  candidateMarketId: varchar("candidateMarketId", { length: 128 }),
+  executedMarketId: varchar("executedMarketId", { length: 128 }),
+  decision: text("decision"),
+  candidateSet: text("candidateSet"),
+  rejectedCandidates: text("rejectedCandidates"),
+  appliedGuardrails: text("appliedGuardrails"),
+  exchangeRequest: text("exchangeRequest"),
+  exchangeResponse: text("exchangeResponse"),
+  reconciliationStatus: reconciliationStatusEnum("reconciliationStatus").default("not_required").notNull(),
+  reconciliationReason: text("reconciliationReason"),
+  startedAt: createdAt(),
+  completedAt: timestamp("completedAt", { withTimezone: true }),
   updatedAt: updatedAt(),
 });
 

@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { reviewSignalsWithTrader } from "./_core/tradingReviewer";
+import {
+  isTradingReviewerConfigured,
+  MAX_MARKET_SUMMARY_TITLE_CHARS,
+  MAX_SIGNAL_SUMMARY_REASONING_CHARS,
+  reviewSignalsWithTrader,
+} from "./_core/tradingReviewer";
 
 const baseMarket = {
   id: "KXTEST-1",
@@ -52,6 +57,25 @@ function anthropicResponse(content: string) {
 }
 
 describe("AI trader duo reviewer", () => {
+  it("reports readiness only when both providers are configured", () => {
+    expect(
+      isTradingReviewerConfigured({
+        openaiApiKey: "openai-key",
+        anthropicApiKey: "anthropic-key",
+      })
+    ).toBe(true);
+    expect(
+      isTradingReviewerConfigured({
+        openaiApiKey: "openai-key",
+      })
+    ).toBe(false);
+    expect(
+      isTradingReviewerConfigured({
+        anthropicApiKey: "anthropic-key",
+      })
+    ).toBe(false);
+  });
+
   it("blends OpenAI and Claude approvals conservatively", async () => {
     const result = await reviewSignalsWithTrader(
       {
@@ -107,6 +131,93 @@ describe("AI trader duo reviewer", () => {
     expect(result[0]?.reasoning).toContain("AI trader duo:");
     expect(result[0]?.reasoning).toContain("OpenAI:");
     expect(result[0]?.reasoning).toContain("Claude:");
+  });
+
+  it("fails closed before spending tokens when the duo is only partially configured", async () => {
+    const openaiFetchImpl = vi.fn();
+    const anthropicCreate = vi.fn();
+
+    const result = await reviewSignalsWithTrader(
+      {
+        markets: [baseMarket as any],
+        signals: [baseSignal as any],
+      },
+      {
+        providers: ["openai", "anthropic"],
+        skipInTest: false,
+        openaiApiKey: "openai-key",
+        openaiFetchImpl,
+        anthropicClient: {
+          messages: {
+            create: anthropicCreate,
+          },
+        },
+      }
+    );
+
+    expect(result).toEqual([]);
+    expect(openaiFetchImpl).not.toHaveBeenCalled();
+    expect(anthropicCreate).not.toHaveBeenCalled();
+  });
+
+  it("compacts signal reasoning before sending the review payload", async () => {
+    const openaiFetchImpl = vi.fn().mockResolvedValue(
+      okOpenAiResponse(
+        JSON.stringify({
+          reviews: [{ marketId: "KXTEST-1", approved: true, reasoning: "Approved." }],
+        })
+      )
+    );
+
+    await reviewSignalsWithTrader(
+      {
+        markets: [
+          {
+            ...baseMarket,
+            title: "  Will   demo market resolve yes?   ".repeat(20),
+          } as any,
+        ],
+        signals: [
+          {
+            ...baseSignal,
+            reasoning: "  Explicit\nprobability\tedge  ".repeat(80),
+          } as any,
+        ],
+        maxSignals: 1,
+      },
+      {
+        providers: ["openai", "anthropic"],
+        skipInTest: false,
+        openaiApiKey: "openai-key",
+        anthropicApiKey: "anthropic-key",
+        openaiFetchImpl,
+        anthropicClient: {
+          messages: {
+            create: vi.fn().mockResolvedValue(
+              anthropicResponse(
+                JSON.stringify({
+                  reviews: [{ marketId: "KXTEST-1", approved: true, reasoning: "Approved." }],
+                })
+              )
+            ),
+          },
+        },
+      }
+    );
+
+    const [, requestInit] = openaiFetchImpl.mock.calls[0] ?? [];
+    const body = JSON.parse(String(requestInit?.body));
+    const payload = JSON.parse(body.messages[1].content);
+
+    expect(payload.markets[0]?.title.length).toBeLessThanOrEqual(MAX_MARKET_SUMMARY_TITLE_CHARS);
+    expect(payload.markets[0]?.title).not.toMatch(/\s{2,}/);
+    expect(payload.markets[0]?.title.endsWith("…")).toBe(true);
+    expect(payload.signals[0]?.reasoning.length).toBeLessThanOrEqual(
+      MAX_SIGNAL_SUMMARY_REASONING_CHARS
+    );
+    expect(payload.signals[0]?.reasoning).not.toMatch(/\s{2,}/);
+    expect(payload.signals[0]?.reasoning).not.toContain("\n");
+    expect(payload.signals[0]?.reasoning.endsWith("…")).toBe(true);
   });
 
   it("drops the signal when either provider vetoes it", async () => {

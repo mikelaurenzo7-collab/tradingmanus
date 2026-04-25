@@ -60,9 +60,9 @@ The biggest issue is not that the project lacks any autonomy. It now has autonom
 
 ### 1. The data model is still closer to a single-operator system than a multi-tenant paid product
 
-The `tradingPreferences` and `kalshiCredentials` tables are user-scoped, which is good. But several core trading tables are still not obviously user-scoped in the schema. `kalshiOrders`, `kalshiPositions`, `kalshiSignals`, and `kalshiCapital` are Kalshi-centric tables without a clear `userId` field in the current schema. That is acceptable for a dogfooding product operated by one person, but it is a major weakness for a paid product. If multiple paying users are supposed to trust the system with autonomous execution, each order, signal, capital record, position, and learning artifact should be partitioned per user and auditable end to end.
+The trading-domain schema is in a better place than earlier prototypes: `tradingPreferences`, `kalshiCredentials`, `kalshiOrders`, `kalshiPositions`, `kalshiSignals`, and `kalshiCapital` are all user-scoped. That closes an important correctness gap. The remaining weakness is less about missing `userId` columns and more about whether the system has a rich enough **run ledger, reconciliation trail, and operator tooling** to make that isolation truly trustworthy for paying users.
 
-In plain terms: **the product currently looks like one trading brain with one shared operating ledger, not a cleanly isolated fleet of customer accounts**.
+In plain terms: **the account rows are scoped correctly, but the operational story around scheduled runs, failed writes, and reconciliation is still too thin for a polished multi-user paid product**.
 
 ### 2. The scheduled autonomy service is promising, but still relatively narrow
 

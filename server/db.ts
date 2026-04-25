@@ -1,6 +1,7 @@
 import {
   users,
   auditLog,
+  autonomyRuns,
   kalshiMarkets,
   kalshiOrders,
   kalshiFills,
@@ -670,6 +671,108 @@ export async function updateKalshiCapital(updates: any, userId: number) {
     .update(kalshiCapital)
     .set({ ...updates, updatedAt: new Date() })
     .where(eq(kalshiCapital.id, existing.id));
+}
+
+// Autonomous run ledger queries
+export async function createAutonomyRun(run: {
+  runId: string;
+  runKey: string;
+  userId: number;
+  triggeredByOpenId: string;
+  triggerSource: string;
+  autonomyMode: "manual" | "approval_required" | "semi_autonomous" | "fully_autonomous";
+  executionCadence: "manual_only" | "session_assisted" | "hourly_watch" | "continuous_watch";
+  appliedGuardrails?: string | null;
+}) {
+  const scopedUserId = assertPositiveIntegerUserId(run.userId, "createAutonomyRun userId");
+  const database = await getDb();
+  if (!database) return null;
+
+  try {
+    await database.insert(autonomyRuns).values({
+      runId: run.runId,
+      runKey: run.runKey,
+      userId: scopedUserId,
+      triggeredByOpenId: assertNonEmptyOpenId(run.triggeredByOpenId, "createAutonomyRun triggeredByOpenId"),
+      triggerSource: String(run.triggerSource || "unknown").slice(0, 32),
+      autonomyMode: run.autonomyMode,
+      executionCadence: run.executionCadence,
+      appliedGuardrails: run.appliedGuardrails ?? null,
+    });
+  } catch (error: any) {
+    if (error?.code === "23505") {
+      return null;
+    }
+    throw error;
+  }
+
+  const created = await database
+    .select()
+    .from(autonomyRuns)
+    .where(
+      and(eq(autonomyRuns.runId, run.runId), eq(autonomyRuns.userId, scopedUserId))
+    )
+    .then((rows: any[]) => rows[0]);
+
+  return created ?? null;
+}
+
+export async function updateAutonomyRun(
+  runId: string,
+  userId: number,
+  updates: Record<string, unknown>
+) {
+  const scopedUserId = assertPositiveIntegerUserId(userId, "updateAutonomyRun userId");
+  const database = await getDb();
+  if (!database) return null;
+
+  await database
+    .update(autonomyRuns)
+    .set({
+      ...updates,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(eq(autonomyRuns.runId, runId), eq(autonomyRuns.userId, scopedUserId))
+    );
+
+  const updated = await database
+    .select()
+    .from(autonomyRuns)
+    .where(
+      and(eq(autonomyRuns.runId, runId), eq(autonomyRuns.userId, scopedUserId))
+    )
+    .then((rows: any[]) => rows[0]);
+
+  return updated ?? null;
+}
+
+export async function getLatestAutonomyRun(userId: number) {
+  const scopedUserId = assertPositiveIntegerUserId(userId, "getLatestAutonomyRun userId");
+  const database = await getDb();
+  if (!database) return null;
+
+  const result = await database
+    .select()
+    .from(autonomyRuns)
+    .where(eq(autonomyRuns.userId, scopedUserId))
+    .orderBy(desc(autonomyRuns.startedAt), desc(autonomyRuns.id))
+    .limit(1);
+
+  return result[0] || null;
+}
+
+export async function getRecentAutonomyRuns(userId: number, limit: number = 8) {
+  const scopedUserId = assertPositiveIntegerUserId(userId, "getRecentAutonomyRuns userId");
+  const database = await getDb();
+  if (!database) return [];
+
+  return await database
+    .select()
+    .from(autonomyRuns)
+    .where(eq(autonomyRuns.userId, scopedUserId))
+    .orderBy(desc(autonomyRuns.startedAt), desc(autonomyRuns.id))
+    .limit(limit);
 }
 
 // Audit log queries

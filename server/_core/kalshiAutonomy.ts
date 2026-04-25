@@ -1,4 +1,5 @@
 import type { User } from "../../drizzle/schema";
+import { nanoid } from "nanoid";
 import * as db from "../db";
 import * as kalshiCredDb from "../db.kalshi-credentials";
 import * as tradingPreferencesDb from "../db.trading-preferences";
@@ -6,7 +7,7 @@ import type { RiskPosture } from "../db.trading-preferences";
 import { getUserTrainingInstructions, isInstructionActiveNow, applyInstructionsToSignals } from "../db.training";
 import { fetchKalshiMarkets } from "./kalshiMarketData";
 import { fetchKalshiAccountEquity } from "./kalshiAuth";
-import { getMarketFeed } from "./kalshiMarketFeed";
+import { getMarketFeed, isMarketDataStale } from "./kalshiMarketFeed";
 import {
   filterSignalsByConfidence,
   filterSignalsByMarketConditions,
@@ -30,6 +31,8 @@ const BASE_RISK_LIMITS = {
 const SCHEDULED_SCAN_EVENT = "scheduled_autonomy_scan_completed";
 const HOURLY_SCAN_MIN_INTERVAL_MS = 55 * 60 * 1000;
 const RECENT_MANUAL_ORDER_COOLDOWN_MS = 5 * 60 * 1000;
+const AUTONOMY_RUN_DEDUPLICATION_WINDOW_MS = 15 * 60 * 1000;
+const MARKET_DATA_STALE_AFTER_MS = 30 * 1000;
 const MAX_SCHEDULED_MARKETS = 24;
 
 export type AwayTradingDecisionDetails = {
@@ -46,6 +49,20 @@ export type AwayTradingDecisionDetails = {
   maxLossOnTrade: number | null;
   reasoning: string | null;
   blockedBy: string | null;
+};
+
+export type AwayTradingCandidateSummary = {
+  marketId: string;
+  side: "yes" | "no";
+  confidence: number;
+  executionScore: number | null;
+  expectedValue: number;
+  limitPrice: number;
+};
+
+export type AwayTradingRejectedCandidate = AwayTradingCandidateSummary & {
+  blockedBy: string;
+  reason: string;
 };
 
 export type AwayTradingRunResult = {
@@ -65,7 +82,18 @@ export type AwayTradingRunResult = {
   candidateMarketId?: string;
   autonomyMode?: string;
   executionCadence?: string;
+  runId?: string;
+  triggerSource?: string;
+  reconciliationStatus?: "not_required" | "pending" | "reconciled" | null;
+  reconciliationReason?: string | null;
   decision?: AwayTradingDecisionDetails | null;
+  candidateSet?: AwayTradingCandidateSummary[];
+  rejectedCandidates?: AwayTradingRejectedCandidate[];
+};
+
+type ScheduledRunOptions = {
+  triggeredByOpenId?: string;
+  now?: Date;
 };
 
 function clampRiskLimit(value: number, minimum: number, maximum: number) {
@@ -124,7 +152,13 @@ function buildResult(
     candidateMarketId: input.candidateMarketId,
     autonomyMode: input.autonomyMode,
     executionCadence: input.executionCadence,
+    runId: input.runId,
+    triggerSource: input.triggerSource,
+    reconciliationStatus: input.reconciliationStatus ?? "not_required",
+    reconciliationReason: input.reconciliationReason ?? null,
     decision: input.decision ?? null,
+    candidateSet: input.candidateSet ?? [],
+    rejectedCandidates: input.rejectedCandidates ?? [],
   };
 }
 
@@ -153,10 +187,107 @@ function buildDecisionDetails(
   };
 }
 
-async function persistScheduledResult(user: User, result: AwayTradingRunResult) {
+function safeJsonStringify(value: unknown) {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return JSON.stringify(null);
+  }
+}
+
+function buildTriggerSource(triggeredByOpenId: string) {
+  if (triggeredByOpenId === "vercel_cron") return "vercel_cron";
+  if (triggeredByOpenId === "local_scheduler") return "local_scheduler";
+  return "authenticated_user";
+}
+
+function getRunBucketStart(now: Date) {
+  const nowMs = now.getTime();
+  const bucketMs = Math.floor(nowMs / AUTONOMY_RUN_DEDUPLICATION_WINDOW_MS) * AUTONOMY_RUN_DEDUPLICATION_WINDOW_MS;
+  return new Date(bucketMs);
+}
+
+function buildRunKey(
+  userId: number,
+  triggeredByOpenId: string,
+  executionCadence: string,
+  now: Date
+) {
+  const bucket = getRunBucketStart(now).toISOString();
+  // Format: scheduled:<userId>:<triggerSource>:<executionCadence>:<bucketStartIso>
+  return `scheduled:${userId}:${buildTriggerSource(triggeredByOpenId)}:${executionCadence}:${bucket}`;
+}
+
+function summarizeCandidate(signal: KalshiSignal & { executionScore?: number }): AwayTradingCandidateSummary {
+  return {
+    marketId: signal.marketId,
+    side: signal.side,
+    confidence: signal.confidence,
+    executionScore: signal.executionScore ?? null,
+    expectedValue: signal.expectedValue,
+    limitPrice: signal.marketPrice,
+  };
+}
+
+function buildAppliedGuardrails(
+  preferences: Awaited<ReturnType<typeof tradingPreferencesDb.getTradingPreferences>>,
+  riskLimits?: Awaited<ReturnType<typeof getDynamicRiskLimits>>
+) {
+  return [
+    { name: "live_trading_enabled", value: Boolean(preferences.liveTradingEnabled) },
+    { name: "autonomy_mode", value: preferences.autonomyMode },
+    { name: "execution_cadence", value: preferences.executionCadence },
+    { name: "min_signal_confidence", value: preferences.minSignalConfidence },
+    { name: "max_order_notional", value: preferences.maxOrderNotional },
+    { name: "max_daily_orders", value: preferences.maxDailyOrders },
+    { name: "require_approval_above", value: preferences.requireApprovalAbove },
+    ...(riskLimits
+      ? [
+          { name: "dynamic_max_loss_per_trade", value: riskLimits.maxLossPerTrade },
+          { name: "dynamic_max_loss_per_day", value: riskLimits.maxLossPerDay },
+          { name: "dynamic_max_position_size", value: riskLimits.maxPositionSize },
+          { name: "dynamic_max_open_positions", value: riskLimits.maxOpenPositions },
+          { name: "effective_min_confidence_delta", value: riskLimits.effectiveMinConfidence },
+        ]
+      : []),
+  ];
+}
+
+async function persistScheduledResult(
+  user: User,
+  result: AwayTradingRunResult,
+  options: {
+    runId?: string;
+    userId: number;
+    triggeredByOpenId: string;
+    ledgerUpdates?: Record<string, unknown>;
+  }
+) {
+  if (result.runId) {
+    await db.updateAutonomyRun(result.runId, options.userId, {
+      status: result.status,
+      reason: result.reason,
+      signalsGenerated: result.signalsGenerated,
+      executionCandidates: result.executionCandidates,
+      orderPlaced: result.orderPlaced ? 1 : 0,
+      orderId: result.orderId ?? null,
+      candidateMarketId: result.candidateMarketId ?? null,
+      executedMarketId: result.executedMarketId ?? null,
+      decision: safeJsonStringify(result.decision ?? null),
+      candidateSet: safeJsonStringify(result.candidateSet ?? []),
+      rejectedCandidates: safeJsonStringify(result.rejectedCandidates ?? []),
+      reconciliationStatus: result.reconciliationStatus ?? "not_required",
+      reconciliationReason: result.reconciliationReason ?? null,
+      completedAt: new Date(),
+      ...options.ledgerUpdates,
+    });
+  }
+
   await db.logAuditEvent(
     `scheduled_autonomy_run_${result.status}`,
     JSON.stringify({
+      runId: result.runId ?? null,
+      triggerSource: result.triggerSource ?? null,
       reason: result.reason,
       signalsGenerated: result.signalsGenerated,
       executionCandidates: result.executionCandidates,
@@ -166,9 +297,13 @@ async function persistScheduledResult(user: User, result: AwayTradingRunResult) 
       candidateMarketId: result.candidateMarketId ?? null,
       autonomyMode: result.autonomyMode ?? null,
       executionCadence: result.executionCadence ?? null,
+      reconciliationStatus: result.reconciliationStatus ?? "not_required",
+      reconciliationReason: result.reconciliationReason ?? null,
+      candidateSet: result.candidateSet ?? [],
+      rejectedCandidates: result.rejectedCandidates ?? [],
       decision: result.decision ?? null,
     }),
-    user.openId
+    options.triggeredByOpenId || user.openId
   );
 
   return result;
@@ -298,6 +433,70 @@ async function generateScheduledSignals(userId: number, minConfidence: number, a
   };
 }
 
+function evaluateExecutionCandidate(
+  signal: KalshiSignal & { executionScore?: number },
+  input: {
+    openPositions: any[];
+    preferences: Awaited<ReturnType<typeof tradingPreferencesDb.getTradingPreferences>>;
+    effectiveMinConfidence: number;
+    maxBudget: number;
+  }
+) {
+  const marketAlreadyOpen = input.openPositions.some(
+    (position: any) => String(position.marketId) === signal.marketId
+  );
+  if (marketAlreadyOpen) {
+    return {
+      eligible: false as const,
+      blockedBy: "market_already_open",
+      reason: "an open position already exists for this market",
+    };
+  }
+
+  const feed = getMarketFeed(signal.marketId);
+  if (feed && isMarketDataStale(feed, MARKET_DATA_STALE_AFTER_MS)) {
+    return {
+      eligible: false as const,
+      blockedBy: "stale_market_data",
+      reason: "market data is stale and must refresh before execution",
+    };
+  }
+
+  const marketPrice = Number(signal.marketPrice);
+  if (!Number.isFinite(marketPrice) || input.maxBudget < marketPrice) {
+    return {
+      eligible: false as const,
+      blockedBy: "risk_budget_below_one_contract",
+      reason: "the current budget cannot fund even one contract at this price",
+    };
+  }
+
+  if (
+    input.preferences.autonomyMode === "semi_autonomous" &&
+    input.maxBudget > input.preferences.requireApprovalAbove
+  ) {
+    return {
+      eligible: false as const,
+      blockedBy: "approval_threshold_exceeded",
+      reason: "semi-autonomous mode requires manual approval above the saved threshold",
+    };
+  }
+
+  if (signal.confidence < input.effectiveMinConfidence) {
+    return {
+      eligible: false as const,
+      blockedBy: "below_effective_min_confidence",
+      reason: "confidence fell below the effective minimum after posture/risk adjustments",
+    };
+  }
+
+  return {
+    eligible: true as const,
+    blockedBy: null,
+    reason: null,
+  };
+}
+
 async function shouldSkipScheduledRun(
   user: User,
   preferences: Awaited<ReturnType<typeof tradingPreferencesDb.getTradingPreferences>>
@@ -319,13 +518,10 @@ async function shouldSkipScheduledRun(
   }
 
   if (preferences.executionCadence === "hourly_watch") {
-    const latestRun = await db.getLatestAuditEventByType(
-      SCHEDULED_SCAN_EVENT,
-      user.openId
-    );
+    const latestRun = await db.getLatestAutonomyRun(user.id);
 
-    if (latestRun?.createdAt) {
-      const lastRunTime = new Date(latestRun.createdAt).getTime();
+    if (latestRun?.startedAt) {
+      const lastRunTime = new Date(latestRun.startedAt).getTime();
       if (Date.now() - lastRunTime < HOURLY_SCAN_MIN_INTERVAL_MS) {
         return "hourly review policy already ran recently";
       }
@@ -370,13 +566,56 @@ export type ScheduledAutonomyBatchSummary = {
 };
 
 export async function runScheduledAutonomousTrading(
-  user: User
+  user: User,
+  options: ScheduledRunOptions = {}
 ): Promise<AwayTradingRunResult> {
   const userId = assertPositiveIntegerUserId(user.id, "scheduled autonomy userId");
+  const triggeredByOpenId = options.triggeredByOpenId ?? user.openId;
+  const triggerSource = buildTriggerSource(triggeredByOpenId);
+  const runId = nanoid(16);
   const preferences = await tradingPreferencesDb.getTradingPreferences(userId);
+  const runRecord = await db.createAutonomyRun({
+    runId,
+    runKey: buildRunKey(userId, triggeredByOpenId, preferences.executionCadence, options.now ?? new Date()),
+    userId,
+    triggeredByOpenId,
+    triggerSource,
+    autonomyMode: preferences.autonomyMode,
+    executionCadence: preferences.executionCadence,
+    appliedGuardrails: safeJsonStringify(buildAppliedGuardrails(preferences)),
+  });
+
+  if (!runRecord) {
+    return buildResult({
+      status: "skipped",
+      reason: "an autonomy run for this cycle is already in progress or completed",
+      signalsGenerated: 0,
+      executionCandidates: 0,
+      orderPlaced: false,
+      autonomyMode: preferences.autonomyMode,
+      executionCadence: preferences.executionCadence,
+      triggerSource,
+    });
+  }
+
   const finalize = (
-    input: Omit<AwayTradingRunResult, "success"> & { success?: boolean }
-  ) => persistScheduledResult(user, buildResult(input));
+    input: Omit<AwayTradingRunResult, "success"> & { success?: boolean },
+    ledgerUpdates: Record<string, unknown> = {}
+  ) =>
+    persistScheduledResult(
+      user,
+      buildResult({
+        ...input,
+        runId,
+        triggerSource,
+      }),
+      {
+        runId,
+        userId,
+        triggeredByOpenId,
+        ledgerUpdates,
+      }
+    );
   const skipReason = await shouldSkipScheduledRun(user, preferences);
 
   if (skipReason) {
@@ -430,21 +669,25 @@ export async function runScheduledAutonomousTrading(
     preferences.minSignalConfidence,
     activeInstructions
   );
+  const candidateSet = executionCandidates.map(summarizeCandidate);
 
   const topCandidate = executionCandidates[0] ?? null;
 
   await db.logAuditEvent(
     SCHEDULED_SCAN_EVENT,
     JSON.stringify({
+      runId,
+      triggerSource,
       signalsGenerated: savedSignals.length,
       executionCandidates: executionCandidates.length,
       autonomyMode: preferences.autonomyMode,
       executionCadence: preferences.executionCadence,
       riskPosture: preferences.riskPosture,
       activeInstructions: activeInstructions.length,
+      candidateSet,
       decision: buildDecisionDetails(topCandidate),
     }),
-    user.openId
+    triggeredByOpenId
   );
 
   if (executionCandidates.length === 0) {
@@ -456,6 +699,7 @@ export async function runScheduledAutonomousTrading(
       orderPlaced: false,
       autonomyMode: preferences.autonomyMode,
       executionCadence: preferences.executionCadence,
+      candidateSet,
     });
   }
 
@@ -469,6 +713,7 @@ export async function runScheduledAutonomousTrading(
       candidateMarketId: executionCandidates[0]?.marketId,
       autonomyMode: preferences.autonomyMode,
       executionCadence: preferences.executionCadence,
+      candidateSet,
       decision: buildDecisionDetails(executionCandidates[0], {
         blockedBy: "approval_required_mode",
       }),
@@ -494,9 +739,12 @@ export async function runScheduledAutonomousTrading(
       candidateMarketId: executionCandidates[0]?.marketId,
       autonomyMode: preferences.autonomyMode,
       executionCadence: preferences.executionCadence,
+      candidateSet,
       decision: buildDecisionDetails(executionCandidates[0], {
         blockedBy: "daily_order_cap",
       }),
+    }, {
+      appliedGuardrails: safeJsonStringify(buildAppliedGuardrails(preferences, riskLimits)),
     });
   }
 
@@ -510,9 +758,12 @@ export async function runScheduledAutonomousTrading(
       candidateMarketId: executionCandidates[0]?.marketId,
       autonomyMode: preferences.autonomyMode,
       executionCadence: preferences.executionCadence,
+      candidateSet,
       decision: buildDecisionDetails(executionCandidates[0], {
         blockedBy: "open_position_limit",
       }),
+    }, {
+      appliedGuardrails: safeJsonStringify(buildAppliedGuardrails(preferences, riskLimits)),
     });
   }
 
@@ -521,59 +772,65 @@ export async function runScheduledAutonomousTrading(
     Math.max(0, preferences.minSignalConfidence + riskLimits.effectiveMinConfidence)
   );
 
-  const eligibleSignal = executionCandidates.find((signal) => {
-    const marketAlreadyOpen = openPositions.some(
-      (position: any) => String(position.marketId) === signal.marketId
-    );
-    if (marketAlreadyOpen) {
-      return false;
-    }
+  const rejectedCandidates: AwayTradingRejectedCandidate[] = [];
+  let eligibleSignal: (KalshiSignal & { executionScore?: number }) | null = null;
+  let eligibleMaxBudget: number | null = null;
 
+  for (const signal of executionCandidates) {
     const maxBudget = Math.min(
       preferences.maxOrderNotional,
       riskLimits.maxPositionSize,
       riskLimits.maxLossPerTrade,
       Number(capital?.currentBalance ?? 0)
     );
+    const evaluation = evaluateExecutionCandidate(signal, {
+      openPositions,
+      preferences,
+      effectiveMinConfidence,
+      maxBudget,
+    });
 
-    const marketPrice = Number(signal.marketPrice);
-    if (!Number.isFinite(marketPrice) || maxBudget < marketPrice) {
-      return false;
+    if (evaluation.eligible && !eligibleSignal) {
+      eligibleSignal = signal;
+      eligibleMaxBudget = maxBudget;
+      continue;
     }
 
-    if (
-      preferences.autonomyMode === "semi_autonomous" &&
-      maxBudget > preferences.requireApprovalAbove
-    ) {
-      return false;
-    }
-
-    return signal.confidence >= effectiveMinConfidence;
-  });
+    rejectedCandidates.push({
+      ...summarizeCandidate(signal),
+      blockedBy: evaluation.eligible ? "lower_ranked_candidate" : evaluation.blockedBy,
+      reason: evaluation.eligible
+        ? "a higher-ranked eligible candidate was selected first"
+        : evaluation.reason,
+    });
+  }
 
   if (!eligibleSignal) {
+    const primaryRejectedCandidate = rejectedCandidates[0] ?? null;
     return finalize({
       status: "generated_only",
-      reason: "execution candidates exist, but none satisfy autonomy and exposure guardrails",
+      reason:
+        primaryRejectedCandidate?.reason ??
+        "execution candidates exist, but none satisfy autonomy and exposure guardrails",
       signalsGenerated: savedSignals.length,
       executionCandidates: executionCandidates.length,
       orderPlaced: false,
       candidateMarketId: executionCandidates[0]?.marketId,
       autonomyMode: preferences.autonomyMode,
       executionCadence: preferences.executionCadence,
+      candidateSet,
+      rejectedCandidates,
       decision: buildDecisionDetails(executionCandidates[0], {
-        blockedBy: "autonomy_or_exposure_guardrail",
+        blockedBy:
+          primaryRejectedCandidate?.blockedBy ?? "autonomy_or_exposure_guardrail",
       }),
+    }, {
+      appliedGuardrails: safeJsonStringify(buildAppliedGuardrails(preferences, riskLimits)),
     });
   }
 
   const availableCapital = Number(capital?.currentBalance ?? equityResult.equity ?? 0);
-  const maxBudget = Math.min(
-    preferences.maxOrderNotional,
-    riskLimits.maxPositionSize,
-    riskLimits.maxLossPerTrade,
-    availableCapital
-  );
+  const maxBudget = Math.min(eligibleMaxBudget ?? Number.POSITIVE_INFINITY, availableCapital);
   const limitPrice = Number(eligibleSignal.marketPrice);
   const quantity = estimateContractsForRiskBudget(maxBudget, limitPrice);
 
@@ -587,6 +844,8 @@ export async function runScheduledAutonomousTrading(
       candidateMarketId: eligibleSignal.marketId,
       autonomyMode: preferences.autonomyMode,
       executionCadence: preferences.executionCadence,
+      candidateSet,
+      rejectedCandidates,
       decision: buildDecisionDetails(eligibleSignal, {
         quantity,
         availableCapital,
@@ -595,6 +854,8 @@ export async function runScheduledAutonomousTrading(
         maxLossOnTrade: 0,
         blockedBy: "risk_budget_below_one_contract",
       }),
+    }, {
+      appliedGuardrails: safeJsonStringify(buildAppliedGuardrails(preferences, riskLimits)),
     });
   }
 
@@ -612,6 +873,8 @@ export async function runScheduledAutonomousTrading(
       candidateMarketId: eligibleSignal.marketId,
       autonomyMode: preferences.autonomyMode,
       executionCadence: preferences.executionCadence,
+      candidateSet,
+      rejectedCandidates,
       decision: buildDecisionDetails(eligibleSignal, {
         quantity,
         availableCapital,
@@ -620,6 +883,8 @@ export async function runScheduledAutonomousTrading(
         maxLossOnTrade,
         blockedBy: "per_trade_risk_limit",
       }),
+    }, {
+      appliedGuardrails: safeJsonStringify(buildAppliedGuardrails(preferences, riskLimits)),
     });
   }
 
@@ -633,6 +898,8 @@ export async function runScheduledAutonomousTrading(
       candidateMarketId: eligibleSignal.marketId,
       autonomyMode: preferences.autonomyMode,
       executionCadence: preferences.executionCadence,
+      candidateSet,
+      rejectedCandidates,
       decision: buildDecisionDetails(eligibleSignal, {
         quantity,
         availableCapital,
@@ -641,6 +908,8 @@ export async function runScheduledAutonomousTrading(
         maxLossOnTrade,
         blockedBy: "daily_loss_limit",
       }),
+    }, {
+      appliedGuardrails: safeJsonStringify(buildAppliedGuardrails(preferences, riskLimits)),
     });
   }
 
@@ -654,6 +923,8 @@ export async function runScheduledAutonomousTrading(
       candidateMarketId: eligibleSignal.marketId,
       autonomyMode: preferences.autonomyMode,
       executionCadence: preferences.executionCadence,
+      candidateSet,
+      rejectedCandidates,
       decision: buildDecisionDetails(eligibleSignal, {
         quantity,
         availableCapital,
@@ -662,6 +933,8 @@ export async function runScheduledAutonomousTrading(
         maxLossOnTrade,
         blockedBy: "available_capital",
       }),
+    }, {
+      appliedGuardrails: safeJsonStringify(buildAppliedGuardrails(preferences, riskLimits)),
     });
   }
 
@@ -677,6 +950,7 @@ export async function runScheduledAutonomousTrading(
     await db.logAuditEvent(
       "scheduled_autonomy_order_blocked_or_failed",
       JSON.stringify({
+        runId,
         marketId: eligibleSignal.marketId,
         side: eligibleSignal.side,
         quantity,
@@ -690,8 +964,10 @@ export async function runScheduledAutonomousTrading(
         orderExposure,
         maxLossOnTrade,
         reason: result.error ?? "unknown",
+        exchangeRequest: result.exchangeRequest ?? null,
+        exchangeResponse: result.exchangeResponse ?? null,
       }),
-      user.openId
+      triggeredByOpenId
     );
 
     return finalize({
@@ -703,6 +979,8 @@ export async function runScheduledAutonomousTrading(
       candidateMarketId: eligibleSignal.marketId,
       autonomyMode: preferences.autonomyMode,
       executionCadence: preferences.executionCadence,
+      candidateSet,
+      rejectedCandidates,
       decision: buildDecisionDetails(eligibleSignal, {
         quantity,
         availableCapital,
@@ -711,12 +989,17 @@ export async function runScheduledAutonomousTrading(
         maxLossOnTrade,
         blockedBy: "exchange_rejected_or_failed",
       }),
+    }, {
+      appliedGuardrails: safeJsonStringify(buildAppliedGuardrails(preferences, riskLimits)),
+      exchangeRequest: safeJsonStringify(result.exchangeRequest ?? null),
+      exchangeResponse: safeJsonStringify(result.exchangeResponse ?? { error: result.error ?? "unknown" }),
     });
   }
 
   await db.logAuditEvent(
     "scheduled_autonomy_order_placed",
     JSON.stringify({
+      runId,
       marketId: eligibleSignal.marketId,
       side: eligibleSignal.side,
       quantity,
@@ -729,13 +1012,17 @@ export async function runScheduledAutonomousTrading(
       maxBudget,
       orderExposure,
       maxLossOnTrade,
+      reconciliationStatus: result.needsReconciliation ? "pending" : "not_required",
+      reconciliationReason: result.reconciliationReason ?? null,
     }),
-    user.openId
+    triggeredByOpenId
   );
 
   return finalize({
     status: "executed",
-    reason: "scheduled autonomy found an eligible non-heuristic signal and placed a live order",
+    reason: result.needsReconciliation
+      ? "scheduled autonomy placed a live order, but the local order ledger still needs reconciliation"
+      : "scheduled autonomy found an eligible non-heuristic signal and placed a live order",
     signalsGenerated: savedSignals.length,
     executionCandidates: executionCandidates.length,
     orderPlaced: true,
@@ -744,6 +1031,10 @@ export async function runScheduledAutonomousTrading(
     candidateMarketId: eligibleSignal.marketId,
     autonomyMode: preferences.autonomyMode,
     executionCadence: preferences.executionCadence,
+    reconciliationStatus: result.needsReconciliation ? "pending" : "not_required",
+    reconciliationReason: result.reconciliationReason ?? null,
+    candidateSet,
+    rejectedCandidates,
     decision: buildDecisionDetails(eligibleSignal, {
       quantity,
       availableCapital,
@@ -751,13 +1042,18 @@ export async function runScheduledAutonomousTrading(
       orderExposure,
       maxLossOnTrade,
     }),
+  }, {
+    appliedGuardrails: safeJsonStringify(buildAppliedGuardrails(preferences, riskLimits)),
+    exchangeRequest: safeJsonStringify(result.exchangeRequest ?? null),
+    exchangeResponse: safeJsonStringify(result.exchangeResponse ?? null),
   });
 }
 
 export async function runScheduledAutonomousTradingBatch(
   users: User[],
   triggeredByOpenId: string,
-  runOne: (user: User) => Promise<AwayTradingRunResult> = runScheduledAutonomousTrading
+  runOne: (user: User) => Promise<AwayTradingRunResult> = (user) =>
+    runScheduledAutonomousTrading(user, { triggeredByOpenId })
 ): Promise<ScheduledAutonomyBatchSummary> {
   const results: ScheduledAutonomyBatchSummary["results"] = [];
 

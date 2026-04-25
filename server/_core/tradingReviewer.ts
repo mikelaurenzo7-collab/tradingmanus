@@ -36,6 +36,10 @@ type ProviderReviewResponse = {
 const DEFAULT_OPENAI_ENDPOINT = "https://api.openai.com/v1/chat/completions";
 const DEFAULT_MAX_SIGNALS = 12;
 const MAX_REASONING_CHARS = 240;
+export const MAX_MARKET_SUMMARY_TITLE_CHARS = 160;
+export const MAX_MARKET_SUMMARY_CATEGORY_CHARS = 80;
+export const MAX_SIGNAL_SUMMARY_REASONING_CHARS = 320;
+const DEFAULT_DUO_PROVIDERS: ProviderName[] = ["openai", "anthropic"];
 
 const reviewSchema = z.object({
   marketId: z.string().min(1),
@@ -84,7 +88,8 @@ export function createTradingReviewer(options: TradingReviewerOptions = {}): Tra
 }
 
 export function isTradingReviewerConfigured(options: TradingReviewerOptions = {}) {
-  return getActiveProviders(options).length > 0;
+  const activeProviders = getActiveProviders(options);
+  return DEFAULT_DUO_PROVIDERS.every((provider) => activeProviders.includes(provider));
 }
 
 function clamp(value: number, minimum: number, maximum: number) {
@@ -116,11 +121,29 @@ function parseTradingReviews(text: string): TradingSignalReview[] {
   return Array.isArray(result.data) ? result.data : result.data.reviews;
 }
 
+function compactText(value: string | undefined, maxChars: number) {
+  const normalized = value?.replace(/\s+/g, " ").trim() ?? "";
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+  if (maxChars <= 1) {
+    return normalized.slice(0, maxChars);
+  }
+
+  const clipped = normalized.slice(0, maxChars - 1).trimEnd();
+  const wordBoundary = clipped.lastIndexOf(" ");
+  const readableClip = wordBoundary > Math.floor((maxChars - 1) * 0.6)
+    ? clipped.slice(0, wordBoundary).trimEnd()
+    : clipped;
+
+  return `${readableClip}…`;
+}
+
 function summarizeMarket(market: KalshiMarket) {
   return {
     id: market.id,
-    title: market.title,
-    category: market.category,
+    title: compactText(market.title, MAX_MARKET_SUMMARY_TITLE_CHARS),
+    category: compactText(market.category, MAX_MARKET_SUMMARY_CATEGORY_CHARS),
     status: market.status,
     yesPrice: market.yesPrice,
     noPrice: market.noPrice,
@@ -140,7 +163,7 @@ function summarizeSignal(signal: KalshiSignal) {
     marketPrice: signal.marketPrice,
     impliedProbability: signal.impliedProbability,
     expectedValue: signal.expectedValue,
-    reasoning: signal.reasoning,
+    reasoning: compactText(signal.reasoning, MAX_SIGNAL_SUMMARY_REASONING_CHARS),
     liquidityScore: signal.metadata?.liquidityScore ?? null,
     spreadProxy: signal.metadata?.spreadProxy ?? null,
     totalVolume: signal.metadata?.totalVolume ?? null,
@@ -148,7 +171,7 @@ function summarizeSignal(signal: KalshiSignal) {
 }
 
 function getActiveProviders(options: TradingReviewerOptions) {
-  const requestedProviders = options.providers ?? ["openai", "anthropic"];
+  const requestedProviders = options.providers ?? DEFAULT_DUO_PROVIDERS;
 
   return requestedProviders.filter((provider) => {
     if (provider === "openai") {
@@ -351,9 +374,9 @@ export async function reviewSignalsWithTrader(
 
   const logger = options.logger ?? console;
   const activeProviders = getActiveProviders(options);
-  if (activeProviders.length === 0) {
+  if (!DEFAULT_DUO_PROVIDERS.every((provider) => activeProviders.includes(provider))) {
     logger.error(
-      "[TradingReviewer] No AI trader providers are configured; dropping all candidates so autonomous trading fails closed."
+      "[TradingReviewer] OpenAI + Claude duo is not fully configured; dropping all candidates so autonomous trading fails closed."
     );
     return [];
   }

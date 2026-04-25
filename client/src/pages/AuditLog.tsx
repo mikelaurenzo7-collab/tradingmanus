@@ -83,6 +83,11 @@ export default function AuditLog() {
                   <div className="mt-1 text-xs text-muted-foreground">
                     {formatAutonomyActivityTime(event.createdAt)}
                   </div>
+                  {event.details?.reconciliationStatus === "pending" ? (
+                    <div className="mt-2 text-xs font-medium text-amber-300">
+                      Needs reconciliation: {String(event.details?.reconciliationReason ?? "local ledger follow-up required")}
+                    </div>
+                  ) : null}
                 </div>
               ))}
               {!autonomyActivity.data?.recentActivity.length ? (

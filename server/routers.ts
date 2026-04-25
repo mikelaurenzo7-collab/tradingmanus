@@ -140,130 +140,106 @@ function parseDecisionDetails(details: Record<string, unknown> | null): {
   };
 }
 
-function buildAutonomyActivitySummary(events: Array<any>) {
-  const recentActivity = events
-    .filter((event) =>
-      event.eventType.startsWith("scheduled_autonomy_") ||
-      event.eventType === "live_trading_armed" ||
-      event.eventType === "live_trading_disarmed" ||
-      event.eventType === "trading_preferences_updated"
-    )
-    .slice(0, 8)
-    .map((event) => ({
-      id: event.id,
-      eventType: event.eventType,
-      createdAt: event.createdAt,
-      details: parseAuditDetails(event.details),
-      rawDetails: event.details,
-    }));
+function isOrderPlacedFlag(value: unknown) {
+  return Number(value ?? 0) === 1;
+}
 
-  const lastRunEvent = events.find((event) => event.eventType.startsWith("scheduled_autonomy_run_"));
-  const rawLastRunStatus = lastRunEvent
-    ? String(lastRunEvent.eventType).replace("scheduled_autonomy_run_", "")
-    : null;
-  const lastRunStatus =
-    rawLastRunStatus === "executed" ||
-    rawLastRunStatus === "generated_only" ||
-    rawLastRunStatus === "skipped" ||
-    rawLastRunStatus === "blocked" ||
-    rawLastRunStatus === "error"
-      ? rawLastRunStatus
-      : null;
-  const lastRunDetails = parseAuditDetails(lastRunEvent?.details);
-  const lastScanEvent = events.find((event) => event.eventType === "scheduled_autonomy_scan_completed");
-  const lastScanDetails = parseAuditDetails(lastScanEvent?.details);
-  const lastRunDecision = parseDecisionDetails(lastRunDetails) ?? parseDecisionDetails(lastScanDetails);
-  const lastOrderEvent = events.find(
-    (event) =>
-      event.eventType === "scheduled_autonomy_order_placed" ||
-      event.eventType === "scheduled_autonomy_order_blocked_or_failed"
+function buildAutonomyActivitySummary(runs: Array<any>) {
+  const recentRuns = runs.slice(0, 8);
+  const lastRun = recentRuns[0] ?? null;
+  const lastRunDecisionPayload = parseAuditDetails(lastRun?.decision);
+  const candidateSetPayload = parseAuditDetails(lastRun?.candidateSet);
+  const rejectedCandidatesPayload = parseAuditDetails(lastRun?.rejectedCandidates);
+  const lastRunDecision = parseDecisionDetails(
+    lastRunDecisionPayload ? { decision: lastRunDecisionPayload } : null
   );
-  const lastOrderDetails = parseAuditDetails(lastOrderEvent?.details);
 
   return {
-    lastRun: lastRunEvent && lastRunStatus
+    lastRun: lastRun
       ? {
-          eventType: lastRunEvent.eventType,
-          status: lastRunStatus,
-          createdAt: lastRunEvent.createdAt,
-          reason: typeof lastRunDetails?.reason === "string" ? lastRunDetails.reason : null,
-          signalsGenerated:
-            typeof lastRunDetails?.signalsGenerated === "number"
-              ? lastRunDetails.signalsGenerated
-              : typeof lastScanDetails?.signalsGenerated === "number"
-                ? lastScanDetails.signalsGenerated
-                : 0,
-          executionCandidates:
-            typeof lastRunDetails?.executionCandidates === "number"
-              ? lastRunDetails.executionCandidates
-              : typeof lastScanDetails?.executionCandidates === "number"
-                ? lastScanDetails.executionCandidates
-                : 0,
+          runId: typeof lastRun.runId === "string" ? lastRun.runId : null,
+          eventType: `scheduled_autonomy_run_${lastRun.status}`,
+          status: String(lastRun.status),
+          createdAt: lastRun.startedAt,
+          completedAt: lastRun.completedAt ?? null,
+          reason: typeof lastRun.reason === "string" ? lastRun.reason : null,
+          signalsGenerated: Number(lastRun.signalsGenerated ?? 0),
+          executionCandidates: Number(lastRun.executionCandidates ?? 0),
           candidateMarketId:
-            typeof lastRunDetails?.candidateMarketId === "string"
-              ? lastRunDetails.candidateMarketId
-              : null,
+            typeof lastRun.candidateMarketId === "string" ? lastRun.candidateMarketId : null,
           executedMarketId:
-            typeof lastRunDetails?.executedMarketId === "string"
-              ? lastRunDetails.executedMarketId
-              : null,
+            typeof lastRun.executedMarketId === "string" ? lastRun.executedMarketId : null,
           autonomyMode:
-            typeof lastRunDetails?.autonomyMode === "string"
-              ? lastRunDetails.autonomyMode
-              : typeof lastScanDetails?.autonomyMode === "string"
-                ? lastScanDetails.autonomyMode
-                : null,
+            typeof lastRun.autonomyMode === "string" ? lastRun.autonomyMode : null,
           executionCadence:
-            typeof lastRunDetails?.executionCadence === "string"
-              ? lastRunDetails.executionCadence
-              : typeof lastScanDetails?.executionCadence === "string"
-                ? lastScanDetails.executionCadence
-                : null,
+            typeof lastRun.executionCadence === "string" ? lastRun.executionCadence : null,
+          triggerSource:
+            typeof lastRun.triggerSource === "string" ? lastRun.triggerSource : null,
+          reconciliationStatus:
+            typeof lastRun.reconciliationStatus === "string"
+              ? lastRun.reconciliationStatus
+              : null,
+          reconciliationReason:
+            typeof lastRun.reconciliationReason === "string"
+              ? lastRun.reconciliationReason
+              : null,
           decision: lastRunDecision,
+          candidateSet: Array.isArray(candidateSetPayload) ? candidateSetPayload : [],
+          rejectedCandidates: Array.isArray(rejectedCandidatesPayload) ? rejectedCandidatesPayload : [],
         }
       : null,
-    lastOrder: lastOrderEvent
+    lastOrder: lastRun && isOrderPlacedFlag(lastRun.orderPlaced)
       ? {
-          eventType: lastOrderEvent.eventType,
-          createdAt: lastOrderEvent.createdAt,
-          marketId: typeof lastOrderDetails?.marketId === "string" ? lastOrderDetails.marketId : null,
-          side: typeof lastOrderDetails?.side === "string" ? lastOrderDetails.side : null,
-          quantity: typeof lastOrderDetails?.quantity === "number" ? lastOrderDetails.quantity : null,
-          limitPrice: typeof lastOrderDetails?.limitPrice === "number" ? lastOrderDetails.limitPrice : null,
-          confidence:
-            typeof lastOrderDetails?.confidence === "number" ? lastOrderDetails.confidence : null,
-          executionScore:
-            typeof lastOrderDetails?.executionScore === "number"
-              ? lastOrderDetails.executionScore
-              : null,
-          reason: typeof lastOrderDetails?.reason === "string" ? lastOrderDetails.reason : null,
-          expectedValue:
-            typeof lastOrderDetails?.expectedValue === "number"
-              ? lastOrderDetails.expectedValue
-              : null,
-          reasoning:
-            typeof lastOrderDetails?.reasoning === "string"
-              ? lastOrderDetails.reasoning
-              : null,
-          availableCapital:
-            typeof lastOrderDetails?.availableCapital === "number"
-              ? lastOrderDetails.availableCapital
-              : null,
-          maxBudget:
-            typeof lastOrderDetails?.maxBudget === "number"
-              ? lastOrderDetails.maxBudget
-              : null,
-          orderExposure:
-            typeof lastOrderDetails?.orderExposure === "number"
-              ? lastOrderDetails.orderExposure
-              : null,
-          maxLossOnTrade:
-            typeof lastOrderDetails?.maxLossOnTrade === "number"
-              ? lastOrderDetails.maxLossOnTrade
-              : null,
+          eventType:
+            String(lastRun.status) === "executed"
+              ? "scheduled_autonomy_order_placed"
+              : "scheduled_autonomy_order_blocked_or_failed",
+          createdAt: lastRun.completedAt ?? lastRun.startedAt,
+          marketId:
+            typeof lastRun.executedMarketId === "string"
+              ? lastRun.executedMarketId
+              : typeof lastRun.candidateMarketId === "string"
+                ? lastRun.candidateMarketId
+                : null,
+          side: lastRunDecision?.side ?? null,
+          quantity: lastRunDecision?.quantity ?? null,
+          limitPrice: lastRunDecision?.limitPrice ?? null,
+          confidence: lastRunDecision?.confidence ?? null,
+          executionScore: lastRunDecision?.executionScore ?? null,
+          reason: typeof lastRun.reason === "string" ? lastRun.reason : null,
+          expectedValue: lastRunDecision?.expectedValue ?? null,
+          reasoning: lastRunDecision?.reasoning ?? null,
+          availableCapital: lastRunDecision?.availableCapital ?? null,
+          maxBudget: lastRunDecision?.maxBudget ?? null,
+          orderExposure: lastRunDecision?.orderExposure ?? null,
+          maxLossOnTrade: lastRunDecision?.maxLossOnTrade ?? null,
         }
       : null,
-    recentActivity,
+    recentActivity: recentRuns.map((run) => ({
+      id: run.id,
+      eventType: `scheduled_autonomy_run_${run.status}`,
+      createdAt: run.startedAt,
+      details: {
+        runId: run.runId,
+        reason: run.reason,
+        status: run.status,
+        signalsGenerated: Number(run.signalsGenerated ?? 0),
+        executionCandidates: Number(run.executionCandidates ?? 0),
+        orderPlaced: isOrderPlacedFlag(run.orderPlaced),
+        reconciliationStatus: run.reconciliationStatus,
+        reconciliationReason: run.reconciliationReason,
+      },
+      rawDetails: JSON.stringify({
+        runId: run.runId,
+        reason: run.reason,
+        status: run.status,
+        signalsGenerated: Number(run.signalsGenerated ?? 0),
+        executionCandidates: Number(run.executionCandidates ?? 0),
+        orderPlaced: isOrderPlacedFlag(run.orderPlaced),
+        reconciliationStatus: run.reconciliationStatus,
+        reconciliationReason: run.reconciliationReason,
+      }),
+    })),
   };
 }
 
@@ -626,8 +602,8 @@ export const appRouter = router({
 
     getAutonomyActivity: protectedProcedure.query(async ({ ctx }) => {
       try {
-        const events = await db.getAuditLog(14, ctx.user!.openId);
-        return buildAutonomyActivitySummary(events);
+        const runs = await db.getRecentAutonomyRuns(getRequiredUserId(ctx), 8);
+        return buildAutonomyActivitySummary(runs);
       } catch (error) {
         console.error("[Kalshi] Get autonomy activity error:", error);
         return {
