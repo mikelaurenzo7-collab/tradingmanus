@@ -8,7 +8,7 @@ export const ENV = {
   ownerPassword: normalize(process.env.OWNER_PASSWORD),
   cronSecret: normalize(process.env.CRON_SECRET),
   anthropicApiKey: normalize(process.env.ANTHROPIC_API_KEY),
-  anthropicModel: normalize(process.env.ANTHROPIC_MODEL) || "claude-3-5-sonnet-latest",
+  anthropicModel: normalize(process.env.ANTHROPIC_MODEL) || "claude-sonnet-4-5",
   kalshiApiKey: normalize(process.env.KALSHI_API_KEY),
   isProduction: process.env.NODE_ENV === "production",
   gnewsApiKey: normalize(process.env.GNEWS_API_KEY),

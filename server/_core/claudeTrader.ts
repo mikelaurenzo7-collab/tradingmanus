@@ -123,7 +123,15 @@ export async function reviewSignalsWithClaude(input: {
     return input.signals
       .map((signal) => {
         const review = reviewByMarket.get(signal.marketId);
-        if (!review) return signal;
+        // Safe-by-default: any signal Claude did not explicitly approve is dropped.
+        // This protects autonomous execution from silent passthrough when Claude's
+        // response is truncated, malformed, or omits a marketId.
+        if (!review) {
+          console.warn(
+            `[ClaudeTrader] No review entry for marketId=${signal.marketId}; dropping signal.`
+          );
+          return null;
+        }
         if (!review.approved) {
           return null;
         }
@@ -143,11 +151,7 @@ export async function reviewSignalsWithClaude(input: {
       })
       .filter((signal): signal is KalshiSignal => Boolean(signal));
   } catch (error) {
-    console.error("[ClaudeTrader] Signal review failed; returning heuristic signals for supervised review:", error);
-    return input.signals.map((signal) => ({
-      ...signal,
-      confidence: Math.max(0.01, signal.confidence - 0.08),
-      reasoning: `${signal.reasoning} | Claude trader unavailable; confidence reduced for manual review`,
-    }));
+    console.error("[ClaudeTrader] Signal review failed; dropping all candidates (no autonomous execution without Claude approval):", error);
+    return [];
   }
 }
