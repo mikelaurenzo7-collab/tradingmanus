@@ -1,11 +1,15 @@
 import crypto from "crypto";
 import { parse as parseCookieHeader } from "cookie";
-import type { Request } from "express";
+import type { IncomingHttpHeaders } from "node:http";
 import { SignJWT, jwtVerify } from "jose";
 import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
 import type { User } from "../../drizzle/schema";
 import * as db from "../db";
 import { ENV } from "./env";
+
+export type AuthRequest = {
+  headers: IncomingHttpHeaders;
+};
 
 export type SessionPayload = {
   openId: string;
@@ -86,8 +90,11 @@ export async function verifySessionToken(token: string) {
   return payload.openId;
 }
 
-export async function authenticateRequest(req: Request): Promise<User | null> {
-  const cookies = parseCookieHeader(req.headers.cookie ?? "");
+export async function authenticateRequest(req: AuthRequest): Promise<User | null> {
+  const cookieHeader = Array.isArray(req.headers.cookie)
+    ? req.headers.cookie.join("; ")
+    : req.headers.cookie;
+  const cookies = parseCookieHeader(cookieHeader ?? "");
   const token = cookies[COOKIE_NAME];
   if (!token) return null;
 

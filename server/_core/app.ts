@@ -1,5 +1,6 @@
-import express, { type Request, type Response } from "express";
+import express from "express";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
+import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:http";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { validateServerEnv, ENV } from "./env";
@@ -8,14 +9,34 @@ import { authenticateRequest } from "./auth";
 import { runScheduledAutonomousTradingBatch } from "./kalshiAutonomy";
 import { syncPendingOrders, syncLivePositions } from "./kalshiOrderSync";
 
-function readBearerToken(req: Request) {
-  const header = req.headers.authorization;
+type AppRequest = IncomingMessage & {
+  headers: IncomingHttpHeaders;
+  protocol?: string;
+};
+
+type AppResponse = ServerResponse & {
+  status(code: number): AppResponse;
+  json(body: unknown): AppResponse;
+};
+
+type AsyncRouteHandler = (req: AppRequest, res: AppResponse) => Promise<void>;
+
+function toExpressHandler(handler: AsyncRouteHandler) {
+  return (req: unknown, res: unknown) => {
+    void handler(req as AppRequest, res as AppResponse);
+  };
+}
+
+function readBearerToken(req: AppRequest) {
+  const header = Array.isArray(req.headers.authorization)
+    ? req.headers.authorization[0]
+    : req.headers.authorization;
   if (!header) return null;
   const [scheme, token] = header.split(" ");
   return scheme?.toLowerCase() === "bearer" && token ? token : null;
 }
 
-async function getScheduledTrigger(req: Request) {
+async function getScheduledTrigger(req: AppRequest) {
   const bearer = readBearerToken(req);
   if (ENV.cronSecret && bearer === ENV.cronSecret) {
     return { authorized: true as const, openId: "vercel_cron" };
@@ -33,7 +54,7 @@ async function getScheduledTrigger(req: Request) {
   return { authorized: true as const, openId: requester.openId };
 }
 
-async function autonomousTradingHandler(req: Request, res: Response) {
+async function autonomousTradingHandler(req: AppRequest, res: AppResponse) {
   try {
     const trigger = await getScheduledTrigger(req);
     if (!trigger.authorized) {
@@ -59,7 +80,7 @@ async function autonomousTradingHandler(req: Request, res: Response) {
   }
 }
 
-async function orderSyncHandler(req: Request, res: Response) {
+async function orderSyncHandler(req: AppRequest, res: AppResponse) {
   try {
     const trigger = await getScheduledTrigger(req);
     if (!trigger.authorized) {
@@ -127,8 +148,8 @@ export async function createApp(options: { runStartupMigrations?: boolean } = {}
     })
   );
 
-  app.get("/api/health", (_req, res) => {
-    res.json({
+  app.get("/api/health", (_req: unknown, res: unknown) => {
+    (res as AppResponse).json({
       status: "ok",
       runtime: process.env.VERCEL ? "vercel" : "node",
       scheduler: process.env.VERCEL ? "vercel-cron" : "node-interval",
@@ -136,8 +157,8 @@ export async function createApp(options: { runStartupMigrations?: boolean } = {}
     });
   });
 
-  app.all("/api/scheduled/autonomous-trading", autonomousTradingHandler);
-  app.all("/api/scheduled/order-sync", orderSyncHandler);
+  app.all("/api/scheduled/autonomous-trading", toExpressHandler(autonomousTradingHandler));
+  app.all("/api/scheduled/order-sync", toExpressHandler(orderSyncHandler));
 
   return app;
 }
