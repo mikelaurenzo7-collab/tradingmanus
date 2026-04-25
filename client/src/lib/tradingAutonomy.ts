@@ -127,9 +127,11 @@ export function getAutonomyStatusSummary(preferences: TradingPreferences) {
 
 export type AutonomyActivitySummary = {
   lastRun: null | {
+    runId: string | null;
     eventType: string;
     status: string;
     createdAt: string | Date;
+    completedAt?: string | Date | null;
     reason: string | null;
     signalsGenerated: number;
     executionCandidates: number;
@@ -137,6 +139,9 @@ export type AutonomyActivitySummary = {
     executedMarketId: string | null;
     autonomyMode: string | null;
     executionCadence: string | null;
+    triggerSource?: string | null;
+    reconciliationStatus?: string | null;
+    reconciliationReason?: string | null;
     decision: null | {
       marketId: string | null;
       side: "yes" | "no" | null;
@@ -152,6 +157,8 @@ export type AutonomyActivitySummary = {
       reasoning: string | null;
       blockedBy: string | null;
     };
+    candidateSet?: Array<Record<string, unknown>>;
+    rejectedCandidates?: Array<Record<string, unknown>>;
   };
   lastOrder: null | {
     eventType: string;
@@ -198,9 +205,20 @@ export function getAutonomyReviewSummary(activity: AutonomyActivitySummary | nul
 
   const lastRun = activity.lastRun;
   const counts = `${lastRun.signalsGenerated} signals · ${lastRun.executionCandidates} execution-ready candidates`;
+  const reconciliationLine =
+    lastRun.reconciliationStatus === "pending"
+      ? ` Reconciliation required: ${lastRun.reconciliationReason ?? "the exchange accepted the order but the local ledger still needs repair."}`
+      : "";
 
   switch (lastRun.status) {
     case "executed":
+      if (lastRun.reconciliationStatus === "pending") {
+        return {
+          title: "Last autonomous trading cycle placed a live order that needs reconciliation",
+          body: `${counts}. ${lastRun.executedMarketId ? `Executed ${lastRun.executedMarketId}. ` : ""}${lastRun.reason ?? "A live order was submitted."}${reconciliationLine}`,
+          tone: "text-amber-300",
+        };
+      }
       return {
         title: "Last autonomous trading cycle placed a live order",
         body: `${counts}. ${lastRun.executedMarketId ? `Executed ${lastRun.executedMarketId}. ` : ""}${lastRun.reason ?? "A live order was submitted."}`,
@@ -241,8 +259,18 @@ function getDecisionGuardrailLabel(blockedBy: string | null | undefined) {
       return "The saved daily order cap blocked execution.";
     case "open_position_limit":
       return "The open-position limit blocked another autonomous trade.";
+    case "market_already_open":
+      return "The market was skipped because a position was already open.";
+    case "stale_market_data":
+      return "Execution was blocked until market data refreshes.";
     case "autonomy_or_exposure_guardrail":
       return "The candidate did not satisfy the saved autonomy or exposure guardrails.";
+    case "approval_threshold_exceeded":
+      return "Semi-autonomous approval limits blocked the order size.";
+    case "below_effective_min_confidence":
+      return "Confidence did not clear the effective minimum threshold.";
+    case "risk_budget_below_one_contract":
+      return "The current budget could not fund even one contract.";
     case "per_trade_risk_limit":
       return "The candidate would have exceeded the per-trade risk limit.";
     case "daily_loss_limit":
@@ -273,14 +301,20 @@ export function getAutonomyDecisionSummary(activity: AutonomyActivitySummary | n
   const scoreLabel = decision.executionScore !== null ? `${Math.round(decision.executionScore * 100)}% execution score` : null;
   const edgeLabel = decision.expectedValue !== null ? `${(decision.expectedValue * 100).toFixed(1)}¢ EV` : null;
   const detailLine = [confidenceLabel, scoreLabel, edgeLabel].filter(Boolean).join(" · ");
-  const guardrailLine = getDecisionGuardrailLabel(decision.blockedBy) ?? lastRun.reason;
+  const guardrailLine =
+    lastRun.reconciliationStatus === "pending"
+      ? lastRun.reconciliationReason ?? lastRun.reason
+      : getDecisionGuardrailLabel(decision.blockedBy) ?? lastRun.reason;
 
   switch (lastRun.status) {
     case "executed":
       return {
-        title: `Last away review executed ${decision.marketId} ${sideLabel}`,
+        title:
+          lastRun.reconciliationStatus === "pending"
+            ? `Last away review executed ${decision.marketId} ${sideLabel} but needs reconciliation`
+            : `Last away review executed ${decision.marketId} ${sideLabel}`,
         body: [detailLine, guardrailLine].filter(Boolean).join(". "),
-        tone: "text-emerald-300",
+        tone: lastRun.reconciliationStatus === "pending" ? "text-amber-300" : "text-emerald-300",
       };
     case "blocked":
       return {
