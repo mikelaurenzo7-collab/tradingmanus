@@ -9,6 +9,9 @@ import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
   SidebarHeader,
   SidebarInset,
   SidebarMenu,
@@ -18,29 +21,52 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { useAuth } from "@/_core/hooks/useAuth";
-import { LayoutDashboard, LogOut, TrendingUp, Shield, FileText, Plug, BookOpen, BarChart3, Brain, Briefcase, LineChart, SlidersHorizontal, AlertTriangle, Loader2 } from "lucide-react";
+import { LayoutDashboard, LogOut, TrendingUp, Shield, FileText, Plug, BookOpen, BarChart3, Brain, Briefcase, LineChart, SlidersHorizontal, AlertTriangle, Loader2, ListChecks, Wallet, Activity } from "lucide-react";
 import { CSSProperties, FormEvent, useEffect, useState } from "react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { trpc } from "@/lib/trpc";
 
-const menuItems = [
-  { icon: LayoutDashboard, label: "Dashboard", path: "/dashboard" },
-  { icon: Plug, label: "Connect Kalshi", path: "/connect" },
-  { icon: SlidersHorizontal, label: "Trading Autonomy", path: "/autonomy" },
-  { icon: TrendingUp, label: "Signals", path: "/signals" },
-  { icon: LayoutDashboard, label: "Positions", path: "/positions" },
-  { icon: LayoutDashboard, label: "Trades", path: "/trades" },
-  { icon: BarChart3, label: "Performance", path: "/performance" },
-  { icon: Brain, label: "Sentiment", path: "/sentiment" },
-  { icon: Briefcase, label: "Portfolio", path: "/portfolio" },
-  { icon: LineChart, label: "Backtest", path: "/backtest" },
-  { icon: BarChart3, label: "Analytics", path: "/analytics" },
-  { icon: BookOpen, label: "Training", path: "/training" },
-  { icon: Shield, label: "Risk Controls", path: "/risk-controls" },
-  { icon: FileText, label: "Audit Log", path: "/audit" },
+type NavItem = { icon: typeof LayoutDashboard; label: string; path: string };
+
+const navSections: { label: string; items: NavItem[] }[] = [
+  {
+    label: "Trade",
+    items: [
+      { icon: LayoutDashboard, label: "Dashboard", path: "/dashboard" },
+      { icon: TrendingUp, label: "Signals", path: "/signals" },
+      { icon: ListChecks, label: "Positions", path: "/positions" },
+      { icon: Activity, label: "Trades", path: "/trades" },
+    ],
+  },
+  {
+    label: "Strategy",
+    items: [
+      { icon: SlidersHorizontal, label: "Trading Autonomy", path: "/autonomy" },
+      { icon: Shield, label: "Risk Controls", path: "/risk-controls" },
+      { icon: BookOpen, label: "Training", path: "/training" },
+    ],
+  },
+  {
+    label: "Insight",
+    items: [
+      { icon: BarChart3, label: "Performance", path: "/performance" },
+      { icon: Brain, label: "Sentiment", path: "/sentiment" },
+      { icon: Briefcase, label: "Portfolio", path: "/portfolio" },
+      { icon: LineChart, label: "Backtest", path: "/backtest" },
+      { icon: BarChart3, label: "Analytics", path: "/analytics" },
+      { icon: FileText, label: "Audit Log", path: "/audit" },
+    ],
+  },
+  {
+    label: "Account",
+    items: [
+      { icon: Plug, label: "Connect Kalshi", path: "/connect" },
+      { icon: Wallet, label: "Funding", path: "/funding" },
+    ],
+  },
 ];
 
 const SIDEBAR_WIDTH_KEY = "sidebar-width";
@@ -58,6 +84,7 @@ export default function DashboardLayout({
     return saved ? parseInt(saved, 10) : DEFAULT_WIDTH;
   });
   const { loading, user, logout } = useAuth();
+  const [location] = useLocation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState<string | null>(null);
@@ -167,18 +194,28 @@ export default function DashboardLayout({
           </div>
         </SidebarHeader>
         <SidebarContent>
-          <SidebarMenu>
-            {menuItems.map((item) => (
-              <SidebarMenuItem key={item.path}>
-                <SidebarMenuButton asChild>
-                  <Link href={item.path} className="flex items-center gap-2">
-                    <item.icon className="w-4 h-4" />
-                    <span>{item.label}</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            ))}
-          </SidebarMenu>
+          {navSections.map((section) => (
+            <SidebarGroup key={section.label}>
+              <SidebarGroupLabel>{section.label}</SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  {section.items.map((item) => {
+                    const isActive = location === item.path || (item.path === "/dashboard" && location === "/");
+                    return (
+                      <SidebarMenuItem key={item.path}>
+                        <SidebarMenuButton asChild isActive={isActive}>
+                          <Link href={item.path} className="flex items-center gap-2">
+                            <item.icon className="w-4 h-4" />
+                            <span>{item.label}</span>
+                          </Link>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    );
+                  })}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          ))}
         </SidebarContent>
         <SidebarFooter className="border-t border-sidebar-border">
           <DropdownMenu>

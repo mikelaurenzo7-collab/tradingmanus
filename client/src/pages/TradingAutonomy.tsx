@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
-import { AlertTriangle, CheckCircle2, Loader2, Shield, Sparkles, Zap } from "lucide-react";
+import { CheckCircle2, Circle, Loader2, Shield, Zap, ChevronRight, Clock, Ban, Activity } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { trpc } from "@/lib/trpc";
 import {
   AUTONOMY_MODES,
@@ -12,28 +12,76 @@ import {
   RISK_POSTURES,
   formatAutonomyActivityTime,
   formatConfidence,
-  getAutonomyDecisionSummary,
   getAutonomyModeDescription,
   getAutonomyModeLabel,
   getAutonomyReadinessSummary,
   getAutonomyReviewSummary,
-  getAutonomyStatusSummary,
   getExecutionCadenceLabel,
   getRiskPostureLabel,
   type TradingPreferences,
 } from "@/lib/tradingAutonomy";
 
-function formatCurrency(value: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(value);
+function fmt(value: number) {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 }).format(value);
 }
 
-function formatContractPrice(value: number) {
-  return `${(value * 100).toFixed(1)}¢`;
+// ── Pill selector ─────────────────────────────────────────────────────────────
+function PillGroup<T extends string>({
+  options,
+  value,
+  disabled,
+  label,
+  description,
+  onChange,
+}: {
+  options: readonly T[];
+  value: T;
+  disabled: boolean;
+  label: (v: T) => string;
+  description: (v: T) => string;
+  onChange: (v: T) => void;
+}) {
+  return (
+    <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+      {options.map((opt) => {
+        const active = opt === value;
+        return (
+          <button
+            key={opt}
+            type="button"
+            disabled={disabled}
+            onClick={() => onChange(opt)}
+            className={`rounded-xl border px-4 py-3 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${
+              active
+                ? "border-cyan-400 bg-cyan-500/10 shadow-[0_0_12px_rgba(34,211,238,0.1)]"
+                : "border-border/60 bg-background/40 hover:border-cyan-500/30"
+            }`}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-semibold text-foreground">{label(opt)}</span>
+              {active ? <CheckCircle2 className="w-4 h-4 text-cyan-400 shrink-0" /> : <Circle className="w-4 h-4 text-border/60 shrink-0" />}
+            </div>
+            <p className="mt-1.5 text-xs text-muted-foreground leading-relaxed">{description(opt)}</p>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Step header ───────────────────────────────────────────────────────────────
+function StepHeader({ n, title, subtitle }: { n: number; title: string; subtitle: string }) {
+  return (
+    <div className="flex items-start gap-4">
+      <div className="w-8 h-8 rounded-full bg-cyan-500/20 text-cyan-300 flex items-center justify-center font-bold text-sm shrink-0">
+        {n}
+      </div>
+      <div>
+        <h2 className="font-semibold text-foreground">{title}</h2>
+        <p className="text-sm text-muted-foreground mt-0.5">{subtitle}</p>
+      </div>
+    </div>
+  );
 }
 
 export default function TradingAutonomy() {
@@ -46,15 +94,13 @@ export default function TradingAutonomy() {
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    if (preferencesQuery.data) {
-      setForm(preferencesQuery.data);
-    }
+    if (preferencesQuery.data) setForm(preferencesQuery.data);
   }, [preferencesQuery.data]);
 
   const saveMutation = trpc.kalshi.updateTradingPreferences.useMutation({
     onSuccess: async (result) => {
       setForm(result.preferences);
-      setMessage("Trading autonomy settings saved.");
+      setMessage("Settings saved.");
       await Promise.all([
         utils.kalshi.getTradingPreferences.invalidate(),
         utils.kalshi.getKalshiAccountStatus.invalidate(),
@@ -68,8 +114,8 @@ export default function TradingAutonomy() {
       setForm(result.preferences);
       setMessage(
         result.preferences.liveTradingEnabled
-          ? `${getAutonomyModeLabel(result.preferences.autonomyMode)} mode is now armed for live trading.`
-          : "Live trading is now disarmed."
+          ? `${getAutonomyModeLabel(result.preferences.autonomyMode)} is now armed.`
+          : "Live trading disarmed.",
       );
       await Promise.all([
         utils.kalshi.getTradingPreferences.invalidate(),
@@ -82,621 +128,339 @@ export default function TradingAutonomy() {
   const accountStatus = accountStatusQuery.data;
   const connected = accountStatus?.connected ?? false;
   const equity = accountStatus?.equity ?? 0;
-  const hasInstructions = (instructionsQuery.data?.length ?? 0) > 0;
-  const status = useMemo(() => getAutonomyStatusSummary(form), [form]);
-  const activitySummary = useMemo(
-    () => getAutonomyReviewSummary(autonomyActivityQuery.data),
-    [autonomyActivityQuery.data]
-  );
-  const readinessSummary = useMemo(
-    () =>
-      getAutonomyReadinessSummary({
-        preferences: form,
-        connected,
-        equity,
-        lastRunAt: autonomyActivityQuery.data?.lastRun?.createdAt ?? null,
-      }),
-    [autonomyActivityQuery.data?.lastRun?.createdAt, connected, equity, form]
-  );
-  const decisionSummary = useMemo(
-    () => getAutonomyDecisionSummary(autonomyActivityQuery.data),
-    [autonomyActivityQuery.data]
-  );
-  const canArm = connected && equity > 0 && form.autonomyMode !== "manual";
-  const saveDisabled = saveMutation.isPending || activationMutation.isPending;
-  const policyLocked = form.liveTradingEnabled;
-  const policyControlsDisabled = saveDisabled || policyLocked;
 
-  if (
-    accountStatusQuery.isLoading ||
-    instructionsQuery.isLoading ||
-    preferencesQuery.isLoading ||
-    autonomyActivityQuery.isLoading
-  ) {
+  const readiness = useMemo(
+    () => getAutonomyReadinessSummary({ preferences: form, connected, equity, lastRunAt: autonomyActivityQuery.data?.lastRun?.createdAt ?? null }),
+    [autonomyActivityQuery.data?.lastRun?.createdAt, connected, equity, form],
+  );
+  const activitySummary = useMemo(() => getAutonomyReviewSummary(autonomyActivityQuery.data), [autonomyActivityQuery.data]);
+
+  const canArm = connected && equity > 0 && form.autonomyMode !== "manual";
+  const isMutating = saveMutation.isPending || activationMutation.isPending;
+  const isArmed = form.liveTradingEnabled;
+  const policyLocked = isArmed;
+
+  if (accountStatusQuery.isLoading || preferencesQuery.isLoading || autonomyActivityQuery.isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="flex flex-col items-center gap-4">
-          <Loader2 className="h-12 w-12 animate-spin text-primary" />
-          <p className="text-muted-foreground">Loading trading autonomy controls...</p>
-        </div>
+      <div className="flex items-center justify-center min-h-[50vh]">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
       </div>
     );
   }
 
   return (
-    <div className="space-y-8 p-6">
-      <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+    <div className="p-6 space-y-8 max-w-4xl">
+      {/* Page title + status pill */}
+      <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="mb-2 text-5xl font-bold gradient-text">Trading Autonomy</h1>
-          <p className="max-w-3xl text-lg text-muted-foreground">
-            This is the control room for deciding how autonomous the agent is. Choose whether the app should only research trades, require approval for every live order, or operate in a more autonomous execution mode within your saved guardrails.
+          <h1 className="text-2xl font-bold">Trading Autonomy</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Configure how autonomous Claude is, then arm live trading when you're ready.
           </p>
         </div>
-        <div className="flex flex-wrap gap-3">
-          <Link href="/signals">
-            <Button variant="outline">Review Signals</Button>
-          </Link>
-          <Link href="/risk-controls">
-            <Button className="laurenzo-button">Review Risk Controls</Button>
-          </Link>
+        <div className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold ${
+          isArmed
+            ? "border-rose-400/50 bg-rose-500/10 text-rose-200"
+            : "border-border/60 bg-background/50 text-muted-foreground"
+        }`}>
+          {isArmed ? <Zap className="w-3.5 h-3.5" /> : <Shield className="w-3.5 h-3.5" />}
+          {isArmed ? "Armed — live trading active" : "Disarmed"}
         </div>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-        <Card className="laurenzo-card border-cyan-500/30 bg-cyan-500/5">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Sparkles className="h-5 w-5 text-cyan-400" />
-              How to have the AI start trading
-            </CardTitle>
-            <CardDescription>
-              The user decides the autonomy level. Fully autonomous trading is an explicit in-app choice.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4 text-sm text-muted-foreground">
-            <p>
-              First, connect your live Kalshi account. Second, choose an autonomy mode on this page. Third, save your thresholds and risk posture. Fourth, arm live trading. If you choose <strong>Fully Autonomous</strong>, the agent may place eligible live orders automatically while the app is armed and operating inside your configured limits.
-            </p>
-            <p>
-              If you prefer tighter control, choose <strong>Approval Required</strong> so the agent can prepare opportunities without placing a live order until you approve it.
-            </p>
-            <div className="grid gap-3 md:grid-cols-3">
-              <div className="rounded-2xl border border-border/60 bg-background/50 p-4">
-                <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Connection</div>
-                <div className="mt-2 text-lg font-semibold text-foreground">
-                  {connected ? "Connected" : "Not connected"}
-                </div>
-                <p className="mt-2 text-xs text-muted-foreground">
-                  {connected
-                    ? `Live account equity: ${formatCurrency(equity)}`
-                    : "Connect Kalshi before enabling live execution."}
-                </p>
-              </div>
-              <div className="rounded-2xl border border-border/60 bg-background/50 p-4">
-                <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Training</div>
-                <div className="mt-2 text-lg font-semibold text-foreground">
-                  {hasInstructions ? "Configured" : "Optional"}
-                </div>
-                <p className="mt-2 text-xs text-muted-foreground">
-                  {hasInstructions
-                    ? "Your trading instructions are available to guide execution behavior."
-                    : "You can still trade without instructions, but a policy profile is recommended."}
-                </p>
-              </div>
-              <div className="rounded-2xl border border-border/60 bg-background/50 p-4">
-                <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Current status</div>
-                <div className={`mt-2 text-lg font-semibold ${status.tone}`}>
-                  {status.title}
-                </div>
-                <p className="mt-2 text-xs text-muted-foreground">{status.body}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+      {/* Connection gate */}
+      {!connected && (
+        <Alert className="border-amber-500/40 bg-amber-500/10">
+          <AlertDescription className="flex items-center justify-between gap-3 flex-wrap">
+            <span>Connect your Kalshi account before arming live trading.</span>
+            <Link href="/connect"><Button size="sm" variant="outline">Connect Kalshi</Button></Link>
+          </AlertDescription>
+        </Alert>
+      )}
 
-        <Card className="laurenzo-card">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Shield className="h-5 w-5 text-violet-400" />
-              Live trading master arm
-            </CardTitle>
-            <CardDescription>
-              Saving a policy does not arm live trading by itself. Arming is a separate explicit action.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="rounded-2xl border border-border/60 bg-background/40 p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-sm font-medium text-foreground">Autonomy policy</div>
-                  <div className="mt-1 text-sm text-muted-foreground">
-                    {getAutonomyModeLabel(form.autonomyMode)} · {getRiskPostureLabel(form.riskPosture)} · {getExecutionCadenceLabel(form.executionCadence)}
-                  </div>
-                </div>
-                <div className={`text-sm font-semibold ${form.liveTradingEnabled ? "text-emerald-300" : "text-amber-300"}`}>
-                  {form.liveTradingEnabled ? "Armed" : "Disarmed"}
-                </div>
-              </div>
-            </div>
+      {/* Message feedback */}
+      {message && (
+        <Alert className="border-cyan-500/30 bg-cyan-500/5">
+          <CheckCircle2 className="h-4 w-4" />
+          <AlertDescription>{message}</AlertDescription>
+        </Alert>
+      )}
 
-            <Alert>
-              <AlertTriangle className="h-4 w-4" />
-              <AlertDescription>
-                Manual mode always keeps live execution disarmed. To let the app place live orders, choose Approval Required, Semi-autonomous, or Fully Autonomous, then arm live trading explicitly.
-              </AlertDescription>
-            </Alert>
+      {/* Policy locked notice */}
+      {policyLocked && (
+        <Alert className="border-amber-500/40 bg-amber-500/10">
+          <Shield className="h-4 w-4" />
+          <AlertDescription>
+            Disarm live trading before changing autonomy mode, cadence, thresholds, or risk posture.
+          </AlertDescription>
+        </Alert>
+      )}
 
-            {policyLocked ? (
-              <Alert className="border-amber-500/40 bg-amber-500/10">
-                <Shield className="h-4 w-4" />
-                <AlertTitle>Policy editing is locked while armed</AlertTitle>
-                <AlertDescription>
-                  Disarm live trading before changing autonomy mode, cadence, risk posture, confidence, or order-size limits.
-                </AlertDescription>
-              </Alert>
-            ) : null}
-
-            {message ? (
-              <Alert className="border-cyan-500/30 bg-cyan-500/5">
-                <CheckCircle2 className="h-4 w-4" />
-                <AlertDescription>{message}</AlertDescription>
-              </Alert>
-            ) : null}
-
-            <div className="flex flex-wrap gap-3">
-              <Button
-                className="laurenzo-button"
-                disabled={saveDisabled || form.autonomyMode === "manual" || !canArm}
-                onClick={() => activationMutation.mutate({ enabled: true })}
-              >
-                {activationMutation.isPending && !form.liveTradingEnabled ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Arming...
-                  </>
-                ) : (
-                  <>
-                    <Zap className="mr-2 h-4 w-4" />
-                    Arm live trading
-                  </>
-                )}
-              </Button>
-              <Button
-                variant="outline"
-                disabled={saveDisabled || !form.liveTradingEnabled}
-                onClick={() => activationMutation.mutate({ enabled: false })}
-              >
-                Disarm live trading
-              </Button>
-              {!connected ? (
-                <Link href="/connect">
-                  <Button variant="outline">Connect Kalshi first</Button>
-                </Link>
-              ) : null}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      <Card className="laurenzo-card">
-        <CardHeader>
-          <CardTitle>Choose your autonomy mode</CardTitle>
-          <CardDescription>
-            The user decides how autonomous the agent is. These modes control whether the app can place live orders automatically.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-4">
-          {AUTONOMY_MODES.map((mode) => {
-            const selected = form.autonomyMode === mode;
-            return (
-              <button
-                key={mode}
-                type="button"
-                disabled={policyControlsDisabled}
-                onClick={() =>
-                  setForm((current) => ({
-                    ...current,
-                    autonomyMode: mode,
-                    liveTradingEnabled: mode === "manual" ? false : current.liveTradingEnabled,
-                  }))
-                }
-                className={`rounded-3xl border p-5 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${selected ? "border-cyan-400 bg-cyan-500/10 shadow-[0_0_30px_rgba(34,211,238,0.12)]" : "border-border/60 bg-background/40 hover:border-cyan-500/40"}`}
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="text-lg font-semibold text-foreground">
-                    {getAutonomyModeLabel(mode)}
-                  </div>
-                  {selected ? <CheckCircle2 className="h-5 w-5 text-cyan-300" /> : null}
-                </div>
-                <p className="mt-3 text-sm text-muted-foreground">
-                  {getAutonomyModeDescription(mode)}
-                </p>
-              </button>
-            );
-          })}
-        </CardContent>
-      </Card>
-
-      <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
-        <Card className="laurenzo-card border-emerald-500/20 bg-emerald-500/5">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Shield className="h-5 w-5 text-emerald-300" />
-              Autonomous trading readiness
-            </CardTitle>
-            <CardDescription>
-              This status answers whether Laurenzo is actually configured to trade directly for you, within guardrails, while you are away.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className={`text-lg font-semibold ${readinessSummary.tone}`}>{readinessSummary.title}</div>
-            <p className="text-sm text-muted-foreground">{readinessSummary.body}</p>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="rounded-xl border border-border/60 bg-background/50 p-3 text-sm">
-                <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Mode and cadence</div>
-                <div className="mt-2 font-semibold text-foreground">
-                  {getAutonomyModeLabel(form.autonomyMode)} · {getExecutionCadenceLabel(form.executionCadence)}
-                </div>
-              </div>
-              <div className="rounded-xl border border-border/60 bg-background/50 p-3 text-sm">
-                <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Last autonomous trading cycle</div>
-                <div className="mt-2 font-semibold text-foreground">
-                  {formatAutonomyActivityTime(autonomyActivityQuery.data?.lastRun?.createdAt)}
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="laurenzo-card border-emerald-500/20 bg-emerald-500/5">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Zap className="h-5 w-5 text-emerald-300" />
-              Latest autonomous trading activity
-            </CardTitle>
-            <CardDescription>
-              This panel shows the most recent autonomous trading outcome recorded for your account.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
-          <div className="space-y-3 rounded-2xl border border-border/60 bg-background/40 p-4">
-            <div className={`text-lg font-semibold ${activitySummary.tone}`}>{activitySummary.title}</div>
-            <p className="text-sm text-muted-foreground">{activitySummary.body}</p>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="rounded-xl border border-border/60 bg-background/50 p-3 text-sm">
-                <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Last review</div>
-                <div className="mt-2 font-semibold text-foreground">
-                  {formatAutonomyActivityTime(autonomyActivityQuery.data?.lastRun?.createdAt)}
-                </div>
-                <p className="mt-2 text-xs text-muted-foreground">
-                  {autonomyActivityQuery.data?.lastRun?.autonomyMode
-                    ? `${autonomyActivityQuery.data.lastRun.autonomyMode} · ${autonomyActivityQuery.data.lastRun.executionCadence ?? "cadence unknown"}`
-                    : "No autonomous trading cycle has been persisted yet."}
-                </p>
-              </div>
-              <div className="rounded-xl border border-border/60 bg-background/50 p-3 text-sm">
-                <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Last autonomous order event</div>
-                <div className="mt-2 font-semibold text-foreground">
-                  {formatAutonomyActivityTime(autonomyActivityQuery.data?.lastOrder?.createdAt)}
-                </div>
-                <p className="mt-2 text-xs text-muted-foreground">
-                  {autonomyActivityQuery.data?.lastOrder?.marketId
-                    ? `${autonomyActivityQuery.data.lastOrder.marketId} · ${autonomyActivityQuery.data.lastOrder.side?.toUpperCase() ?? "UNKNOWN"} side`
-                    : "No autonomous order event is recorded yet."}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-3 rounded-2xl border border-border/60 bg-background/40 p-4">
-            <div>
-              <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Recent autonomy events</div>
-              <p className="mt-2 text-sm text-muted-foreground">
-                  The latest persisted events help separate real autonomous trading cycles from manual arm/disarm actions.
-
-              </p>
-            </div>
-            <div className="space-y-2">
-              {autonomyActivityQuery.data?.recentActivity.slice(0, 4).map((event) => (
-                <div key={event.id} className="rounded-xl border border-border/60 bg-background/50 p-3 text-sm">
-                  <div className="font-medium text-foreground">{event.eventType.replace(/_/g, " ")}</div>
-                  <div className="mt-1 text-xs text-muted-foreground">
-                    {formatAutonomyActivityTime(event.createdAt)}
-                  </div>
-                </div>
-              ))}
-              {!autonomyActivityQuery.data?.recentActivity.length ? (
-                <div className="rounded-xl border border-dashed border-border/60 p-3 text-sm text-muted-foreground">
-                  No autonomous trading events have been recorded yet.
-                </div>
-              ) : null}
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="laurenzo-card border-cyan-500/20 bg-cyan-500/5">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Sparkles className="h-5 w-5 text-cyan-300" />
-            Latest candidate decision detail
-          </CardTitle>
-          <CardDescription>
-            This panel explains the concrete candidate Laurenzo most recently considered during the latest autonomous trading cycle.
-          </CardDescription>
+      {/* ── Step 1: Choose mode ─────────────────────────────────────────── */}
+      <Card>
+        <CardHeader className="pb-4">
+          <StepHeader
+            n={1}
+            title="Choose how autonomous Claude is"
+            subtitle="This controls whether Claude can place live orders automatically or only prepares analysis."
+          />
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className={`text-lg font-semibold ${decisionSummary.tone}`}>{decisionSummary.title}</div>
-          <p className="text-sm text-muted-foreground">{decisionSummary.body}</p>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            <div className="rounded-xl border border-border/60 bg-background/50 p-3 text-sm">
-              <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Candidate</div>
-              <div className="mt-2 font-semibold text-foreground">
-                {autonomyActivityQuery.data?.lastRun?.decision?.marketId ?? "Not yet recorded"}
+          <PillGroup
+            options={AUTONOMY_MODES}
+            value={form.autonomyMode}
+            disabled={policyLocked}
+            label={getAutonomyModeLabel}
+            description={getAutonomyModeDescription}
+            onChange={(mode) =>
+              setForm((f) => ({ ...f, autonomyMode: mode, liveTradingEnabled: mode === "manual" ? false : f.liveTradingEnabled }))
+            }
+          />
+
+          {/* Cadence — hidden for manual mode */}
+          {form.autonomyMode !== "manual" && (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-2 mt-4">How often Claude scans</p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {EXECUTION_CADENCES.map((c) => {
+                  const active = form.executionCadence === c;
+                  const cadenceDescriptions: Record<string, string> = {
+                    manual_only: "Only acts during sessions you manually start.",
+                    session_assisted: "Stays active while you're guiding in-app.",
+                    hourly_watch: "Scans markets once per hour automatically.",
+                    continuous_watch: "Most proactive — scans as often as allowed.",
+                  };
+                  return (
+                    <button
+                      key={c}
+                      type="button"
+                      disabled={policyLocked}
+                      onClick={() => setForm((f) => ({ ...f, executionCadence: c }))}
+                      className={`rounded-xl border px-4 py-3 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                        active ? "border-violet-400 bg-violet-500/10" : "border-border/60 bg-background/40 hover:border-violet-500/30"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-semibold">{getExecutionCadenceLabel(c)}</span>
+                        {active ? <CheckCircle2 className="w-4 h-4 text-violet-400 shrink-0" /> : <Circle className="w-4 h-4 text-border/60 shrink-0" />}
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground">{cadenceDescriptions[c]}</p>
+                    </button>
+                  );
+                })}
               </div>
-              <p className="mt-2 text-xs text-muted-foreground">
-                {autonomyActivityQuery.data?.lastRun?.decision?.side
-                  ? `${autonomyActivityQuery.data.lastRun.decision.side.toUpperCase()} side`
-                  : "No candidate side was persisted for the latest autonomous trading cycle."}
-              </p>
             </div>
-            <div className="rounded-xl border border-border/60 bg-background/50 p-3 text-sm">
-              <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Signal quality</div>
-              <div className="mt-2 font-semibold text-foreground">
-                {autonomyActivityQuery.data?.lastRun?.decision?.confidence !== null && autonomyActivityQuery.data?.lastRun?.decision?.confidence !== undefined
-                  ? `${formatConfidence(autonomyActivityQuery.data.lastRun.decision.confidence)} confidence`
-                  : "Not yet scored"}
-              </div>
-              <p className="mt-2 text-xs text-muted-foreground">
-                {autonomyActivityQuery.data?.lastRun?.decision?.executionScore !== null && autonomyActivityQuery.data?.lastRun?.decision?.executionScore !== undefined
-                  ? `${Math.round(autonomyActivityQuery.data.lastRun.decision.executionScore * 100)}% execution score · ${autonomyActivityQuery.data.lastRun.decision.expectedValue !== null && autonomyActivityQuery.data.lastRun.decision.expectedValue !== undefined ? `${(autonomyActivityQuery.data.lastRun.decision.expectedValue * 100).toFixed(1)}¢ expected value` : "expected value unavailable"}`
-                  : "Execution scoring was not persisted for the latest autonomous trading cycle."}
-              </p>
-            </div>
-            <div className="rounded-xl border border-border/60 bg-background/50 p-3 text-sm">
-              <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Sizing plan</div>
-              <div className="mt-2 font-semibold text-foreground">
-                {autonomyActivityQuery.data?.lastRun?.decision?.quantity !== null && autonomyActivityQuery.data?.lastRun?.decision?.quantity !== undefined
-                  ? `${autonomyActivityQuery.data.lastRun.decision.quantity} contracts at ${autonomyActivityQuery.data.lastRun.decision.limitPrice !== null && autonomyActivityQuery.data.lastRun.decision.limitPrice !== undefined ? formatContractPrice(autonomyActivityQuery.data.lastRun.decision.limitPrice) : "price unavailable"}`
-                  : autonomyActivityQuery.data?.lastRun?.decision?.limitPrice !== null && autonomyActivityQuery.data?.lastRun?.decision?.limitPrice !== undefined
-                    ? `Candidate priced at ${formatContractPrice(autonomyActivityQuery.data.lastRun.decision.limitPrice)}`
-                    : "No sizing plan recorded"}
-              </div>
-              <p className="mt-2 text-xs text-muted-foreground">
-                {autonomyActivityQuery.data?.lastRun?.decision?.orderExposure !== null && autonomyActivityQuery.data?.lastRun?.decision?.orderExposure !== undefined
-                  ? `Exposure ${formatCurrency(autonomyActivityQuery.data.lastRun.decision.orderExposure)} · max loss ${autonomyActivityQuery.data.lastRun.decision.maxLossOnTrade !== null && autonomyActivityQuery.data.lastRun.decision.maxLossOnTrade !== undefined ? formatCurrency(autonomyActivityQuery.data.lastRun.decision.maxLossOnTrade) : "unknown"}`
-                  : "The latest autonomous trading cycle did not persist an execution-sized exposure estimate."}
-              </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ── Step 2: Set thresholds ──────────────────────────────────────── */}
+      <Card>
+        <CardHeader className="pb-4">
+          <StepHeader
+            n={2}
+            title="Set thresholds and size limits"
+            subtitle="These numbers define the guardrails Claude must stay within on every order."
+          />
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {/* Risk posture */}
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-2">Risk posture</p>
+            <div className="grid gap-2 sm:grid-cols-3">
+              {RISK_POSTURES.map((rp) => {
+                const active = form.riskPosture === rp;
+                const posDescriptions: Record<string, string> = {
+                  conservative: "Fewer trades, tighter thresholds, capital preservation first.",
+                  balanced: "Moderate — blend caution with opportunity.",
+                  aggressive: "Most assertive within your hard limits.",
+                };
+                return (
+                  <button
+                    key={rp}
+                    type="button"
+                    disabled={policyLocked}
+                    onClick={() => setForm((f) => ({ ...f, riskPosture: rp }))}
+                    className={`rounded-xl border px-4 py-3 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                      active ? "border-pink-400 bg-pink-500/10" : "border-border/60 bg-background/40 hover:border-pink-500/30"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-semibold">{getRiskPostureLabel(rp)}</span>
+                      {active ? <CheckCircle2 className="w-4 h-4 text-pink-400 shrink-0" /> : <Circle className="w-4 h-4 text-border/60 shrink-0" />}
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">{posDescriptions[rp]}</p>
+                  </button>
+                );
+              })}
             </div>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="rounded-xl border border-border/60 bg-background/50 p-3 text-sm">
-              <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Capital context</div>
-              <div className="mt-2 font-semibold text-foreground">
-                {autonomyActivityQuery.data?.lastRun?.decision?.availableCapital !== null && autonomyActivityQuery.data?.lastRun?.decision?.availableCapital !== undefined
-                  ? `${formatCurrency(autonomyActivityQuery.data.lastRun.decision.availableCapital)} available`
-                  : "Not yet recorded"}
+
+          {/* Numeric controls */}
+          <div className="grid gap-5 sm:grid-cols-2">
+            <label className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="font-medium">Minimum signal confidence</span>
+                <span className="text-muted-foreground font-mono">{formatConfidence(form.minSignalConfidence)}</span>
               </div>
-              <p className="mt-2 text-xs text-muted-foreground">
-                {autonomyActivityQuery.data?.lastRun?.decision?.maxBudget !== null && autonomyActivityQuery.data?.lastRun?.decision?.maxBudget !== undefined
-                  ? `The saved guardrails allowed up to ${formatCurrency(autonomyActivityQuery.data.lastRun.decision.maxBudget)} for this candidate.`
-                  : "No budget envelope was stored for the latest autonomous trading cycle."}
-              </p>
-            </div>
-            <div className="rounded-xl border border-border/60 bg-background/50 p-3 text-sm">
-              <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Why Laurenzo acted this way</div>
-              <div className="mt-2 font-semibold text-foreground">
-                {autonomyActivityQuery.data?.lastRun?.reason ?? "No run reason recorded yet"}
-              </div>
-              <p className="mt-2 text-xs text-muted-foreground">
-                {autonomyActivityQuery.data?.lastRun?.decision?.reasoning ?? "No candidate reasoning was persisted for the latest autonomous trading cycle."}
-              </p>
-            </div>
+              <input
+                type="range" min={0.5} max={0.95} step={0.01}
+                value={form.minSignalConfidence}
+                disabled={policyLocked}
+                onChange={(e) => setForm((f) => ({ ...f, minSignalConfidence: Number(e.target.value) }))}
+                className="w-full"
+              />
+              <p className="text-xs text-muted-foreground">Claude only acts on signals that meet this quality threshold.</p>
+            </label>
+
+            <label className="space-y-2 text-sm">
+              <span className="font-medium">Max order size ($)</span>
+              <input
+                type="number" min={1} max={250} step={1}
+                value={form.maxOrderNotional}
+                disabled={policyLocked}
+                onChange={(e) => setForm((f) => ({ ...f, maxOrderNotional: Number(e.target.value || 0) }))}
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground disabled:opacity-50"
+              />
+              <p className="text-xs text-muted-foreground">Orders above this notional are blocked automatically.</p>
+            </label>
+
+            <label className="space-y-2 text-sm">
+              <span className="font-medium">Max orders per day</span>
+              <input
+                type="number" min={1} max={48} step={1}
+                value={form.maxDailyOrders}
+                disabled={policyLocked}
+                onChange={(e) => setForm((f) => ({ ...f, maxDailyOrders: Number(e.target.value || 0) }))}
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground disabled:opacity-50"
+              />
+              <p className="text-xs text-muted-foreground">Daily cap on autonomous orders across all markets.</p>
+            </label>
+
+            <label className="space-y-2 text-sm">
+              <span className="font-medium">Require approval above ($)</span>
+              <input
+                type="number" min={1} max={500} step={1}
+                value={form.requireApprovalAbove}
+                disabled={policyLocked}
+                onChange={(e) => setForm((f) => ({ ...f, requireApprovalAbove: Number(e.target.value || 0) }))}
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-foreground disabled:opacity-50"
+              />
+              <p className="text-xs text-muted-foreground">In semi-autonomous mode, orders above this size need your approval.</p>
+            </label>
+          </div>
+
+          {/* Summary line */}
+          <div className="rounded-lg border border-border/60 bg-background/40 px-4 py-3 text-sm text-muted-foreground">
+            <span className="text-foreground font-medium">Summary: </span>
+            {getAutonomyModeLabel(form.autonomyMode)} · {getRiskPostureLabel(form.riskPosture)} · {getExecutionCadenceLabel(form.executionCadence)} · min {formatConfidence(form.minSignalConfidence)} confidence · {fmt(form.maxOrderNotional)} max order · {form.maxDailyOrders} orders/day
           </div>
         </CardContent>
       </Card>
 
-      <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-        <Card className="laurenzo-card">
-          <CardHeader>
-            <CardTitle>Choose your autonomy mode</CardTitle>
-            <CardDescription>
-              Configure when the agent is allowed to act and how demanding the signal quality threshold should be.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <div>
-              <div className="mb-3 text-sm font-medium text-foreground">Execution cadence</div>
-              <div className="grid gap-3 md:grid-cols-2">
-                {EXECUTION_CADENCES.map((cadence) => {
-                  const selected = form.executionCadence === cadence;
-                  return (
-                    <button
-                      key={cadence}
-                      type="button"
-                      disabled={policyControlsDisabled}
-                      onClick={() => setForm((current) => ({ ...current, executionCadence: cadence }))}
-                      className={`rounded-2xl border px-4 py-3 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${selected ? "border-violet-400 bg-violet-500/10" : "border-border/60 bg-background/40 hover:border-violet-500/40"}`}
-                    >
-                      <div className="font-medium text-foreground">{getExecutionCadenceLabel(cadence)}</div>
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        {cadence === "manual_only"
-                          ? "Only act during explicitly initiated trading sessions."
-                          : cadence === "session_assisted"
-                            ? "Stay active while you are guiding the session inside the app."
-                            : cadence === "hourly_watch"
-                              ? "Prefer direct autonomous trading on a controlled hourly cadence."
-                              : "Use the most proactive direct-autonomous-trading posture available to the execution loop."}
-                      </div>
-                    </button>
-                  );
-                })}
+      {/* ── Step 3: Save & arm ─────────────────────────────────────────── */}
+      <Card className={isArmed ? "border-rose-500/30 bg-rose-500/5" : "border-emerald-500/20 bg-emerald-500/5"}>
+        <CardHeader className="pb-4">
+          <StepHeader
+            n={3}
+            title={isArmed ? "Live trading is armed" : "Save settings and arm when ready"}
+            subtitle={
+              isArmed
+                ? "Disarm before changing any settings. Use the kill switch in Risk Controls or the header to close positions instantly."
+                : "Save your policy first, then arm. Arming is intentionally a separate step."
+            }
+          />
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className={`rounded-lg border px-4 py-3 text-sm ${isArmed ? "border-rose-500/30 bg-rose-500/5" : "border-border/60 bg-background/40"}`}>
+            <div className={`font-semibold mb-1 ${readiness.tone}`}>{readiness.title}</div>
+            <p className="text-muted-foreground text-xs">{readiness.body}</p>
+          </div>
+
+          <div className="flex flex-wrap gap-3">
+            {!isArmed && (
+              <Button
+                className="laurenzo-button"
+                disabled={isMutating || policyLocked}
+                onClick={() => { setMessage(null); saveMutation.mutate(form); }}
+              >
+                {saveMutation.isPending ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Saving…</> : "Save settings"}
+              </Button>
+            )}
+            {!isArmed && (
+              <Button
+                className="laurenzo-button"
+                disabled={isMutating || !canArm}
+                onClick={() => activationMutation.mutate({ enabled: true })}
+              >
+                {activationMutation.isPending && !isArmed ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Arming…</> : <><Zap className="w-4 h-4 mr-2" />Arm live trading</>}
+              </Button>
+            )}
+            {isArmed && (
+              <Button
+                variant="outline"
+                disabled={isMutating}
+                onClick={() => activationMutation.mutate({ enabled: false })}
+              >
+                {activationMutation.isPending ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Disarming…</> : "Disarm live trading"}
+              </Button>
+            )}
+            <Link href="/risk-controls">
+              <Button variant="outline" className="flex items-center gap-1">
+                Risk Controls <ChevronRight className="w-3.5 h-3.5" />
+              </Button>
+            </Link>
+            <Link href="/signals">
+              <Button variant="outline" className="flex items-center gap-1">
+                Signals <ChevronRight className="w-3.5 h-3.5" />
+              </Button>
+            </Link>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ── Last activity (compact) ────────────────────────────────────── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-xs font-semibold uppercase tracking-widest text-muted-foreground flex items-center gap-2">
+            <Activity className="w-3.5 h-3.5" /> Last Autonomous Activity
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="text-sm space-y-3">
+          <div className={`font-medium ${activitySummary.tone}`}>{activitySummary.title}</div>
+          <p className="text-muted-foreground text-xs">{activitySummary.body}</p>
+
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="rounded-lg border border-border/40 bg-background/40 px-3 py-2.5">
+              <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1"><Clock className="w-3 h-3" />Last scan</div>
+              <div className="font-medium text-xs">{formatAutonomyActivityTime(autonomyActivityQuery.data?.lastRun?.createdAt)}</div>
+            </div>
+            <div className="rounded-lg border border-border/40 bg-background/40 px-3 py-2.5">
+              <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1"><Zap className="w-3 h-3" />Last order</div>
+              <div className="font-medium text-xs">{formatAutonomyActivityTime(autonomyActivityQuery.data?.lastOrder?.createdAt)}</div>
+            </div>
+            <div className="rounded-lg border border-border/40 bg-background/40 px-3 py-2.5">
+              <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1"><Ban className="w-3 h-3" />Last block reason</div>
+              <div className="font-medium text-xs">
+                {autonomyActivityQuery.data?.lastRun?.reason ?? "Not recorded yet"}
               </div>
             </div>
+          </div>
 
-            <div>
-              <div className="mb-3 text-sm font-medium text-foreground">Risk posture</div>
-              <div className="grid gap-3 md:grid-cols-3">
-                {RISK_POSTURES.map((riskPosture) => {
-                  const selected = form.riskPosture === riskPosture;
-                  return (
-                    <button
-                      key={riskPosture}
-                      type="button"
-                      disabled={policyControlsDisabled}
-                      onClick={() => setForm((current) => ({ ...current, riskPosture }))}
-                      className={`rounded-2xl border px-4 py-3 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${selected ? "border-pink-400 bg-pink-500/10" : "border-border/60 bg-background/40 hover:border-pink-500/40"}`}
-                    >
-                      <div className="font-medium text-foreground">{getRiskPostureLabel(riskPosture)}</div>
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        {riskPosture === "conservative"
-                          ? "Bias toward fewer trades and tighter thresholds."
-                          : riskPosture === "balanced"
-                            ? "Blend caution with moderate opportunity capture."
-                            : "Allow the most assertive behavior that still respects your hard limits."}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
+          {autonomyActivityQuery.data?.recentActivity.length ? (
+            <div className="space-y-1 pt-1">
+              {autonomyActivityQuery.data.recentActivity.slice(0, 5).map((event) => (
+                <div key={event.id} className="flex items-center justify-between text-xs text-muted-foreground py-1 border-b border-border/30 last:border-0">
+                  <span className="text-foreground/70">{event.eventType.replace(/_/g, " ")}</span>
+                  <span>{formatAutonomyActivityTime(event.createdAt)}</span>
+                </div>
+              ))}
             </div>
-
-            <div className="grid gap-5 md:grid-cols-2">
-              <label className="space-y-2 text-sm">
-                <span className="font-medium text-foreground">Minimum signal confidence</span>
-                <input
-                  type="range"
-                  min={0.5}
-                  max={0.95}
-                  step={0.01}
-                  value={form.minSignalConfidence}
-                  disabled={policyControlsDisabled}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      minSignalConfidence: Number(event.target.value),
-                    }))
-                  }
-                  className="w-full"
-                />
-                <div className="text-xs text-muted-foreground">
-                  Candidate trades must meet at least <strong>{formatConfidence(form.minSignalConfidence)}</strong> model confidence.
-                </div>
-              </label>
-
-              <label className="space-y-2 text-sm">
-                <span className="font-medium text-foreground">Maximum order notional</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={250}
-                  step={1}
-                  value={form.maxOrderNotional}
-                  disabled={policyControlsDisabled}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      maxOrderNotional: Number(event.target.value || 0),
-                    }))
-                  }
-                  className="w-full rounded-xl border border-border bg-background px-3 py-2 text-foreground disabled:cursor-not-allowed disabled:opacity-60"
-                />
-                <div className="text-xs text-muted-foreground">
-                  Live orders above this notional are blocked by your autonomy policy.
-                </div>
-              </label>
-
-              <label className="space-y-2 text-sm">
-                <span className="font-medium text-foreground">Require approval above</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={500}
-                  step={1}
-                  value={form.requireApprovalAbove}
-                  disabled={policyControlsDisabled}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      requireApprovalAbove: Number(event.target.value || 0),
-                    }))
-                  }
-                  className="w-full rounded-xl border border-border bg-background px-3 py-2 text-foreground disabled:cursor-not-allowed disabled:opacity-60"
-                />
-                <div className="text-xs text-muted-foreground">
-                  In semi-autonomous mode, live orders above this size should wait for approval.
-                </div>
-              </label>
-
-              <label className="space-y-2 text-sm">
-                <span className="font-medium text-foreground">Maximum daily orders</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={48}
-                  step={1}
-                  value={form.maxDailyOrders}
-                  disabled={policyControlsDisabled}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      maxDailyOrders: Number(event.target.value || 0),
-                    }))
-                  }
-                  className="w-full rounded-xl border border-border bg-background px-3 py-2 text-foreground disabled:cursor-not-allowed disabled:opacity-60"
-                />
-                <div className="text-xs text-muted-foreground">
-                  This caps how many trades the autonomy policy may permit during one trading day.
-                </div>
-              </label>
-            </div>
-                </CardContent>
-        </Card>
-      </div>
-
-      <Card className="laurenzo-card border-violet-500/20 bg-violet-500/5">
-          <CardHeader>
-            <CardTitle>Save and activate</CardTitle>
-            <CardDescription>
-              Save your policy first, then arm live trading when you are ready.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4 text-sm text-muted-foreground">
-            <p>
-              Your saved policy becomes the single source of truth for how autonomous the agent is allowed to be. The current selection is <strong>{getAutonomyModeLabel(form.autonomyMode)}</strong> with <strong>{formatConfidence(form.minSignalConfidence)}</strong> minimum confidence and a <strong>{formatCurrency(form.maxOrderNotional)}</strong> max order size.
-            </p>
-            <p>
-              Arming the app is intentionally separate so you can prepare the policy in advance without accidentally permitting live execution.
-            </p>
-            {policyLocked ? (
-              <Alert className="border-amber-500/40 bg-amber-500/10 text-foreground">
-                <Shield className="h-4 w-4" />
-                <AlertDescription>
-                  Policy saves are disabled while live trading is armed. Disarm live trading first, make changes, save, then arm again.
-                </AlertDescription>
-              </Alert>
-            ) : null}
-            <Button
-              className="w-full laurenzo-button"
-              disabled={saveDisabled || policyLocked}
-              onClick={() => {
-                setMessage(null);
-                saveMutation.mutate(form);
-              }}
-              size="lg"
-            >
-              {saveMutation.isPending ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Saving policy...
-                </>
-              ) : (
-                "Save autonomy policy"
-              )}
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">No autonomous trading events recorded yet.</p>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

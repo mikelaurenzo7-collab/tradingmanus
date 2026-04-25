@@ -373,15 +373,13 @@ export default function Dashboard() {
 
   // Funded account - show full dashboard
   return (
-    <div className="space-y-8 p-6">
-      {/* Header with gradient text */}
+    <div className="space-y-6 p-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-5xl font-bold gradient-text mb-2">
-            {user?.name || "LAURENZO"}
-          </h1>
-          <p className="text-muted-foreground">
-            Laurenzo Trading Dashboard • Owner: {user?.name}
+          <h1 className="text-2xl font-bold">Dashboard</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            {user?.name} · Kalshi equity: <strong className="text-foreground">${displayEquity.toFixed(2)}</strong>
           </p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-3">
@@ -438,54 +436,20 @@ export default function Dashboard() {
         </Card>
       ) : null}
 
-      {/* Start Trading Banner */}
+      {/* Autonomy status bar */}
       {!showStartTrading && (
-        <Card className="laurenzo-card border-cyan-500/30 bg-cyan-500/5">
-          <CardContent className="space-y-5 pt-6">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-              <div className="flex items-start gap-3">
-                <CheckCircle2 className="mt-1 w-8 h-8 text-cyan-400" />
-                <div>
-                  <p className="font-semibold">Trading autonomy is now explicit</p>
-                  <p className="text-sm text-muted-foreground">
-                    {autonomyStatus.title}. Open Trading Autonomy to choose Manual, Approval Required, Semi-autonomous, or Fully Autonomous behavior.
-                  </p>
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-3">
-                <Button onClick={() => navigate("/autonomy")} variant="outline">
-                  Open Trading Autonomy
-                </Button>
-                <Button
-                  onClick={() => setShowStartTrading(true)}
-                  className="laurenzo-button"
-                  disabled={tradingPreferences.autonomyMode === "manual"}
-                >
-                  Arm Live Trading
-                </Button>
-              </div>
-            </div>
-            <div className="grid gap-3 md:grid-cols-3">
-              <div className="rounded-2xl border border-border/60 bg-background/40 p-4">
-                <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Current mode</div>
-                <div className="mt-2 text-lg font-semibold text-foreground">{getAutonomyModeLabel(tradingPreferences.autonomyMode)}</div>
-                <p className="mt-2 text-xs text-muted-foreground">
-                  {tradingPreferences.liveTradingEnabled ? "Live trading armed" : "Live trading disarmed"}
-                </p>
-              </div>
-              <div className="rounded-2xl border border-border/60 bg-background/40 p-4">
-                <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Confidence floor</div>
-                <div className="mt-2 text-lg font-semibold text-foreground">{Math.round(tradingPreferences.minSignalConfidence * 100)}%</div>
-                <p className="mt-2 text-xs text-muted-foreground">Minimum signal quality required by the saved policy.</p>
-              </div>
-              <div className="rounded-2xl border border-border/60 bg-background/40 p-4">
-                <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Order limit</div>
-                <div className="mt-2 text-lg font-semibold text-foreground">${tradingPreferences.maxOrderNotional.toFixed(2)}</div>
-                <p className="mt-2 text-xs text-muted-foreground">Maximum notional permitted by the autonomy policy.</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border/60 bg-background/50 px-4 py-3">
+          <div className="text-sm">
+            <span className={`font-semibold ${autonomyStatus.tone}`}>{autonomyStatus.title}</span>
+            <span className="text-muted-foreground ml-2">· {getAutonomyModeLabel(tradingPreferences.autonomyMode)} · {Math.round(tradingPreferences.minSignalConfidence * 100)}% min confidence · ${tradingPreferences.maxOrderNotional.toFixed(0)} max order</span>
+          </div>
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={() => navigate("/autonomy")}>Settings</Button>
+            {!tradingPreferences.liveTradingEnabled && (
+              <Button size="sm" className="laurenzo-button" disabled={tradingPreferences.autonomyMode === "manual"} onClick={() => setShowStartTrading(true)}>Arm</Button>
+            )}
+          </div>
+        </div>
       )}
 
       {/* Start Trading Dialog */}
@@ -501,207 +465,87 @@ export default function Dashboard() {
         />
       )}
 
-      <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
-        <Card className="laurenzo-card border-emerald-500/20 bg-emerald-500/5">
-          <CardContent className="space-y-3 pt-6">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-semibold text-foreground">Away-from-chat status</p>
-                <p className={`mt-2 text-lg font-semibold ${autonomyReadinessSummary.tone}`}>
-                  {autonomyReadinessSummary.title}
-                </p>
-              </div>
-              <Button variant="outline" onClick={() => navigate("/autonomy")}>
-                Open Trading Autonomy
-              </Button>
-            </div>
-            <p className="text-sm text-muted-foreground">{autonomyReadinessSummary.body}</p>
-            <div className="grid gap-3 md:grid-cols-2">
-              <div className="rounded-2xl border border-border/60 bg-background/40 p-4">
-                <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Latest away review</div>
-                <div className={`mt-2 text-base font-semibold ${autonomyReviewSummary.tone}`}>{autonomyReviewSummary.title}</div>
-                <p className="mt-2 text-xs text-muted-foreground">{autonomyReviewSummary.body}</p>
-              </div>
-              <div className="rounded-2xl border border-border/60 bg-background/40 p-4">
-                <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Last recorded review time</div>
-                <div className="mt-2 text-base font-semibold text-foreground">
-                  {formatAutonomyActivityTime(autonomyActivityQuery.data?.lastRun?.createdAt)}
-                </div>
-                <p className="mt-2 text-xs text-muted-foreground">
-                  Mode: {getAutonomyModeLabel(tradingPreferences.autonomyMode)}
-                </p>
-              </div>
-            </div>
+      {/* Last scan summary */}
+      <div className="rounded-lg border border-border/60 bg-background/50 px-4 py-3 text-sm">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div>
+            <span className={`font-medium ${autonomyReviewSummary.tone}`}>{autonomyReviewSummary.title}</span>
+            <span className="text-muted-foreground ml-2">· Last scan: {formatAutonomyActivityTime(autonomyActivityQuery.data?.lastRun?.createdAt)}</span>
+          </div>
+          <span className={`text-xs ${autonomyReadinessSummary.tone}`}>{autonomyReadinessSummary.title}</span>
+        </div>
+      </div>
+
+      {/* Key metrics grid */}
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <Card className="laurenzo-card">
+          <CardContent className="pt-6">
+            <p className="text-xs text-muted-foreground mb-1">Account Equity</p>
+            <p className="text-2xl font-bold gradient-text">${displayEquity.toFixed(2)}</p>
+            <p className="text-xs text-muted-foreground mt-1">Kalshi balance</p>
+          </CardContent>
+        </Card>
+        <Card className="laurenzo-card">
+          <CardContent className="pt-6">
+            <p className="text-xs text-muted-foreground mb-1">Total Trades</p>
+            <p className="text-2xl font-bold text-lime-400">{totalTrades}</p>
+            <p className="text-xs text-muted-foreground mt-1">{winningTrades} winning</p>
+          </CardContent>
+        </Card>
+        <Card className="laurenzo-card">
+          <CardContent className="pt-6">
+            <p className="text-xs text-muted-foreground mb-1">Win Rate</p>
+            <p className="text-2xl font-bold text-pink-400">{(winRate * 100).toFixed(1)}%</p>
+            <p className="text-xs text-muted-foreground mt-1">{hasClosedTrades ? "closed trades" : "no trades yet"}</p>
+          </CardContent>
+        </Card>
+        <Card className="laurenzo-card">
+          <CardContent className="pt-6">
+            <p className="text-xs text-muted-foreground mb-1">Active Positions</p>
+            <p className="text-2xl font-bold text-yellow-400">{activePositions}</p>
+            <p className="text-xs text-muted-foreground mt-1">open trades</p>
           </CardContent>
         </Card>
       </div>
 
-      {/* Equity Cards */}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-        <Card className="laurenzo-card">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-sm text-muted-foreground">GLOBAL EQUITY</p>
-              <Sparkles className="w-4 h-4 text-primary" />
-            </div>
-            <p className="text-3xl font-bold gradient-text">
-              ${displayEquity.toFixed(2)}
-            </p>
-            <p className="text-xs text-muted-foreground mt-2">
-              Real Kalshi account balance
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card className="laurenzo-card">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-sm text-muted-foreground">TOTAL EQUITY</p>
-              <Activity className="w-4 h-4 text-cyan-400" />
-            </div>
-            <p className="text-3xl font-bold text-cyan-400">
-              ${displayEquity.toFixed(2)}
-            </p>
-            <p className="text-xs text-muted-foreground mt-2">
-              Current account value
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card className="laurenzo-card">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-sm text-muted-foreground">TOTAL TRADES</p>
-              <TrendingUp className="w-4 h-4 text-lime-400" />
-            </div>
-            <p className="text-3xl font-bold text-lime-400">{totalTrades}</p>
-            <p className="text-xs text-muted-foreground mt-2">
-              Winning: {winningTrades}
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card className="laurenzo-card">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-sm text-muted-foreground">WIN RATE</p>
-              <TrendingDown className="w-4 h-4 text-pink-400" />
-            </div>
-            <p className="text-3xl font-bold text-pink-400">
-              {(winRate * 100).toFixed(1)}%
-            </p>
-            <p className="text-xs text-muted-foreground mt-2">
-              {hasClosedTrades
-                ? "Success ratio on closed trades"
-                : "No closed trades yet"}
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Performance Metrics */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card className="laurenzo-card">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-sm text-muted-foreground">DAILY P&L</p>
-              <TrendingUp className="w-4 h-4" />
-            </div>
-            <p
-              className={`text-2xl font-bold ${dailyPnl >= 0 ? "text-lime-400" : "text-pink-400"}`}
-            >
-              {dailyPnl >= 0 ? "+" : ""}${dailyPnl.toFixed(2)}
-            </p>
-            <p className="text-xs text-muted-foreground mt-2">
-              Closed-trade P&L today
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card className="laurenzo-card">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-sm text-muted-foreground">SHARPE RATIO</p>
-              <Activity className="w-4 h-4" />
-            </div>
-            <p className="text-2xl font-bold text-cyan-400">
-              {sharpeRatio.toFixed(2)}
-            </p>
-            <p className="text-xs text-muted-foreground mt-2">
-              {hasClosedTrades
-                ? "Risk-adjusted returns"
-                : "Waiting for trade history"}
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card className="laurenzo-card">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-sm text-muted-foreground">MAX DRAWDOWN</p>
-              <AlertTriangle className="w-4 h-4" />
-            </div>
-            <p className="text-2xl font-bold text-pink-400">
-              {(maxDrawdown * 100).toFixed(2)}%
-            </p>
-            <p className="text-xs text-muted-foreground mt-2">
-              Peak-to-trough decline
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Additional Metrics */}
+      {/* P&L + risk metrics */}
       <Card className="laurenzo-card">
         <CardContent className="pt-6">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-6">
             <div>
-              <p className="text-xs text-muted-foreground mb-2">REALIZED P&L</p>
-              <p
-                className={`text-xl font-bold ${realizedPnl >= 0 ? "text-lime-400" : "text-pink-400"}`}
-              >
-                {realizedPnl >= 0 ? "+" : ""}${realizedPnl.toFixed(2)}
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">
-                Closed position gains
-              </p>
+              <p className="text-xs text-muted-foreground mb-1">Daily P&L</p>
+              <p className={`text-xl font-bold ${dailyPnl >= 0 ? "text-lime-400" : "text-pink-400"}`}>{dailyPnl >= 0 ? "+" : ""}${dailyPnl.toFixed(2)}</p>
+              <p className="text-xs text-muted-foreground mt-1">Closed today</p>
             </div>
             <div>
-              <p className="text-xs text-muted-foreground mb-2">
-                UNREALIZED P&L
-              </p>
-              <p
-                className={`text-xl font-bold ${unrealizedPnl >= 0 ? "text-cyan-400" : "text-pink-400"}`}
-              >
-                {unrealizedPnl >= 0 ? "+" : ""}${unrealizedPnl.toFixed(2)}
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">
-                Open position gains
-              </p>
+              <p className="text-xs text-muted-foreground mb-1">Realized P&L</p>
+              <p className={`text-xl font-bold ${realizedPnl >= 0 ? "text-lime-400" : "text-pink-400"}`}>{realizedPnl >= 0 ? "+" : ""}${realizedPnl.toFixed(2)}</p>
+              <p className="text-xs text-muted-foreground mt-1">Closed positions</p>
             </div>
             <div>
-              <p className="text-xs text-muted-foreground mb-2">
-                RECOVERY FACTOR
-              </p>
-              <p className="text-xl font-bold text-pink-400">
-                {(metrics?.recoveryFactor ?? 0).toFixed(2)}
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">
-                Profit vs max loss
-              </p>
+              <p className="text-xs text-muted-foreground mb-1">Unrealized P&L</p>
+              <p className={`text-xl font-bold ${unrealizedPnl >= 0 ? "text-cyan-400" : "text-pink-400"}`}>{unrealizedPnl >= 0 ? "+" : ""}${unrealizedPnl.toFixed(2)}</p>
+              <p className="text-xs text-muted-foreground mt-1">Open positions</p>
             </div>
             <div>
-              <p className="text-xs text-muted-foreground mb-2">
-                ACTIVE POSITIONS
-              </p>
-              <p className="text-xl font-bold text-yellow-400">
-                {activePositions}
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">Open trades</p>
+              <p className="text-xs text-muted-foreground mb-1">Max Drawdown</p>
+              <p className="text-xl font-bold text-pink-400">{(maxDrawdown * 100).toFixed(2)}%</p>
+              <p className="text-xs text-muted-foreground mt-1">Peak-to-trough</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground mb-1">Sharpe Ratio</p>
+              <p className="text-xl font-bold text-cyan-400">{sharpeRatio.toFixed(2)}</p>
+              <p className="text-xs text-muted-foreground mt-1">{hasClosedTrades ? "risk-adjusted" : "awaiting trades"}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground mb-1">Recovery Factor</p>
+              <p className="text-xl font-bold text-pink-400">{(metrics?.recoveryFactor ?? 0).toFixed(2)}</p>
+              <p className="text-xs text-muted-foreground mt-1">Profit vs max loss</p>
             </div>
           </div>
         </CardContent>
       </Card>
+
     </div>
   );
 }
