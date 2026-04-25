@@ -19,6 +19,7 @@ import PortfolioOptimization from "./pages/PortfolioOptimization";
 import Backtesting from "./pages/Backtesting";
 import Analytics from "./pages/Analytics";
 import TradingAutonomy from "./pages/TradingAutonomy";
+import Funding from "./pages/Funding";
 
 function Router() {
   return (
@@ -38,6 +39,7 @@ function Router() {
       <Route path={"/portfolio"} component={() => <DashboardLayout><PortfolioOptimization /></DashboardLayout>} />
       <Route path={"/backtest"} component={() => <DashboardLayout><Backtesting /></DashboardLayout>} />
       <Route path={"/analytics"} component={() => <DashboardLayout><Analytics /></DashboardLayout>} />
+      <Route path={"/funding"} component={() => <DashboardLayout><Funding /></DashboardLayout>} />
       <Route path={"/404"} component={NotFound} />
       <Route component={NotFound} />
     </Switch>

@@ -162,8 +162,13 @@ async function signedKalshiRequest<T>(
   };
 }
 
+function toCents(price: number): number {
+  return Math.max(1, Math.min(99, Math.round(price * 100)));
+}
+
 /**
  * Place an order on Kalshi
+ * limitPrice must be in decimal dollar form (0.01–0.99); it is converted to cents internally.
  */
 export async function placeKalshiOrder(
   userIdOrApiKey: number | string,
@@ -174,16 +179,17 @@ export async function placeKalshiOrder(
   privateKey?: string,
 ): Promise<{ success: boolean; orderId?: string; error?: string }> {
   try {
-    const action = side === "yes" ? "buy" : "sell";
+    const priceCents = toCents(limitPrice);
     const body = {
       ticker: marketId,
-      side,
-      action,
-      count: Math.max(1, Math.round(quantity)),
-      yes_price: side === "yes" ? Math.round(limitPrice) : undefined,
-      no_price: side === "no" ? Math.round(limitPrice) : undefined,
-      time_in_force: "good_till_canceled",
+      type: "limit",
       client_order_id: `nexus-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+      action: "buy",
+      side,
+      count: Math.max(1, Math.round(quantity)),
+      yes_price: side === "yes" ? priceCents : undefined,
+      no_price: side === "no" ? priceCents : undefined,
+      time_in_force: "good_till_cancelled",
     };
 
     const result = await signedKalshiRequest<{ order?: { order_id?: string; id?: string } }>(
@@ -413,20 +419,47 @@ export async function closeKalshiPosition(
 
     const credentials = await resolveCredentials(userIdOrApiKey, privateKey);
     if (credentials) {
-      const closingSide = side === "yes" ? "no" : "yes";
-      const result = await placeKalshiOrder(
-        typeof userIdOrApiKey === "number" ? userIdOrApiKey : credentials.apiKey,
-        marketId,
-        closingSide,
-        quantity,
-        markPrice,
-        typeof userIdOrApiKey === "number" ? undefined : credentials.privateKey,
+      const priceCents = toCents(markPrice);
+      const closeBody = {
+        ticker: marketId,
+        type: "limit",
+        client_order_id: `nexus-close-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+        action: "sell",
+        side,
+        count: Math.max(1, Math.round(quantity)),
+        yes_price: side === "yes" ? priceCents : undefined,
+        no_price: side === "no" ? priceCents : undefined,
+        time_in_force: "good_till_cancelled",
+      };
+
+      const closeResult = await signedKalshiRequest<{ order?: { order_id?: string; id?: string } }>(
+        userIdOrApiKey,
+        "POST",
+        "/portfolio/orders",
+        { privateKey, body: closeBody },
       );
-      if (!result.success) {
-        return result;
+
+      if (!closeResult.ok) {
+        console.error("[Kalshi] Close position order failed:", closeResult.error);
+        return { success: false, error: closeResult.error };
       }
+
+      const closeOrderId = closeResult.data.order?.order_id || closeResult.data.order?.id;
+      if (closeOrderId) {
+        await db.insert(kalshiOrders).values({
+          orderId: closeOrderId,
+          marketId,
+          side,
+          quantity,
+          limitPrice: markPrice,
+          status: "pending",
+          filledQuantity: 0,
+          averagePrice: 0,
+        });
+      }
+
       mode = "exchange";
-      orderId = result.orderId;
+      orderId = closeOrderId;
     }
 
     const realizedPnl =

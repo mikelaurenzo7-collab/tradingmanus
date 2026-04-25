@@ -11,6 +11,7 @@ import { validateServerEnv } from "./env";
 import { getDb, getUsersEligibleForAutomaticScheduledTrading } from "../db";
 import { sdk } from "./sdk";
 import { runScheduledAutonomousTrading, runScheduledAutonomousTradingBatch } from "./kalshiAutonomy";
+import { syncPendingOrders, syncLivePositions } from "./kalshiOrderSync";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -54,7 +55,7 @@ async function startServer() {
     })
   );
   app.get("/api/health", (_req, res) => {
-    res.json({ status: "ok" });
+    res.json({ status: "ok", scheduler: "running", interval_minutes: 15 });
   });
 
   app.post("/api/scheduled/autonomous-trading", async (req, res) => {
@@ -107,4 +108,42 @@ async function startServer() {
   });
 }
 
-startServer().catch(console.error);
+const AUTONOMOUS_TRADING_INTERVAL_MS = 15 * 60 * 1000;
+const ORDER_SYNC_INTERVAL_MS = 30 * 1000;
+
+async function runAutonomousScheduler() {
+  try {
+    const eligibleUsers = await getUsersEligibleForAutomaticScheduledTrading();
+    if (eligibleUsers.length > 0) {
+      console.log(`[Scheduler] Running autonomous trading for ${eligibleUsers.length} eligible user(s)`);
+      await runScheduledAutonomousTradingBatch(eligibleUsers as any, "system_scheduler");
+    }
+  } catch (error) {
+    console.error("[Scheduler] Autonomous trading run failed:", error);
+  }
+}
+
+async function runOrderSync() {
+  try {
+    const eligibleUsers = await getUsersEligibleForAutomaticScheduledTrading();
+    for (const user of eligibleUsers) {
+      try {
+        await syncPendingOrders((user as any).id);
+        await syncLivePositions((user as any).id);
+      } catch (err) {
+        console.error(`[OrderSync] Sync failed for user ${(user as any).id}:`, err);
+      }
+    }
+  } catch (error) {
+    console.error("[OrderSync] Order sync run failed:", error);
+  }
+}
+
+startServer().then(() => {
+  setInterval(runAutonomousScheduler, AUTONOMOUS_TRADING_INTERVAL_MS);
+  setInterval(runOrderSync, ORDER_SYNC_INTERVAL_MS);
+  // Give server 2 minutes to stabilize before first autonomous run
+  setTimeout(runAutonomousScheduler, 2 * 60 * 1000);
+  console.log("[Scheduler] Autonomous trading scheduler started (15-min interval)");
+  console.log("[OrderSync] Order sync started (30-sec interval)");
+}).catch(console.error);

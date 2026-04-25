@@ -10,6 +10,7 @@ export const ENV = {
   isProduction: process.env.NODE_ENV === "production",
   forgeApiUrl: normalize(process.env.BUILT_IN_FORGE_API_URL),
   forgeApiKey: normalize(process.env.BUILT_IN_FORGE_API_KEY),
+  gnewsApiKey: normalize(process.env.GNEWS_API_KEY),
 };
 
 const REQUIRED_SERVER_ENV = [

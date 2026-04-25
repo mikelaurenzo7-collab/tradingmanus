@@ -2,6 +2,8 @@ import type { User } from "../../drizzle/schema";
 import * as db from "../db";
 import * as kalshiCredDb from "../db.kalshi-credentials";
 import * as tradingPreferencesDb from "../db.trading-preferences";
+import type { RiskPosture } from "../db.trading-preferences";
+import { getUserTrainingInstructions, isInstructionActiveNow, applyInstructionsToSignals } from "../db.training";
 import { fetchKalshiMarkets } from "./kalshiMarketData";
 import { fetchKalshiAccountEquity } from "./kalshiAuth";
 import { getMarketFeed } from "./kalshiMarketFeed";
@@ -66,7 +68,13 @@ function clampRiskLimit(value: number, minimum: number, maximum: number) {
   return Math.max(minimum, Math.min(maximum, Number.isFinite(value) ? value : minimum));
 }
 
-async function getDynamicRiskLimits() {
+const POSTURE_MULTIPLIERS: Record<RiskPosture, { positionScale: number; confidenceBoost: number }> = {
+  conservative: { positionScale: 0.6, confidenceBoost: 0.08 },
+  balanced:     { positionScale: 1.0, confidenceBoost: 0.0  },
+  aggressive:   { positionScale: 1.4, confidenceBoost: -0.05 },
+};
+
+async function getDynamicRiskLimits(riskPosture: RiskPosture = "balanced") {
   const capital = await db.getKalshiCapital();
   const maxCapital = Math.max(
     0,
@@ -80,15 +88,19 @@ async function getDynamicRiskLimits() {
       maxLossPerDay: 0,
       maxPositionSize: 0,
       maxOpenPositions: 0,
+      effectiveMinConfidence: 0,
     };
   }
 
+  const { positionScale, confidenceBoost } = POSTURE_MULTIPLIERS[riskPosture] ?? POSTURE_MULTIPLIERS.balanced;
+
   return {
     maxCapital,
-    maxLossPerTrade: clampRiskLimit(maxCapital * 0.05, 1, BASE_RISK_LIMITS.maxLossPerTrade),
+    maxLossPerTrade: clampRiskLimit(maxCapital * 0.05 * positionScale, 1, BASE_RISK_LIMITS.maxLossPerTrade),
     maxLossPerDay: clampRiskLimit(maxCapital * 0.1, 2, BASE_RISK_LIMITS.maxLossPerDay),
-    maxPositionSize: clampRiskLimit(maxCapital * 0.2, 2, BASE_RISK_LIMITS.maxPositionSize),
+    maxPositionSize: clampRiskLimit(maxCapital * 0.2 * positionScale, 2, BASE_RISK_LIMITS.maxPositionSize),
     maxOpenPositions: BASE_RISK_LIMITS.maxOpenPositions,
+    effectiveMinConfidence: confidenceBoost,
   };
 }
 
@@ -181,9 +193,46 @@ function extractActionableMarkets(markets: Awaited<ReturnType<typeof fetchKalshi
   });
 }
 
-async function generateScheduledSignals(minConfidence: number) {
+function applyInstructionsToMarkets(
+  markets: Awaited<ReturnType<typeof fetchKalshiMarkets>>,
+  activeInstructions: any[]
+) {
+  if (activeInstructions.length === 0) return markets;
+
+  return markets.filter((market) => {
+    for (const instruction of activeInstructions) {
+      for (const rule of (instruction.rules ?? [])) {
+        if (rule.ruleType === "exclude" || rule.ruleType === "forbid") {
+          if (
+            rule.ruleKey === "category" &&
+            String(market.category ?? "").toLowerCase().includes(String(rule.ruleValue).toLowerCase())
+          ) {
+            return false;
+          }
+          if (
+            rule.ruleKey === "title" &&
+            String(market.title ?? "").toLowerCase().includes(String(rule.ruleValue).toLowerCase())
+          ) {
+            return false;
+          }
+        }
+        if (rule.ruleType === "include" || rule.ruleType === "require") {
+          if (rule.ruleKey === "category") {
+            if (!String(market.category ?? "").toLowerCase().includes(String(rule.ruleValue).toLowerCase())) {
+              return false;
+            }
+          }
+        }
+      }
+    }
+    return true;
+  });
+}
+
+async function generateScheduledSignals(minConfidence: number, activeInstructions: any[] = []) {
   const markets = await fetchKalshiMarkets({ status: "open" });
-  const actionableMarkets = extractActionableMarkets(markets).slice(0, MAX_SCHEDULED_MARKETS);
+  const filteredMarkets = applyInstructionsToMarkets(markets, activeInstructions);
+  const actionableMarkets = extractActionableMarkets(filteredMarkets).slice(0, MAX_SCHEDULED_MARKETS);
 
   if (actionableMarkets.length === 0) {
     return {
@@ -218,11 +267,14 @@ async function generateScheduledSignals(minConfidence: number) {
     sentimentContexts
   );
   const confidenceFilteredSignals = filterSignalsByConfidence(allSignals, minConfidence);
-  const savedSignals = filterSignalsByMarketConditions(
+  const conditionFilteredSignals = filterSignalsByMarketConditions(
     confidenceFilteredSignals,
     feeds,
     0.35
   );
+  const savedSignals = activeInstructions.length > 0
+    ? applyInstructionsToSignals(conditionFilteredSignals, activeInstructions)
+    : conditionFilteredSignals;
 
   await saveSignals(savedSignals);
 
@@ -349,8 +401,12 @@ export async function runScheduledAutonomousTrading(
     db.syncKalshiCapitalWithLiveEquity(equityResult.equity),
   ]);
 
+  const allInstructions = await getUserTrainingInstructions(userId);
+  const activeInstructions = allInstructions.filter(isInstructionActiveNow);
+
   const { savedSignals, executionCandidates } = await generateScheduledSignals(
-    preferences.minSignalConfidence
+    preferences.minSignalConfidence,
+    activeInstructions
   );
 
   const topCandidate = executionCandidates[0] ?? null;
@@ -362,6 +418,8 @@ export async function runScheduledAutonomousTrading(
       executionCandidates: executionCandidates.length,
       autonomyMode: preferences.autonomyMode,
       executionCadence: preferences.executionCadence,
+      riskPosture: preferences.riskPosture,
+      activeInstructions: activeInstructions.length,
       decision: buildDecisionDetails(topCandidate),
     }),
     user.openId
@@ -400,7 +458,7 @@ export async function runScheduledAutonomousTrading(
       db.getKalshiCapital(),
       db.getOpenKalshiPositions(),
       db.getTodayRealizedLoss(),
-      getDynamicRiskLimits(),
+      getDynamicRiskLimits(preferences.riskPosture),
       db.getTodayKalshiOrderCount(),
     ]);
 
@@ -436,6 +494,11 @@ export async function runScheduledAutonomousTrading(
     });
   }
 
+  const effectiveMinConfidence = Math.min(
+    0.99,
+    Math.max(0, preferences.minSignalConfidence + riskLimits.effectiveMinConfidence)
+  );
+
   const eligibleSignal = executionCandidates.find((signal) => {
     const marketAlreadyOpen = openPositions.some(
       (position: any) => String(position.marketId) === signal.marketId
@@ -462,7 +525,7 @@ export async function runScheduledAutonomousTrading(
       return false;
     }
 
-    return signal.confidence >= preferences.minSignalConfidence;
+    return signal.confidence >= effectiveMinConfidence;
   });
 
   if (!eligibleSignal) {
