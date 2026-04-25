@@ -8,6 +8,7 @@ import { MarketFeed, calculatePriceMomentum, calculateVolumeMomentum, detectVola
 import { detectMispricingArbitrage } from "./kalshiArbitrage";
 import { applySentimentBoost, calculateCompositeSentiment, fetchGdeltTopicSignal, fetchLiveNewsSummary } from "./kalshiSentiment";
 import * as db from "../db";
+import { assertPositiveIntegerUserId } from "./userScope";
 
 export type SignalType = "value_play" | "momentum" | "contrarian" | "arbitrage" | "sentiment";
 
@@ -451,8 +452,10 @@ export function getTopSignalsForExecution(signals: KalshiSignal[], topN: number 
 /**
  * Save a signal to the database
  */
-export async function saveSignal(signal: KalshiSignal): Promise<void> {
+export async function saveSignal(signal: KalshiSignal, userId: number): Promise<void> {
+  const scopedUserId = assertPositiveIntegerUserId(userId, "saveSignal userId");
   await db.createKalshiSignal({
+    userId: scopedUserId,
     marketId: signal.marketId,
     signalType: signal.signalType,
     side: signal.side,
@@ -467,8 +470,9 @@ export async function saveSignal(signal: KalshiSignal): Promise<void> {
 /**
  * Save multiple signals to the database
  */
-export async function saveSignals(signals: KalshiSignal[]): Promise<void> {
-  await Promise.all(signals.map((s) => saveSignal(s)));
+export async function saveSignals(signals: KalshiSignal[], userId: number): Promise<void> {
+  const scopedUserId = assertPositiveIntegerUserId(userId, "saveSignals userId");
+  await Promise.all(signals.map((s) => saveSignal(s, scopedUserId)));
 }
 
 /**

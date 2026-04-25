@@ -1,6 +1,7 @@
 import { protectedProcedure, router } from "./_core/trpc";
 import { z } from "zod";
 import * as trainingDb from "./db.training";
+import { assertPositiveIntegerUserId } from "./_core/userScope";
 
 export const trainingRouter = router({
   // Create new instruction
@@ -15,7 +16,7 @@ export const trainingRouter = router({
     )
     .mutation(async ({ input, ctx }) => {
       try {
-        const userId = ctx.user!.id || 1;
+        const userId = assertPositiveIntegerUserId(ctx.user!.id, "training create userId");
         const result = await trainingDb.createTrainingInstruction({
           userId,
           title: input.title,
@@ -33,7 +34,7 @@ export const trainingRouter = router({
   // Get all instructions for user
   getInstructions: protectedProcedure.query(async ({ ctx }) => {
     try {
-      const userId = ctx.user!.id || 1;
+      const userId = assertPositiveIntegerUserId(ctx.user!.id, "training list userId");
       return await trainingDb.getUserTrainingInstructions(userId);
     } catch (error) {
       console.error("[Training] Get instructions error:", error);

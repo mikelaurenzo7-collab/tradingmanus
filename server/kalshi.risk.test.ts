@@ -8,7 +8,10 @@ const mocks = vi.hoisted(() => ({
   getKalshiCapital: vi.fn(),
   getOpenKalshiPositions: vi.fn(),
   getTodayRealizedLoss: vi.fn(),
+  getTodayKalshiOrderCount: vi.fn(),
   placeKalshiOrder: vi.fn(),
+  getTradingPreferences: vi.fn(),
+  saveTradingPreferences: vi.fn(),
 }));
 
 vi.mock("./db", () => ({
@@ -16,9 +19,25 @@ vi.mock("./db", () => ({
   getKalshiCapital: mocks.getKalshiCapital,
   getOpenKalshiPositions: mocks.getOpenKalshiPositions,
   getTodayRealizedLoss: mocks.getTodayRealizedLoss,
+  getTodayKalshiOrderCount: mocks.getTodayKalshiOrderCount,
   initializeKalshiCapital: vi.fn(),
   getRecentSignals: vi.fn(async () => []),
   getAuditLog: vi.fn(async () => []),
+}));
+
+vi.mock("./db.trading-preferences", () => ({
+  DEFAULT_TRADING_PREFERENCES: {
+    autonomyMode: "approval_required",
+    liveTradingEnabled: false,
+    executionCadence: "manual_only",
+    riskPosture: "balanced",
+    minSignalConfidence: 0.72,
+    maxOrderNotional: 10,
+    maxDailyOrders: 3,
+    requireApprovalAbove: 8,
+  },
+  getTradingPreferences: mocks.getTradingPreferences,
+  saveTradingPreferences: mocks.saveTradingPreferences,
 }));
 
 vi.mock("./_core/kalshiMarketData", () => ({
@@ -67,6 +86,27 @@ describe("kalshi risk controls", () => {
     mocks.getKalshiCapital.mockResolvedValue({ currentBalance: 100 });
     mocks.getOpenKalshiPositions.mockResolvedValue([]);
     mocks.getTodayRealizedLoss.mockResolvedValue(0);
+    mocks.getTodayKalshiOrderCount.mockResolvedValue(0);
+    mocks.getTradingPreferences.mockResolvedValue({
+      autonomyMode: "approval_required",
+      liveTradingEnabled: true,
+      executionCadence: "manual_only",
+      riskPosture: "balanced",
+      minSignalConfidence: 0.72,
+      maxOrderNotional: 10,
+      maxDailyOrders: 3,
+      requireApprovalAbove: 8,
+    });
+    mocks.saveTradingPreferences.mockResolvedValue({
+      autonomyMode: "approval_required",
+      liveTradingEnabled: false,
+      executionCadence: "manual_only",
+      riskPosture: "balanced",
+      minSignalConfidence: 0.72,
+      maxOrderNotional: 10,
+      maxDailyOrders: 3,
+      requireApprovalAbove: 8,
+    });
     mocks.placeKalshiOrder.mockResolvedValue({ success: true, orderId: "order-1" });
   });
 
@@ -115,7 +155,7 @@ describe("kalshi risk controls", () => {
       marketId: "CPI-2026",
       side: "no",
       quantity: 1,
-      limitPrice: 1,
+      limitPrice: 0.5,
     });
 
     expect(result).toEqual({
@@ -133,7 +173,7 @@ describe("kalshi risk controls", () => {
       marketId: "JOBS-2026",
       side: "yes",
       quantity: 1,
-      limitPrice: 1,
+      limitPrice: 0.5,
     });
 
     expect(result).toEqual({
@@ -150,10 +190,10 @@ describe("kalshi risk controls", () => {
       marketId: "GDP-2026",
       side: "yes",
       quantity: 2,
-      limitPrice: 1,
+      limitPrice: 0.5,
     });
 
-    expect(mocks.placeKalshiOrder).toHaveBeenCalledWith(1, "GDP-2026", "yes", 2, 1);
+    expect(mocks.placeKalshiOrder).toHaveBeenCalledWith(1, "GDP-2026", "yes", 2, 0.5);
   });
 
   it("returns detailed kill-switch outcomes and logs an audit event", async () => {

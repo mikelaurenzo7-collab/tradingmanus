@@ -134,7 +134,7 @@ describe("kalshi.generateSignals router", () => {
     expect(routedContext?.marketSentiment).toBeCloseTo(0.22, 5);
 
     expect(mocks.filterSignalsByConfidence).toHaveBeenCalledWith([routedSignal], 0.5);
-    expect(mocks.saveSignals).toHaveBeenCalledWith([routedSignal]);
+    expect(mocks.saveSignals).toHaveBeenCalledWith([routedSignal], 42);
     expect(mocks.logAuditEvent).toHaveBeenCalledWith(
       "kalshi_signals_generated",
       expect.stringContaining('"count":1'),

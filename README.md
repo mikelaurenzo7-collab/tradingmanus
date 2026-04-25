@@ -14,12 +14,13 @@ Kalshi-focused trading dashboard for local testing and deployment validation.
 2. Fill in the required values:
    - `DATABASE_URL`
    - `JWT_SECRET`
+   - `CREDENTIAL_ENCRYPTION_SECRET`
    - `VITE_APP_ID`
    - `VITE_OAUTH_PORTAL_URL`
    - `OAUTH_SERVER_URL`
-   - `KALSHI_API_KEY`
 3. Optional integrations:
    - `OWNER_OPEN_ID`
+   - `KALSHI_API_KEY` (only needed for future server-level Kalshi data integrations; user trading uses user-connected credentials)
    - `BUILT_IN_FORGE_API_URL`
    - `BUILT_IN_FORGE_API_KEY`
    - `VITE_FRONTEND_FORGE_API_URL`
@@ -52,7 +53,7 @@ Useful endpoints:
 ## Deployment checklist
 
 1. Set all required environment variables from `.env.example`.
-2. Run database migrations before first boot.
+2. Run database migrations before first boot. Startup migrations fail on unknown SQL errors; do not proceed if any migration error is reported.
 3. Validate locally:
    - `corepack pnpm check`
    - `corepack pnpm test`
@@ -63,8 +64,35 @@ Useful endpoints:
 corepack pnpm start
 ```
 
+## Personal Kalshi dogfood checklist
+
+Before enabling live trading on your own Kalshi account:
+
+1. Confirm `JWT_SECRET` and `CREDENTIAL_ENCRYPTION_SECRET` are strong, distinct production secrets.
+2. Sign in as the intended operator account and connect only that Kalshi account under Connect Kalshi.
+3. Confirm the dashboard shows the expected live Kalshi equity before arming.
+4. Review Trading Autonomy while disarmed, save policy changes, then use the separate Arm live trading action.
+5. Keep maximum order notional and maximum daily orders small for the first dogfood session.
+6. Confirm the header shows Live trading armed only when expected; use the header Kill switch or dashboard kill switch to disarm and submit close orders for open positions.
+7. Review Audit Log, Positions, Trades, and Kalshi directly after each early autonomous cycle.
+
+## Multi-user production isolation
+
+The app is hardened for a single deployment serving multiple authenticated users with separate Kalshi accounts:
+
+- Every live trading ledger path for orders, fills, positions, signals, performance, capital, credentials, preferences, and training instructions requires an explicit authenticated `userId`.
+- Missing or invalid user scope fails closed instead of falling back to user 1.
+- Credential encryption is bound to the owning user context; another user context cannot decrypt the stored envelope.
+- Audit-log reads are scoped to the authenticated actor and no longer expose a global all-user view through normal app helpers.
+- Runtime order-sync guards are keyed by validated user scope so one user cannot block or consume another user's sync loop.
+- Startup migrations verify that user-scoped Kalshi tables have `userId` columns that are `NOT NULL` and have no default value.
+
+For future team or organization accounts, add an explicit organization/tenant model and scope admin roles to that tenant before allowing shared-team administration. The current production boundary is authenticated-user isolation.
+
 ## Notes
 
 - Optional analytics only load when both analytics environment variables are set.
-- Kalshi trading actions now fail clearly when `KALSHI_API_KEY` is missing.
-- Encrypted credential storage requires `JWT_SECRET`; there is no fallback key.
+- User Kalshi trading actions use the user's encrypted API key/private key pair and stay scoped to that user's ledger.
+- Encrypted credential storage uses per-user AES-256-GCM envelopes derived from `CREDENTIAL_ENCRYPTION_SECRET`.
+- The dashboard kill switch both disarms live trading and submits exchange close orders for the user's open positions.
+- Autonomy policy editing is intentionally locked while live trading is armed; disarm, edit/save, then arm again.

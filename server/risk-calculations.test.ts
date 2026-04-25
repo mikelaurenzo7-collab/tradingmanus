@@ -1,4 +1,10 @@
 import { describe, it, expect } from "vitest";
+import {
+  calculateKalshiBuyOrderRisk,
+  estimateContractsForRiskBudget,
+  normalizeLimitPrice,
+  normalizeOrderQuantity,
+} from "./_core/kalshiRisk";
 
 /**
  * Risk Calculation Semantics Tests for Kalshi Pricing Units
@@ -14,6 +20,30 @@ import { describe, it, expect } from "vitest";
  */
 
 describe("Risk Calculations - Kalshi Pricing Units", () => {
+  describe("Centralized live order risk helper", () => {
+    it("uses selected-side cost as exposure and max loss", () => {
+      const risk = calculateKalshiBuyOrderRisk({ quantity: 25, limitPrice: 0.4 });
+
+      expect(risk.quantity).toBe(25);
+      expect(risk.orderExposure).toBeCloseTo(10, 5);
+      expect(risk.maxLossOnTrade).toBeCloseTo(10, 5);
+      expect(risk.maxProfit).toBeCloseTo(15, 5);
+    });
+
+    it("sizes contracts by dollar risk budget and price", () => {
+      expect(estimateContractsForRiskBudget(5, 0.5)).toBe(10);
+      expect(estimateContractsForRiskBudget(5, 0.4)).toBe(12);
+      expect(estimateContractsForRiskBudget(0.25, 0.5)).toBe(0);
+    });
+
+    it("rejects invalid prices and quantities before an exchange call", () => {
+      expect(() => normalizeLimitPrice(0)).toThrow(/between/);
+      expect(() => normalizeLimitPrice(1)).toThrow(/between/);
+      expect(() => normalizeOrderQuantity(0)).toThrow(/at least 1/);
+      expect(() => normalizeOrderQuantity(251)).toThrow(/cannot exceed/);
+    });
+  });
+
   describe("Position Size & Exposure Calculations", () => {
     it("should calculate max loss correctly for YES position", () => {
       const quantity = 100; // 100 contracts

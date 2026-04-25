@@ -104,6 +104,8 @@ export default function TradingAutonomy() {
   );
   const canArm = connected && equity > 0 && form.autonomyMode !== "manual";
   const saveDisabled = saveMutation.isPending || activationMutation.isPending;
+  const policyLocked = form.liveTradingEnabled;
+  const policyControlsDisabled = saveDisabled || policyLocked;
 
   if (
     accountStatusQuery.isLoading ||
@@ -224,6 +226,16 @@ export default function TradingAutonomy() {
               </AlertDescription>
             </Alert>
 
+            {policyLocked ? (
+              <Alert className="border-amber-500/40 bg-amber-500/10">
+                <Shield className="h-4 w-4" />
+                <AlertTitle>Policy editing is locked while armed</AlertTitle>
+                <AlertDescription>
+                  Disarm live trading before changing autonomy mode, cadence, risk posture, confidence, or order-size limits.
+                </AlertDescription>
+              </Alert>
+            ) : null}
+
             {message ? (
               <Alert className="border-cyan-500/30 bg-cyan-500/5">
                 <CheckCircle2 className="h-4 w-4" />
@@ -280,6 +292,7 @@ export default function TradingAutonomy() {
               <button
                 key={mode}
                 type="button"
+                disabled={policyControlsDisabled}
                 onClick={() =>
                   setForm((current) => ({
                     ...current,
@@ -287,7 +300,7 @@ export default function TradingAutonomy() {
                     liveTradingEnabled: mode === "manual" ? false : current.liveTradingEnabled,
                   }))
                 }
-                className={`rounded-3xl border p-5 text-left transition ${selected ? "border-cyan-400 bg-cyan-500/10 shadow-[0_0_30px_rgba(34,211,238,0.12)]" : "border-border/60 bg-background/40 hover:border-cyan-500/40"}`}
+                className={`rounded-3xl border p-5 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${selected ? "border-cyan-400 bg-cyan-500/10 shadow-[0_0_30px_rgba(34,211,238,0.12)]" : "border-border/60 bg-background/40 hover:border-cyan-500/40"}`}
               >
                 <div className="flex items-center justify-between gap-3">
                   <div className="text-lg font-semibold text-foreground">
@@ -501,8 +514,9 @@ export default function TradingAutonomy() {
                     <button
                       key={cadence}
                       type="button"
+                      disabled={policyControlsDisabled}
                       onClick={() => setForm((current) => ({ ...current, executionCadence: cadence }))}
-                      className={`rounded-2xl border px-4 py-3 text-left transition ${selected ? "border-violet-400 bg-violet-500/10" : "border-border/60 bg-background/40 hover:border-violet-500/40"}`}
+                      className={`rounded-2xl border px-4 py-3 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${selected ? "border-violet-400 bg-violet-500/10" : "border-border/60 bg-background/40 hover:border-violet-500/40"}`}
                     >
                       <div className="font-medium text-foreground">{getExecutionCadenceLabel(cadence)}</div>
                       <div className="mt-1 text-xs text-muted-foreground">
@@ -529,8 +543,9 @@ export default function TradingAutonomy() {
                     <button
                       key={riskPosture}
                       type="button"
+                      disabled={policyControlsDisabled}
                       onClick={() => setForm((current) => ({ ...current, riskPosture }))}
-                      className={`rounded-2xl border px-4 py-3 text-left transition ${selected ? "border-pink-400 bg-pink-500/10" : "border-border/60 bg-background/40 hover:border-pink-500/40"}`}
+                      className={`rounded-2xl border px-4 py-3 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${selected ? "border-pink-400 bg-pink-500/10" : "border-border/60 bg-background/40 hover:border-pink-500/40"}`}
                     >
                       <div className="font-medium text-foreground">{getRiskPostureLabel(riskPosture)}</div>
                       <div className="mt-1 text-xs text-muted-foreground">
@@ -555,6 +570,7 @@ export default function TradingAutonomy() {
                   max={0.95}
                   step={0.01}
                   value={form.minSignalConfidence}
+                  disabled={policyControlsDisabled}
                   onChange={(event) =>
                     setForm((current) => ({
                       ...current,
@@ -576,13 +592,14 @@ export default function TradingAutonomy() {
                   max={250}
                   step={1}
                   value={form.maxOrderNotional}
+                  disabled={policyControlsDisabled}
                   onChange={(event) =>
                     setForm((current) => ({
                       ...current,
                       maxOrderNotional: Number(event.target.value || 0),
                     }))
                   }
-                  className="w-full rounded-xl border border-border bg-background px-3 py-2 text-foreground"
+                  className="w-full rounded-xl border border-border bg-background px-3 py-2 text-foreground disabled:cursor-not-allowed disabled:opacity-60"
                 />
                 <div className="text-xs text-muted-foreground">
                   Live orders above this notional are blocked by your autonomy policy.
@@ -597,13 +614,14 @@ export default function TradingAutonomy() {
                   max={500}
                   step={1}
                   value={form.requireApprovalAbove}
+                  disabled={policyControlsDisabled}
                   onChange={(event) =>
                     setForm((current) => ({
                       ...current,
                       requireApprovalAbove: Number(event.target.value || 0),
                     }))
                   }
-                  className="w-full rounded-xl border border-border bg-background px-3 py-2 text-foreground"
+                  className="w-full rounded-xl border border-border bg-background px-3 py-2 text-foreground disabled:cursor-not-allowed disabled:opacity-60"
                 />
                 <div className="text-xs text-muted-foreground">
                   In semi-autonomous mode, live orders above this size should wait for approval.
@@ -618,13 +636,14 @@ export default function TradingAutonomy() {
                   max={48}
                   step={1}
                   value={form.maxDailyOrders}
+                  disabled={policyControlsDisabled}
                   onChange={(event) =>
                     setForm((current) => ({
                       ...current,
                       maxDailyOrders: Number(event.target.value || 0),
                     }))
                   }
-                  className="w-full rounded-xl border border-border bg-background px-3 py-2 text-foreground"
+                  className="w-full rounded-xl border border-border bg-background px-3 py-2 text-foreground disabled:cursor-not-allowed disabled:opacity-60"
                 />
                 <div className="text-xs text-muted-foreground">
                   This caps how many trades the autonomy policy may permit during one trading day.
@@ -649,9 +668,17 @@ export default function TradingAutonomy() {
             <p>
               Arming the app is intentionally separate so you can prepare the policy in advance without accidentally permitting live execution.
             </p>
+            {policyLocked ? (
+              <Alert className="border-amber-500/40 bg-amber-500/10 text-foreground">
+                <Shield className="h-4 w-4" />
+                <AlertDescription>
+                  Policy saves are disabled while live trading is armed. Disarm live trading first, make changes, save, then arm again.
+                </AlertDescription>
+              </Alert>
+            ) : null}
             <Button
               className="w-full laurenzo-button"
-              disabled={saveDisabled}
+              disabled={saveDisabled || policyLocked}
               onClick={() => {
                 setMessage(null);
                 saveMutation.mutate(form);

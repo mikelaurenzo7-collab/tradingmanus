@@ -1,8 +1,10 @@
 import crypto from "crypto";
 import { URL } from "url";
 import { getCredentialEncryptionSecret } from "./env";
+import { assertPositiveIntegerUserId } from "./userScope";
 
-const ALGORITHM = "aes-256-cbc";
+const LEGACY_ALGORITHM = "aes-256-cbc";
+const CREDENTIAL_CIPHER_VERSION = "v2";
 const KALSHI_ENVIRONMENTS = [
   {
     mode: "production" as const,
@@ -14,11 +16,25 @@ const KALSHI_ENVIRONMENTS = [
   },
 ];
 
-function getEncryptionKey() {
+function getLegacyEncryptionKey() {
   return crypto
     .createHash("sha256")
     .update(getCredentialEncryptionSecret())
     .digest();
+}
+
+function getCredentialEncryptionKey(salt: Buffer, userId: number) {
+  const scopedUserId = assertPositiveIntegerUserId(userId, "credential encryption userId");
+  return crypto.scryptSync(
+    getCredentialEncryptionSecret(),
+    `kalshi-credential:${scopedUserId}:${salt.toString("hex")}`,
+    32,
+  );
+}
+
+function getCredentialAad(userId: number) {
+  const scopedUserId = assertPositiveIntegerUserId(userId, "credential AAD userId");
+  return Buffer.from(`kalshi-credential:${scopedUserId}`, "utf8");
 }
 
 function normalizePrivateKey(privateKey: string) {
@@ -135,16 +151,28 @@ async function probeKalshiEnvironment(apiKey: string, privateKey: string) {
 /**
  * Encrypt sensitive data (API keys, private keys)
  */
-export function encryptCredential(plaintext: string): string {
+export function encryptCredential(plaintext: string, userId: number): string {
   try {
-    const key = getEncryptionKey();
-    const iv = crypto.randomBytes(16);
-    const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
+    const scopedUserId = assertPositiveIntegerUserId(userId, "encryptCredential userId");
+    const salt = crypto.randomBytes(16);
+    const iv = crypto.randomBytes(12);
+    const key = getCredentialEncryptionKey(salt, scopedUserId);
+    const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+    cipher.setAAD(getCredentialAad(scopedUserId));
 
-    let encrypted = cipher.update(plaintext, "utf8", "hex");
-    encrypted += cipher.final("hex");
+    const encrypted = Buffer.concat([
+      cipher.update(plaintext, "utf8"),
+      cipher.final(),
+    ]);
+    const authTag = cipher.getAuthTag();
 
-    return iv.toString("hex") + ":" + encrypted;
+    return [
+      CREDENTIAL_CIPHER_VERSION,
+      salt.toString("hex"),
+      iv.toString("hex"),
+      authTag.toString("hex"),
+      encrypted.toString("hex"),
+    ].join(":");
   } catch (error) {
     console.error("[Kalshi Auth] Encryption failed:", error);
     throw new Error("Failed to encrypt credential");
@@ -154,15 +182,40 @@ export function encryptCredential(plaintext: string): string {
 /**
  * Decrypt sensitive data
  */
-export function decryptCredential(encrypted: string): string {
+export function decryptCredential(encrypted: string, userId: number): string {
   try {
-    const [ivHex, encryptedHex] = encrypted.split(":");
+    const scopedUserId = assertPositiveIntegerUserId(userId, "decryptCredential userId");
+    const parts = encrypted.split(":");
+
+    if (parts[0] === CREDENTIAL_CIPHER_VERSION) {
+      const [, saltHex, ivHex, authTagHex, encryptedHex] = parts;
+      if (!saltHex || !ivHex || !authTagHex || !encryptedHex) {
+        throw new Error("Invalid encrypted credential format");
+      }
+
+      const salt = Buffer.from(saltHex, "hex");
+      const iv = Buffer.from(ivHex, "hex");
+      const authTag = Buffer.from(authTagHex, "hex");
+      const key = getCredentialEncryptionKey(salt, scopedUserId);
+      const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
+      decipher.setAAD(getCredentialAad(scopedUserId));
+      decipher.setAuthTag(authTag);
+
+      const decrypted = Buffer.concat([
+        decipher.update(Buffer.from(encryptedHex, "hex")),
+        decipher.final(),
+      ]);
+
+      return decrypted.toString("utf8");
+    }
+
+    const [ivHex, encryptedHex] = parts;
     if (!ivHex || !encryptedHex) {
       throw new Error("Invalid encrypted credential format");
     }
-    const key = getEncryptionKey();
+    const key = getLegacyEncryptionKey();
     const iv = Buffer.from(ivHex, "hex");
-    const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
+    const decipher = crypto.createDecipheriv(LEGACY_ALGORITHM, key, iv);
 
     let decrypted = decipher.update(encryptedHex, "hex", "utf8");
     decrypted += decipher.final("utf8");

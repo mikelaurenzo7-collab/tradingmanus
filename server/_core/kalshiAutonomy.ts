@@ -16,6 +16,8 @@ import {
   type KalshiSignal,
 } from "./kalshiSignals";
 import { placeKalshiOrder } from "./kalshiExecution";
+import { calculateKalshiBuyOrderRisk, estimateContractsForRiskBudget } from "./kalshiRisk";
+import { assertPositiveIntegerUserId } from "./userScope";
 
 const BASE_RISK_LIMITS = {
   maxLossPerTrade: 5,
@@ -74,8 +76,9 @@ const POSTURE_MULTIPLIERS: Record<RiskPosture, { positionScale: number; confiden
   aggressive:   { positionScale: 1.4, confidenceBoost: -0.05 },
 };
 
-async function getDynamicRiskLimits(riskPosture: RiskPosture = "balanced") {
-  const capital = await db.getKalshiCapital();
+async function getDynamicRiskLimits(riskPosture: RiskPosture, userId: number) {
+  const scopedUserId = assertPositiveIntegerUserId(userId, "autonomy risk limits userId");
+  const capital = await db.getKalshiCapital(scopedUserId);
   const maxCapital = Math.max(
     0,
     Number(capital?.currentBalance ?? capital?.startingBalance ?? 0)
@@ -169,10 +172,6 @@ async function persistScheduledResult(user: User, result: AwayTradingRunResult) 
   return result;
 }
 
-function estimateOrderQuantity(maxBudget: number) {
-  return Math.max(1, Math.floor(maxBudget));
-}
-
 function extractActionableMarkets(markets: Awaited<ReturnType<typeof fetchKalshiMarkets>>) {
   return markets.filter((market) => {
     const yesPrice = Number(market.yesPrice);
@@ -229,7 +228,7 @@ function applyInstructionsToMarkets(
   });
 }
 
-async function generateScheduledSignals(minConfidence: number, activeInstructions: any[] = []) {
+async function generateScheduledSignals(userId: number, minConfidence: number, activeInstructions: any[] = []) {
   const markets = await fetchKalshiMarkets({ status: "open" });
   const filteredMarkets = applyInstructionsToMarkets(markets, activeInstructions);
   const actionableMarkets = extractActionableMarkets(filteredMarkets).slice(0, MAX_SCHEDULED_MARKETS);
@@ -276,7 +275,7 @@ async function generateScheduledSignals(minConfidence: number, activeInstruction
     ? applyInstructionsToSignals(conditionFilteredSignals, activeInstructions)
     : conditionFilteredSignals;
 
-  await saveSignals(savedSignals);
+  await saveSignals(savedSignals, userId);
 
   return {
     actionableMarkets,
@@ -351,7 +350,7 @@ export type ScheduledAutonomyBatchSummary = {
 export async function runScheduledAutonomousTrading(
   user: User
 ): Promise<AwayTradingRunResult> {
-  const userId = user.id || 1;
+  const userId = assertPositiveIntegerUserId(user.id, "scheduled autonomy userId");
   const preferences = await tradingPreferencesDb.getTradingPreferences(userId);
   const finalize = (
     input: Omit<AwayTradingRunResult, "success"> & { success?: boolean }
@@ -398,13 +397,14 @@ export async function runScheduledAutonomousTrading(
 
   await Promise.all([
     kalshiCredDb.updateKalshiAccountEquity(userId, equityResult.equity),
-    db.syncKalshiCapitalWithLiveEquity(equityResult.equity),
+    db.syncKalshiCapitalWithLiveEquity(equityResult.equity, userId),
   ]);
 
   const allInstructions = await getUserTrainingInstructions(userId);
   const activeInstructions = allInstructions.filter(isInstructionActiveNow);
 
   const { savedSignals, executionCandidates } = await generateScheduledSignals(
+    userId,
     preferences.minSignalConfidence,
     activeInstructions
   );
@@ -455,11 +455,11 @@ export async function runScheduledAutonomousTrading(
 
   const [capital, openPositions, todayRealizedLoss, riskLimits, todayOrderCount] =
     await Promise.all([
-      db.getKalshiCapital(),
-      db.getOpenKalshiPositions(),
-      db.getTodayRealizedLoss(),
-      getDynamicRiskLimits(preferences.riskPosture),
-      db.getTodayKalshiOrderCount(),
+      db.getKalshiCapital(userId),
+      db.getOpenKalshiPositions(userId),
+      db.getTodayRealizedLoss(userId),
+      getDynamicRiskLimits(preferences.riskPosture, userId),
+      db.getTodayKalshiOrderCount(userId),
     ]);
 
   if (todayOrderCount >= preferences.maxDailyOrders) {
@@ -514,7 +514,8 @@ export async function runScheduledAutonomousTrading(
       Number(capital?.currentBalance ?? 0)
     );
 
-    if (maxBudget < 1) {
+    const marketPrice = Number(signal.marketPrice);
+    if (!Number.isFinite(marketPrice) || maxBudget < marketPrice) {
       return false;
     }
 
@@ -551,10 +552,33 @@ export async function runScheduledAutonomousTrading(
     riskLimits.maxLossPerTrade,
     availableCapital
   );
-  const quantity = estimateOrderQuantity(maxBudget);
   const limitPrice = Number(eligibleSignal.marketPrice);
-  const orderExposure = Math.max(quantity * limitPrice, quantity * (1 - limitPrice));
-  const maxLossOnTrade = Math.min(orderExposure, quantity * (1 - limitPrice));
+  const quantity = estimateContractsForRiskBudget(maxBudget, limitPrice);
+
+  if (quantity < 1) {
+    return finalize({
+      status: "blocked",
+      reason: "candidate price is above the allowed risk budget",
+      signalsGenerated: savedSignals.length,
+      executionCandidates: executionCandidates.length,
+      orderPlaced: false,
+      candidateMarketId: eligibleSignal.marketId,
+      autonomyMode: preferences.autonomyMode,
+      executionCadence: preferences.executionCadence,
+      decision: buildDecisionDetails(eligibleSignal, {
+        quantity,
+        availableCapital,
+        maxBudget,
+        orderExposure: 0,
+        maxLossOnTrade: 0,
+        blockedBy: "risk_budget_below_one_contract",
+      }),
+    });
+  }
+
+  const orderRisk = calculateKalshiBuyOrderRisk({ quantity, limitPrice });
+  const orderExposure = orderRisk.orderExposure;
+  const maxLossOnTrade = orderRisk.maxLossOnTrade;
 
   if (maxLossOnTrade > riskLimits.maxLossPerTrade) {
     return finalize({
@@ -623,8 +647,8 @@ export async function runScheduledAutonomousTrading(
     userId,
     eligibleSignal.marketId,
     eligibleSignal.side,
-    quantity,
-    limitPrice
+    orderRisk.quantity,
+    orderRisk.limitPrice
   );
 
   if (!result.success) {

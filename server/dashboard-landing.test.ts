@@ -38,9 +38,9 @@ describe("dashboard landing production-readiness states", () => {
     const dashboardPath = path.resolve(process.cwd(), "client/src/pages/Dashboard.tsx");
     const dashboardSource = fs.readFileSync(dashboardPath, "utf8");
 
-    expect(dashboardSource).toContain("const killSwitchMutation = trpc.kalshi.setTradingActivation.useMutation(");
-    expect(dashboardSource).toContain("await killSwitchMutation.mutateAsync({ enabled: false });");
+    expect(dashboardSource).toContain("const killSwitchMutation = trpc.kalshi.killSwitch.useMutation(");
+    expect(dashboardSource).toContain("await killSwitchMutation.mutateAsync();");
     expect(dashboardSource).not.toContain("const killSwitchMutation = { mutateAsync: async () => {} };");
-    expect(dashboardSource).toContain("Emergency disarm complete. Live trading is now off.");
+    expect(dashboardSource).toContain("Kill switch submitted. Live trading is disarmed");
   });
 });

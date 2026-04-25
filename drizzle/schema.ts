@@ -127,8 +127,10 @@ export const kalshiOrderBook = mysqlTable("kalshiOrderBook", {
 
 export const kalshiOrders = mysqlTable("kalshiOrders", {
   id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
   orderId: varchar("orderId", { length: 128 }).notNull().unique(),
   marketId: varchar("marketId", { length: 128 }).notNull(),
+  action: mysqlEnum("orderAction", ["buy", "sell"]).default("buy").notNull(),
   side: mysqlEnum("side", ["yes", "no"]).notNull(),
   quantity: double("quantity").notNull(),
   limitPrice: double("limitPrice").notNull(),
@@ -142,6 +144,7 @@ export const kalshiOrders = mysqlTable("kalshiOrders", {
 
 export const kalshiFills = mysqlTable("kalshiFills", {
   id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
   orderId: varchar("orderId", { length: 128 }).notNull(),
   marketId: varchar("marketId", { length: 128 }).notNull(),
   fillPrice: double("fillPrice").notNull(),
@@ -151,6 +154,7 @@ export const kalshiFills = mysqlTable("kalshiFills", {
 
 export const kalshiPositions = mysqlTable("kalshiPositions", {
   id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
   marketId: varchar("marketId", { length: 128 }).notNull(),
   side: mysqlEnum("positionSide", ["yes", "no"]).notNull(),
   quantity: double("quantity").notNull(),
@@ -158,13 +162,14 @@ export const kalshiPositions = mysqlTable("kalshiPositions", {
   currentPrice: double("currentPrice").notNull(),
   unrealizedPnl: double("unrealizedPnl").default(0).notNull(),
   realizedPnl: double("realizedPnl").default(0).notNull(),
-  positionStatus: mysqlEnum("positionStatus", ["open", "closed"]).default("open").notNull(),
+  positionStatus: mysqlEnum("positionStatus", ["open", "closing", "closed"]).default("open").notNull(),
   openedAt: timestamp("openedAt").defaultNow().notNull(),
   closedAt: timestamp("closedAt"),
 });
 
 export const kalshiSignals = mysqlTable("kalshiSignals", {
   id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
   marketId: varchar("marketId", { length: 128 }).notNull(),
   signalType: mysqlEnum("signalType", ["value_play", "momentum", "contrarian", "arbitrage", "sentiment"]).notNull(),
   side: mysqlEnum("signalSide", ["yes", "no"]).notNull(),
@@ -178,6 +183,7 @@ export const kalshiSignals = mysqlTable("kalshiSignals", {
 
 export const kalshiPerformance = mysqlTable("kalshiPerformance", {
   id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
   signalId: int("signalId").notNull(),
   marketId: varchar("marketId", { length: 128 }).notNull(),
   outcome: mysqlEnum("outcome", ["win", "loss", "partial"]).notNull(),
@@ -190,6 +196,7 @@ export const kalshiPerformance = mysqlTable("kalshiPerformance", {
 
 export const kalshiCapital = mysqlTable("kalshiCapital", {
   id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull().unique(),
   startingBalance: double("startingBalance").default(0).notNull(),
   currentBalance: double("currentBalance").default(0).notNull(),
   totalPnl: double("totalPnl").default(0).notNull(),

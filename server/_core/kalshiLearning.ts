@@ -4,6 +4,7 @@
  */
 
 import * as db from "../db";
+import { assertPositiveIntegerUserId } from "./userScope";
 
 export interface TradeRecord {
   id: string;
@@ -351,12 +352,13 @@ export function analyzeSignalPerformanceFromData(
     );
 }
 
-export async function getPerformanceOverview(): Promise<PerformanceOverview> {
+export async function getPerformanceOverview(userId: number): Promise<PerformanceOverview> {
+  const scopedUserId = assertPositiveIntegerUserId(userId, "getPerformanceOverview userId");
   const [capital, trades, signals, openPositions] = await Promise.all([
-    db.getKalshiCapital(),
-    db.getKalshiTradeHistory(1000),
-    db.getRecentSignals(1000),
-    db.getOpenKalshiPositions(),
+    db.getKalshiCapital(scopedUserId),
+    db.getKalshiTradeHistory(1000, scopedUserId),
+    db.getRecentSignals(1000, scopedUserId),
+    db.getOpenKalshiPositions(scopedUserId),
   ]);
 
   const startingBalance = Number(
@@ -381,6 +383,7 @@ export async function getPerformanceOverview(): Promise<PerformanceOverview> {
  * Record a new trade entry from a signal
  */
 export async function recordTradeEntry(
+  userId: number,
   marketId: string,
   signalId: string,
   signalType: string,
@@ -389,6 +392,7 @@ export async function recordTradeEntry(
   entryQuantity: number,
   reasoning: string
 ): Promise<TradeRecord> {
+  const scopedUserId = assertPositiveIntegerUserId(userId, "recordTradeEntry userId");
   const tradeId = `trade-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
   const trade: TradeRecord = {
@@ -406,6 +410,7 @@ export async function recordTradeEntry(
 
   // Store in database using existing position creation
   await db.createKalshiPosition({
+    userId: scopedUserId,
     marketId,
     side,
     quantity: entryQuantity,
@@ -422,11 +427,13 @@ export async function recordTradeEntry(
  * Record trade exit and calculate P&L
  */
 export async function recordTradeExit(
+  userId: number,
   positionId: number,
   exitPrice: number
 ): Promise<TradeRecord | null> {
+  const scopedUserId = assertPositiveIntegerUserId(userId, "recordTradeExit userId");
   // Use existing position close function
-  await db.closeKalshiPosition(positionId, exitPrice);
+  await db.closeKalshiPosition(positionId, exitPrice, scopedUserId);
 
   console.log(
     `[Learning] Trade closed: Position ${positionId} @ $${exitPrice}`
@@ -437,29 +444,30 @@ export async function recordTradeExit(
 /**
  * Calculate comprehensive performance metrics
  */
-export async function calculatePerformanceMetrics(): Promise<PerformanceMetrics> {
-  const overview = await getPerformanceOverview();
+export async function calculatePerformanceMetrics(userId: number): Promise<PerformanceMetrics> {
+  const overview = await getPerformanceOverview(userId);
   return overview.metrics;
 }
 
 /**
  * Analyze performance by signal type
  */
-export async function analyzeSignalPerformance(): Promise<SignalPerformance[]> {
-  const overview = await getPerformanceOverview();
+export async function analyzeSignalPerformance(userId: number): Promise<SignalPerformance[]> {
+  const overview = await getPerformanceOverview(userId);
   return overview.signalPerformance;
 }
 
 /**
  * Get trade history with filtering
  */
-export async function getTradeHistory(filters?: {
+export async function getTradeHistory(userId: number, filters?: {
   status?: "open" | "closed" | "partial";
   signalType?: string;
   outcome?: "win" | "loss" | "breakeven";
   limit?: number;
 }): Promise<TradeRecord[]> {
-  const trades = await db.getKalshiTradeHistory(filters?.limit || 50);
+  const scopedUserId = assertPositiveIntegerUserId(userId, "getTradeHistory userId");
+  const trades = await db.getKalshiTradeHistory(filters?.limit || 50, scopedUserId);
   return trades.map((t: any) => ({
     id: `trade-${t.id}`,
     marketId: t.marketId,
@@ -486,13 +494,14 @@ export async function getTradeHistory(filters?: {
 /**
  * Calculate win/loss streaks
  */
-export async function calculateStreaks(): Promise<{
+export async function calculateStreaks(userId: number): Promise<{
   currentWinStreak: number;
   maxWinStreak: number;
   currentLossStreak: number;
   maxLossStreak: number;
 }> {
-  const trades = await db.getKalshiTradeHistory(1000);
+  const scopedUserId = assertPositiveIntegerUserId(userId, "calculateStreaks userId");
+  const trades = await db.getKalshiTradeHistory(1000, scopedUserId);
   const closedTrades = trades.filter((t: any) => t.positionStatus === "closed");
 
   let currentWinStreak = 0;

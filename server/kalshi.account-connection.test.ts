@@ -174,7 +174,7 @@ describe("kalshi account connection", () => {
       "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----",
       123.45,
     );
-    expect(mocks.syncKalshiCapitalWithLiveEquity).toHaveBeenCalledWith(123.45);
+    expect(mocks.syncKalshiCapitalWithLiveEquity).toHaveBeenCalledWith(123.45, 7);
     expect(mocks.logAuditEvent).toHaveBeenCalledWith(
       "kalshi_account_connected",
       "Equity: $123.45",
@@ -237,7 +237,7 @@ describe("kalshi account connection", () => {
     });
 
     expect(mocks.saveKalshiCredentials).toHaveBeenCalledTimes(1);
-    expect(mocks.syncKalshiCapitalWithLiveEquity).toHaveBeenCalledWith(78.9);
+    expect(mocks.syncKalshiCapitalWithLiveEquity).toHaveBeenCalledWith(78.9, 7);
     expect(mocks.logAuditEvent).toHaveBeenCalledWith(
       "kalshi_account_connected",
       "Equity: $78.9",
@@ -264,7 +264,7 @@ describe("kalshi account connection", () => {
 
     expect(mocks.fetchKalshiAccountEquity).toHaveBeenCalledWith("live-api-key", "private-key");
     expect(mocks.updateKalshiAccountEquity).toHaveBeenCalledWith(7, 321.09);
-    expect(mocks.syncKalshiCapitalWithLiveEquity).toHaveBeenCalledWith(321.09);
+    expect(mocks.syncKalshiCapitalWithLiveEquity).toHaveBeenCalledWith(321.09, 7);
     expect(result.connected).toBe(true);
     expect(result.status).toBe("connected");
     expect(result.equity).toBe(321.09);

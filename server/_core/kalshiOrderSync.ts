@@ -5,12 +5,17 @@
 
 import { db } from "../db";
 import { kalshiOrders, kalshiPositions } from "../../drizzle/schema";
-import { eq, and } from "drizzle-orm";
-import { getKalshiOrderStatus, createPositionFromFill } from "./kalshiExecution";
+import { eq, and, inArray } from "drizzle-orm";
+import { getKalshiOrderStatus, createPositionFromFill, closePositionFromFill } from "./kalshiExecution";
 import * as kalshiCredDb from "../db.kalshi-credentials";
+import { assertPositiveIntegerUserId } from "./userScope";
 
-// Guards against two concurrent sync intervals processing the same pending orders
-let _syncRunning = false;
+// Guards against two concurrent sync intervals processing the same user's pending orders
+const _syncRunningByUser = new Set<string>();
+
+function getUserSyncKey(userId: number) {
+  return `user:${assertPositiveIntegerUserId(userId, "order sync userId")}`;
+}
 
 /**
  * Check all locally-pending orders for the user; mark filled ones and
@@ -18,32 +23,50 @@ let _syncRunning = false;
  * Idempotent: skips if a position for the same market is already open.
  */
 export async function syncPendingOrders(userId: number): Promise<void> {
-  if (_syncRunning) return;
-  _syncRunning = true;
+  const scopedUserId = assertPositiveIntegerUserId(userId, "syncPendingOrders userId");
+  const syncKey = getUserSyncKey(scopedUserId);
+  if (_syncRunningByUser.has(syncKey)) return;
+  _syncRunningByUser.add(syncKey);
 
   try {
-    const creds = await kalshiCredDb.getKalshiCredentials(userId);
+    const creds = await kalshiCredDb.getKalshiCredentials(scopedUserId);
     if (!creds || !creds.apiKey || !creds.privateKey) return;
 
     const pending = await db
       .select()
       .from(kalshiOrders)
-      .where(eq(kalshiOrders.status, "pending"));
+      .where(and(eq(kalshiOrders.userId, scopedUserId), eq(kalshiOrders.status, "pending")));
 
     for (const order of pending) {
       try {
-        const updated = await getKalshiOrderStatus(userId, order.orderId);
+        const updated = await getKalshiOrderStatus(scopedUserId, order.orderId);
         if (!updated) continue;
 
         if (updated.status === "filled" && updated.filledQuantity > 0) {
+          if ((order.action ?? "buy") === "sell") {
+            const closed = await closePositionFromFill(
+              scopedUserId,
+              order.marketId,
+              order.side as "yes" | "no",
+              updated.filledQuantity,
+              updated.averagePrice > 0 ? updated.averagePrice : order.limitPrice,
+            );
+
+            if (!closed) {
+              console.warn(`[OrderSync] Filled close order ${order.orderId} had no matching open position`);
+            }
+            continue;
+          }
+
           // Idempotency guard: skip if an open position already exists for this market
           const existingOpen = await db
             .select()
             .from(kalshiPositions)
             .where(
               and(
+                eq(kalshiPositions.userId, scopedUserId),
                 eq(kalshiPositions.marketId, order.marketId),
-                eq(kalshiPositions.positionStatus, "open"),
+                inArray(kalshiPositions.positionStatus, ["open", "closing"]),
               ),
             )
             .then((rows: any[]) => rows[0]);
@@ -57,6 +80,7 @@ export async function syncPendingOrders(userId: number): Promise<void> {
             updated.averagePrice > 0 ? updated.averagePrice : order.limitPrice;
 
           await createPositionFromFill(
+            scopedUserId,
             order.orderId,
             order.marketId,
             order.side as "yes" | "no",
@@ -69,7 +93,7 @@ export async function syncPendingOrders(userId: number): Promise<void> {
       }
     }
   } finally {
-    _syncRunning = false;
+    _syncRunningByUser.delete(syncKey);
   }
 }
 
@@ -78,7 +102,8 @@ export async function syncPendingOrders(userId: number): Promise<void> {
  * Kalshi API: GET /portfolio/positions
  */
 export async function syncLivePositions(userId: number): Promise<void> {
-  const creds = await kalshiCredDb.getKalshiCredentials(userId);
+  const scopedUserId = assertPositiveIntegerUserId(userId, "syncLivePositions userId");
+  const creds = await kalshiCredDb.getKalshiCredentials(scopedUserId);
   if (!creds || !creds.apiKey || !creds.privateKey) return;
 
   try {
@@ -165,8 +190,13 @@ export async function syncLivePositions(userId: number): Promise<void> {
       const existing = await db
         .select()
         .from(kalshiPositions)
-        .where(eq(kalshiPositions.marketId, marketId))
-        .then((rows: any[]) => rows.find((r: any) => r.positionStatus === "open"));
+        .where(
+          and(
+            eq(kalshiPositions.userId, scopedUserId),
+            eq(kalshiPositions.marketId, marketId),
+          )
+        )
+        .then((rows: any[]) => rows.find((r: any) => r.positionStatus === "open" || r.positionStatus === "closing"));
 
       if (existing) {
         await db
@@ -182,8 +212,9 @@ export async function syncLivePositions(userId: number): Promise<void> {
           .where(eq(kalshiPositions.id, existing.id));
       } else {
         await db.insert(kalshiPositions).values({
+          userId: scopedUserId,
           marketId,
-          positionSide: side,
+          side,
           quantity,
           entryPrice,
           currentPrice,

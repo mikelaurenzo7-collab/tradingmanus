@@ -536,10 +536,10 @@ describe("Kalshi Signal Generation", () => {
         },
       ];
 
-      await saveSignals(signals);
+      await saveSignals(signals, 7);
 
       expect(vi.mocked(db.createKalshiSignal)).toHaveBeenCalledTimes(1);
-      expect(vi.mocked(db.createKalshiSignal)).toHaveBeenCalledWith(expect.objectContaining({ marketId: "m1", signalType: "value_play" }));
+      expect(vi.mocked(db.createKalshiSignal)).toHaveBeenCalledWith(expect.objectContaining({ userId: 7, marketId: "m1", signalType: "value_play" }));
     });
   });
 

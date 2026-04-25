@@ -4,6 +4,7 @@
  */
 
 import * as db from "../db";
+import { assertPositiveIntegerUserId } from "./userScope";
 
 export interface KalshiOrder {
   orderId: string;
@@ -32,11 +33,13 @@ export interface KalshiPosition {
  * In production, this would call the actual Kalshi API
  */
 export async function placeMarketOrder(
+  userId: number,
   marketId: string,
   side: "yes" | "no",
   quantity: number,
   maxPrice: number
 ): Promise<KalshiOrder> {
+  const scopedUserId = assertPositiveIntegerUserId(userId, "placeMarketOrder userId");
   const orderId = `order-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   
   // Simulate order placement
@@ -52,10 +55,13 @@ export async function placeMarketOrder(
 
   // Store order in database
   await db.createKalshiOrder({
+    userId: scopedUserId,
+    orderId,
     marketId,
+    action: "buy",
     side,
     quantity,
-    price: maxPrice,
+    limitPrice: maxPrice,
     status: "pending",
   });
 
@@ -68,6 +74,7 @@ export async function placeMarketOrder(
     
     // Create position
     await db.createKalshiPosition({
+      userId: scopedUserId,
       marketId,
       side,
       quantity,
@@ -84,10 +91,12 @@ export async function placeMarketOrder(
  * Close a position at market price
  */
 export async function closePosition(
+  userId: number,
   positionId: number,
   exitPrice: number
 ): Promise<{ pnl: number; pnlPercent: number }> {
-  await db.closeKalshiPosition(positionId, exitPrice);
+  const scopedUserId = assertPositiveIntegerUserId(userId, "closePosition userId");
+  await db.closeKalshiPosition(positionId, exitPrice, scopedUserId);
   
   console.log(`[Trading] Position closed: ${positionId} @ $${exitPrice}`);
   
@@ -100,8 +109,9 @@ export async function closePosition(
 /**
  * Get all open positions
  */
-export async function getOpenPositions(): Promise<KalshiPosition[]> {
-  const positions = await db.getOpenKalshiPositions();
+export async function getOpenPositions(userId: number): Promise<KalshiPosition[]> {
+  const scopedUserId = assertPositiveIntegerUserId(userId, "getOpenPositions userId");
+  const positions = await db.getOpenKalshiPositions(scopedUserId);
   
   return positions.map((p: any) => ({
     positionId: p.id,
@@ -118,13 +128,14 @@ export async function getOpenPositions(): Promise<KalshiPosition[]> {
 /**
  * Update position prices from market feed
  */
-export async function updatePositionPrices(marketPrices: Map<string, number>): Promise<void> {
-  const positions = await db.getOpenKalshiPositions();
+export async function updatePositionPrices(userId: number, marketPrices: Map<string, number>): Promise<void> {
+  const scopedUserId = assertPositiveIntegerUserId(userId, "updatePositionPrices userId");
+  const positions = await db.getOpenKalshiPositions(scopedUserId);
   
   for (const position of positions) {
     const marketPrice = marketPrices.get(position.marketId);
     if (marketPrice) {
-      await db.updateKalshiPositionPrice(position.id, marketPrice);
+      await db.updateKalshiPositionPrice(position.id, marketPrice, scopedUserId);
       console.log(`[Trading] Updated ${position.marketId}: $${marketPrice}`);
     }
   }
@@ -135,11 +146,13 @@ export async function updatePositionPrices(marketPrices: Map<string, number>): P
  * Converts signal to market order
  */
 export async function executeSignal(
+  userId: number,
   signal: any,
   maxPrice: number,
   quantity: number
 ): Promise<KalshiOrder | null> {
   try {
+    const scopedUserId = assertPositiveIntegerUserId(userId, "executeSignal userId");
     // Validate signal
     if (!signal.marketId || !signal.side || signal.confidence < 0.5) {
       console.warn("[Trading] Signal rejected: insufficient confidence or missing data");
@@ -147,7 +160,7 @@ export async function executeSignal(
     }
 
     // Place order
-    const order = await placeMarketOrder(signal.marketId, signal.side, quantity, maxPrice);
+    const order = await placeMarketOrder(scopedUserId, signal.marketId, signal.side, quantity, maxPrice);
     
     console.log(`[Trading] Signal executed: ${signal.signalType} ${signal.side} on ${signal.marketId}`);
     return order;
@@ -160,7 +173,7 @@ export async function executeSignal(
 /**
  * Calculate portfolio metrics
  */
-export async function getPortfolioMetrics(): Promise<{
+export async function getPortfolioMetrics(userId: number): Promise<{
   totalCapital: number;
   currentValue: number;
   totalPnL: number;
@@ -168,14 +181,15 @@ export async function getPortfolioMetrics(): Promise<{
   openPositions: number;
   unrealizedPnL: number;
 }> {
-  const positions = await db.getOpenKalshiPositions();
-  const tradeHistory = await db.getKalshiTradeHistory(1000);
+  const scopedUserId = assertPositiveIntegerUserId(userId, "getPortfolioMetrics userId");
+  const positions = await db.getOpenKalshiPositions(scopedUserId);
+  const tradeHistory = await db.getKalshiTradeHistory(1000, scopedUserId);
   
   const closedTrades = tradeHistory.filter((t: any) => t.positionStatus === "closed");
   const realizedPnL = closedTrades.reduce((sum: number, t: any) => sum + (t.realizedPnL || 0), 0);
   const unrealizedPnL = positions.reduce((sum: any, p: any) => sum + (p.unrealizedPnL || 0), 0);
   
-  const capitalRecord = await db.getKalshiCapital();
+  const capitalRecord = await db.getKalshiCapital(scopedUserId);
   const totalPnL = realizedPnL + unrealizedPnL;
   const totalCapital = Math.max(
     0,
@@ -201,11 +215,12 @@ export async function getPortfolioMetrics(): Promise<{
  * Risk management: Check position sizing
  */
 export async function validatePositionSize(
+  userId: number,
   quantity: number,
   price: number,
   maxRiskPercent: number = 2
 ): Promise<{ valid: boolean; reason?: string }> {
-  const metrics = await getPortfolioMetrics();
+  const metrics = await getPortfolioMetrics(userId);
   const positionValue = quantity * price;
   const riskAmount = (metrics.totalCapital * maxRiskPercent) / 100;
   
@@ -222,15 +237,16 @@ export async function validatePositionSize(
 /**
  * Stop loss check: Close positions if loss exceeds threshold
  */
-export async function checkStopLosses(maxLossPercent: number = 5): Promise<number> {
-  const positions = await db.getOpenKalshiPositions();
+export async function checkStopLosses(userId: number, maxLossPercent: number = 5): Promise<number> {
+  const scopedUserId = assertPositiveIntegerUserId(userId, "checkStopLosses userId");
+  const positions = await db.getOpenKalshiPositions(scopedUserId);
   let closedCount = 0;
   
   for (const position of positions) {
     const lossPercent = ((position.currentPrice - position.entryPrice) / position.entryPrice) * 100;
     
     if (lossPercent < -maxLossPercent) {
-      await db.closeKalshiPosition(position.id, position.currentPrice);
+      await db.closeKalshiPosition(position.id, position.currentPrice, scopedUserId);
       closedCount++;
       console.log(`[Trading] Stop loss triggered: Position ${position.id} closed at $${position.currentPrice}`);
     }
@@ -242,15 +258,16 @@ export async function checkStopLosses(maxLossPercent: number = 5): Promise<numbe
 /**
  * Take profit check: Close positions if profit exceeds threshold
  */
-export async function checkTakeProfits(maxProfitPercent: number = 10): Promise<number> {
-  const positions = await db.getOpenKalshiPositions();
+export async function checkTakeProfits(userId: number, maxProfitPercent: number = 10): Promise<number> {
+  const scopedUserId = assertPositiveIntegerUserId(userId, "checkTakeProfits userId");
+  const positions = await db.getOpenKalshiPositions(scopedUserId);
   let closedCount = 0;
   
   for (const position of positions) {
     const profitPercent = ((position.currentPrice - position.entryPrice) / position.entryPrice) * 100;
     
     if (profitPercent > maxProfitPercent) {
-      await db.closeKalshiPosition(position.id, position.currentPrice);
+      await db.closeKalshiPosition(position.id, position.currentPrice, scopedUserId);
       closedCount++;
       console.log(`[Trading] Take profit triggered: Position ${position.id} closed at $${position.currentPrice}`);
     }

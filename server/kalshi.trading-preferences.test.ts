@@ -179,6 +179,39 @@ describe("kalshi trading preferences", () => {
     });
   });
 
+  it("refuses to arm live trading through the policy save endpoint", async () => {
+    const attemptedArmedPreferences = {
+      ...mocks.DEFAULT_PREFERENCES,
+      autonomyMode: "fully_autonomous" as const,
+      liveTradingEnabled: true,
+    };
+
+    const caller = appRouter.createCaller(createProtectedContext());
+
+    await expect(
+      caller.kalshi.updateTradingPreferences(attemptedArmedPreferences)
+    ).rejects.toThrow("Save policy changes while disarmed");
+    expect(mocks.saveTradingPreferences).not.toHaveBeenCalled();
+  });
+
+  it("refuses policy edits while live trading is armed", async () => {
+    mocks.getTradingPreferences.mockResolvedValue({
+      ...mocks.DEFAULT_PREFERENCES,
+      autonomyMode: "semi_autonomous",
+      liveTradingEnabled: true,
+    });
+
+    const caller = appRouter.createCaller(createProtectedContext());
+
+    await expect(
+      caller.kalshi.updateTradingPreferences({
+        ...mocks.DEFAULT_PREFERENCES,
+        autonomyMode: "fully_autonomous",
+      })
+    ).rejects.toThrow("Disarm live trading before changing autonomy policy settings");
+    expect(mocks.saveTradingPreferences).not.toHaveBeenCalled();
+  });
+
   it("refuses to arm live trading when manual mode is selected", async () => {
     mocks.getKalshiCredentials.mockResolvedValue({
       userId: 7,

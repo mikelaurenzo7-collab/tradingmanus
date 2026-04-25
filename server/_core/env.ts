@@ -3,6 +3,7 @@ const normalize = (value: string | undefined) => value?.trim() ?? "";
 export const ENV = {
   appId: normalize(process.env.VITE_APP_ID),
   cookieSecret: normalize(process.env.JWT_SECRET),
+  credentialEncryptionSecret: normalize(process.env.CREDENTIAL_ENCRYPTION_SECRET),
   databaseUrl: normalize(process.env.DATABASE_URL),
   oAuthServerUrl: normalize(process.env.OAUTH_SERVER_URL),
   ownerOpenId: normalize(process.env.OWNER_OPEN_ID),
@@ -30,14 +31,24 @@ export function validateServerEnv() {
       `Missing required environment variables: ${missing.join(", ")}`
     );
   }
+
+  if (ENV.isProduction && ENV.cookieSecret.length < 32) {
+    throw new Error("JWT_SECRET must be at least 32 characters in production");
+  }
+
+  if (ENV.isProduction && getCredentialEncryptionSecret().length < 32) {
+    throw new Error("CREDENTIAL_ENCRYPTION_SECRET must be at least 32 characters in production");
+  }
 }
 
 export function getCredentialEncryptionSecret() {
-  if (!ENV.cookieSecret) {
-    throw new Error("JWT_SECRET is required for credential encryption");
+  const secret = ENV.credentialEncryptionSecret || ENV.cookieSecret;
+
+  if (!secret) {
+    throw new Error("CREDENTIAL_ENCRYPTION_SECRET or JWT_SECRET is required for credential encryption");
   }
 
-  return ENV.cookieSecret;
+  return secret;
 }
 
 export function getKalshiApiKey() {

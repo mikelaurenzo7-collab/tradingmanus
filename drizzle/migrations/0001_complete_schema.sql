@@ -129,8 +129,10 @@ CREATE TABLE IF NOT EXISTS `kalshiOrderBook` (
 
 CREATE TABLE IF NOT EXISTS `kalshiOrders` (
   `id` int AUTO_INCREMENT NOT NULL,
+  `userId` int NOT NULL,
   `orderId` varchar(128) NOT NULL,
   `marketId` varchar(128) NOT NULL,
+  `orderAction` enum('buy','sell') NOT NULL DEFAULT 'buy',
   `side` enum('yes','no') NOT NULL,
   `quantity` double NOT NULL,
   `limitPrice` double NOT NULL,
@@ -146,6 +148,7 @@ CREATE TABLE IF NOT EXISTS `kalshiOrders` (
 
 CREATE TABLE IF NOT EXISTS `kalshiFills` (
   `id` int AUTO_INCREMENT NOT NULL,
+  `userId` int NOT NULL,
   `orderId` varchar(128) NOT NULL,
   `marketId` varchar(128) NOT NULL,
   `fillPrice` double NOT NULL,
@@ -156,6 +159,7 @@ CREATE TABLE IF NOT EXISTS `kalshiFills` (
 
 CREATE TABLE IF NOT EXISTS `kalshiPositions` (
   `id` int AUTO_INCREMENT NOT NULL,
+  `userId` int NOT NULL,
   `marketId` varchar(128) NOT NULL,
   `positionSide` enum('yes','no') NOT NULL,
   `quantity` double NOT NULL,
@@ -163,7 +167,7 @@ CREATE TABLE IF NOT EXISTS `kalshiPositions` (
   `currentPrice` double NOT NULL,
   `unrealizedPnl` double NOT NULL DEFAULT 0,
   `realizedPnl` double NOT NULL DEFAULT 0,
-  `positionStatus` enum('open','closed') NOT NULL DEFAULT 'open',
+  `positionStatus` enum('open','closing','closed') NOT NULL DEFAULT 'open',
   `openedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `closedAt` timestamp NULL,
   CONSTRAINT `kalshiPositions_id` PRIMARY KEY (`id`)
@@ -171,6 +175,7 @@ CREATE TABLE IF NOT EXISTS `kalshiPositions` (
 
 CREATE TABLE IF NOT EXISTS `kalshiSignals` (
   `id` int AUTO_INCREMENT NOT NULL,
+  `userId` int NOT NULL,
   `marketId` varchar(128) NOT NULL,
   `signalType` enum('value_play','momentum','contrarian','arbitrage','sentiment') NOT NULL,
   `signalSide` enum('yes','no') NOT NULL,
@@ -185,6 +190,7 @@ CREATE TABLE IF NOT EXISTS `kalshiSignals` (
 
 CREATE TABLE IF NOT EXISTS `kalshiPerformance` (
   `id` int AUTO_INCREMENT NOT NULL,
+  `userId` int NOT NULL,
   `signalId` int NOT NULL,
   `marketId` varchar(128) NOT NULL,
   `outcome` enum('win','loss','partial') NOT NULL,
@@ -198,6 +204,7 @@ CREATE TABLE IF NOT EXISTS `kalshiPerformance` (
 
 CREATE TABLE IF NOT EXISTS `kalshiCapital` (
   `id` int AUTO_INCREMENT NOT NULL,
+  `userId` int NOT NULL,
   `startingBalance` double NOT NULL DEFAULT 0,
   `currentBalance` double NOT NULL DEFAULT 0,
   `totalPnl` double NOT NULL DEFAULT 0,
@@ -207,7 +214,8 @@ CREATE TABLE IF NOT EXISTS `kalshiCapital` (
   `totalTrades` int NOT NULL DEFAULT 0,
   `winningTrades` int NOT NULL DEFAULT 0,
   `updatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  CONSTRAINT `kalshiCapital_id` PRIMARY KEY (`id`)
+  CONSTRAINT `kalshiCapital_id` PRIMARY KEY (`id`),
+  CONSTRAINT `kalshiCapital_userId_unique` UNIQUE (`userId`)
 );
 
 CREATE TABLE IF NOT EXISTS `tradingPreferences` (

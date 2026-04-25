@@ -169,7 +169,7 @@ describe("kalshi market-data router", () => {
     const result = await caller.kalshi.getTradeHistory({ limit: 25 });
 
     expect(result).toEqual(history);
-    expect(mocks.getKalshiTradeHistory).toHaveBeenCalledWith(25);
+    expect(mocks.getKalshiTradeHistory).toHaveBeenCalledWith(25, 1);
   });
 
   it("returns a truthful performance overview", async () => {

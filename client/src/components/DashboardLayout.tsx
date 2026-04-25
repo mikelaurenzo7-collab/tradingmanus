@@ -16,16 +16,14 @@ import {
   SidebarMenuItem,
   SidebarProvider,
   SidebarTrigger,
-  useSidebar,
 } from "@/components/ui/sidebar";
 import { getLoginUrl } from "@/const";
-import { useIsMobile } from "@/hooks/useMobile";
 import { useAuth } from "@/_core/hooks/useAuth";
-import { LayoutDashboard, LogOut, PanelLeft, Zap, TrendingUp, Shield, FileText, Plug, BookOpen, BarChart3, Brain, Briefcase, LineChart, SlidersHorizontal } from "lucide-react";
-import { CSSProperties, useEffect, useRef, useState } from "react";
-import { useLocation } from "wouter";
+import { LayoutDashboard, LogOut, TrendingUp, Shield, FileText, Plug, BookOpen, BarChart3, Brain, Briefcase, LineChart, SlidersHorizontal, AlertTriangle, Loader2 } from "lucide-react";
+import { CSSProperties, useEffect, useState } from "react";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { Button } from "./ui/button";
+import { trpc } from "@/lib/trpc";
 
 const menuItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/" },
@@ -59,6 +57,21 @@ export default function DashboardLayout({
     return saved ? parseInt(saved, 10) : DEFAULT_WIDTH;
   });
   const { loading, user, logout } = useAuth();
+  const utils = trpc.useUtils();
+  const tradingPreferencesQuery = trpc.kalshi.getTradingPreferences.useQuery(undefined, {
+    enabled: Boolean(user),
+  });
+  const killSwitchMutation = trpc.kalshi.killSwitch.useMutation({
+    onSuccess: async () => {
+      await Promise.all([
+        utils.kalshi.getTradingPreferences.invalidate(),
+        utils.kalshi.getKalshiAccountStatus.invalidate(),
+        utils.kalshi.getPositions.invalidate(),
+        utils.kalshi.getCapital.invalidate(),
+      ]);
+    },
+  });
+  const liveTradingArmed = tradingPreferencesQuery.data?.liveTradingEnabled ?? false;
 
   useEffect(() => {
     document.title = "Laurenzo";
@@ -162,8 +175,36 @@ export default function DashboardLayout({
           <div className="flex items-center gap-2">
             <SidebarTrigger />
           </div>
-          <div className="text-sm text-muted-foreground">
-            Laurenzo Trading Dashboard
+          <div className="flex items-center gap-3">
+            <div className={`hidden rounded-full border px-3 py-1 text-xs font-semibold sm:block ${liveTradingArmed ? "border-red-400/50 bg-red-500/10 text-red-200" : "border-emerald-400/30 bg-emerald-500/10 text-emerald-200"}`}>
+              {liveTradingArmed ? "Live trading armed" : "Live trading disarmed"}
+            </div>
+            {liveTradingArmed ? (
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={killSwitchMutation.isPending}
+                onClick={() => {
+                  const confirmed = window.confirm(
+                    "Activate the Kalshi kill switch? This will disarm live trading and submit close orders for your open positions."
+                  );
+                  if (confirmed) {
+                    killSwitchMutation.mutate();
+                  }
+                }}
+                title="Cancel live autonomy and submit close orders for open Kalshi positions."
+              >
+                {killSwitchMutation.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <AlertTriangle className="h-4 w-4" />
+                )}
+                Kill switch
+              </Button>
+            ) : null}
+            <div className="hidden text-sm text-muted-foreground md:block">
+              Laurenzo Trading Dashboard
+            </div>
           </div>
         </header>
         <main className="flex-1 overflow-auto">

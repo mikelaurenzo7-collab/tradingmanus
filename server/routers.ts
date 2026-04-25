@@ -11,7 +11,6 @@ import {
   placeKalshiOrder,
   cancelKalshiOrder,
   getKalshiOrderStatus,
-  getKalshiPositions,
   closeKalshiPosition,
   activateKalshiKillSwitch,
 } from "./_core/kalshiExecution";
@@ -38,6 +37,7 @@ import * as kalshiCredDb from "./db.kalshi-credentials";
 import * as tradingPreferencesDb from "./db.trading-preferences";
 import { trainingRouter } from "./training.router";
 import { advancedRouter } from "./advanced.router";
+import { calculateKalshiBuyOrderRisk, MAX_KALSHI_ORDER_CONTRACTS } from "./_core/kalshiRisk";
 
 import { COOKIE_NAME } from "../shared/const";
 
@@ -51,6 +51,17 @@ const BASE_RISK_LIMITS = {
 
 function clampRiskLimit(value: number, minimum: number, maximum: number) {
   return Math.max(minimum, Math.min(maximum, Number.isFinite(value) ? value : minimum));
+}
+
+function getRequiredUserId(ctx: { user: { id?: number | null } }) {
+  if (!Number.isInteger(ctx.user.id) || Number(ctx.user.id) <= 0) {
+    throw new TRPCError({
+      code: "UNAUTHORIZED",
+      message: "Invalid authenticated user context.",
+    });
+  }
+
+  return Number(ctx.user.id);
 }
 
 const tradingPreferencesInput = z.object({
@@ -255,8 +266,9 @@ function buildAutonomyActivitySummary(events: Array<any>) {
   };
 }
 
-async function getDynamicRiskLimits() {
-  const capital = await db.getKalshiCapital();
+async function getDynamicRiskLimits(userId: number) {
+  const scopedUserId = getRequiredUserId({ user: { id: userId } });
+  const capital = await db.getKalshiCapital(scopedUserId);
   const maxCapital = Math.max(
     0,
     Number(capital?.currentBalance ?? capital?.startingBalance ?? 0)
@@ -339,23 +351,38 @@ export const appRouter = router({
         z.object({
           marketId: z.string(),
           side: z.enum(["yes", "no"]),
-          quantity: z.number(),
-          limitPrice: z.number(),
+          quantity: z.number().int().min(1).max(MAX_KALSHI_ORDER_CONTRACTS),
+          limitPrice: z.number().min(0.01).max(0.99),
         })
       )
       .mutation(async ({ input, ctx }) => {
         try {
-          const [capital, openPositions, todayRealizedLoss, riskLimits] = await Promise.all([
-            db.getKalshiCapital(),
-            db.getOpenKalshiPositions(),
-            db.getTodayRealizedLoss(),
-            getDynamicRiskLimits(),
+          const userId = getRequiredUserId(ctx);
+          const [capital, openPositions, todayRealizedLoss, riskLimits, preferences, todayOrderCount] = await Promise.all([
+            db.getKalshiCapital(userId),
+            db.getOpenKalshiPositions(userId),
+            db.getTodayRealizedLoss(userId),
+            getDynamicRiskLimits(userId),
+            tradingPreferencesDb.getTradingPreferences(userId),
+            db.getTodayKalshiOrderCount(userId),
           ]);
-          // Risk exposure: quantity * limitPrice (limitPrice is 0-1, so max exposure is quantity)
-          const orderExposure = Math.max(
-            Number(input.quantity) * Number(input.limitPrice),
-            Number(input.quantity) * (1 - Number(input.limitPrice))
-          );
+          const orderRisk = calculateKalshiBuyOrderRisk(input);
+          const orderExposure = orderRisk.orderExposure;
+          const maxLossOnTrade = orderRisk.maxLossOnTrade;
+
+          if (todayOrderCount >= preferences.maxDailyOrders) {
+            return {
+              success: false,
+              error: `Daily order cap reached (${preferences.maxDailyOrders})`,
+            };
+          }
+
+          if (orderExposure > preferences.maxOrderNotional) {
+            return {
+              success: false,
+              error: `Order exposure of $${orderExposure.toFixed(2)} exceeds your configured max order notional of $${preferences.maxOrderNotional}`,
+            };
+          }
 
           if (openPositions.length >= riskLimits.maxOpenPositions) {
             return {
@@ -365,18 +392,14 @@ export const appRouter = router({
           }
 
           // Position size check: total capital at risk
-          if (Number(input.quantity) > riskLimits.maxPositionSize) {
+          if (orderExposure > riskLimits.maxPositionSize) {
             return {
               success: false,
-              error: `Order quantity exceeds max position size of $${riskLimits.maxPositionSize}`,
+              error: `Order exposure exceeds max position size of $${riskLimits.maxPositionSize}`,
             };
           }
 
           // Max loss check: worst-case loss on this trade
-          const maxLossOnTrade = Math.min(
-            orderExposure,
-            Number(input.quantity) * (1 - Number(input.limitPrice))
-          );
           if (maxLossOnTrade > riskLimits.maxLossPerTrade) {
             return {
               success: false,
@@ -399,23 +422,23 @@ export const appRouter = router({
           }
 
           const result = await placeKalshiOrder(
-            ctx.user!.id || 1,
+            userId,
             input.marketId,
             input.side,
-            input.quantity,
-            input.limitPrice
+            orderRisk.quantity,
+            orderRisk.limitPrice
           );
 
           if (result.success) {
             await db.logAuditEvent(
               "kalshi_order_placed",
-              JSON.stringify(input),
+              JSON.stringify({ ...input, orderExposure, maxLossOnTrade }),
               ctx.user!.openId
             );
           } else {
             await db.logAuditEvent(
               "kalshi_order_blocked_or_failed",
-              JSON.stringify({ ...input, reason: result.error ?? "unknown" }),
+              JSON.stringify({ ...input, orderExposure, maxLossOnTrade, reason: result.error ?? "unknown" }),
               ctx.user!.openId
             );
           }
@@ -432,7 +455,7 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         try {
           const result = await cancelKalshiOrder(
-            ctx.user!.id || 1,
+            getRequiredUserId(ctx),
             input.orderId
           );
 
@@ -456,7 +479,7 @@ export const appRouter = router({
       .query(async ({ input, ctx }) => {
         try {
           return await getKalshiOrderStatus(
-            ctx.user!.id || 1,
+            getRequiredUserId(ctx),
             input.orderId
           );
         } catch (error) {
@@ -466,9 +489,9 @@ export const appRouter = router({
       }),
 
     // Positions
-    getPositions: protectedProcedure.query(async () => {
+    getPositions: protectedProcedure.query(async ({ ctx }) => {
       try {
-        return await db.getOpenKalshiPositions();
+        return await db.getOpenKalshiPositions(getRequiredUserId(ctx));
       } catch (error) {
         console.error("[Kalshi] Get positions error:", error);
         return [];
@@ -479,9 +502,9 @@ export const appRouter = router({
       .input(
         z.object({ limit: z.number().min(1).max(200).optional() }).optional()
       )
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
         try {
-          return await db.getKalshiTradeHistory(input?.limit ?? 50);
+          return await db.getKalshiTradeHistory(input?.limit ?? 50, getRequiredUserId(ctx));
         } catch (error) {
           console.error("[Kalshi] Get trade history error:", error);
           return [];
@@ -499,7 +522,7 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         try {
           const result = await closeKalshiPosition(
-            ctx.user!.id || 1,
+            getRequiredUserId(ctx),
             input.positionId,
             input.marketId,
             input.currentPrice
@@ -523,7 +546,7 @@ export const appRouter = router({
     // Capital management
     getCapital: protectedProcedure.query(async ({ ctx }) => {
       try {
-        const userId = ctx.user!.id || 1;
+        const userId = getRequiredUserId(ctx);
         const creds = await kalshiCredDb.getKalshiCredentials(userId);
         if (!creds || creds.accountStatus !== "connected") {
           return null;
@@ -536,7 +559,7 @@ export const appRouter = router({
 
         const [, capital] = await Promise.all([
           kalshiCredDb.updateKalshiAccountEquity(userId, equityResult.equity),
-          db.syncKalshiCapitalWithLiveEquity(equityResult.equity),
+          db.syncKalshiCapitalWithLiveEquity(equityResult.equity, userId),
         ]);
 
         return capital;
@@ -550,7 +573,7 @@ export const appRouter = router({
       .input(z.object({ amount: z.number().default(0) }))
       .mutation(async ({ input, ctx }) => {
         try {
-          await db.initializeKalshiCapital(input.amount);
+          await db.initializeKalshiCapital(input.amount, getRequiredUserId(ctx));
           await db.logAuditEvent(
             "kalshi_capital_initialized",
             `$${input.amount}`,
@@ -564,9 +587,9 @@ export const appRouter = router({
       }),
 
     // Signals
-    getRecentSignals: protectedProcedure.query(async () => {
+    getRecentSignals: protectedProcedure.query(async ({ ctx }) => {
       try {
-        return await db.getRecentSignals(20);
+        return await db.getRecentSignals(20, getRequiredUserId(ctx));
       } catch (error) {
         console.error("[Kalshi] Get signals error:", error);
         return [];
@@ -600,9 +623,13 @@ export const appRouter = router({
     // Risk controls
     killSwitch: protectedProcedure.mutation(async ({ ctx }) => {
       try {
-          const result = await activateKalshiKillSwitch(
-            ctx.user!.id || 1
-          );
+        const userId = getRequiredUserId(ctx);
+        const result = await activateKalshiKillSwitch(userId);
+        const preferences = await tradingPreferencesDb.getTradingPreferences(userId);
+        await tradingPreferencesDb.saveTradingPreferences(userId, {
+          ...preferences,
+          liveTradingEnabled: false,
+        });
         await db.logAuditEvent(
           "kalshi_kill_switch_activated",
           JSON.stringify({
@@ -626,7 +653,7 @@ export const appRouter = router({
       }
     }),
 
-    getRiskLimits: protectedProcedure.query(async () => getDynamicRiskLimits()),
+    getRiskLimits: protectedProcedure.query(async ({ ctx }) => getDynamicRiskLimits(getRequiredUserId(ctx))),
 
     // Phase 2: Market Feed Subscriptions
     subscribeMarketFeed: protectedProcedure
@@ -765,7 +792,7 @@ export const appRouter = router({
             0.35
           );
 
-          await saveSignals(filteredSignals);
+          await saveSignals(filteredSignals, getRequiredUserId(ctx));
           await db.logAuditEvent(
             "kalshi_signals_generated",
             JSON.stringify({
@@ -789,9 +816,9 @@ export const appRouter = router({
           minExecutionScore: z.number().min(0).max(1).optional().default(0.6),
         })
       )
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
         try {
-          const recentSignals = await db.getRecentSignals(50);
+          const recentSignals = await db.getRecentSignals(50, getRequiredUserId(ctx));
           return getTopSignalsForExecution(
             recentSignals,
             input.topN,
@@ -807,18 +834,18 @@ export const appRouter = router({
       .input(
         z.object({ limit: z.number().min(1).max(200).optional().default(50) })
       )
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
         try {
-          return await db.getRecentSignals(input.limit);
+          return await db.getRecentSignals(input.limit, getRequiredUserId(ctx));
         } catch (error) {
           console.error("[Kalshi] Get signal history error:", error);
           return [];
         }
       }),
 
-    getPerformanceOverview: protectedProcedure.query(async () => {
+    getPerformanceOverview: protectedProcedure.query(async ({ ctx }) => {
       try {
-        return await getPerformanceOverview();
+        return await getPerformanceOverview(getRequiredUserId(ctx));
       } catch (error) {
         console.error("[Kalshi] Get performance overview error:", error);
         throw new TRPCError({
@@ -858,7 +885,7 @@ export const appRouter = router({
             };
           }
 
-          const userId = ctx.user!.id || 1;
+          const userId = getRequiredUserId(ctx);
 
           try {
             await kalshiCredDb.saveKalshiCredentials(
@@ -867,7 +894,7 @@ export const appRouter = router({
               input.privateKey,
               equityResult.equity
             );
-            await db.syncKalshiCapitalWithLiveEquity(equityResult.equity);
+            await db.syncKalshiCapitalWithLiveEquity(equityResult.equity, userId);
             await db.logAuditEvent(
               "kalshi_account_connected",
               `Equity: $${equityResult.equity}`,
@@ -901,7 +928,7 @@ export const appRouter = router({
 
     getKalshiAccountStatus: protectedProcedure.query(async ({ ctx }) => {
       try {
-        const userId = ctx.user!.id || 1;
+        const userId = getRequiredUserId(ctx);
         const [creds, preferences] = await Promise.all([
           kalshiCredDb.getKalshiCredentials(userId),
           tradingPreferencesDb.getTradingPreferences(userId),
@@ -939,7 +966,7 @@ export const appRouter = router({
 
         await Promise.all([
           kalshiCredDb.updateKalshiAccountEquity(userId, equityResult.equity),
-          db.syncKalshiCapitalWithLiveEquity(equityResult.equity),
+          db.syncKalshiCapitalWithLiveEquity(equityResult.equity, userId),
         ]);
 
         return {
@@ -963,7 +990,7 @@ export const appRouter = router({
 
     getTradingPreferences: protectedProcedure.query(async ({ ctx }) => {
       try {
-        const userId = ctx.user!.id || 1;
+        const userId = getRequiredUserId(ctx);
         return await tradingPreferencesDb.getTradingPreferences(userId);
       } catch (error) {
         console.error("[Kalshi] Get trading preferences error:", error);
@@ -979,14 +1006,20 @@ export const appRouter = router({
       .input(tradingPreferencesInput)
       .mutation(async ({ ctx, input }) => {
         try {
-          const userId = ctx.user!.id || 1;
-          const creds = await kalshiCredDb.getKalshiCredentials(userId);
-          const isConnected = creds?.accountStatus === "connected";
+          const userId = getRequiredUserId(ctx);
+          const currentPreferences = await tradingPreferencesDb.getTradingPreferences(userId);
 
-          if (input.liveTradingEnabled && input.autonomyMode !== "manual" && !isConnected) {
+          if (currentPreferences.liveTradingEnabled) {
             throw new TRPCError({
               code: "BAD_REQUEST",
-              message: "Connect a live Kalshi account before enabling live trading.",
+              message: "Disarm live trading before changing autonomy policy settings.",
+            });
+          }
+
+          if (input.liveTradingEnabled) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: "Save policy changes while disarmed, then use the arm live trading action.",
             });
           }
 
@@ -1023,7 +1056,7 @@ export const appRouter = router({
       .input(z.object({ enabled: z.boolean() }))
       .mutation(async ({ ctx, input }) => {
         try {
-          const userId = ctx.user!.id || 1;
+          const userId = getRequiredUserId(ctx);
           const [creds, preferences] = await Promise.all([
             kalshiCredDb.getKalshiCredentials(userId),
             tradingPreferencesDb.getTradingPreferences(userId),
@@ -1089,7 +1122,7 @@ export const appRouter = router({
 
     disconnectKalshiAccount: protectedProcedure.mutation(async ({ ctx }) => {
       try {
-        const userId = ctx.user!.id || 1;
+        const userId = getRequiredUserId(ctx);
         await kalshiCredDb.deleteKalshiCredentials(userId);
         await db.logAuditEvent(
           "kalshi_account_disconnected",

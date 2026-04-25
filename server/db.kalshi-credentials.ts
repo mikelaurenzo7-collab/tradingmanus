@@ -17,8 +17,8 @@ export async function saveKalshiCredentials(
     throw new Error("Database not initialized");
   }
 
-  const encryptedApiKey = encryptCredential(apiKey);
-  const encryptedPrivateKey = encryptCredential(privateKey);
+  const encryptedApiKey = encryptCredential(apiKey, userId);
+  const encryptedPrivateKey = encryptCredential(privateKey, userId);
 
   try {
     await database
@@ -72,8 +72,8 @@ export async function getKalshiCredentials(userId: number) {
     return {
       id: cred.id,
       userId: cred.userId,
-      apiKey: decryptCredential(cred.apiKeyEncrypted),
-      privateKey: decryptCredential(cred.privateKeyEncrypted),
+      apiKey: decryptCredential(cred.apiKeyEncrypted, cred.userId),
+      privateKey: decryptCredential(cred.privateKeyEncrypted, cred.userId),
       accountEquity: cred.accountEquity,
       accountStatus: cred.accountStatus,
       lastSyncedAt: cred.lastSyncedAt,

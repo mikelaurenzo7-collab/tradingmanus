@@ -209,18 +209,18 @@ describe("scheduled away-from-chat trading", () => {
     expect(result.decision).toMatchObject({
       marketId: "KXTEST-1",
       side: "yes",
-      quantity: 5,
+      quantity: 11,
       limitPrice: 0.43,
       availableCapital: 100,
       maxBudget: 5,
     });
-    expect(result.decision?.orderExposure).toBeCloseTo(2.85, 6);
-    expect(result.decision?.maxLossOnTrade).toBeCloseTo(2.85, 6);
-    expect(mocks.placeKalshiOrder).toHaveBeenCalledWith(7, "KXTEST-1", "yes", 5, 0.43);
+    expect(result.decision?.orderExposure).toBeCloseTo(4.73, 6);
+    expect(result.decision?.maxLossOnTrade).toBeCloseTo(4.73, 6);
+    expect(mocks.placeKalshiOrder).toHaveBeenCalledWith(7, "KXTEST-1", "yes", 11, 0.43);
     expect(mocks.logAuditEvent).toHaveBeenNthCalledWith(
       2,
       "scheduled_autonomy_order_placed",
-      expect.stringContaining('"orderExposure":2.8500000000000005'),
+      expect.stringContaining('"orderExposure":4.729'),
       "away-open-id"
     );
     expect(mocks.logAuditEvent).toHaveBeenCalledWith(
