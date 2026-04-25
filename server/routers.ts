@@ -140,7 +140,7 @@ function parseDecisionDetails(details: Record<string, unknown> | null): {
   };
 }
 
-function isOrderPlaced(value: unknown) {
+function isOrderPlacedFlag(value: unknown) {
   return Number(value ?? 0) === 1;
 }
 
@@ -188,7 +188,7 @@ function buildAutonomyActivitySummary(runs: Array<any>) {
           rejectedCandidates: Array.isArray(rejectedCandidatesPayload) ? rejectedCandidatesPayload : [],
         }
       : null,
-    lastOrder: lastRun && isOrderPlaced(lastRun.orderPlaced)
+    lastOrder: lastRun && isOrderPlacedFlag(lastRun.orderPlaced)
       ? {
           eventType:
             String(lastRun.status) === "executed"
@@ -225,7 +225,7 @@ function buildAutonomyActivitySummary(runs: Array<any>) {
         status: run.status,
         signalsGenerated: Number(run.signalsGenerated ?? 0),
         executionCandidates: Number(run.executionCandidates ?? 0),
-        orderPlaced: isOrderPlaced(run.orderPlaced),
+        orderPlaced: isOrderPlacedFlag(run.orderPlaced),
         reconciliationStatus: run.reconciliationStatus,
         reconciliationReason: run.reconciliationReason,
       },
@@ -235,7 +235,7 @@ function buildAutonomyActivitySummary(runs: Array<any>) {
         status: run.status,
         signalsGenerated: Number(run.signalsGenerated ?? 0),
         executionCandidates: Number(run.executionCandidates ?? 0),
-        orderPlaced: isOrderPlaced(run.orderPlaced),
+        orderPlaced: isOrderPlacedFlag(run.orderPlaced),
         reconciliationStatus: run.reconciliationStatus,
         reconciliationReason: run.reconciliationReason,
       }),

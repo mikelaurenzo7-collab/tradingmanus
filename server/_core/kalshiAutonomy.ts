@@ -31,7 +31,7 @@ const BASE_RISK_LIMITS = {
 const SCHEDULED_SCAN_EVENT = "scheduled_autonomy_scan_completed";
 const HOURLY_SCAN_MIN_INTERVAL_MS = 55 * 60 * 1000;
 const RECENT_MANUAL_ORDER_COOLDOWN_MS = 5 * 60 * 1000;
-const AUTONOMY_RUN_DEDUPE_WINDOW_MS = 15 * 60 * 1000;
+const AUTONOMY_RUN_DEDUPLICATION_WINDOW_MS = 15 * 60 * 1000;
 const MARKET_DATA_STALE_AFTER_MS = 30 * 1000;
 const MAX_SCHEDULED_MARKETS = 24;
 
@@ -203,7 +203,7 @@ function buildTriggerSource(triggeredByOpenId: string) {
 
 function getRunBucketStart(now: Date) {
   const nowMs = now.getTime();
-  const bucketMs = Math.floor(nowMs / AUTONOMY_RUN_DEDUPE_WINDOW_MS) * AUTONOMY_RUN_DEDUPE_WINDOW_MS;
+  const bucketMs = Math.floor(nowMs / AUTONOMY_RUN_DEDUPLICATION_WINDOW_MS) * AUTONOMY_RUN_DEDUPLICATION_WINDOW_MS;
   return new Date(bucketMs);
 }
 
