@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   getKalshiCapital: vi.fn(),
   getOpenKalshiPositions: vi.fn(),
   getRecentSignals: vi.fn(),
+  getRecentAutonomyRuns: vi.fn(),
 }));
 
 vi.mock("./db", () => ({
@@ -20,6 +21,7 @@ vi.mock("./db", () => ({
   initializeKalshiCapital: vi.fn(),
   getRecentSignals: mocks.getRecentSignals,
   getAuditLog: vi.fn(async () => []),
+  getRecentAutonomyRuns: mocks.getRecentAutonomyRuns,
   getKalshiTradeHistory: mocks.getKalshiTradeHistory,
 }));
 
@@ -80,6 +82,7 @@ describe("kalshi market-data router", () => {
     });
     mocks.getOpenKalshiPositions.mockResolvedValue([]);
     mocks.getRecentSignals.mockResolvedValue([]);
+    mocks.getRecentAutonomyRuns.mockResolvedValue([]);
   });
 
   it("upserts each market returned by getMarkets", async () => {
@@ -230,6 +233,59 @@ describe("kalshi market-data router", () => {
     await expect(caller.kalshi.getPerformanceOverview()).rejects.toMatchObject({
       code: "INTERNAL_SERVER_ERROR",
       message: "Unable to load performance overview",
+    });
+  });
+
+  it("builds autonomy activity from structured run-ledger rows", async () => {
+    mocks.getRecentAutonomyRuns.mockResolvedValue([
+      {
+        id: 11,
+        runId: "run-11",
+        status: "executed",
+        startedAt: new Date("2026-04-25T08:45:00Z"),
+        completedAt: new Date("2026-04-25T08:45:10Z"),
+        reason: "scheduled autonomy found an eligible non-heuristic signal and placed a live order",
+        signalsGenerated: 4,
+        executionCandidates: 2,
+        orderPlaced: 1,
+        candidateMarketId: "FED-2026",
+        executedMarketId: "FED-2026",
+        autonomyMode: "fully_autonomous",
+        executionCadence: "continuous_watch",
+        triggerSource: "vercel_cron",
+        reconciliationStatus: "pending",
+        reconciliationReason: "exchange accepted the order but the local order ledger write failed",
+        decision: JSON.stringify({
+          marketId: "FED-2026",
+          side: "yes",
+          confidence: 0.82,
+          executionScore: 0.8,
+          expectedValue: 0.11,
+          limitPrice: 0.42,
+          quantity: 10,
+          availableCapital: 100,
+          maxBudget: 5,
+          orderExposure: 4.2,
+          maxLossOnTrade: 4.2,
+          reasoning: "Probability edge held after duo review",
+          blockedBy: null,
+        }),
+        candidateSet: JSON.stringify([{ marketId: "FED-2026" }]),
+        rejectedCandidates: JSON.stringify([]),
+      },
+    ]);
+
+    const caller = appRouter.createCaller(createProtectedContext());
+    const result = await caller.kalshi.getAutonomyActivity();
+
+    expect(result.lastRun).toMatchObject({
+      runId: "run-11",
+      status: "executed",
+      executedMarketId: "FED-2026",
+      reconciliationStatus: "pending",
+    });
+    expect(result.recentActivity[0]).toMatchObject({
+      eventType: "scheduled_autonomy_run_executed",
     });
   });
 });

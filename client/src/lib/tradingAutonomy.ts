@@ -18,6 +18,9 @@ export const RISK_POSTURES = [
   "aggressive",
 ] as const;
 
+const RECONCILIATION_PENDING_MESSAGE =
+  "the exchange accepted the order but the local ledger still needs repair.";
+
 export type TradingAutonomyMode = (typeof AUTONOMY_MODES)[number];
 export type ExecutionCadence = (typeof EXECUTION_CADENCES)[number];
 export type RiskPosture = (typeof RISK_POSTURES)[number];
@@ -207,7 +210,7 @@ export function getAutonomyReviewSummary(activity: AutonomyActivitySummary | nul
   const counts = `${lastRun.signalsGenerated} signals · ${lastRun.executionCandidates} execution-ready candidates`;
   const reconciliationLine =
     lastRun.reconciliationStatus === "pending"
-      ? ` Reconciliation required: ${lastRun.reconciliationReason ?? "the exchange accepted the order but the local ledger still needs repair."}`
+      ? ` Reconciliation required: ${lastRun.reconciliationReason ?? RECONCILIATION_PENDING_MESSAGE}`
       : "";
 
   switch (lastRun.status) {

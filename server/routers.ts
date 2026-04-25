@@ -140,6 +140,10 @@ function parseDecisionDetails(details: Record<string, unknown> | null): {
   };
 }
 
+function isOrderPlaced(value: unknown) {
+  return Number(value ?? 0) === 1;
+}
+
 function buildAutonomyActivitySummary(runs: Array<any>) {
   const recentRuns = runs.slice(0, 8);
   const lastRun = recentRuns[0] ?? null;
@@ -184,7 +188,7 @@ function buildAutonomyActivitySummary(runs: Array<any>) {
           rejectedCandidates: Array.isArray(rejectedCandidatesPayload) ? rejectedCandidatesPayload : [],
         }
       : null,
-    lastOrder: lastRun && lastRun.orderPlaced
+    lastOrder: lastRun && isOrderPlaced(lastRun.orderPlaced)
       ? {
           eventType:
             String(lastRun.status) === "executed"
@@ -221,7 +225,7 @@ function buildAutonomyActivitySummary(runs: Array<any>) {
         status: run.status,
         signalsGenerated: Number(run.signalsGenerated ?? 0),
         executionCandidates: Number(run.executionCandidates ?? 0),
-        orderPlaced: Number(run.orderPlaced ?? 0) === 1,
+        orderPlaced: isOrderPlaced(run.orderPlaced),
         reconciliationStatus: run.reconciliationStatus,
         reconciliationReason: run.reconciliationReason,
       },
@@ -231,7 +235,7 @@ function buildAutonomyActivitySummary(runs: Array<any>) {
         status: run.status,
         signalsGenerated: Number(run.signalsGenerated ?? 0),
         executionCandidates: Number(run.executionCandidates ?? 0),
-        orderPlaced: Number(run.orderPlaced ?? 0) === 1,
+        orderPlaced: isOrderPlaced(run.orderPlaced),
         reconciliationStatus: run.reconciliationStatus,
         reconciliationReason: run.reconciliationReason,
       }),

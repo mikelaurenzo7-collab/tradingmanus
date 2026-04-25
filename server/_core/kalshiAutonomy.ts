@@ -202,7 +202,8 @@ function buildTriggerSource(triggeredByOpenId: string) {
 }
 
 function getRunBucketStart(now: Date) {
-  const bucketMs = Math.floor(now.getTime() / AUTONOMY_RUN_DEDUPE_WINDOW_MS) * AUTONOMY_RUN_DEDUPE_WINDOW_MS;
+  const nowMs = now.getTime();
+  const bucketMs = Math.floor(nowMs / AUTONOMY_RUN_DEDUPE_WINDOW_MS) * AUTONOMY_RUN_DEDUPE_WINDOW_MS;
   return new Date(bucketMs);
 }
 
@@ -213,6 +214,7 @@ function buildRunKey(
   now: Date
 ) {
   const bucket = getRunBucketStart(now).toISOString();
+  // Format: scheduled:<userId>:<triggerSource>:<executionCadence>:<bucketStartIso>
   return `scheduled:${userId}:${buildTriggerSource(triggeredByOpenId)}:${executionCadence}:${bucket}`;
 }
 
@@ -232,7 +234,7 @@ function buildAppliedGuardrails(
   riskLimits?: Awaited<ReturnType<typeof getDynamicRiskLimits>>
 ) {
   return [
-    { name: "live_trading_enabled", value: preferences.liveTradingEnabled === true || preferences.liveTradingEnabled === 1 },
+    { name: "live_trading_enabled", value: Boolean(preferences.liveTradingEnabled) },
     { name: "autonomy_mode", value: preferences.autonomyMode },
     { name: "execution_cadence", value: preferences.executionCadence },
     { name: "min_signal_confidence", value: preferences.minSignalConfidence },

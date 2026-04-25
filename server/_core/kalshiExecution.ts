@@ -309,7 +309,7 @@ export async function placeKalshiOrder(
       success: true,
       orderId,
       needsReconciliation: false,
-      reconciliationReason: null,
+      reconciliationReason: undefined,
       exchangeRequest: {
         marketId,
         action: "buy",
