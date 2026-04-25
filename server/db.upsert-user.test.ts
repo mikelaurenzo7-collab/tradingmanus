@@ -53,6 +53,24 @@ vi.mock("drizzle-orm/mysql2", () => ({
   drizzle: mocks.drizzleInit,
 }));
 
+vi.mock("./_core/env", () => ({
+  ENV: {
+    databaseUrl: "mysql://user:pass@localhost:3306/testdb",
+    appId: "",
+    cookieSecret: "test-secret",
+    oAuthServerUrl: "",
+    ownerOpenId: "",
+    kalshiApiKey: "",
+    isProduction: false,
+    forgeApiUrl: "",
+    forgeApiKey: "",
+    gnewsApiKey: "",
+  },
+  validateServerEnv: vi.fn(),
+  getCredentialEncryptionSecret: vi.fn().mockReturnValue("test-secret"),
+  getKalshiApiKey: vi.fn().mockReturnValue("test-key"),
+}));
+
 describe("upsertUser", () => {
   beforeEach(() => {
     vi.clearAllMocks();
