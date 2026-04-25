@@ -76,6 +76,12 @@ vi.mock("./_core/kalshiExecution", () => ({
   placeKalshiOrder: mocks.placeKalshiOrder,
 }));
 
+vi.mock("./db.training", () => ({
+  getUserTrainingInstructions: vi.fn().mockResolvedValue([]),
+  isInstructionActiveNow: vi.fn().mockReturnValue(false),
+  applyInstructionsToSignals: vi.fn().mockImplementation((signals: any[]) => signals),
+}));
+
 import {
   runScheduledAutonomousTrading,
   runScheduledAutonomousTradingBatch,
