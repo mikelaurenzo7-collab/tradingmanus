@@ -57,6 +57,7 @@ export default function DashboardLayout({
     return saved ? parseInt(saved, 10) : DEFAULT_WIDTH;
   });
   const { loading, user, logout } = useAuth();
+  const loginUrl = getLoginUrl();
   const utils = trpc.useUtils();
   const tradingPreferencesQuery = trpc.kalshi.getTradingPreferences.useQuery(undefined, {
     enabled: Boolean(user),
@@ -95,20 +96,25 @@ export default function DashboardLayout({
               Kalshi Trading
             </h1>
             <p className="text-sm text-muted-foreground text-center max-w-sm">
-              Sign in with your Manus account to start trading on Kalshi prediction markets with real signals and risk controls.
+              Sign in to access your Kalshi trading dashboard, live signals, and risk controls.
             </p>
           </div>
           <Button
             onClick={() => {
-              window.location.href = getLoginUrl();
+              if (loginUrl) {
+                window.location.href = loginUrl;
+              }
             }}
+            disabled={!loginUrl}
             size="lg"
             className="w-full shadow-lg hover:shadow-xl transition-all laurenzo-button"
           >
-            Sign in with Manus
+            {loginUrl ? "Sign in" : "Sign-in not configured"}
           </Button>
           <p className="text-xs text-muted-foreground text-center">
-            After signing in: Connect your Kalshi API key to start trading
+            {loginUrl
+              ? "After signing in: Connect your Kalshi API key to start trading"
+              : "Set VITE_OAUTH_PORTAL_URL and VITE_APP_ID to enable sign-in for this preview."}
           </p>
         </div>
       </div>

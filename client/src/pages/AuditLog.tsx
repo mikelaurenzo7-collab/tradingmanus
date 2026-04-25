@@ -61,7 +61,7 @@ export default function AuditLog() {
         <CardHeader>
           <CardTitle>Latest away-from-chat review</CardTitle>
           <CardDescription>
-            Laurenzo now records whether the scheduled autonomy loop executed, generated analysis only, skipped, or was blocked.
+            The system records whether the scheduled autonomy loop executed, generated analysis only, skipped, or was blocked.
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">

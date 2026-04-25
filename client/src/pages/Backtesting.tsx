@@ -184,6 +184,11 @@ export default function Backtesting() {
             >
               Scenario Sandbox
             </Button>
+            {liveTrades.length === 0 ? (
+              <p className="basis-full text-xs text-slate-500">
+                Live trade-history mode unlocks after your first closed Kalshi trade. Use the scenario sandbox until then.
+              </p>
+            ) : null}
           </div>
         </div>
 

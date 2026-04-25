@@ -21,10 +21,10 @@ Kalshi-focused trading dashboard for local testing and deployment validation.
 3. Optional integrations:
    - `OWNER_OPEN_ID`
    - `KALSHI_API_KEY` (only needed for future server-level Kalshi data integrations; user trading uses user-connected credentials)
-   - `BUILT_IN_FORGE_API_URL`
-   - `BUILT_IN_FORGE_API_KEY`
-   - `VITE_FRONTEND_FORGE_API_URL`
-   - `VITE_FRONTEND_FORGE_API_KEY`
+   - `BUILT_IN_FORGE_API_URL` (optional Manus Forge proxy base URL for auxiliary app services, not Kalshi)
+   - `BUILT_IN_FORGE_API_KEY` (optional server-side Forge proxy key)
+   - `VITE_FRONTEND_FORGE_API_URL` (optional browser-facing Forge proxy URL, for example a Maps proxy)
+   - `VITE_FRONTEND_FORGE_API_KEY` (optional browser-facing Forge proxy key)
    - `VITE_ANALYTICS_ENDPOINT`
    - `VITE_ANALYTICS_WEBSITE_ID`
 
@@ -100,6 +100,12 @@ Other platforms need an adapter sprint rather than a small patch:
 - PredictIt and similar legacy venues require fresh legal/API verification before any integration plan.
 
 Before adding another exchange, introduce a platform adapter boundary with typed operations for credentials, account equity, market discovery, order placement, order sync, positions, and risk normalization. Then either add platform-aware generic ledgers or explicit platform columns/indexes so every order, fill, position, signal, audit event, and capital record remains user-scoped and exchange-scoped. The frontend should move from direct `kalshi` assumptions to a platform selector and capability-aware copy.
+
+## Manus Forge endpoint
+
+`https://forge.manus.ai` is a Manus-hosted Forge proxy endpoint. In this codebase, Forge settings are optional auxiliary infrastructure for app services such as LLM calls, data proxies, storage/map/notification helpers, or browser map proxying. They are separate from Kalshi and are not the API endpoint used to place trades.
+
+For Kalshi launch testing, the important live-trading credentials are the user-connected Kalshi API key ID and private key entered through Connect Kalshi. Leave Forge variables blank unless a specific auxiliary feature you use requires them.
 
 ## Notes
 

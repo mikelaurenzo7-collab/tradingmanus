@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { trpc } from "@/lib/trpc";
+import { Link } from "wouter";
 
 export default function Funding() {
   const { data: accountStatus, isLoading } = trpc.kalshi.getKalshiAccountStatus.useQuery();
@@ -149,7 +150,7 @@ export default function Funding() {
           <Alert>
             <AlertCircle className="h-4 w-4" />
             <AlertDescription>
-              <strong>LAURENZO OMEGA Risk Controls:</strong> Risk limits are enforced against your live connected Kalshi balance, including per-trade and daily loss caps. Your dashboard will only size trades from confirmed account equity.
+              <strong>Kalshi risk controls:</strong> Risk limits are enforced against your live connected Kalshi balance, including per-trade and daily loss caps. Your dashboard will only size trades from confirmed account equity.
             </AlertDescription>
           </Alert>
         </>
@@ -187,10 +188,12 @@ export default function Funding() {
                   <span>Click <strong>Start Trading</strong> to begin executing signals</span>
                 </li>
               </ol>
-              <Button className="laurenzo-button w-full mt-6" size="lg">
-                <Zap className="w-5 h-5 mr-2" />
-                Go to Signals
-              </Button>
+              <Link href="/signals">
+                <Button className="laurenzo-button w-full mt-6" size="lg">
+                  <Zap className="w-5 h-5 mr-2" />
+                  Go to Signals
+                </Button>
+              </Link>
             </CardContent>
           </Card>
         </>

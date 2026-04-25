@@ -90,7 +90,7 @@ export default function Connect() {
             <Laptop className="h-4 w-4" />
             <AlertTitle>Fresh-key setup</AlertTitle>
             <AlertDescription>
-              You do <strong>not</strong> need to store your personal Kalshi trading keys in Manus settings. This page is the intended place to connect them.
+              Generate credentials inside Kalshi, then paste them here. This page is the intended place to connect your personal Kalshi trading keys.
             </AlertDescription>
           </Alert>
 
