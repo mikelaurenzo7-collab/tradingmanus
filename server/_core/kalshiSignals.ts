@@ -35,8 +35,32 @@ export interface KalshiSignal {
     spreadProxy?: number;
     totalVolume?: number;
     marketDataQuality?: number;
+    marketCategory?: string;
+    strategyProfile?: StrategyProfileKey;
   };
 }
+
+type StrategyProfileKey =
+  | "macro_data"
+  | "weather_event"
+  | "politics_event"
+  | "sports_event"
+  | "crypto_event"
+  | "general_event";
+
+type StrategyProfileConfig = {
+  executionAdjustment: number;
+  minLiquidity: number;
+};
+
+const STRATEGY_PROFILES: Record<StrategyProfileKey, StrategyProfileConfig> = {
+  macro_data: { executionAdjustment: 0.05, minLiquidity: 0.38 },
+  weather_event: { executionAdjustment: 0.03, minLiquidity: 0.34 },
+  politics_event: { executionAdjustment: -0.02, minLiquidity: 0.45 },
+  sports_event: { executionAdjustment: 0.01, minLiquidity: 0.36 },
+  crypto_event: { executionAdjustment: -0.05, minLiquidity: 0.55 },
+  general_event: { executionAdjustment: 0, minLiquidity: 0.35 },
+};
 
 export interface MarketSentimentContext {
   topic?: string;
@@ -98,6 +122,28 @@ function attachLiquidityMetadata(signal: KalshiSignal, feed?: MarketFeed): Kalsh
   };
 }
 
+function resolveStrategyProfile(market: KalshiMarket): StrategyProfileKey {
+  const bucket = `${market.category ?? ""} ${market.title ?? ""}`.toLowerCase();
+
+  if (/(fed|fomc|cpi|inflation|jobs|unemployment|gdp|treasury|economy|recession)/.test(bucket)) {
+    return "macro_data";
+  }
+  if (/(hurricane|storm|rain|snow|temperature|weather|wildfire|earthquake)/.test(bucket)) {
+    return "weather_event";
+  }
+  if (/(election|senate|house|president|politic|approval|primary|governor)/.test(bucket)) {
+    return "politics_event";
+  }
+  if (/(nba|nfl|mlb|nhl|soccer|football|baseball|basketball|tournament|match|game)/.test(bucket)) {
+    return "sports_event";
+  }
+  if (/(bitcoin|btc|ethereum|eth|crypto|solana)/.test(bucket)) {
+    return "crypto_event";
+  }
+
+  return "general_event";
+}
+
 function applySentimentOverlay(
   signal: KalshiSignal,
   sentimentScore: number,
@@ -137,6 +183,7 @@ export async function generateSignalsForMarket(
   sentimentContext?: MarketSentimentContext
 ): Promise<KalshiSignal[]> {
   const signals: KalshiSignal[] = [];
+  const strategyProfile = resolveStrategyProfile(market);
 
   let sentimentOverlay: ReturnType<typeof calculateCompositeSentiment> | null = null;
   if (sentimentContext?.topic) {
@@ -320,7 +367,16 @@ export async function generateSignalsForMarket(
       )
     : signals;
 
-  return sentimentAdjustedSignals.map((signal) => attachLiquidityMetadata(signal, feed));
+  return sentimentAdjustedSignals
+    .map((signal) => ({
+      ...signal,
+      metadata: {
+        ...signal.metadata,
+        marketCategory: market.category ?? "unknown",
+        strategyProfile,
+      },
+    }))
+    .map((signal) => attachLiquidityMetadata(signal, feed));
 }
 
 /**
@@ -393,26 +449,45 @@ export function filterSignalsByMarketConditions(
  * Returns a 0-1 score indicating how ready the signal is to trade
  */
 export function scoreSignalForExecution(signal: KalshiSignal): number {
-  let score = signal.confidence; // Base score from confidence
+  const expectedValue = Math.max(0, Number.isFinite(signal.expectedValue) ? signal.expectedValue : 0);
+  const normalizedEdge = Math.max(0, Math.min(1, expectedValue / 0.2));
+  const liquidityScore = Math.max(
+    0,
+    Math.min(1, Number.isFinite(signal.metadata?.liquidityScore) ? (signal.metadata?.liquidityScore as number) : 0.5)
+  );
 
-  // Boost for high expected value
-  if (signal.expectedValue > 0.1) {
-    score += 0.1;
+  let score = signal.confidence * 0.6 + normalizedEdge * 0.25 + liquidityScore * 0.15;
+  const strategyProfile = signal.metadata?.strategyProfile ?? "general_event";
+  const strategyConfig = STRATEGY_PROFILES[strategyProfile];
+
+  // Reward more statistically stable styles; discount styles with wider downside variance.
+  if (signal.signalType === "value_play") score += 0.06;
+  if (signal.signalType === "arbitrage") score += 0.04;
+  if (signal.signalType === "momentum") score -= 0.04;
+  if (signal.signalType === "contrarian") score -= 0.08;
+
+  score += strategyConfig.executionAdjustment;
+
+  if (liquidityScore < strategyConfig.minLiquidity) {
+    score -= 0.08;
   }
 
-  // Boost for value plays (more predictable)
-  if (signal.signalType === "value_play") {
-    score += 0.05;
+  // Late-cycle tails near 0/1 are often harder to execute without adverse selection.
+  if (signal.marketPrice <= 0.06 || signal.marketPrice >= 0.94) {
+    score -= 0.08;
+  } else if (signal.marketPrice <= 0.1 || signal.marketPrice >= 0.9) {
+    score -= 0.04;
   }
 
-  // Reduce for momentum (more volatile)
-  if (signal.signalType === "momentum") {
-    score -= 0.05;
+  const spreadProxy = Number(signal.metadata?.spreadProxy ?? 0);
+  if (Number.isFinite(spreadProxy)) {
+    if (spreadProxy > 0.08) score -= 0.05;
+    else if (spreadProxy > 0.04) score -= 0.02;
   }
 
-  // Reduce for contrarian (riskier)
-  if (signal.signalType === "contrarian") {
-    score -= 0.1;
+  const totalVolume = Number(signal.metadata?.totalVolume ?? 0);
+  if (Number.isFinite(totalVolume) && totalVolume >= 5000) {
+    score += 0.03;
   }
 
   return Math.max(0, Math.min(1, score));
@@ -443,10 +518,18 @@ export function rankSignalsByExecution(signals: KalshiSignal[]): Array<KalshiSig
  * Get top N signals ready for execution
  */
 export function getTopSignalsForExecution(signals: KalshiSignal[], topN: number = 5, minExecutionScore: number = 0.6): Array<KalshiSignal & { executionScore: number }> {
-  return rankSignalsByExecution(signals)
+  const ranked = rankSignalsByExecution(signals)
     .filter((s) => !isHeuristicBaselineSignal(s))
-    .filter((s) => s.executionScore >= minExecutionScore)
-    .slice(0, topN);
+    .filter((s) => s.executionScore >= minExecutionScore);
+
+  const bestByMarket = new Map<string, KalshiSignal & { executionScore: number }>();
+  for (const signal of ranked) {
+    if (!bestByMarket.has(signal.marketId)) {
+      bestByMarket.set(signal.marketId, signal);
+    }
+  }
+
+  return Array.from(bestByMarket.values()).slice(0, topN);
 }
 
 /**

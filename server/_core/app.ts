@@ -20,6 +20,11 @@ type AppResponse = ServerResponse & {
 };
 
 type AsyncRouteHandler = (req: AppRequest, res: AppResponse) => Promise<void>;
+type EligibleScheduledUser = {
+  id: number;
+  openId: string;
+  email?: string | null;
+};
 
 function toExpressHandler(handler: AsyncRouteHandler) {
   return (req: unknown, res: unknown) => {
@@ -54,6 +59,23 @@ async function getScheduledTrigger(req: AppRequest) {
   return { authorized: true as const, openId: requester.openId };
 }
 
+export function scopeScheduledUsersToTrigger(
+  users: EligibleScheduledUser[],
+  triggerOpenId: string
+) {
+  if (triggerOpenId === "vercel_cron") {
+    const ownerEmail = ENV.ownerEmail.trim().toLowerCase();
+    if (!ownerEmail) {
+      return users;
+    }
+
+    const owner = users.find((user) => String(user.email ?? "").trim().toLowerCase() === ownerEmail);
+    return owner ? [owner] : [];
+  }
+
+  return users.filter((user) => user.openId === triggerOpenId);
+}
+
 async function autonomousTradingHandler(req: AppRequest, res: AppResponse) {
   try {
     const trigger = await getScheduledTrigger(req);
@@ -63,8 +85,30 @@ async function autonomousTradingHandler(req: AppRequest, res: AppResponse) {
     }
 
     const eligibleUsers = await getUsersEligibleForAutomaticScheduledTrading();
+    const scopedUsers = scopeScheduledUsersToTrigger(
+      eligibleUsers as EligibleScheduledUser[],
+      trigger.openId
+    );
+
+    if (scopedUsers.length === 0) {
+      res.json({
+        success: true,
+        mode: "eligible_users_autonomous_trading",
+        triggeredByOpenId: trigger.openId,
+        eligibleUsers: eligibleUsers.length,
+        processedUsers: 0,
+        successfulUsers: 0,
+        skippedUsers: 0,
+        blockedUsers: 0,
+        errorUsers: 0,
+        results: [],
+        reason: "No eligible scheduled users matched trigger scope (owner/requester).",
+      });
+      return;
+    }
+
     const summary = await runScheduledAutonomousTradingBatch(
-      eligibleUsers as any,
+      scopedUsers as any,
       trigger.openId
     );
 
@@ -89,9 +133,13 @@ async function orderSyncHandler(req: AppRequest, res: AppResponse) {
     }
 
     const eligibleUsers = await getUsersEligibleForAutomaticScheduledTrading();
+    const scopedUsers = scopeScheduledUsersToTrigger(
+      eligibleUsers as EligibleScheduledUser[],
+      trigger.openId
+    );
     const results = [];
 
-    for (const user of eligibleUsers as Array<{ id: number; openId: string }>) {
+    for (const user of scopedUsers as Array<{ id: number; openId: string }>) {
       try {
         await syncPendingOrders(user.id);
         await syncLivePositions(user.id);
@@ -112,6 +160,7 @@ async function orderSyncHandler(req: AppRequest, res: AppResponse) {
       mode: "eligible_users_order_sync",
       triggeredByOpenId: trigger.openId,
       eligibleUsers: eligibleUsers.length,
+      scopedUsers: scopedUsers.length,
       processedUsers: results.length,
       results,
     });

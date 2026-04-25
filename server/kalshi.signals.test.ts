@@ -184,6 +184,28 @@ describe("Kalshi Signal Generation", () => {
       expect(valueSignal?.metadata?.fundamentalSource).toBe("neutral_fallback");
       expect(Number.isFinite(valueSignal?.expectedValue)).toBe(true);
     });
+
+    it("tags generated signals with market strategy profile metadata", async () => {
+      const market = {
+        id: "market-strategy-1",
+        title: "Will CPI print above 3.0% this month?",
+        category: "economics",
+        description: "Macro release market",
+        resolutionDate: "2026-12-31",
+        status: "open" as const,
+        yesPrice: 0.35,
+        noPrice: 0.65,
+        yesVolume: 8000,
+        noVolume: 7000,
+        impliedProbability: 0.35,
+      };
+
+      const signals = await generateSignalsForMarket(market, undefined, 0.6);
+
+      expect(signals.length).toBeGreaterThan(0);
+      expect(signals[0].metadata?.marketCategory).toBe("economics");
+      expect(signals[0].metadata?.strategyProfile).toBe("macro_data");
+    });
   });
 
   describe("generateSignalsForMarkets", () => {
@@ -378,6 +400,78 @@ describe("Kalshi Signal Generation", () => {
 
       expect(highEVScore).toBeGreaterThan(lowEVScore);
     });
+
+    it("penalizes thin-liquidity execution profiles", () => {
+      const liquidSignal: KalshiSignal = {
+        marketId: "m1",
+        signalType: "value_play",
+        side: "yes",
+        confidence: 0.72,
+        reasoning: "Liquid",
+        impliedProbability: 0.45,
+        marketPrice: 0.45,
+        expectedValue: 0.12,
+        metadata: { liquidityScore: 0.9, spreadProxy: 0.01, totalVolume: 10000 },
+      };
+      const thinSignal: KalshiSignal = {
+        ...liquidSignal,
+        marketId: "m2",
+        reasoning: "Thin",
+        metadata: { liquidityScore: 0.2, spreadProxy: 0.1, totalVolume: 150 },
+      };
+
+      expect(scoreSignalForExecution(liquidSignal)).toBeGreaterThan(scoreSignalForExecution(thinSignal));
+    });
+
+    it("penalizes near-tail pricing to avoid late-cycle adverse selection", () => {
+      const balancedPrice: KalshiSignal = {
+        marketId: "m1",
+        signalType: "value_play",
+        side: "yes",
+        confidence: 0.78,
+        reasoning: "Balanced pricing",
+        impliedProbability: 0.45,
+        marketPrice: 0.45,
+        expectedValue: 0.1,
+      };
+      const tailPrice: KalshiSignal = {
+        ...balancedPrice,
+        marketId: "m2",
+        marketPrice: 0.97,
+        impliedProbability: 0.97,
+        reasoning: "Tail pricing",
+      };
+
+      expect(scoreSignalForExecution(balancedPrice)).toBeGreaterThan(scoreSignalForExecution(tailPrice));
+    });
+
+    it("applies category strategy profile adjustments (macro favored vs crypto constrained)", () => {
+      const macroSignal: KalshiSignal = {
+        marketId: "macro-1",
+        signalType: "value_play",
+        side: "yes",
+        confidence: 0.74,
+        reasoning: "Macro signal",
+        impliedProbability: 0.42,
+        marketPrice: 0.42,
+        expectedValue: 0.12,
+        metadata: {
+          liquidityScore: 0.6,
+          strategyProfile: "macro_data",
+        },
+      };
+      const cryptoSignal: KalshiSignal = {
+        ...macroSignal,
+        marketId: "crypto-1",
+        reasoning: "Crypto signal",
+        metadata: {
+          liquidityScore: 0.6,
+          strategyProfile: "crypto_event",
+        },
+      };
+
+      expect(scoreSignalForExecution(macroSignal)).toBeGreaterThan(scoreSignalForExecution(cryptoSignal));
+    });
   });
 
   describe("rankSignalsByExecution", () => {
@@ -517,6 +611,48 @@ describe("Kalshi Signal Generation", () => {
 
       expect(top).toHaveLength(1);
       expect(top[0].marketId).toBe("explicit-m3");
+    });
+
+    it("keeps only the best signal per market to avoid duplicate exposure", () => {
+      const signals: KalshiSignal[] = [
+        {
+          marketId: "same-market",
+          signalType: "momentum",
+          side: "yes",
+          confidence: 0.72,
+          reasoning: "Lower score variant",
+          impliedProbability: 0.46,
+          marketPrice: 0.46,
+          expectedValue: 0.08,
+        },
+        {
+          marketId: "same-market",
+          signalType: "value_play",
+          side: "yes",
+          confidence: 0.84,
+          reasoning: "Higher score variant",
+          impliedProbability: 0.44,
+          marketPrice: 0.44,
+          expectedValue: 0.14,
+        },
+        {
+          marketId: "other-market",
+          signalType: "value_play",
+          side: "no",
+          confidence: 0.82,
+          reasoning: "Other market",
+          impliedProbability: 0.38,
+          marketPrice: 0.62,
+          expectedValue: 0.13,
+        },
+      ];
+
+      const top = getTopSignalsForExecution(signals, 5, 0.6);
+      const sameMarketEntries = top.filter((signal) => signal.marketId === "same-market");
+
+      expect(sameMarketEntries).toHaveLength(1);
+      expect(sameMarketEntries[0].reasoning).toContain("Higher score variant");
+      expect(top).toHaveLength(2);
     });
 
   });

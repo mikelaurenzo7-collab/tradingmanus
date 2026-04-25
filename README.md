@@ -56,7 +56,7 @@ corepack pnpm build
 
 1. The autonomy job pulls open Kalshi markets and runs the heuristic signal generator (price/volume/sentiment/liquidity).
 2. Heuristic signals are filtered by confidence, market conditions, and any active training instructions.
-3. **OpenAI + Claude are the final reviewers** (`server/_core/tradingReviewer.ts`). Each returns JSON shaped like `[{ marketId, approved, confidenceAdjustment, expectedValueAdjustment, reasoning }]`. Any veto, omission, malformed response, or timeout drops the signal. Dual approvals get bounded adjustments blended together.
+3. **OpenAI + Claude are the final reviewers** (`server/_core/tradingReviewer.ts`). Each returns JSON shaped like `{ reviews: [{ marketId, approved, confidenceAdjustment, expectedValueAdjustment, reasoning }] }`. Any veto, omission, malformed response, or timeout drops the signal. Dual approvals get bounded adjustments blended together.
 4. The execution layer ranks remaining signals, computes risk-budgeted contract sizes, and only places an order if every guardrail passes (`kalshiRisk.ts`).
 5. In `NODE_ENV=test`, duo review is bypassed for deterministic tests unless a test explicitly forces provider calls.
 
@@ -69,13 +69,35 @@ corepack pnpm build
 ## Repo layout
 
 ```
-api/index.ts               # Vercel serverless entrypoint
-server/_core/app.ts        # Express factory; mounts /api/trpc + /api/scheduled/*
-server/_core/auth.ts       # Owner credential check + JWT session
+api/index.ts                    # Vercel serverless entrypoint
+server/_core/app.ts             # Express factory; mounts /api/trpc + /api/scheduled/*
+server/_core/auth.ts            # Owner credential check + JWT session
 server/_core/tradingReviewer.ts # OpenAI + Claude reviewer (final go/no-go on signals)
-server/_core/kalshiAutonomy.ts # Scheduled autonomous trading run
-server/routers.ts          # tRPC routers (auth, kalshi, training, advanced)
-drizzle/schema.ts          # Postgres schema (16 tables)
-client/src                 # React SPA
-vercel.json                # Vercel build + cron config
+server/_core/kalshiAutonomy.ts  # Scheduled autonomous trading run
+server/routers.ts               # tRPC routers (auth, kalshi, training, advanced)
+drizzle/schema.ts               # Postgres schema (16 tables)
+client/src                      # React SPA
+vercel.json                     # Vercel build + cron config
 ```
+
+## Future platform expansion (post-Kalshi)
+
+- Polymarket has a materially different wallet/signing and CLOB integration model.
+- Manifold has public APIs, but its market mechanics and play-money/social use case do not map directly to Kalshi live-cash risk controls.
+- PredictIt and similar legacy venues require fresh legal/API verification before any integration plan.
+
+Before adding another exchange, introduce a platform adapter boundary with typed operations for credentials, account equity, market discovery, order placement, order sync, positions, and risk normalization. Then either add platform-aware generic ledgers or explicit platform columns/indexes so every order, fill, position, signal, audit event, and capital record remains user-scoped and exchange-scoped. The frontend should move from direct `kalshi` assumptions to a platform selector and capability-aware copy.
+
+## Manus Forge endpoint
+
+`https://forge.manus.ai` is a Manus-hosted Forge proxy endpoint. In this codebase, Forge settings are optional auxiliary infrastructure for app services such as LLM calls, data proxies, storage/map/notification helpers, or browser map proxying. They are separate from Kalshi and are not the API endpoint used to place trades.
+
+For Kalshi launch testing, the important live-trading credentials are the user-connected Kalshi API key ID and private key entered through Connect Kalshi. Leave Forge variables blank unless a specific auxiliary feature you use requires them.
+
+## Notes
+
+- Optional analytics only load when both analytics environment variables are set.
+- User Kalshi trading actions use the user's encrypted API key/private key pair and stay scoped to that user's ledger.
+- Encrypted credential storage uses per-user AES-256-GCM envelopes derived from `CREDENTIAL_ENCRYPTION_SECRET`.
+- The dashboard kill switch both disarms live trading and submits exchange close orders for the user's open positions.
+- Autonomy policy editing is intentionally locked while live trading is armed; disarm, edit/save, then arm again.
