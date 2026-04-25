@@ -35,6 +35,7 @@ const RECENT_MANUAL_ORDER_COOLDOWN_MS = 5 * 60 * 1000;
 const AUTONOMY_RUN_DEDUPLICATION_WINDOW_MS = 15 * 60 * 1000;
 const MARKET_DATA_STALE_AFTER_MS = 30 * 1000;
 const MAX_SCHEDULED_MARKETS = 24;
+const POSTGRES_UNIQUE_VIOLATION = "23505";
 
 export type AwayTradingDecisionDetails = {
   marketId: string | null;
@@ -224,6 +225,8 @@ function buildRunKey(
 }
 
 function summarizeCandidate(signal: KalshiSignal & { executionScore?: number }): AwayTradingCandidateSummary {
+  // These extra fields preserve more of the ranking context in the run ledger
+  // so oversight views can explain why a candidate was selected or rejected.
   return {
     marketId: signal.marketId,
     side: signal.side,
@@ -273,7 +276,8 @@ async function repairMissingLocalOrderLedger(input: {
       limitPrice: input.limitPrice,
     });
   } catch (error: any) {
-    if (error?.code !== "23505") {
+    // Concurrent repair attempts can race on the unique orderId constraint.
+    if (error?.code !== POSTGRES_UNIQUE_VIOLATION) {
       throw error;
     }
   }
@@ -300,6 +304,7 @@ async function reconcileAutonomyExecution(input: {
   exchangeAcceptedButLocalWriteFailed: boolean;
   initialReason?: string | null;
 }) {
+  type OpenPositionLike = { marketId: string | number };
   const steps: string[] = [];
 
   if (input.exchangeAcceptedButLocalWriteFailed) {
@@ -322,7 +327,8 @@ async function reconcileAutonomyExecution(input: {
 
   const refreshedOrder = await db.getKalshiOrder(input.orderId, input.userId);
   const openPositions = await db.getOpenKalshiPositions(input.userId);
-  const openPosition = openPositions.find((position: any) => String(position.marketId) === input.marketId) ?? null;
+  const openPosition =
+    openPositions.find((position: OpenPositionLike) => String(position.marketId) === input.marketId) ?? null;
 
   let postTradeCapital = null;
   try {
@@ -344,9 +350,9 @@ async function reconcileAutonomyExecution(input: {
     steps.push(`capital refresh failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 
-  const reconciliationPending =
-    !refreshedOrder ||
-    (input.exchangeAcceptedButLocalWriteFailed && !refreshedOrder);
+  const localOrderFound = Boolean(refreshedOrder);
+  const openPositionFound = Boolean(openPosition);
+  const reconciliationPending = !localOrderFound;
 
   return {
     status: reconciliationPending ? "pending" as const : "reconciled" as const,
@@ -357,8 +363,8 @@ async function reconcileAutonomyExecution(input: {
     summary: {
       orderId: input.orderId,
       marketId: input.marketId,
-      localOrderFound: Boolean(refreshedOrder),
-      openPositionFound: Boolean(openPosition),
+      localOrderFound,
+      openPositionFound,
       postTradeCapital,
       orderExposure: input.orderExposure,
       maxLossOnTrade: input.maxLossOnTrade,
