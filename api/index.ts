@@ -2,9 +2,7 @@ import "dotenv/config";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createApp } from "../server/_core/app";
 
-type ExpressLikeApp = {
-  handle(req: IncomingMessage, res: ServerResponse): unknown;
-};
+type ExpressLikeApp = (req: IncomingMessage, res: ServerResponse) => unknown;
 
 let appPromise: Promise<ExpressLikeApp> | null = null;
 
@@ -25,7 +23,7 @@ function getApp() {
 export default async function handler(req: any, res: any) {
   try {
     const app = await getApp();
-    return app.handle(req, res);
+    return app(req, res);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error("[api/index] createApp failed:", message);
