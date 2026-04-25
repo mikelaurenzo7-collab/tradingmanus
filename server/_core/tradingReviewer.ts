@@ -36,7 +36,9 @@ type ProviderReviewResponse = {
 const DEFAULT_OPENAI_ENDPOINT = "https://api.openai.com/v1/chat/completions";
 const DEFAULT_MAX_SIGNALS = 12;
 const MAX_REASONING_CHARS = 240;
-const MAX_SIGNAL_SUMMARY_REASONING_CHARS = 320;
+export const MAX_MARKET_SUMMARY_TITLE_CHARS = 160;
+export const MAX_MARKET_SUMMARY_CATEGORY_CHARS = 80;
+export const MAX_SIGNAL_SUMMARY_REASONING_CHARS = 320;
 const DEFAULT_DUO_PROVIDERS: ProviderName[] = ["openai", "anthropic"];
 
 const reviewSchema = z.object({
@@ -126,8 +128,8 @@ function compactText(value: string | undefined, maxChars: number) {
 function summarizeMarket(market: KalshiMarket) {
   return {
     id: market.id,
-    title: compactText(market.title, 160),
-    category: compactText(market.category, 80),
+    title: compactText(market.title, MAX_MARKET_SUMMARY_TITLE_CHARS),
+    category: compactText(market.category, MAX_MARKET_SUMMARY_CATEGORY_CHARS),
     status: market.status,
     yesPrice: market.yesPrice,
     noPrice: market.noPrice,

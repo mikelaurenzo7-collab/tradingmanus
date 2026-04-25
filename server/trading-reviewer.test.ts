@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { isTradingReviewerConfigured, reviewSignalsWithTrader } from "./_core/tradingReviewer";
+import {
+  isTradingReviewerConfigured,
+  MAX_MARKET_SUMMARY_TITLE_CHARS,
+  MAX_SIGNAL_SUMMARY_REASONING_CHARS,
+  reviewSignalsWithTrader,
+} from "./_core/tradingReviewer";
 
 const baseMarket = {
   id: "KXTEST-1",
@@ -204,8 +209,10 @@ describe("AI trader duo reviewer", () => {
     const body = JSON.parse(String(requestInit?.body));
     const payload = JSON.parse(body.messages[1].content);
 
-    expect(payload.markets[0]?.title.length).toBeLessThanOrEqual(160);
-    expect(payload.signals[0]?.reasoning.length).toBeLessThanOrEqual(320);
+    expect(payload.markets[0]?.title.length).toBeLessThanOrEqual(MAX_MARKET_SUMMARY_TITLE_CHARS);
+    expect(payload.signals[0]?.reasoning.length).toBeLessThanOrEqual(
+      MAX_SIGNAL_SUMMARY_REASONING_CHARS
+    );
     expect(payload.signals[0]?.reasoning).not.toContain("\n");
   });
 
