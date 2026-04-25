@@ -1,6 +1,6 @@
 # Laurenzo Kalshi Trading Dashboard
 
-Single-owner Kalshi trading console with **OpenAI as the autonomous trader**. Designed to run on **Vercel** with a **Neon Postgres** database.
+Single-owner Kalshi trading console with an **OpenAI + Claude autonomous trading duo**. Designed to run on **Vercel** with a **Neon Postgres** database.
 
 ## Architecture
 
@@ -8,14 +8,14 @@ Single-owner Kalshi trading console with **OpenAI as the autonomous trader**. De
 - **Backend**: Express + tRPC, deployed as a single Vercel function at `api/index.ts`
 - **Database**: Neon Postgres via `@neondatabase/serverless` HTTP driver + `drizzle-orm/neon-http`
 - **Auth**: Owner-only password login. JWT (HS256, 1-year) in an httpOnly `app_session_id` cookie.
-- **AI**: `openai`. OpenAI reviews every candidate signal before persistence and before any autonomous order. It can veto, or adjust confidence within `[-0.25, +0.15]` and EV within `[-0.1, +0.1]`. Existing risk guardrails still hard-block.
+- **AI**: OpenAI and Claude review every candidate signal before persistence and before any autonomous order. Both providers must approve. Their bounded confidence adjustments `[-0.25, +0.15]` and EV adjustments `[-0.1, +0.1]` are blended. Existing risk guardrails still hard-block.
 - **Scheduling**: Vercel Cron triggers `/api/scheduled/autonomous-trading` (every 15 min) and `/api/scheduled/order-sync` (every 5 min). Local dev uses interval timers.
 
 ## One-time setup
 
 1. **Create a Neon Postgres project** and copy the pooled `DATABASE_URL`.
 2. **Generate strong secrets** for `JWT_SECRET`, `CREDENTIAL_ENCRYPTION_SECRET`, and `CRON_SECRET` (32+ random chars each).
-3. **Get an OpenAI API key** with access to the model you select (default: `gpt-4.1-mini`).
+3. **Get both an OpenAI API key and an Anthropic API key** for the duo reviewer.
 4. Copy `.env.example` → `.env` and fill in values.
 5. Install deps:
    ```bash
@@ -52,13 +52,13 @@ corepack pnpm build
    - `*/5 * * * *` → order/position sync
    Cron jobs authenticate via `Authorization: Bearer ${CRON_SECRET}`.
 
-## How OpenAI trades
+## How the AI duo trades
 
 1. The autonomy job pulls open Kalshi markets and runs the heuristic signal generator (price/volume/sentiment/liquidity).
 2. Heuristic signals are filtered by confidence, market conditions, and any active training instructions.
-3. **OpenAI is the final reviewer** (`server/_core/openaiTrader.ts`). It returns JSON with a `reviews` array: `{ reviews: [{ marketId, approved, confidenceAdjustment, expectedValueAdjustment, reasoning }] }`. Vetoed signals are dropped. Approved signals get bounded adjustments.
+3. **OpenAI + Claude are the final reviewers** (`server/_core/tradingReviewer.ts`). Each returns JSON shaped like `{ reviews: [{ marketId, approved, confidenceAdjustment, expectedValueAdjustment, reasoning }] }`. Any veto, omission, malformed response, or timeout drops the signal. Dual approvals get bounded adjustments blended together.
 4. The execution layer ranks remaining signals, computes risk-budgeted contract sizes, and only places an order if every guardrail passes (`kalshiRisk.ts`).
-5. In `NODE_ENV=test`, OpenAI review is bypassed for deterministic tests.
+5. In `NODE_ENV=test`, duo review is bypassed for deterministic tests unless a test explicitly forces provider calls.
 
 ## Disarming live trading
 
@@ -69,15 +69,15 @@ corepack pnpm build
 ## Repo layout
 
 ```
-api/index.ts               # Vercel serverless entrypoint
-server/_core/app.ts        # Express factory; mounts /api/trpc + /api/scheduled/*
-server/_core/auth.ts       # Owner credential check + JWT session
-server/_core/openaiTrader.ts # OpenAI reviewer (final go/no-go on signals)
-server/_core/kalshiAutonomy.ts # Scheduled autonomous trading run
-server/routers.ts          # tRPC routers (auth, kalshi, training, advanced)
-drizzle/schema.ts          # Postgres schema (16 tables)
-client/src                 # React SPA
-vercel.json                # Vercel build + cron config
+api/index.ts                    # Vercel serverless entrypoint
+server/_core/app.ts             # Express factory; mounts /api/trpc + /api/scheduled/*
+server/_core/auth.ts            # Owner credential check + JWT session
+server/_core/tradingReviewer.ts # OpenAI + Claude reviewer (final go/no-go on signals)
+server/_core/kalshiAutonomy.ts  # Scheduled autonomous trading run
+server/routers.ts               # tRPC routers (auth, kalshi, training, advanced)
+drizzle/schema.ts               # Postgres schema (16 tables)
+client/src                      # React SPA
+vercel.json                     # Vercel build + cron config
 ```
 
 ## Future platform expansion (post-Kalshi)

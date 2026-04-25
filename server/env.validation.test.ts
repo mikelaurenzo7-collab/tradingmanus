@@ -21,18 +21,33 @@ describe("validateServerEnv", () => {
     setBaseRequiredEnv();
     process.env.NODE_ENV = "production";
     delete process.env.OPENAI_API_KEY;
+    process.env.ANTHROPIC_API_KEY = "sk-ant-test";
 
     const envModule = await import("./_core/env");
 
     expect(() => envModule.validateServerEnv()).toThrow(
-      "OPENAI_API_KEY must be set in production for autonomous signal review"
+      "OPENAI_API_KEY must be set in production for the duo AI trading reviewer"
     );
   });
 
-  it("accepts a complete production env including OPENAI_API_KEY", async () => {
+  it("requires ANTHROPIC_API_KEY in production", async () => {
     setBaseRequiredEnv();
     process.env.NODE_ENV = "production";
     process.env.OPENAI_API_KEY = "sk-test-value";
+    delete process.env.ANTHROPIC_API_KEY;
+
+    const envModule = await import("./_core/env");
+
+    expect(() => envModule.validateServerEnv()).toThrow(
+      "ANTHROPIC_API_KEY must be set in production for the duo AI trading reviewer"
+    );
+  });
+
+  it("accepts a complete production env including both AI provider keys", async () => {
+    setBaseRequiredEnv();
+    process.env.NODE_ENV = "production";
+    process.env.OPENAI_API_KEY = "sk-test-value";
+    process.env.ANTHROPIC_API_KEY = "sk-ant-test";
 
     const envModule = await import("./_core/env");
 

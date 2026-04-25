@@ -141,7 +141,7 @@ export default function DashboardLayout({
               Kalshi Trading
             </h1>
             <p className="text-sm text-muted-foreground text-center max-w-sm">
-              Founder-only sign-in for OpenAI-assisted Kalshi signals, live execution controls, and the audit trail.
+              Founder-only sign-in for OpenAI + Claude-reviewed Kalshi signals, live execution controls, and the audit trail.
             </p>
           </div>
           <div className="w-full space-y-3">

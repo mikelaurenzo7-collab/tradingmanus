@@ -28,7 +28,7 @@ import {
   saveSignals,
   filterSignalsByMarketConditions,
 } from "./_core/kalshiSignals";
-import { reviewSignalsWithOpenAi } from "./_core/openaiTrader";
+import { reviewSignalsWithTrader } from "./_core/tradingReviewer";
 import {
   validateKalshiCredentials,
   fetchKalshiAccountEquity,
@@ -810,8 +810,8 @@ export const appRouter = router({
             0.35
           );
 
-          // OpenAI makes the final go/no-go on each candidate before persistence.
-          const reviewedSignals = await reviewSignalsWithOpenAi({
+          // OpenAI + Claude make the final go/no-go on each candidate before persistence.
+          const reviewedSignals = await reviewSignalsWithTrader({
             markets: validMarkets,
             signals: filteredSignals,
             maxSignals: 12,

@@ -1,4 +1,8 @@
 const normalize = (value: string | undefined) => value?.trim() ?? "";
+const normalizePositiveInt = (value: string | undefined, fallback: number) => {
+  const parsed = Number.parseInt(value?.trim() ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
 
 export const ENV = {
   cookieSecret: normalize(process.env.JWT_SECRET),
@@ -7,8 +11,12 @@ export const ENV = {
   ownerEmail: normalize(process.env.OWNER_EMAIL),
   ownerPassword: normalize(process.env.OWNER_PASSWORD),
   cronSecret: normalize(process.env.CRON_SECRET),
-  openAiApiKey: normalize(process.env.OPENAI_API_KEY),
-  openAiModel: normalize(process.env.OPENAI_MODEL) || "gpt-4.1-mini",
+  openaiApiKey: normalize(process.env.OPENAI_API_KEY),
+  openaiModel: normalize(process.env.OPENAI_MODEL) || "gpt-4.1-mini",
+  openaiTimeoutMs: normalizePositiveInt(process.env.OPENAI_TIMEOUT_MS, 12000),
+  anthropicApiKey: normalize(process.env.ANTHROPIC_API_KEY),
+  anthropicModel: normalize(process.env.ANTHROPIC_MODEL) || "claude-sonnet-4-5",
+  anthropicTimeoutMs: normalizePositiveInt(process.env.ANTHROPIC_TIMEOUT_MS, 12000),
   kalshiApiKey: normalize(process.env.KALSHI_API_KEY),
   isProduction: process.env.NODE_ENV === "production",
   gnewsApiKey: normalize(process.env.GNEWS_API_KEY),
@@ -52,8 +60,12 @@ export function validateServerEnv() {
     throw new Error("CRON_SECRET must be set (16+ chars) in production for Vercel cron auth");
   }
 
-  if (ENV.isProduction && ENV.openAiApiKey.length === 0) {
-    throw new Error("OPENAI_API_KEY must be set in production for autonomous signal review");
+  if (ENV.isProduction && ENV.openaiApiKey.length === 0) {
+    throw new Error("OPENAI_API_KEY must be set in production for the duo AI trading reviewer");
+  }
+
+  if (ENV.isProduction && ENV.anthropicApiKey.length === 0) {
+    throw new Error("ANTHROPIC_API_KEY must be set in production for the duo AI trading reviewer");
   }
 }
 

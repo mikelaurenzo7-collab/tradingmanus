@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   filterSignalsByMarketConditions: vi.fn(),
   getTopSignalsForExecution: vi.fn(),
   saveSignals: vi.fn(),
+  reviewSignalsWithTrader: vi.fn(),
   getLatestAuditEventByType: vi.fn(),
   getTodayKalshiOrderCount: vi.fn(),
   getKalshiCapital: vi.fn(),
@@ -70,6 +71,10 @@ vi.mock("./_core/kalshiSignals", () => ({
   filterSignalsByMarketConditions: mocks.filterSignalsByMarketConditions,
   getTopSignalsForExecution: mocks.getTopSignalsForExecution,
   saveSignals: mocks.saveSignals,
+}));
+
+vi.mock("./_core/tradingReviewer", () => ({
+  reviewSignalsWithTrader: mocks.reviewSignalsWithTrader,
 }));
 
 vi.mock("./_core/kalshiExecution", () => ({
@@ -136,6 +141,7 @@ describe("scheduled away-from-chat trading", () => {
     mocks.generateSignalsForMarkets.mockResolvedValue([candidateSignal]);
     mocks.filterSignalsByConfidence.mockImplementation((signals: any[]) => signals);
     mocks.filterSignalsByMarketConditions.mockImplementation((signals: any[]) => signals);
+    mocks.reviewSignalsWithTrader.mockImplementation(async ({ signals }: { signals: any[] }) => signals);
     mocks.getTopSignalsForExecution.mockReturnValue([candidateSignal]);
     mocks.saveSignals.mockResolvedValue(undefined);
     mocks.getLatestAuditEventByType.mockResolvedValue(null);
@@ -250,6 +256,20 @@ describe("scheduled away-from-chat trading", () => {
       expect.stringContaining('"decision":{"marketId":"KXTEST-1"'),
       "away-open-id"
     );
+  });
+
+  it("fails closed when the AI trader duo approves nothing", async () => {
+    mocks.reviewSignalsWithTrader.mockResolvedValueOnce([]);
+    mocks.getTopSignalsForExecution.mockReturnValueOnce([]);
+
+    const result = await runScheduledAutonomousTrading(testUser);
+
+    expect(result.status).toBe("generated_only");
+    expect(result.reason).toContain("no non-heuristic execution-ready signals");
+    expect(result.signalsGenerated).toBe(0);
+    expect(result.executionCandidates).toBe(0);
+    expect(mocks.saveSignals).toHaveBeenCalledWith([], 7);
+    expect(mocks.placeKalshiOrder).not.toHaveBeenCalled();
   });
 
   it("summarizes automatic-review outcomes across all eligible users in a single batch", async () => {
