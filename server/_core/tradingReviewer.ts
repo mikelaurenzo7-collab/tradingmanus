@@ -321,7 +321,9 @@ function combineApprovedSignal(
   const reviewerReasoning = providerReviews
     .map(({ provider, review }) => {
       const prefix = provider === "openai" ? "OpenAI" : "Claude";
-      const text = review.reasoning?.trim().slice(0, MAX_REASONING_CHARS) || `${prefix} approved after conservative review.`;
+      const text =
+        review.reasoning?.trim().slice(0, MAX_REASONING_CHARS) ||
+        prefix.concat(" approved after conservative review.");
       return `${prefix}: ${text}`;
     })
     .join(" | ");
