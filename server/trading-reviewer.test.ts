@@ -210,10 +210,14 @@ describe("AI trader duo reviewer", () => {
     const payload = JSON.parse(body.messages[1].content);
 
     expect(payload.markets[0]?.title.length).toBeLessThanOrEqual(MAX_MARKET_SUMMARY_TITLE_CHARS);
+    expect(payload.markets[0]?.title).not.toMatch(/\s{2,}/);
+    expect(payload.markets[0]?.title.endsWith("…")).toBe(true);
     expect(payload.signals[0]?.reasoning.length).toBeLessThanOrEqual(
       MAX_SIGNAL_SUMMARY_REASONING_CHARS
     );
+    expect(payload.signals[0]?.reasoning).not.toMatch(/\s{2,}/);
     expect(payload.signals[0]?.reasoning).not.toContain("\n");
+    expect(payload.signals[0]?.reasoning.endsWith("…")).toBe(true);
   });
 
   it("drops the signal when either provider vetoes it", async () => {

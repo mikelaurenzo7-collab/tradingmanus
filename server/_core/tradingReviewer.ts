@@ -122,7 +122,21 @@ function parseTradingReviews(text: string): TradingSignalReview[] {
 }
 
 function compactText(value: string | undefined, maxChars: number) {
-  return value?.replace(/\s+/g, " ").trim().slice(0, maxChars) ?? "";
+  const normalized = value?.replace(/\s+/g, " ").trim() ?? "";
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+  if (maxChars <= 1) {
+    return normalized.slice(0, maxChars);
+  }
+
+  const clipped = normalized.slice(0, maxChars - 1).trimEnd();
+  const wordBoundary = clipped.lastIndexOf(" ");
+  const readableClip = wordBoundary > Math.floor((maxChars - 1) * 0.6)
+    ? clipped.slice(0, wordBoundary).trimEnd()
+    : clipped;
+
+  return `${readableClip}…`;
 }
 
 function summarizeMarket(market: KalshiMarket) {
