@@ -74,6 +74,48 @@ export const ENV = {
     const parsed = Number.parseFloat(process.env.KELLY_MAX_EQUITY_FRACTION ?? "");
     return Number.isFinite(parsed) && parsed > 0 && parsed <= 1 ? parsed : 0.05;
   })(),
+  // Cold-start sizing.  Scale orders down for new accounts until either a
+  // time threshold (days) or trade count is reached, whichever first.
+  enableColdStartSizing: normalizeBoolean(process.env.ENABLE_COLD_START_SIZING, true),
+  coldStartSizeFloor: (() => {
+    const parsed = Number.parseFloat(process.env.COLD_START_SIZE_FLOOR ?? "");
+    return Number.isFinite(parsed) && parsed > 0 && parsed <= 1 ? parsed : 0.1;
+  })(),
+  coldStartDays: (() => {
+    const parsed = Number.parseInt(process.env.COLD_START_DAYS ?? "", 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 30;
+  })(),
+  coldStartTrades: (() => {
+    const parsed = Number.parseInt(process.env.COLD_START_TRADES ?? "", 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 30;
+  })(),
+  // Operator alerts.  When set, circuit-breaker / kill-switch /
+  // shadow-flip events also POST a small JSON payload to this URL.
+  // Compatible with Slack/Discord generic webhook formats.
+  alertsWebhookUrl: normalize(process.env.ALERTS_WEBHOOK_URL),
+  // Concentration limits.  Block new positions when an existing open
+  // position is too similar (Jaccard token overlap) to the candidate, or
+  // when same-category exposure exceeds the configured fraction of equity.
+  enableConcentrationLimits: normalizeBoolean(process.env.ENABLE_CONCENTRATION_LIMITS, true),
+  concentrationSimilarityThreshold: (() => {
+    const parsed = Number.parseFloat(process.env.CONCENTRATION_SIMILARITY_THRESHOLD ?? "");
+    return Number.isFinite(parsed) && parsed >= 0 && parsed <= 1 ? parsed : 0.5;
+  })(),
+  concentrationCategoryCapFraction: (() => {
+    const parsed = Number.parseFloat(process.env.CONCENTRATION_CATEGORY_CAP_FRACTION ?? "");
+    return Number.isFinite(parsed) && parsed > 0 && parsed <= 1 ? parsed : 0.2;
+  })(),
+  // Stop-loss / time-stop scanner.  Runs on its own cron tick and closes
+  // open Kalshi positions that have hit either threshold.
+  enableStopLossScanner: normalizeBoolean(process.env.ENABLE_STOP_LOSS_SCANNER, true),
+  stopLossLossFraction: (() => {
+    const parsed = Number.parseFloat(process.env.STOP_LOSS_LOSS_FRACTION ?? "");
+    return Number.isFinite(parsed) && parsed > 0 && parsed <= 1 ? parsed : 0.3;
+  })(),
+  stopLossMaxHoldHours: (() => {
+    const parsed = Number.parseFloat(process.env.STOP_LOSS_MAX_HOLD_HOURS ?? "");
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 72;
+  })(),
   kalshiApiKey: normalize(process.env.KALSHI_API_KEY),
   isProduction: process.env.NODE_ENV === "production",
   gnewsApiKey: normalize(process.env.GNEWS_API_KEY),

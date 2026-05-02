@@ -23,6 +23,8 @@ import { reviewSignalsWithTrader } from "./tradingReviewer";
 import { getCacheHitRatio, newReviewerTelemetry, getEstimatedUsdCost } from "./aiToolbelt";
 import { isShadowModeEnabled, recordKalshiShadowOrder } from "./shadowMode";
 import { computeKellyBet, beliefFromSignal } from "./positionSizing";
+import { computeColdStartScale } from "./coldStart";
+import { checkConcentration, type ExistingExposure } from "./concentrationLimits";
 import { ENV } from "./env";
 
 const BASE_RISK_LIMITS = {
@@ -867,6 +869,36 @@ export async function runScheduledAutonomousTrading(
   let maxBudget = Math.min(eligibleMaxBudget ?? Number.POSITIVE_INFINITY, availableCapital);
   const limitPrice = Number(eligibleSignal.marketPrice);
 
+  // Cold-start shrink: scale new accounts down until they have either
+  // accumulated days or completed trades.  Applied before Kelly so the
+  // Kelly cap is a percent of the cold-start-shrunken budget.
+  if (ENV.enableColdStartSizing) {
+    try {
+      const coldStartInputs = await db.getColdStartInputs(userId);
+      const coldStart = computeColdStartScale(coldStartInputs);
+      if (coldStart.scale < 1) {
+        const previous = maxBudget;
+        maxBudget = maxBudget * coldStart.scale;
+        await db.logAuditEvent(
+          "kalshi_cold_start_sized",
+          JSON.stringify({
+            marketId: eligibleSignal.marketId,
+            accountAgeDays: coldStartInputs.accountAgeDays,
+            completedTrades: coldStartInputs.completedTrades,
+            scale: coldStart.scale,
+            reason: coldStart.reason,
+            progress: coldStart.progress,
+            previousBudget: previous,
+            shrunkenBudget: maxBudget,
+          }),
+          triggeredByOpenId,
+        );
+      }
+    } catch (error) {
+      console.error("[Autonomy] cold-start lookup failed:", error);
+    }
+  }
+
   // Kelly shrink: when enabled, derive a Kelly-fractional cap from the
   // signal's confidence and apply it as a budget shrinker.  Existing
   // hard caps (per-trade risk, equity fraction) still apply.  This only
@@ -975,6 +1007,65 @@ export async function runScheduledAutonomousTrading(
   const orderExposure = orderRisk.orderExposure;
   const maxLossOnTrade = orderRisk.maxLossOnTrade;
 
+  // Concentration check: refuse if this candidate is too similar to an
+  // open position, or if same-category exposure would breach the cap.
+  // Defer market-title lookup gracefully — when titles aren't available
+  // we still cap by category alone.
+  if (ENV.enableConcentrationLimits && availableCapital > 0) {
+    const existingExposure: ExistingExposure[] = openPositions.map((pos: any) => ({
+      marketId: String(pos.marketId ?? ""),
+      // Open positions don't carry market titles; fall back to marketId
+      // for similarity matching.  Titles can be richer once we wire a
+      // marketId → title cache.
+      text: String(pos.marketId ?? ""),
+      category: String(pos.category ?? "unknown"),
+      notionalUsd: Number(pos.entryPrice ?? 0) * Number(pos.quantity ?? 0),
+    }));
+    const concentration = checkConcentration({
+      candidate: {
+        text: eligibleSignal.marketId,
+        category:
+          (eligibleSignal as any).metadata?.marketCategory ?? "unknown",
+        notionalUsd: orderExposure,
+      },
+      existingExposure,
+      equity: availableCapital,
+    });
+    if (!concentration.allowed) {
+      await db.logAuditEvent(
+        "kalshi_concentration_blocked",
+        JSON.stringify({
+          marketId: eligibleSignal.marketId,
+          reason: concentration.reason,
+          details: concentration.details,
+        }),
+        triggeredByOpenId,
+      );
+      return finalize({
+        status: "blocked",
+        reason: `concentration limit: ${concentration.reason}`,
+        signalsGenerated: savedSignals.length,
+        executionCandidates: executionCandidates.length,
+        orderPlaced: false,
+        candidateMarketId: eligibleSignal.marketId,
+        autonomyMode: preferences.autonomyMode,
+        executionCadence: preferences.executionCadence,
+        candidateSet,
+        rejectedCandidates,
+        decision: buildDecisionDetails(eligibleSignal, {
+          quantity,
+          availableCapital,
+          maxBudget,
+          orderExposure,
+          maxLossOnTrade,
+          blockedBy: "concentration_limit",
+        }),
+      }, {
+        appliedGuardrails: safeJsonStringify(buildAppliedGuardrails(preferences, riskLimits)),
+      });
+    }
+  }
+
   if (maxLossOnTrade > riskLimits.maxLossPerTrade) {
     return finalize({
       status: "blocked",
@@ -1001,6 +1092,18 @@ export async function runScheduledAutonomousTrading(
   }
 
   if (todayRealizedLoss >= riskLimits.maxLossPerDay) {
+    const { sendOperatorAlert } = await import("./operatorAlerts");
+    await sendOperatorAlert({
+      kind: "daily_loss_circuit_breaker",
+      severity: "critical",
+      message: `Kalshi daily loss circuit breaker tripped: $${todayRealizedLoss.toFixed(2)} >= $${riskLimits.maxLossPerDay.toFixed(2)}`,
+      details: {
+        platform: "kalshi",
+        todayLoss: todayRealizedLoss,
+        maxLossPerDay: riskLimits.maxLossPerDay,
+      },
+      triggeredByOpenId,
+    });
     return finalize({
       status: "blocked",
       reason: "daily loss limit reached",

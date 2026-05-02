@@ -171,6 +171,72 @@ async function autonomousTradingHandler(req: AppRequest, res: AppResponse) {
   }
 }
 
+async function stopLossScanHandler(req: AppRequest, res: AppResponse) {
+  try {
+    const trigger = await getScheduledTrigger(req);
+    if (!trigger.authorized) {
+      res.status(trigger.status).json({ success: false, error: trigger.error });
+      return;
+    }
+
+    const eligibleUsers = await getUsersEligibleForAutomaticScheduledTrading();
+    const scopedUsers = scopeScheduledUsersToTrigger(
+      eligibleUsers as EligibleScheduledUser[],
+      trigger.openId,
+    );
+
+    const { runStopLossScan } = await import("./stopLossScanner");
+    const results: Array<{
+      userId: number;
+      openId: string;
+      scannedPositions: number;
+      closesAttempted: number;
+      closesSucceeded: number;
+      errors: string[];
+    }> = [];
+
+    for (const user of scopedUsers as Array<{ id: number; openId: string }>) {
+      try {
+        const result = await runStopLossScan(user.id, {
+          triggeredByOpenId: trigger.openId,
+        });
+        results.push({
+          userId: user.id,
+          openId: user.openId,
+          scannedPositions: result.scannedPositions,
+          closesAttempted: result.closesAttempted,
+          closesSucceeded: result.closesSucceeded,
+          errors: result.errors,
+        });
+      } catch (error) {
+        logger.error({ error, userId: user.id }, "StopLossScan user failed");
+        results.push({
+          userId: user.id,
+          openId: user.openId,
+          scannedPositions: 0,
+          closesAttempted: 0,
+          closesSucceeded: 0,
+          errors: [error instanceof Error ? error.message : String(error)],
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      mode: "stop_loss_scan",
+      triggeredByOpenId: trigger.openId,
+      processedUsers: results.length,
+      results,
+    });
+  } catch (error) {
+    logger.error({ error }, "StopLossScan route error");
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 async function orderSyncHandler(req: AppRequest, res: AppResponse) {
   try {
     const trigger = await getScheduledTrigger(req);
@@ -302,6 +368,7 @@ export async function createApp(options: { runStartupMigrations?: boolean } = {}
   // Apply rate limiting to scheduled endpoints
   app.all("/api/scheduled/autonomous-trading", scheduledLimiter, toExpressHandler(autonomousTradingHandler));
   app.all("/api/scheduled/order-sync", scheduledLimiter, toExpressHandler(orderSyncHandler));
+  app.all("/api/scheduled/stop-loss-scan", scheduledLimiter, toExpressHandler(stopLossScanHandler));
 
   // Global error handler
   app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {

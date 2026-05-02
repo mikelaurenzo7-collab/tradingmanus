@@ -958,6 +958,18 @@ export const appRouter = router({
           }),
           ctx.user!.openId
         );
+        const { sendOperatorAlert } = await import("./_core/operatorAlerts");
+        await sendOperatorAlert({
+          kind: "kill_switch_activated",
+          severity: "critical",
+          message: `Kalshi kill switch activated — ${result.closedPositions}/${result.totalPositions} positions closed`,
+          details: {
+            totalPositions: result.totalPositions,
+            closedPositions: result.closedPositions,
+            failedPositions: result.failedPositions,
+          },
+          triggeredByOpenId: ctx.user!.openId,
+        });
         return result;
       } catch (error) {
         console.error("[Kalshi] Kill switch error:", error);

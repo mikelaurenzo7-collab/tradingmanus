@@ -898,6 +898,60 @@ export async function getLatestAuditEventByType(
 }
 
 /**
+ * Cold-start sizing inputs for a user: account age in days plus the count
+ * of completed trades across both platforms (closed Kalshi positions +
+ * polymarket_trade_exit audit events).
+ */
+export async function getColdStartInputs(userId: number) {
+  const scopedUserId = assertPositiveIntegerUserId(userId, "getColdStartInputs userId");
+  const database = await getDb();
+  if (!database) return { accountAgeDays: 0, completedTrades: 0 };
+
+  try {
+    const [userRow] = await database
+      .select({ createdAt: users.createdAt })
+      .from(users)
+      .where(eq(users.id, scopedUserId))
+      .limit(1);
+
+    const accountAgeDays = userRow?.createdAt
+      ? Math.max(
+          0,
+          (Date.now() - new Date(userRow.createdAt).getTime()) / (24 * 60 * 60 * 1000),
+        )
+      : 0;
+
+    const closedKalshi = await database
+      .select({ id: kalshiPositions.id })
+      .from(kalshiPositions)
+      .where(
+        and(
+          eq(kalshiPositions.userId, scopedUserId),
+          eq(kalshiPositions.positionStatus, "closed"),
+        ),
+      );
+
+    const polymarketExits = await database
+      .select({ id: auditLog.id })
+      .from(auditLog)
+      .where(
+        and(
+          eq(auditLog.eventType, "polymarket_trade_exit"),
+          eq(auditLog.triggeredByOpenId, `user:${scopedUserId}`),
+        ),
+      );
+
+    return {
+      accountAgeDays,
+      completedTrades: closedKalshi.length + polymarketExits.length,
+    };
+  } catch (error) {
+    console.error("[Database] getColdStartInputs failed:", error);
+    return { accountAgeDays: 0, completedTrades: 0 };
+  }
+}
+
+/**
  * Sum today's realized loss from Polymarket trade-exit audit events.
  *
  * Polymarket exits don't write to a positions table; we encode realizedPnl

@@ -36,6 +36,8 @@ import {
 import { assertPositiveIntegerUserId } from "./userScope";
 import { recordPolymarketTradeEntry } from "./polymarketLearning";
 import { isShadowModeEnabled, recordPolymarketShadowOrder } from "./shadowMode";
+import { computeKellyBet, beliefFromSignal } from "./positionSizing";
+import { ENV } from "./env";
 
 const MAX_SCHEDULED_MARKETS = 80;
 const BASE_RISK_LIMITS = {
@@ -389,7 +391,62 @@ export async function runPolymarketAutonomousTrading(
     MAX_POLYMARKET_ORDER_USDC,
     0.25
   );
-  const scaledSize = clamp(rawSize * sizeScale, 0.01, maxBudget);
+  let scaledSize = clamp(rawSize * sizeScale, 0.01, maxBudget);
+
+  // Kelly shrink: when ENABLE_KELLY_SIZING is on, derive a Kelly-fractional
+  // cap from the signal's confidence and clamp scaledSize to it.  Existing
+  // hard caps still apply.  When Kelly returns 0 (no edge), veto.
+  if (ENV.enableKellySizing && bankroll > 0 && best.limitPrice > 0 && best.limitPrice < 1) {
+    const beliefYes = beliefFromSignal(best.side, best.confidence);
+    const kelly = computeKellyBet({
+      side: best.side,
+      marketYesPrice: best.side === "yes" ? best.limitPrice : 1 - best.limitPrice,
+      beliefYesProbability: beliefYes,
+      equity: bankroll,
+      kellyFraction: ENV.kellyFraction,
+      maxFractionOfEquity: ENV.kellyMaxFractionOfEquity,
+      minBetDollars: 1,
+    });
+    if (kelly.betDollars <= 0) {
+      await db.logAuditEvent(
+        "polymarket_kelly_veto",
+        JSON.stringify({
+          marketId: best.marketId,
+          side: best.side,
+          confidence: best.confidence,
+          reason: kelly.reason,
+          fullKellyFraction: kelly.fullKellyFraction,
+        }),
+        triggeredByOpenId,
+      );
+      return {
+        success: true,
+        status: "blocked",
+        reason: `kelly veto (${kelly.reason})`,
+        signalsGenerated: allSignals.length,
+        executionCandidates: candidates.length,
+        orderPlaced: false,
+      };
+    }
+    if (kelly.betDollars < scaledSize) {
+      const kellyApplied = kelly.betDollars;
+      await db.logAuditEvent(
+        "polymarket_kelly_sized",
+        JSON.stringify({
+          marketId: best.marketId,
+          side: best.side,
+          confidence: best.confidence,
+          kellyFraction: ENV.kellyFraction,
+          fullKellyFraction: kelly.fullKellyFraction,
+          effectiveFraction: kelly.effectiveFraction,
+          previousSize: scaledSize,
+          kellySize: kellyApplied,
+        }),
+        triggeredByOpenId,
+      );
+      scaledSize = kellyApplied;
+    }
+  }
 
   const riskCheck = validatePolymarketOrderRisk(
     { price: best.limitPrice, size: scaledSize },
@@ -432,6 +489,18 @@ export async function runPolymarketAutonomousTrading(
       }),
       triggeredByOpenId,
     );
+    const { sendOperatorAlert } = await import("./operatorAlerts");
+    await sendOperatorAlert({
+      kind: "daily_loss_circuit_breaker",
+      severity: "critical",
+      message: `Polymarket daily loss circuit breaker tripped: $${todayPolymarketLoss.toFixed(2)} >= $${riskLimits.maxLossPerDay.toFixed(2)}`,
+      details: {
+        platform: "polymarket",
+        todayLoss: todayPolymarketLoss,
+        maxLossPerDay: riskLimits.maxLossPerDay,
+      },
+      triggeredByOpenId,
+    });
     return {
       success: true,
       status: "blocked",
