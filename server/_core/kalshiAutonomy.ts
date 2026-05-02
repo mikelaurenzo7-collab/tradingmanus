@@ -45,6 +45,13 @@ const MAX_SCHEDULED_MARKETS = 48;
 // Maximum markets sampled from any single category to prevent category
 // concentration bias (e.g., not all 48 slots going to sports).
 const MAX_MARKETS_PER_CATEGORY = 8;
+// Markets with combined yes+no volume below this threshold are excluded from
+// scheduled scans.  Thin markets have wide spreads and high adverse selection.
+const MIN_SCHEDULED_MARKET_VOLUME = 500;
+// Markets resolving within this many hours are excluded from scheduled scans.
+// Imminent-resolution markets carry high adverse-selection risk and waste the
+// AI reviewer's budget on signals that can rarely be executed cleanly.
+const MIN_RESOLUTION_HOURS_AHEAD = 2;
 
 export type AwayTradingDecisionDetails = {
   marketId: string | null;
@@ -320,33 +327,60 @@ async function persistScheduledResult(
   return result;
 }
 
-function extractActionableMarkets(markets: Awaited<ReturnType<typeof fetchKalshiMarkets>>) {
+/** Sum of yes and no volume for a market-like object. */
+function getMarketTotalVolume(market: { yesVolume?: unknown; noVolume?: unknown }): number {
+  return Number(market.yesVolume ?? 0) + Number(market.noVolume ?? 0);
+}
+
+export function extractActionableMarkets(markets: Awaited<ReturnType<typeof fetchKalshiMarkets>>) {
+  const minResolutionTime = Date.now() + MIN_RESOLUTION_HOURS_AHEAD * 60 * 60 * 1000;
+
   return markets.filter((market) => {
     const yesPrice = Number(market.yesPrice);
     const noPrice = Number(market.noPrice);
     const impliedProbability = Number(market.impliedProbability);
 
-    return (
-      Number.isFinite(yesPrice) &&
-      Number.isFinite(noPrice) &&
-      Number.isFinite(impliedProbability) &&
-      yesPrice > 0.01 &&
-      yesPrice < 0.99 &&
-      noPrice > 0.01 &&
-      noPrice < 0.99 &&
-      impliedProbability > 0.01 &&
-      impliedProbability < 0.99
-    );
+    if (
+      !Number.isFinite(yesPrice) ||
+      !Number.isFinite(noPrice) ||
+      !Number.isFinite(impliedProbability) ||
+      yesPrice <= 0.01 ||
+      yesPrice >= 0.99 ||
+      noPrice <= 0.01 ||
+      noPrice >= 0.99 ||
+      impliedProbability <= 0.01 ||
+      impliedProbability >= 0.99
+    ) {
+      return false;
+    }
+
+    // Exclude thin markets that cannot be executed without heavy adverse selection.
+    if (getMarketTotalVolume(market) < MIN_SCHEDULED_MARKET_VOLUME) {
+      return false;
+    }
+
+    // Exclude markets resolving very soon or already past their resolution date.
+    // These carry high adverse-selection risk and rarely convert to clean fills.
+    if (market.resolutionDate) {
+      const resolutionTime = new Date(market.resolutionDate).getTime();
+      if (Number.isFinite(resolutionTime) && resolutionTime < minResolutionTime) {
+        return false;
+      }
+    }
+
+    return true;
   });
 }
 
 /**
  * Select up to `maxTotal` markets with category diversity.
  * Markets are grouped by category; at most `perCategory` are kept from each
- * bucket so no single category monopolises the candidate pool.  Remaining
- * slots are filled round-robin across categories until `maxTotal` is reached.
+ * bucket so no single category monopolises the candidate pool.  Within each
+ * bucket markets are sorted by total volume descending so the cap always
+ * selects the most liquid options first.  Remaining slots are filled
+ * round-robin across categories until `maxTotal` is reached.
  */
-function selectDiverseMarkets<T extends { category?: string | null }>(
+export function selectDiverseMarkets<T extends { category?: string | null }>(
   markets: T[],
   maxTotal: number,
   perCategory: number
@@ -357,6 +391,15 @@ function selectDiverseMarkets<T extends { category?: string | null }>(
     const key = String(market.category ?? "other").toLowerCase();
     if (!buckets.has(key)) buckets.set(key, []);
     buckets.get(key)!.push(market);
+  }
+
+  // Sort within each bucket by total volume descending so the per-category cap
+  // always picks the most actively-traded markets first.
+  for (const [, bucket] of Array.from(buckets)) {
+    bucket.sort((a: T, b: T) =>
+      getMarketTotalVolume(b as { yesVolume?: unknown; noVolume?: unknown }) -
+      getMarketTotalVolume(a as { yesVolume?: unknown; noVolume?: unknown })
+    );
   }
 
   const selected: T[] = [];
