@@ -43,6 +43,16 @@ import {
   placePolymarketOrder,
 } from "./_core/polymarketAuth";
 import { generatePolymarketSignals } from "./_core/polymarketSignals";
+import {
+  KNOWN_CLUSTERS,
+  detectClusterActivityBatch,
+  buildFadeRecommendations,
+  type MarketSnapshot,
+} from "./_core/polymarketClusterMonitor";
+import {
+  detectAllCombinatorialArbitrage,
+  type ArbitrageMarket,
+} from "./_core/kalshiCombinatorial";
 import { trainingRouter } from "./training.router";
 import { advancedRouter } from "./advanced.router";
 import { calculateKalshiBuyOrderRisk, MAX_KALSHI_ORDER_CONTRACTS } from "./_core/kalshiRisk";
@@ -1409,6 +1419,219 @@ export const appRouter = router({
         } catch (error) {
           console.error("[Polymarket] Place order error:", error);
           return { success: false, error: String(error) };
+        }
+      }),
+
+    // --- Cluster monitoring ---
+
+    /** Return the static profiles of all 7 documented wash-trading clusters. */
+    getKnownClusters: protectedProcedure.query(() => {
+      return KNOWN_CLUSTERS;
+    }),
+
+    /**
+     * Run heuristic cluster-activity detection against current live markets.
+     * Uses aggregate market data (volume, price, liquidity) as proxies for
+     * the blockchain-level wallet graph signals.
+     */
+    detectClusterActivity: protectedProcedure
+      .input(
+        z
+          .object({
+            /** Optional override: recent volume per marketId */
+            recentVolumes: z.record(z.string(), z.number()).optional(),
+            /** Optional: distinct makers per marketId in last 90 s */
+            recentDistinctMakers: z.record(z.string(), z.number()).optional(),
+            /** marketIds resolving within 5 min */
+            resolvingWithin5Min: z.array(z.string()).optional(),
+            /** marketIds resolving within 4 hours */
+            resolvingWithin4Hours: z.array(z.string()).optional(),
+          })
+          .optional(),
+      )
+      .query(async ({ input }) => {
+        try {
+          const markets = await fetchPolymarketMarkets({
+            limit: POLYMARKET_SIGNAL_GENERATION_MARKET_LIMIT,
+          });
+
+          const snapshots: MarketSnapshot[] = markets.map((m) => ({
+            marketId: m.marketId,
+            question: m.question,
+            category: m.category,
+            impliedProbabilityYes: m.impliedProbabilityYes,
+            recentVolume: input?.recentVolumes?.[m.marketId] ?? 0,
+            totalVolume: m.volume,
+            liquidity: m.liquidity,
+            recentDistinctMakers: input?.recentDistinctMakers?.[m.marketId],
+            resolvingWithin5Min:
+              input?.resolvingWithin5Min?.includes(m.marketId) ?? false,
+            resolvingWithin4Hours:
+              input?.resolvingWithin4Hours?.includes(m.marketId) ?? false,
+          }));
+
+          const clusterSignals = detectClusterActivityBatch(snapshots);
+          const recommendations = buildFadeRecommendations(
+            clusterSignals,
+            0.5,
+          );
+
+          return {
+            clusterSignals,
+            recommendations,
+            marketsScanned: snapshots.length,
+          };
+        } catch (error) {
+          console.error("[Polymarket] Cluster detection error:", error);
+          return { clusterSignals: [], recommendations: [], marketsScanned: 0 };
+        }
+      }),
+
+    /**
+     * Generate cluster-aware trading signals (includes all standard signal
+     * types plus cluster_fade / cluster_copy / wash_volume_warning).
+     */
+    generateClusterSignals: protectedProcedure
+      .input(
+        z
+          .object({
+            minConfidence: z.number().min(0).max(1).optional().default(0.55),
+            minLiquidity: z.number().min(0).optional().default(100),
+            recentVolumes: z.record(z.string(), z.number()).optional(),
+            recentDistinctMakers: z.record(z.string(), z.number()).optional(),
+            resolvingWithin5Min: z.array(z.string()).optional(),
+            resolvingWithin4Hours: z.array(z.string()).optional(),
+          })
+          .optional(),
+      )
+      .mutation(async ({ input, ctx }) => {
+        try {
+          const markets = await fetchPolymarketMarkets({
+            limit: POLYMARKET_SIGNAL_GENERATION_MARKET_LIMIT,
+          });
+
+          const signals = generatePolymarketSignals(markets, {
+            minConfidence: input?.minConfidence ?? 0.55,
+            minLiquidity: input?.minLiquidity ?? 100,
+            recentVolumes: input?.recentVolumes
+              ? new Map(Object.entries(input.recentVolumes))
+              : undefined,
+            recentDistinctMakers: input?.recentDistinctMakers
+              ? new Map(Object.entries(input.recentDistinctMakers))
+              : undefined,
+            resolvingWithin5Min: input?.resolvingWithin5Min
+              ? new Set(input.resolvingWithin5Min)
+              : undefined,
+            resolvingWithin4Hours: input?.resolvingWithin4Hours
+              ? new Set(input.resolvingWithin4Hours)
+              : undefined,
+          });
+
+          await db.logAuditEvent(
+            "polymarket_cluster_signals_generated",
+            JSON.stringify({
+              total: signals.length,
+              clusterFade: signals.filter((s) => s.signalType === "cluster_fade").length,
+              clusterCopy: signals.filter((s) => s.signalType === "cluster_copy").length,
+              washWarning: signals.filter((s) => s.signalType === "wash_volume_warning").length,
+            }),
+            ctx.user!.openId,
+          );
+
+          return { success: true, signals };
+        } catch (error) {
+          console.error("[Polymarket] Cluster signal generation error:", error);
+          return { success: false, signals: [], error: String(error) };
+        }
+      }),
+  }),
+
+  // --------------------------------------------------------------------------
+  // Combinatorial arbitrage (works across both Kalshi and Polymarket markets)
+  // --------------------------------------------------------------------------
+  combinatorial: router({
+    /**
+     * Detect cross-market combinatorial arbitrage on Kalshi markets.
+     * Checks sum-to-one violations and logical implication violations.
+     */
+    detectKalshiArbitrage: protectedProcedure
+      .input(
+        z
+          .object({
+            minSumDeviation: z.number().min(0).max(0.5).optional().default(0.03),
+            minViolation: z.number().min(0).max(0.5).optional().default(0.05),
+            minLiquidity: z.number().min(0).optional().default(500),
+          })
+          .optional(),
+      )
+      .query(async ({ input }) => {
+        try {
+          const rawMarkets = await fetchKalshiMarkets({ status: "open" });
+          const markets: ArbitrageMarket[] = rawMarkets
+            .filter((m) => m.status === "open")
+            .map((m) => ({
+              marketId: m.id,
+              title: m.title,
+              category: m.category,
+              impliedProbabilityYes: Number(m.impliedProbability ?? 0.5),
+              yesPrice: Number(m.yesPrice ?? 0),
+              noPrice: Number(m.noPrice ?? 0),
+              volume: Number(m.yesVolume ?? 0) + Number(m.noVolume ?? 0),
+              liquidity: Number(m.yesVolume ?? 0) + Number(m.noVolume ?? 0),
+            }));
+
+          const opportunities = detectAllCombinatorialArbitrage(markets, {
+            minSumDeviation: input?.minSumDeviation ?? 0.03,
+            minViolation: input?.minViolation ?? 0.05,
+            minLiquidity: input?.minLiquidity ?? 500,
+          });
+
+          return { opportunities, marketsAnalyzed: markets.length };
+        } catch (error) {
+          console.error("[Combinatorial] Kalshi arbitrage detection error:", error);
+          return { opportunities: [], marketsAnalyzed: 0 };
+        }
+      }),
+
+    /**
+     * Detect cross-market combinatorial arbitrage on Polymarket markets.
+     */
+    detectPolymarketArbitrage: protectedProcedure
+      .input(
+        z
+          .object({
+            minSumDeviation: z.number().min(0).max(0.5).optional().default(0.03),
+            minViolation: z.number().min(0).max(0.5).optional().default(0.05),
+            minLiquidity: z.number().min(0).optional().default(500),
+          })
+          .optional(),
+      )
+      .query(async ({ input }) => {
+        try {
+          const rawMarkets = await fetchPolymarketMarkets({
+            limit: POLYMARKET_SIGNAL_GENERATION_MARKET_LIMIT,
+          });
+          const markets: ArbitrageMarket[] = rawMarkets.map((m) => ({
+            marketId: m.marketId,
+            title: m.question,
+            category: m.category,
+            impliedProbabilityYes: m.impliedProbabilityYes,
+            yesPrice: m.tokens.find((t) => t.outcome.toLowerCase() === "yes")?.price ?? m.impliedProbabilityYes,
+            noPrice: m.tokens.find((t) => t.outcome.toLowerCase() === "no")?.price ?? (1 - m.impliedProbabilityYes),
+            volume: m.volume,
+            liquidity: m.liquidity,
+          }));
+
+          const opportunities = detectAllCombinatorialArbitrage(markets, {
+            minSumDeviation: input?.minSumDeviation ?? 0.03,
+            minViolation: input?.minViolation ?? 0.05,
+            minLiquidity: input?.minLiquidity ?? 500,
+          });
+
+          return { opportunities, marketsAnalyzed: markets.length };
+        } catch (error) {
+          console.error("[Combinatorial] Polymarket arbitrage detection error:", error);
+          return { opportunities: [], marketsAnalyzed: 0 };
         }
       }),
   }),
