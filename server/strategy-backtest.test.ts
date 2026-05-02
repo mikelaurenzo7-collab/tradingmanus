@@ -246,6 +246,82 @@ describe("runStrategyBacktest", () => {
   });
 });
 
+describe("fundamentalNoiseStdDev", () => {
+  it("zero noise → strategy receives ground truth (sanity-test mode)", async () => {
+    const result = await runStrategyBacktest({
+      platform: "kalshi",
+      synthetic: { numMarkets: 60, ticksPerMarket: 30, seed: 91, initialDisplacement: 0.4 },
+      feePerLeg: 0,
+      slippagePerLeg: 0,
+      positionSizeUsd: 10,
+      minConfidence: 0.3,
+      maxHoldTicks: 12,
+      signalTypeAllowlist: ["value_play"],
+      fundamentalNoiseStdDev: 0,
+    });
+    // Frictionless + perfect estimate → strongly profitable (this is the
+    // unrealistic upper bound).
+    expect(result.totalPnL).toBeGreaterThan(0);
+  });
+
+  it("under hold-to-resolution, noisy fundamentals hurt directional accuracy", async () => {
+    // Mean-reversion mode is too forgiving for this test: even with noisy
+    // fundamentals the strategy often catches the price-reversion direction
+    // and profits.  Hold-to-resolution disables that escape valve, so PnL
+    // depends purely on whether the side matches resolution.  Noisy
+    // estimates should reduce realized accuracy here.
+    const baseConfig = {
+      platform: "kalshi" as const,
+      synthetic: { numMarkets: 80, ticksPerMarket: 30, seed: 91, initialDisplacement: 0.4 },
+      feePerLeg: 0,
+      slippagePerLeg: 0,
+      positionSizeUsd: 10,
+      minConfidence: 0.3,
+      signalTypeAllowlist: ["value_play"],
+      holdToResolutionOnly: true,
+    };
+    const cleanFundamentals = await runStrategyBacktest({
+      ...baseConfig,
+      fundamentalNoiseStdDev: 0,
+    });
+    const noisyFundamentals = await runStrategyBacktest({
+      ...baseConfig,
+      fundamentalNoiseStdDev: 0.25, // ±25pp Gaussian noise
+    });
+    // Realized accuracy is the directional metric — fraction of opened
+    // positions whose side matched the binary resolution.  Noisy
+    // estimates should drop this number meaningfully.
+    expect(noisyFundamentals.realizedAccuracy).toBeLessThan(
+      cleanFundamentals.realizedAccuracy,
+    );
+  });
+});
+
+describe("holdToResolutionOnly", () => {
+  it("forces exits at resolution rather than mid-market", async () => {
+    const baseConfig = {
+      platform: "kalshi" as const,
+      synthetic: { numMarkets: 30, ticksPerMarket: 30, seed: 13, initialDisplacement: 0.4 },
+      feePerLeg: 0,
+      slippagePerLeg: 0,
+      positionSizeUsd: 10,
+      minConfidence: 0.3,
+      maxHoldTicks: 8,
+      signalTypeAllowlist: ["value_play"],
+    };
+    const meanRevert = await runStrategyBacktest(baseConfig);
+    const holdResolution = await runStrategyBacktest({
+      ...baseConfig,
+      holdToResolutionOnly: true,
+    });
+    // Hold-to-resolution should produce exactly one trade per market that
+    // ever opened a position (no re-entries, no mid-exits).
+    expect(holdResolution.totalTrades).toBeLessThanOrEqual(holdResolution.positionsOpened);
+    // Mean-reversion mode should produce more trades on average.
+    expect(meanRevert.totalTrades).toBeGreaterThanOrEqual(holdResolution.totalTrades);
+  });
+});
+
 describe("runBacktestSweep", () => {
   it("returns a non-empty grid with best + bestRiskAdjusted picks", async () => {
     const result = await runBacktestSweep(

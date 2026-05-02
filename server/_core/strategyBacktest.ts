@@ -67,6 +67,23 @@ export type StrategyBacktestConfig = {
    * When omitted, every signal type the generator emits is eligible.
    */
   signalTypeAllowlist?: string[];
+  /**
+   * Standard deviation of zero-mean Gaussian noise added to each market's
+   * fundamental probability before it's passed to the signal generator.
+   * Default 0 = strategy receives ground truth (sanity test only — too
+   * easy).  Set to e.g. 0.1 to model realistic fundamental-estimate
+   * uncertainty.  Higher values → strategy must extract edge despite
+   * noisy estimates, which is the actual production scenario.
+   */
+  fundamentalNoiseStdDev?: number;
+  /**
+   * Force the engine to ignore mid-market exit signals and hold every
+   * position to terminal resolution.  Use this to measure pure
+   * directional accuracy — what fraction of signals would have predicted
+   * the binary outcome correctly — vs. the default mean-reversion mode
+   * where most exits are at reverted prices before resolution.
+   */
+  holdToResolutionOnly?: boolean;
 };
 
 export const DEFAULT_BACKTEST_CONFIG: StrategyBacktestConfig = {
@@ -135,16 +152,32 @@ function terminalPayout(
 }
 
 /**
- * Build a fundamentals map keyed by marketId.  For synthetic markets the
- * "fundamental probability" equals the (hidden-from-the-strategy) true
- * probability — that's the whole point: the strategy is given a
- * fundamental estimate and has to act on the divergence between fundamental
- * and market price.
+ * Build a fundamentals map keyed by marketId.
+ *
+ * With noiseStdDev=0 the strategy receives ground truth — that's a sanity
+ * test ("can the strategy use a perfect estimate") and produces
+ * unrealistic profitability.  In production our fundamental estimate has
+ * error; pass a positive noiseStdDev to perturb each truth with a
+ * zero-mean Gaussian, then the backtest tells you how robust the
+ * strategy is to estimation noise.
  */
-function buildFundamentalsMap(dataset: SyntheticMarketSeries[]): Map<string, number> {
+function buildFundamentalsMap(
+  dataset: SyntheticMarketSeries[],
+  noiseStdDev: number,
+  rng: () => number,
+): Map<string, number> {
   const map = new Map<string, number>();
   for (const series of dataset) {
-    map.set(series.marketId, series.trueProbability);
+    if (noiseStdDev <= 0) {
+      map.set(series.marketId, series.trueProbability);
+      continue;
+    }
+    // Box-Muller for a properly-shaped Gaussian noise sample.
+    const u1 = Math.max(rng(), 1e-9);
+    const u2 = rng();
+    const z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+    const noisy = series.trueProbability + z * noiseStdDev;
+    map.set(series.marketId, Math.max(0.01, Math.min(0.99, noisy)));
   }
   return map;
 }
@@ -240,7 +273,22 @@ export async function runStrategyBacktest(
 ): Promise<StrategyBacktestResult> {
   const config: StrategyBacktestConfig = { ...DEFAULT_BACKTEST_CONFIG, ...configIn };
   const dataset = generateSyntheticDataset(config.synthetic);
-  const fundamentals = buildFundamentalsMap(dataset);
+  // Use a separate seed for the fundamental noise so callers can vary
+  // noise without affecting the price paths.  Fall back to the synthetic
+  // seed + 7919 (a prime offset) when not explicitly set.
+  const fundamentalRng = (() => {
+    const baseSeed = (config.synthetic?.seed ?? 1) + 7919;
+    let state = (baseSeed | 0) || 1;
+    return () => {
+      state = (state * 48271) % 0x7fffffff;
+      return state / 0x7fffffff;
+    };
+  })();
+  const fundamentals = buildFundamentalsMap(
+    dataset,
+    config.fundamentalNoiseStdDev ?? 0,
+    fundamentalRng,
+  );
 
   const trades: BacktestTrade[] = [];
   let signalsEmitted = 0;
@@ -273,8 +321,10 @@ export async function runStrategyBacktest(
       const chosen = selectSignal(signals, config.minConfidence);
 
       // Exit logic: if max hold reached, or a strong signal in the opposite
-      // direction fires, close at current tick.
-      if (openPosition) {
+      // direction fires, close at current tick.  In holdToResolutionOnly
+      // mode we suppress all mid-market exits — every position must wait
+      // for terminal resolution.  Used to measure pure directional accuracy.
+      if (openPosition && !config.holdToResolutionOnly) {
         const heldFor = tick - openPosition.entryTick;
         const oppositeSignal =
           chosen && chosen.side !== openPosition.side && chosen.confidence >= config.minConfidence;

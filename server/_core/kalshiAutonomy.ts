@@ -22,6 +22,8 @@ import { assertPositiveIntegerUserId } from "./userScope";
 import { reviewSignalsWithTrader } from "./tradingReviewer";
 import { getCacheHitRatio, newReviewerTelemetry, getEstimatedUsdCost } from "./aiToolbelt";
 import { isShadowModeEnabled, recordKalshiShadowOrder } from "./shadowMode";
+import { computeKellyBet, beliefFromSignal } from "./positionSizing";
+import { ENV } from "./env";
 
 const BASE_RISK_LIMITS = {
   maxLossPerTrade: 5,
@@ -862,9 +864,87 @@ export async function runScheduledAutonomousTrading(
   }
 
   const availableCapital = Number(capital?.currentBalance ?? equityResult.equity ?? 0);
-  const maxBudget = Math.min(eligibleMaxBudget ?? Number.POSITIVE_INFINITY, availableCapital);
+  let maxBudget = Math.min(eligibleMaxBudget ?? Number.POSITIVE_INFINITY, availableCapital);
   const limitPrice = Number(eligibleSignal.marketPrice);
+
+  // Kelly shrink: when enabled, derive a Kelly-fractional cap from the
+  // signal's confidence and apply it as a budget shrinker.  Existing
+  // hard caps (per-trade risk, equity fraction) still apply.  This only
+  // SHRINKS the budget — it never increases it past the configured caps.
+  let kellyShrunk = false;
+  let kellyDetails: ReturnType<typeof computeKellyBet> | null = null;
+  if (ENV.enableKellySizing && availableCapital > 0 && limitPrice > 0 && limitPrice < 1) {
+    const beliefYes = beliefFromSignal(eligibleSignal.side, eligibleSignal.confidence);
+    kellyDetails = computeKellyBet({
+      side: eligibleSignal.side,
+      marketYesPrice:
+        eligibleSignal.side === "yes" ? limitPrice : 1 - limitPrice,
+      beliefYesProbability: beliefYes,
+      equity: availableCapital,
+      kellyFraction: ENV.kellyFraction,
+      maxFractionOfEquity: ENV.kellyMaxFractionOfEquity,
+      minBetDollars: 1,
+    });
+    if (kellyDetails.betDollars <= 0) {
+      // Kelly says "don't bet" — block the trade rather than oversizing it.
+      await db.logAuditEvent(
+        "kalshi_kelly_veto",
+        JSON.stringify({
+          marketId: eligibleSignal.marketId,
+          side: eligibleSignal.side,
+          confidence: eligibleSignal.confidence,
+          reason: kellyDetails.reason,
+          fullKellyFraction: kellyDetails.fullKellyFraction,
+        }),
+        triggeredByOpenId,
+      );
+      return finalize({
+        status: "blocked",
+        reason: `kelly veto (${kellyDetails.reason})`,
+        signalsGenerated: savedSignals.length,
+        executionCandidates: executionCandidates.length,
+        orderPlaced: false,
+        candidateMarketId: eligibleSignal.marketId,
+        autonomyMode: preferences.autonomyMode,
+        executionCadence: preferences.executionCadence,
+        candidateSet,
+        rejectedCandidates,
+        decision: buildDecisionDetails(eligibleSignal, {
+          quantity: 0,
+          availableCapital,
+          maxBudget,
+          orderExposure: 0,
+          maxLossOnTrade: 0,
+          blockedBy: "kelly_veto",
+        }),
+      }, {
+        appliedGuardrails: safeJsonStringify(buildAppliedGuardrails(preferences, riskLimits)),
+      });
+    }
+    if (kellyDetails.betDollars < maxBudget) {
+      maxBudget = kellyDetails.betDollars;
+      kellyShrunk = true;
+    }
+  }
+
   const quantity = estimateContractsForRiskBudget(maxBudget, limitPrice);
+
+  if (kellyShrunk && kellyDetails) {
+    await db.logAuditEvent(
+      "kalshi_kelly_sized",
+      JSON.stringify({
+        marketId: eligibleSignal.marketId,
+        side: eligibleSignal.side,
+        confidence: eligibleSignal.confidence,
+        kellyFraction: ENV.kellyFraction,
+        fullKellyFraction: kellyDetails.fullKellyFraction,
+        effectiveFraction: kellyDetails.effectiveFraction,
+        kellyBudget: kellyDetails.betDollars,
+        appliedQuantity: quantity,
+      }),
+      triggeredByOpenId,
+    );
+  }
 
   if (quantity < 1) {
     return finalize({

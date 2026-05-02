@@ -381,6 +381,8 @@ export const advancedRouter = router({
           meanReversion: z.number().min(0).max(1).default(0.05),
           driftToTruth: z.number().min(0).max(1).default(0.005),
           signalTypeAllowlist: z.array(z.string()).optional(),
+          fundamentalNoiseStdDev: z.number().min(0).max(0.5).default(0),
+          holdToResolutionOnly: z.boolean().default(false),
         }),
       )
       .mutation(async ({ input }) => {
@@ -392,6 +394,8 @@ export const advancedRouter = router({
           positionSizeUsd: input.positionSizeUsd,
           maxHoldTicks: input.maxHoldTicks ?? Number.POSITIVE_INFINITY,
           signalTypeAllowlist: input.signalTypeAllowlist,
+          fundamentalNoiseStdDev: input.fundamentalNoiseStdDev,
+          holdToResolutionOnly: input.holdToResolutionOnly,
           synthetic: {
             numMarkets: input.numMarkets,
             ticksPerMarket: input.ticksPerMarket,

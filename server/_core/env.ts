@@ -57,6 +57,23 @@ export const ENV = {
   // real capital is risked.  Default OFF so existing live-trading installs
   // are unaffected.
   shadowTradingMode: normalizeBoolean(process.env.SHADOW_TRADING_MODE, false),
+  // Kelly-fractional position sizing.  When ON, each candidate's bet size
+  // is shrunk to the Kelly-fractional recommendation (capped by the
+  // existing per-trade and equity-fraction limits).  Default OFF — flip
+  // this on once shadow-mode results justify it.
+  enableKellySizing: normalizeBoolean(process.env.ENABLE_KELLY_SIZING, false),
+  // Fraction of full Kelly to deploy (1.0 = full, 0.25 = quarter).  Lower
+  // values trade theoretical growth for survivability.  Default 0.25.
+  kellyFraction: (() => {
+    const parsed = Number.parseFloat(process.env.KELLY_FRACTION ?? "");
+    return Number.isFinite(parsed) && parsed > 0 && parsed <= 1 ? parsed : 0.25;
+  })(),
+  // Hard cap on any single bet as a fraction of equity, regardless of
+  // Kelly's recommendation.  Default 5%.
+  kellyMaxFractionOfEquity: (() => {
+    const parsed = Number.parseFloat(process.env.KELLY_MAX_EQUITY_FRACTION ?? "");
+    return Number.isFinite(parsed) && parsed > 0 && parsed <= 1 ? parsed : 0.05;
+  })(),
   kalshiApiKey: normalize(process.env.KALSHI_API_KEY),
   isProduction: process.env.NODE_ENV === "production",
   gnewsApiKey: normalize(process.env.GNEWS_API_KEY),
