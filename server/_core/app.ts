@@ -342,7 +342,7 @@ export async function createApp(options: { runStartupMigrations?: boolean } = {}
     logger.error(
       {
         error: err,
-        path: req.path,
+        path: req.url,
         method: req.method,
       },
       "Unhandled error"
