@@ -111,7 +111,7 @@ export function generatePolymarketSignals(
       if (token && token.token_id) {
         const limitPrice = clamp(side === "yes" ? p : 1 - p, 0.02, 0.98);
         const confidence = clamp(Math.abs(valueDiff) * 2.5 + 0.35, 0, 1);
-        const ev = side === "yes" ? (fairValue - p) / p : ((1 - fairValue) - (1 - p)) / (1 - p);
+        const ev = side === "yes" ? (fairValue - p) / p : (p - fairValue) / (1 - p);
 
         signals.push({
           marketId: market.marketId,
@@ -138,7 +138,7 @@ export function generatePolymarketSignals(
         const extremity = p <= 0.07 ? 0.07 - p : p - 0.93;
         const confidence = clamp(0.52 + extremity * 3, 0, 0.8);
         const limitPrice = clamp(side === "yes" ? p : 1 - p, 0.02, 0.98);
-        const ev = side === "yes" ? (0.5 - p) / p : ((0.5) - (1 - p)) / (1 - p);
+        const ev = side === "yes" ? (0.5 - p) / p : (p - 0.5) / (1 - p);
 
         signals.push({
           marketId: market.marketId,
@@ -168,7 +168,7 @@ export function generatePolymarketSignals(
         if (!alreadyPricedIn) {
           const confidence = clamp(0.52 + Math.abs(sentimentScore) * 0.3, 0, 0.85);
           const limitPrice = clamp(side === "yes" ? p : 1 - p, 0.02, 0.98);
-          const ev = side === "yes" ? (fairValue - p) / p : ((1 - fairValue) - (1 - p)) / (1 - p);
+          const ev = side === "yes" ? (fairValue - p) / p : (p - fairValue) / (1 - p);
 
           signals.push({
             marketId: market.marketId,
@@ -261,7 +261,7 @@ export function generatePolymarketSignals(
       if (pSum > 1.05) {
         // Both YES overpriced – fade the one that is pricier
         const fadeMarket = pA >= pB ? a : b;
-        const noToken = fadeMarket.tokens.find((t: { outcome: string; token_id: string; price: number }) => t.outcome.toLowerCase() === "no");
+        const noToken = fadeMarket.tokens.find((t) => t.outcome.toLowerCase() === "no");
         if (noToken && noToken.token_id && !signals.some(
           (s) => s.marketId === fadeMarket.marketId && s.signalType === "arbitrage",
         )) {

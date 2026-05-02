@@ -49,6 +49,10 @@ import { calculateKalshiBuyOrderRisk, MAX_KALSHI_ORDER_CONTRACTS } from "./_core
 
 import { COOKIE_NAME, ONE_YEAR_MS } from "../shared/const";
 
+// How many Polymarket markets to pull when generating signals.
+// More markets = more signal candidates; keep bounded to avoid timeouts.
+const POLYMARKET_SIGNAL_GENERATION_MARKET_LIMIT = 80;
+
 // Risk limits anchored to live capital plus static guardrails
 const BASE_RISK_LIMITS = {
   maxLossPerTrade: 5,
@@ -1340,7 +1344,7 @@ export const appRouter = router({
       )
       .mutation(async ({ input, ctx }) => {
         try {
-          const markets = await fetchPolymarketMarkets({ limit: 80 });
+          const markets = await fetchPolymarketMarkets({ limit: POLYMARKET_SIGNAL_GENERATION_MARKET_LIMIT });
           const signals = generatePolymarketSignals(markets, {
             minConfidence: input?.minConfidence ?? 0.55,
             minLiquidity: input?.minLiquidity ?? 100,
