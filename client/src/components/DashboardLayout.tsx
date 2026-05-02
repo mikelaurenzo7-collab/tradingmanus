@@ -63,7 +63,7 @@ const navSections: { label: string; items: NavItem[] }[] = [
   {
     label: "Account",
     items: [
-      { icon: Plug, label: "Connect Kalshi", path: "/connect" },
+      { icon: Plug, label: "Connect Platforms", path: "/connect" },
       { icon: Wallet, label: "Funding", path: "/funding" },
     ],
   },
@@ -138,10 +138,10 @@ export default function DashboardLayout({
           <div className="flex flex-col items-center gap-6">
             <div className="text-6xl font-bold gradient-text">LAURENZO</div>
             <h1 className="text-3xl font-bold tracking-tight text-center gradient-text">
-              Kalshi Trading
+              Prediction Market Trading
             </h1>
             <p className="text-sm text-muted-foreground text-center max-w-sm">
-              Founder-only sign-in for OpenAI + Claude-reviewed Kalshi signals, live execution controls, and the audit trail.
+              Founder-only sign-in for AI-reviewed signals and live execution on Kalshi and Polymarket.
             </p>
           </div>
           <div className="w-full space-y-3">
@@ -172,7 +172,7 @@ export default function DashboardLayout({
             {loginMutation.isPending ? "Signing in..." : "Sign in"}
           </Button>
           <p className="text-xs text-muted-foreground text-center">
-            After signing in, connect Kalshi and set Trading Autonomy before arming live trading.
+            After signing in, connect Kalshi and/or Polymarket and set Trading Autonomy before arming live trading.
           </p>
         </form>
       </div>
@@ -277,7 +277,7 @@ export default function DashboardLayout({
               </Button>
             ) : null}
             <div className="hidden text-sm text-muted-foreground md:block">
-              Laurenzo Trading Dashboard
+              Laurenzo Trading — Kalshi &amp; Polymarket
             </div>
           </div>
         </header>

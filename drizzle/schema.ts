@@ -271,4 +271,27 @@ export const autonomyRuns = pgTable("autonomyRuns", {
   updatedAt: updatedAt(),
 });
 
+export const polymarketAccountStatusEnum = pgEnum("polymarket_account_status", ["connected", "disconnected", "error"]);
+export const platformSubscriptionEnum = pgEnum("platform_subscription", ["kalshi", "polymarket", "both"]);
+
+export const polymarketCredentials = pgTable("polymarketCredentials", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull().unique(),
+  apiKeyEncrypted: text("apiKeyEncrypted").notNull(),
+  apiSecretEncrypted: text("apiSecretEncrypted").notNull(),
+  apiPassphraseEncrypted: text("apiPassphraseEncrypted").notNull(),
+  accountStatus: polymarketAccountStatusEnum("accountStatus").default("disconnected").notNull(),
+  lastSyncedAt: timestamp("lastSyncedAt", { withTimezone: true }),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+export const userPlatformSubscriptions = pgTable("userPlatformSubscriptions", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull().unique(),
+  subscribedPlatforms: platformSubscriptionEnum("subscribedPlatforms").default("kalshi").notNull(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
 export type User = typeof users.$inferSelect;
