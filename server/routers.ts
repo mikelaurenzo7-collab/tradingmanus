@@ -35,7 +35,14 @@ import {
 } from "./_core/kalshiAuth";
 import { getPerformanceOverview } from "./_core/kalshiLearning";
 import * as kalshiCredDb from "./db.kalshi-credentials";
+import * as polymarketCredDb from "./db.polymarket-credentials";
 import * as tradingPreferencesDb from "./db.trading-preferences";
+import {
+  validatePolymarketCredentials,
+  fetchPolymarketMarkets,
+  placePolymarketOrder,
+} from "./_core/polymarketAuth";
+import { generatePolymarketSignals } from "./_core/polymarketSignals";
 import { trainingRouter } from "./training.router";
 import { advancedRouter } from "./advanced.router";
 import { calculateKalshiBuyOrderRisk, MAX_KALSHI_ORDER_CONTRACTS } from "./_core/kalshiRisk";
@@ -1137,6 +1144,269 @@ export const appRouter = router({
         return { success: false, error: String(error) };
       }
     }),
+  }),
+
+  polymarket: router({
+    // --- Account connection ---
+    connectPolymarketAccount: protectedProcedure
+      .input(
+        z.object({
+          apiKey: z.string().min(1),
+          apiSecret: z.string().min(1),
+          apiPassphrase: z.string().min(1),
+        })
+      )
+      .mutation(async ({ input, ctx }) => {
+        try {
+          const validation = await validatePolymarketCredentials(
+            input.apiKey,
+            input.apiSecret,
+            input.apiPassphrase,
+          );
+
+          if (!validation.valid) {
+            return {
+              success: false,
+              error:
+                validation.error ||
+                "Polymarket rejected these credentials. Confirm your API key, secret, and passphrase.",
+            };
+          }
+
+          const userId = getRequiredUserId(ctx);
+
+          try {
+            await polymarketCredDb.savePolymarketCredentials(
+              userId,
+              input.apiKey,
+              input.apiSecret,
+              input.apiPassphrase,
+            );
+            await db.logAuditEvent(
+              "polymarket_account_connected",
+              "Polymarket CLOB credentials saved",
+              ctx.user!.openId
+            );
+          } catch (storageError) {
+            console.error("[Polymarket] Failed to persist validated credentials:", storageError);
+            return {
+              success: false,
+              error:
+                "Your Polymarket credentials were validated, but the dashboard could not save the connection state. Please retry.",
+            };
+          }
+
+          return { success: true };
+        } catch (error) {
+          console.error("[Polymarket] Connect account error:", error);
+          return {
+            success: false,
+            error:
+              error instanceof Error
+                ? error.message
+                : "Unexpected error while connecting your Polymarket account",
+          };
+        }
+      }),
+
+    getPolymarketAccountStatus: protectedProcedure.query(async ({ ctx }) => {
+      try {
+        const userId = getRequiredUserId(ctx);
+        const creds = await polymarketCredDb.getPolymarketCredentials(userId);
+
+        if (!creds) {
+          return { connected: false, status: "disconnected" as const };
+        }
+
+        if (creds.accountStatus !== "connected") {
+          return {
+            connected: false,
+            status: creds.accountStatus,
+            lastSyncedAt: creds.lastSyncedAt,
+          };
+        }
+
+        // Re-validate to confirm credentials still work
+        const validation = await validatePolymarketCredentials(
+          creds.apiKey,
+          creds.apiSecret,
+          creds.apiPassphrase,
+        );
+
+        if (!validation.valid) {
+          await polymarketCredDb.updatePolymarketAccountStatus(userId, "error");
+          return {
+            connected: false,
+            status: "error" as const,
+            error: validation.error,
+            lastSyncedAt: creds.lastSyncedAt,
+          };
+        }
+
+        return {
+          connected: true,
+          status: "connected" as const,
+          lastSyncedAt: new Date(),
+        };
+      } catch (error) {
+        console.error("[Polymarket] Get account status error:", error);
+        return { connected: false, status: "error" as const, error: String(error) };
+      }
+    }),
+
+    disconnectPolymarketAccount: protectedProcedure.mutation(async ({ ctx }) => {
+      try {
+        const userId = getRequiredUserId(ctx);
+        await polymarketCredDb.deletePolymarketCredentials(userId);
+        await db.logAuditEvent(
+          "polymarket_account_disconnected",
+          "",
+          ctx.user!.openId
+        );
+        return { success: true };
+      } catch (error) {
+        console.error("[Polymarket] Disconnect account error:", error);
+        return { success: false, error: String(error) };
+      }
+    }),
+
+    // --- Platform subscriptions ---
+    getPlatformSubscriptions: protectedProcedure.query(async ({ ctx }) => {
+      try {
+        const userId = getRequiredUserId(ctx);
+        return await polymarketCredDb.getPlatformSubscriptions(userId);
+      } catch (error) {
+        console.error("[Polymarket] Get platform subscriptions error:", error);
+        return { subscribedPlatforms: "kalshi" as const };
+      }
+    }),
+
+    savePlatformSubscriptions: protectedProcedure
+      .input(
+        z.object({
+          subscribedPlatforms: z.enum(["kalshi", "polymarket", "both"]),
+        })
+      )
+      .mutation(async ({ input, ctx }) => {
+        try {
+          const userId = getRequiredUserId(ctx);
+          const result = await polymarketCredDb.savePlatformSubscriptions(
+            userId,
+            input.subscribedPlatforms,
+          );
+          await db.logAuditEvent(
+            "platform_subscriptions_updated",
+            input.subscribedPlatforms,
+            ctx.user!.openId
+          );
+          return result;
+        } catch (error) {
+          console.error("[Polymarket] Save platform subscriptions error:", error);
+          return { success: false, subscribedPlatforms: "kalshi" as const };
+        }
+      }),
+
+    // --- Markets ---
+    getMarkets: protectedProcedure
+      .input(
+        z
+          .object({
+            limit: z.number().min(1).max(100).optional(),
+            offset: z.number().min(0).optional(),
+          })
+          .optional()
+      )
+      .query(async ({ input }) => {
+        try {
+          return await fetchPolymarketMarkets({
+            limit: input?.limit ?? 50,
+            offset: input?.offset ?? 0,
+          });
+        } catch (error) {
+          console.error("[Polymarket] Get markets error:", error);
+          return [];
+        }
+      }),
+
+    // --- Signal generation ---
+    generateSignals: protectedProcedure
+      .input(
+        z
+          .object({
+            minConfidence: z.number().min(0).max(1).optional().default(0.55),
+            minLiquidity: z.number().min(0).optional().default(100),
+          })
+          .optional()
+      )
+      .mutation(async ({ input, ctx }) => {
+        try {
+          const markets = await fetchPolymarketMarkets({ limit: 80 });
+          const signals = generatePolymarketSignals(markets, {
+            minConfidence: input?.minConfidence ?? 0.55,
+            minLiquidity: input?.minLiquidity ?? 100,
+          });
+
+          await db.logAuditEvent(
+            "polymarket_signals_generated",
+            JSON.stringify({ count: signals.length }),
+            ctx.user!.openId
+          );
+
+          return { success: true, signals };
+        } catch (error) {
+          console.error("[Polymarket] Generate signals error:", error);
+          return { success: false, signals: [], error: String(error) };
+        }
+      }),
+
+    // --- Order placement ---
+    placeOrder: protectedProcedure
+      .input(
+        z.object({
+          tokenId: z.string().min(1),
+          side: z.enum(["BUY", "SELL"]),
+          price: z.number().min(0.01).max(0.99),
+          size: z.number().min(0.01),
+        })
+      )
+      .mutation(async ({ input, ctx }) => {
+        try {
+          const userId = getRequiredUserId(ctx);
+          const creds = await polymarketCredDb.getPolymarketCredentials(userId);
+
+          if (!creds || creds.accountStatus !== "connected") {
+            return {
+              success: false,
+              error: "Connect a Polymarket account before placing orders.",
+            };
+          }
+
+          const result = await placePolymarketOrder(
+            creds.apiKey,
+            creds.apiSecret,
+            creds.apiPassphrase,
+            {
+              tokenId: input.tokenId,
+              side: input.side,
+              price: input.price,
+              size: input.size,
+            },
+          );
+
+          if (result.success) {
+            await db.logAuditEvent(
+              "polymarket_order_placed",
+              JSON.stringify(input),
+              ctx.user!.openId
+            );
+          }
+
+          return result;
+        } catch (error) {
+          console.error("[Polymarket] Place order error:", error);
+          return { success: false, error: String(error) };
+        }
+      }),
   }),
 });
 
