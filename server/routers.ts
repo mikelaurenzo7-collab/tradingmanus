@@ -63,6 +63,10 @@ import {
 } from "./_core/polymarketMarketMaking";
 import { detectCrossPlatformArbitrage } from "./_core/crossPlatformArbitrage";
 import { runPolymarketAutonomousTrading } from "./_core/polymarketAutonomy";
+import {
+  mergePlatformSignals,
+  executeCrossArbLegs,
+} from "./_core/crossBotStrategies";
 
 import { COOKIE_NAME, ONE_YEAR_MS } from "../shared/const";
 
@@ -1803,6 +1807,233 @@ export const appRouter = router({
         } catch (error) {
           console.error("[Combinatorial] Cross-platform arbitrage detection error:", error);
           return { opportunities: [], kalshiMarketsScanned: 0, polymarketMarketsScanned: 0 };
+        }
+      }),
+  }),
+
+  // --------------------------------------------------------------------------
+  // Cross-Bot Strategies
+  // Coordinates both the Kalshi and Polymarket bots together.
+  // --------------------------------------------------------------------------
+  crossBot: router({
+    /**
+     * Return a unified, ranked list of signals from both the Kalshi and
+     * Polymarket bots, with consensus detection when both bots independently
+     * agree on the same underlying event.
+     */
+    getCombinedSignals: protectedProcedure
+      .input(
+        z
+          .object({
+            minConfidence: z.number().min(0).max(1).optional().default(0.5),
+            /** Maximum total signals to return */
+            limit: z.number().int().min(1).max(100).optional().default(30),
+          })
+          .optional(),
+      )
+      .mutation(async ({ input, ctx }) => {
+        try {
+          const userId = getRequiredUserId(ctx);
+          const minConfidence = input?.minConfidence ?? 0.5;
+          const limit = input?.limit ?? 30;
+
+          // Fetch markets from both platforms in parallel
+          const [kalshiMarkets, polymarketMarkets] = await Promise.all([
+            fetchKalshiMarkets({ status: "open" }),
+            fetchPolymarketMarkets({ limit: POLYMARKET_SIGNAL_GENERATION_MARKET_LIMIT }),
+          ]);
+
+          // Build Kalshi feeds + signals
+          const feeds = new Map();
+          for (const m of kalshiMarkets.slice(0, 24)) {
+            const feed = getMarketFeed(m.id);
+            if (feed) feeds.set(m.id, feed);
+          }
+
+          const validKalshiMarkets = kalshiMarkets.filter((m) => {
+            const yp = Number(m.yesPrice ?? 0);
+            const np = Number(m.noPrice ?? 0);
+            const ip = Number(m.impliedProbability ?? 0.5);
+            return (
+              Number.isFinite(yp) && yp > 0.01 && yp < 0.99 &&
+              Number.isFinite(np) && np > 0.01 && np < 0.99 &&
+              Number.isFinite(ip) && ip > 0.01 && ip < 0.99
+            );
+          });
+
+          // Generate signals from both platforms concurrently
+          const [kalshiRaw, polymarketRaw] = await Promise.all([
+            validKalshiMarkets.length > 0
+              ? generateSignalsForMarkets(validKalshiMarkets, feeds, undefined, undefined)
+              : Promise.resolve([]),
+            Promise.resolve(generatePolymarketSignals(polymarketMarkets, { minConfidence })),
+          ]);
+
+          // Build a title map so Kalshi signals can show human-readable questions
+          const kalshiTitles = new Map(
+            kalshiMarkets.map((m) => [m.id, m.title]),
+          );
+
+          const kalshiFiltered = filterSignalsByConfidence(kalshiRaw, minConfidence);
+          const merged = mergePlatformSignals(kalshiFiltered, polymarketRaw, {
+            minConfidence,
+            kalshiTitles,
+          });
+
+          await db.logAuditEvent(
+            "cross_bot_combined_signals",
+            JSON.stringify({
+              kalshiCount: merged.kalshiCount,
+              polymarketCount: merged.polymarketCount,
+              consensusCount: merged.consensusCount,
+            }),
+            ctx.user!.openId,
+          );
+
+          return {
+            success: true,
+            signals: merged.signals.slice(0, limit),
+            consensusCount: merged.consensusCount,
+            kalshiCount: merged.kalshiCount,
+            polymarketCount: merged.polymarketCount,
+            topConviction: merged.topConviction,
+          };
+        } catch (error) {
+          console.error("[CrossBot] Get combined signals error:", error);
+          return {
+            success: false,
+            signals: [],
+            consensusCount: 0,
+            kalshiCount: 0,
+            polymarketCount: 0,
+            topConviction: null,
+            error: String(error),
+          };
+        }
+      }),
+
+    /**
+     * Execute both legs of a cross-platform arbitrage opportunity.
+     *
+     * Requires valid credentials on both platforms.
+     */
+    executeCrossArb: protectedProcedure
+      .input(
+        z.object({
+          kalshiMarketId: z.string().min(1),
+          kalshiYesPrice: z.number().min(0.01).max(0.99),
+          polymarketMarketId: z.string().min(1),
+          polymarketYesPrice: z.number().min(0.01).max(0.99),
+          polymarketTokenIdYes: z.string().min(1),
+          polymarketTokenIdNo: z.string().min(1),
+          buyPlatform: z.enum(["kalshi", "polymarket"]),
+          netEdge: z.number(),
+          /** Size for the Kalshi leg in contracts */
+          kalshiContracts: z.number().int().min(1).max(MAX_KALSHI_ORDER_CONTRACTS),
+          /** Size for the Polymarket leg in USDC */
+          polymarketSizeUsdc: z.number().min(1).max(500),
+        }),
+      )
+      .mutation(async ({ input, ctx }) => {
+        try {
+          const userId = getRequiredUserId(ctx);
+
+          if (input.netEdge <= 0) {
+            return {
+              success: false,
+              error: "Net edge must be positive to execute cross-arb",
+            };
+          }
+
+          // Verify both platform credentials
+          const [kalshiCreds, polymarketCreds] = await Promise.all([
+            kalshiCredDb.getKalshiCredentials(userId),
+            polymarketCredDb.getPolymarketCredentials(userId),
+          ]);
+
+          if (!kalshiCreds || kalshiCreds.accountStatus !== "connected") {
+            return { success: false, error: "Connect a Kalshi account before executing cross-arb." };
+          }
+          if (!polymarketCreds || polymarketCreds.accountStatus !== "connected") {
+            return { success: false, error: "Connect a Polymarket account before executing cross-arb." };
+          }
+
+          // Basic risk check: don't trade if live trading is disabled
+          const preferences = await tradingPreferencesDb.getTradingPreferences(userId);
+          if (!preferences.liveTradingEnabled) {
+            return { success: false, error: "Arm live trading before executing cross-arb orders." };
+          }
+
+          const opportunity = {
+            type: (input.buyPlatform === "kalshi"
+              ? "buy_kalshi_yes_sell_polymarket_yes"
+              : "buy_polymarket_yes_sell_kalshi_yes") as
+              | "buy_kalshi_yes_sell_polymarket_yes"
+              | "buy_polymarket_yes_sell_kalshi_yes",
+            kalshiMarketId: input.kalshiMarketId,
+            kalshiTitle: input.kalshiMarketId,
+            polymarketMarketId: input.polymarketMarketId,
+            polymarketQuestion: input.polymarketMarketId,
+            kalshiYesPrice: input.kalshiYesPrice,
+            polymarketYesPrice: input.polymarketYesPrice,
+            spread: Math.abs(input.kalshiYesPrice - input.polymarketYesPrice),
+            netEdge: input.netEdge,
+            buyPlatform: input.buyPlatform,
+            sellPlatform: (input.buyPlatform === "kalshi" ? "polymarket" : "kalshi") as
+              | "kalshi"
+              | "polymarket",
+            confidence: 0,
+            reasoning: "",
+            minLiquidity: 0,
+          };
+
+          const { apiKey: kalshiKey, privateKey: kalshiPrivKey } = kalshiCreds;
+          const {
+            apiKey: pmKey,
+            apiSecret: pmSecret,
+            apiPassphrase: pmPass,
+          } = polymarketCreds;
+
+          const result = await executeCrossArbLegs(
+            opportunity,
+            {
+              kalshiContracts: input.kalshiContracts,
+              polymarketSizeUsdc: input.polymarketSizeUsdc,
+              polymarketTokenIdYes: input.polymarketTokenIdYes,
+              polymarketTokenIdNo: input.polymarketTokenIdNo,
+            },
+            {
+              placeKalshiOrder: (marketId, side, quantity, limitPrice) =>
+                placeKalshiOrder(userId, marketId, side, quantity, limitPrice),
+              placePolymarketOrder: (tokenId, side, price, size) =>
+                placePolymarketOrder(pmKey, pmSecret, pmPass, {
+                  tokenId,
+                  side,
+                  price,
+                  size,
+                }),
+            },
+          );
+
+          await db.logAuditEvent(
+            result.bothLegsExecuted
+              ? "cross_bot_arb_executed"
+              : "cross_bot_arb_partial_or_failed",
+            JSON.stringify({
+              kalshiMarketId: input.kalshiMarketId,
+              polymarketMarketId: input.polymarketMarketId,
+              buyPlatform: input.buyPlatform,
+              netEdge: input.netEdge,
+              kalshiSuccess: result.kalshiLeg.success,
+              polymarketSuccess: result.polymarketLeg.success,
+            }),
+            ctx.user!.openId,
+          );
+
+          return result;
+        } catch (error) {
+          console.error("[CrossBot] Execute cross-arb error:", error);
+          return { success: false, error: String(error) };
         }
       }),
   }),
