@@ -338,12 +338,18 @@ export async function createApp(options: { runStartupMigrations?: boolean } = {}
   app.all("/api/scheduled/order-sync", scheduledLimiter, toExpressHandler(orderSyncHandler));
 
   // Global error handler
+  // Note: express.Request types can resolve inconsistently in some build
+  // environments (e.g. Vercel's @vercel/node may surface the global Web
+  // `Request` type instead of the express one, causing TS2339 on `req.url`).
+  // Reading the URL/method via the underlying Node IncomingMessage avoids
+  // any dependency on @types/express resolution at this call site.
   app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const incoming = req as IncomingMessage;
     logger.error(
       {
         error: err,
-        path: req.url,
-        method: req.method,
+        path: incoming.url,
+        method: incoming.method,
       },
       "Unhandled error"
     );
