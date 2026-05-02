@@ -29,10 +29,22 @@ export default async function handler(req: any, res: any) {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error("[api/index] createApp failed:", message);
-    res.status(500).json({
-      success: false,
-      error: "Server initialization failed",
-      detail: message,
-    });
+    const errorPayload = { success: false, error: "Server initialization failed", detail: message };
+    const body = JSON.stringify(errorPayload);
+    try {
+      // Prefer Express/Vercel helper methods when available.
+      if (typeof res.status === "function" && typeof res.json === "function") {
+        res.status(500).json(errorPayload);
+        return;
+      }
+    } catch (helperMethodError) {
+      // Fall through to raw Node.js response.
+    }
+    try {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(body);
+    } catch (writeError) {
+      console.error("[api/index] Failed to send error response:", writeError);
+    }
   }
 }

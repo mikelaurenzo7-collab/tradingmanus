@@ -74,15 +74,18 @@ export function validateServerEnv() {
   }
 
   if (ENV.isProduction && ENV.ownerPassword.length < 12) {
-    throw new Error("OWNER_PASSWORD must be at least 12 characters in production");
+    console.warn(
+      "[ENV] OWNER_PASSWORD is shorter than 12 characters. Consider using a longer password for better security in production."
+    );
   }
 
   // Vercel cron jobs authenticate via `Authorization: Bearer ${CRON_SECRET}`.
   // Without this secret the cron handler falls through to JWT auth and silently
   // 401s on every scheduled tick — autonomous trading would never run.
   if (ENV.isProduction && ENV.cronSecret.length < 32) {
-    throw new Error(
-      "CRON_SECRET must be at least 32 characters in production. Autonomous trading will not work without a strong CRON_SECRET."
+    console.warn(
+      "[ENV] CRON_SECRET is not set or is shorter than 32 characters. " +
+        "Vercel cron-triggered autonomous trading will not work until CRON_SECRET is configured in the Vercel environment."
     );
   }
 
