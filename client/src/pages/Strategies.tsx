@@ -8,7 +8,6 @@ import {
   TrendingUp,
   TrendingDown,
   ArrowLeftRight,
-  RefreshCw,
   AlertTriangle,
   CheckCircle2,
   Loader2,
@@ -17,6 +16,8 @@ import {
   Bot,
   Target,
   Activity,
+  Layers,
+  GitMerge,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -423,9 +424,278 @@ function PolymarketAutonomyPanel() {
   );
 }
 
+// ----------- Cross-Bot panels -----------
+
+function CombinedSignalsPanel() {
+  const [isRunning, setIsRunning] = useState(false);
+  const combinedMutation = trpc.crossBot.getCombinedSignals.useMutation();
+
+  const handleFetch = async () => {
+    setIsRunning(true);
+    try {
+      const result = await combinedMutation.mutateAsync({
+        minConfidence: 0.5,
+        limit: 30,
+      });
+      if (result.success) {
+        toast.success(
+          `Found ${result.signals.length} signals (${result.consensusCount} consensus across bots)`,
+        );
+      } else {
+        toast.error(result.error ?? "Failed to fetch combined signals");
+      }
+    } catch {
+      toast.error("Could not fetch combined signals");
+    } finally {
+      setIsRunning(false);
+    }
+  };
+
+  const signals = combinedMutation.data?.signals ?? [];
+  const topSignals = signals.slice(0, 8);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <GitMerge className="w-4 h-4 text-violet-400" />
+          <span className="text-sm font-bold text-foreground">Unified Signal View</span>
+        </div>
+        <Button
+          size="sm"
+          className="laurenzo-button text-xs"
+          onClick={handleFetch}
+          disabled={isRunning}
+        >
+          {isRunning ? (
+            <><Loader2 className="w-3 h-3 mr-1 animate-spin" />Scanning…</>
+          ) : (
+            <><Zap className="w-3 h-3 mr-1" />Scan Both Bots</>
+          )}
+        </Button>
+      </div>
+
+      {combinedMutation.data && (
+        <div className="grid grid-cols-3 gap-2 text-xs text-center">
+          {[
+            { label: "Kalshi", count: combinedMutation.data.kalshiCount, color: "text-cyan-400" },
+            { label: "Polymarket", count: combinedMutation.data.polymarketCount, color: "text-violet-400" },
+            {
+              label: "Consensus",
+              count: combinedMutation.data.consensusCount,
+              color: "text-emerald-400",
+            },
+          ].map((item) => (
+            <div key={item.label} className="bg-black/20 rounded-lg p-2">
+              <div className={`text-lg font-bold ${item.color}`}>{item.count}</div>
+              <div className="text-slate-400">{item.label}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {topSignals.length === 0 && !combinedMutation.isPending && (
+        <div className="text-xs text-slate-500 italic py-2">
+          Click "Scan Both Bots" to fetch live signals from Kalshi and Polymarket.
+        </div>
+      )}
+
+      <div className="space-y-2">
+        {topSignals.map((sig, idx) => (
+          <div
+            key={`${sig.platform}-${sig.marketId}-${idx}`}
+            className={`rounded-lg p-3 text-xs space-y-1 border ${
+              sig.consensusPartner
+                ? "bg-emerald-500/10 border-emerald-400/25"
+                : sig.platform === "kalshi"
+                  ? "bg-cyan-500/10 border-cyan-400/20"
+                  : "bg-violet-500/10 border-violet-400/20"
+            }`}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 truncate">
+                <Badge
+                  variant="outline"
+                  className={`text-[10px] shrink-0 ${
+                    sig.platform === "kalshi"
+                      ? "border-cyan-400/30 text-cyan-300"
+                      : "border-violet-400/30 text-violet-300"
+                  }`}
+                >
+                  {sig.platform.toUpperCase()}
+                </Badge>
+                {sig.consensusPartner && (
+                  <Badge
+                    variant="outline"
+                    className="text-[10px] shrink-0 border-emerald-400/30 text-emerald-300"
+                  >
+                    CONSENSUS ✓
+                  </Badge>
+                )}
+                <span className="text-foreground font-semibold truncate">
+                  {sig.question.length > 55
+                    ? sig.question.slice(0, 55) + "…"
+                    : sig.question}
+                </span>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                <Badge
+                  variant="outline"
+                  className={`text-[10px] ${
+                    sig.side === "yes"
+                      ? "border-emerald-400/30 text-emerald-300"
+                      : "border-red-400/30 text-red-300"
+                  }`}
+                >
+                  {sig.side.toUpperCase()}
+                </Badge>
+                <span className="text-slate-300 font-bold">
+                  {(sig.convictionScore * 100).toFixed(0)}%
+                </span>
+              </div>
+            </div>
+            <div className="text-slate-400 leading-snug">
+              {sig.reasoning.length > 120
+                ? sig.reasoning.slice(0, 120) + "…"
+                : sig.reasoning}
+            </div>
+            {sig.consensusPartner && (
+              <div className="text-emerald-400/80 text-[11px]">
+                ↔ Corroborated by {sig.consensusPartner.platform.toUpperCase()}{" "}
+                {sig.consensusPartner.signalType} ({(sig.consensusPartner.confidence * 100).toFixed(0)}% confidence)
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CrossArbExecutionPanel() {
+  const arbQuery = trpc.combinatorial.detectCrossPlatformArbitrage.useQuery(undefined, {
+    refetchInterval: 120_000,
+  });
+  const executeArb = trpc.crossBot.executeCrossArb.useMutation();
+  const [executing, setExecuting] = useState<string | null>(null);
+
+  const opportunities = (arbQuery.data?.opportunities ?? []).slice(0, 5);
+
+  const handleExecute = async (opp: (typeof opportunities)[number]) => {
+    const key = `${opp.kalshiMarketId}-${opp.polymarketMarketId}`;
+    setExecuting(key);
+    try {
+      const result = await executeArb.mutateAsync({
+        kalshiMarketId: opp.kalshiMarketId,
+        kalshiYesPrice: opp.kalshiYesPrice,
+        polymarketMarketId: opp.polymarketMarketId,
+        polymarketYesPrice: opp.polymarketYesPrice,
+        buyPlatform: opp.buyPlatform,
+        netEdge: opp.netEdge,
+        kalshiContracts: 1,
+        polymarketSizeUsdc: 5,
+      });
+      if (result.success) {
+        toast.success("Both arb legs executed successfully");
+      } else if ("reasoning" in result) {
+        toast.warning(`Partial execution: ${result.reasoning}`);
+      } else {
+        toast.error(`Execution failed: ${result.error ?? "Unknown error"}`);
+      }
+    } catch (err) {
+      toast.error("Failed to execute cross-arb");
+    } finally {
+      setExecuting(null);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Network className="w-4 h-4 text-emerald-400" />
+          <span className="text-sm font-bold text-foreground">Cross-Platform Arb — Execute</span>
+          {arbQuery.isFetching && <Loader2 className="w-3 h-3 animate-spin text-slate-400" />}
+        </div>
+        <span className="text-xs text-slate-500">
+          {arbQuery.data
+            ? `${arbQuery.data.kalshiMarketsScanned}K + ${arbQuery.data.polymarketMarketsScanned}P scanned`
+            : ""}
+        </span>
+      </div>
+
+      <div className="text-xs text-slate-500 bg-yellow-500/10 border border-yellow-400/20 rounded-lg p-2">
+        <AlertTriangle className="w-3 h-3 inline mr-1 text-yellow-400" />
+        Execution requires valid credentials on <strong>both</strong> platforms and live trading armed.
+        Sizes are intentionally small (1 Kalshi contract, $5 Polymarket). Review before using.
+      </div>
+
+      {opportunities.length === 0 ? (
+        <div className="text-xs text-slate-500 italic py-2">
+          No cross-platform arb opportunities above threshold right now.
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {opportunities.map((opp, idx) => {
+            const key = `${opp.kalshiMarketId}-${opp.polymarketMarketId}`;
+            const isExec = executing === key;
+            return (
+              <div
+                key={idx}
+                className="bg-emerald-500/10 border border-emerald-400/20 rounded-lg p-3 text-xs space-y-2"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold text-emerald-300 truncate max-w-[55%]">
+                    {opp.kalshiTitle.length > 55
+                      ? opp.kalshiTitle.slice(0, 55) + "…"
+                      : opp.kalshiTitle}
+                  </span>
+                  <Badge variant="outline" className="text-[10px] border-emerald-400/30 text-emerald-300">
+                    +{(opp.netEdge * 100).toFixed(1)}pp net
+                  </Badge>
+                </div>
+                <div className="text-slate-400">
+                  {(() => {
+                    const buyPrice =
+                      opp.buyPlatform === "kalshi" ? opp.kalshiYesPrice : opp.polymarketYesPrice;
+                    const sellPrice =
+                      opp.sellPlatform === "kalshi" ? opp.kalshiYesPrice : opp.polymarketYesPrice;
+                    return `Buy ${opp.buyPlatform.toUpperCase()} YES @ ${(buyPrice * 100).toFixed(1)}¢ · Sell ${opp.sellPlatform.toUpperCase()} YES @ ${(sellPrice * 100).toFixed(1)}¢`;
+                  })()}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-500 text-[11px]">
+                    Similarity {(opp.confidence * 100).toFixed(0)}% · min liquidity ${opp.minLiquidity.toLocaleString()}
+                  </span>
+                  <div className="ml-auto">
+                    <Button
+                      size="sm"
+                      className="text-[11px] h-6 px-2 bg-emerald-600/80 hover:bg-emerald-500 text-white"
+                      disabled={isExec}
+                      onClick={() =>
+                        handleExecute(opp)
+                      }
+                    >
+                      {isExec ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : (
+                        "Execute Both Legs"
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ----------- Main page -----------
 
-type Tab = "kalshi" | "polymarket" | "live";
+type Tab = "kalshi" | "polymarket" | "live" | "crossbot";
 
 export default function Strategies() {
   const [tab, setTab] = useState<Tab>("kalshi");
@@ -443,12 +713,13 @@ export default function Strategies() {
       </div>
 
       {/* Tab selector */}
-      <div className="flex gap-2">
+      <div className="flex gap-2 flex-wrap">
         {(
           [
             { key: "kalshi", label: "Kalshi Bot", icon: <TrendingUp className="w-4 h-4" /> },
             { key: "polymarket", label: "Polymarket Bot", icon: <Activity className="w-4 h-4" /> },
             { key: "live", label: "Live Opportunities", icon: <Zap className="w-4 h-4" /> },
+            { key: "crossbot", label: "Cross-Bot", icon: <Layers className="w-4 h-4" /> },
           ] as { key: Tab; label: string; icon: React.ReactNode }[]
         ).map(({ key, label, icon }) => (
           <button
@@ -628,6 +899,110 @@ export default function Strategies() {
               </CardContent>
             </Card>
           </div>
+        </div>
+      )}
+
+      {/* Cross-Bot strategies */}
+      {tab === "crossbot" && (
+        <div className="space-y-6">
+          <div className="flex items-center gap-3">
+            <div className="h-6 w-1 bg-gradient-to-b from-violet-400 to-emerald-500 rounded-full" />
+            <div>
+              <h2 className="text-xl font-bold text-foreground">Cross-Bot Strategies</h2>
+              <p className="text-sm text-slate-400 mt-0.5">
+                Coordinate the Kalshi and Polymarket bots together: unified signal view with
+                cross-platform consensus detection, and one-click cross-arb execution.
+              </p>
+            </div>
+          </div>
+
+          {/* How it works */}
+          <Card className="border bg-gradient-to-br from-slate-800/30 to-slate-900/30 border-slate-700/40 backdrop-blur-xl">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm gradient-text">How Cross-Bot Strategies Work</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-3 md:grid-cols-3 text-xs">
+                {[
+                  {
+                    icon: <GitMerge className="w-4 h-4 text-violet-400" />,
+                    title: "Consensus Detection",
+                    body: "When both bots independently fire signals on the same event in the same direction, conviction is boosted — both agree the market is mispriced.",
+                  },
+                  {
+                    icon: <Network className="w-4 h-4 text-emerald-400" />,
+                    title: "Cross-Platform Arbitrage",
+                    body: "Kalshi and Polymarket price identical events differently. Buy the cheap side on one platform and hedge the expensive side on the other for near risk-free edge.",
+                  },
+                  {
+                    icon: <Layers className="w-4 h-4 text-cyan-400" />,
+                    title: "Coordinated Execution",
+                    body: "The cross-bot executor places both legs of an arbitrage trade concurrently, minimising the window during which only one leg is open.",
+                  },
+                ].map((item) => (
+                  <div key={item.title} className="bg-black/20 rounded-lg p-3 space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      {item.icon}
+                      <span className="font-semibold text-foreground">{item.title}</span>
+                    </div>
+                    <p className="text-slate-400 leading-relaxed">{item.body}</p>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+
+          <div className="grid gap-6 md:grid-cols-2">
+            {/* Combined signals */}
+            <Card className="border bg-gradient-to-br from-violet-500/10 to-purple-500/10 border-violet-400/20 backdrop-blur-xl">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base gradient-text">Combined Signal Scan</CardTitle>
+                <CardDescription className="text-xs text-slate-400">
+                  Signals from both bots merged into one ranked list with consensus highlighting
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <CombinedSignalsPanel />
+              </CardContent>
+            </Card>
+
+            {/* Cross-arb execution */}
+            <Card className="border bg-gradient-to-br from-emerald-500/10 to-teal-500/10 border-emerald-400/20 backdrop-blur-xl">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base gradient-text">Cross-Arb Executor</CardTitle>
+                <CardDescription className="text-xs text-slate-400">
+                  Live Kalshi ↔ Polymarket opportunities — execute both legs in one action
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <CrossArbExecutionPanel />
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Requirements */}
+          <Card className="border bg-gradient-to-br from-slate-800/40 to-slate-900/40 border-slate-700/50 backdrop-blur-xl">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm text-slate-300">Prerequisites</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-2 md:grid-cols-2 text-xs text-slate-400">
+                {[
+                  "Kalshi account connected (Connect page)",
+                  "Polymarket account connected (Connect page)",
+                  "Live trading armed in Trading Autonomy",
+                  "Sufficient balance on both platforms",
+                  "Review arb reasoning before executing",
+                  "Back-test before scaling size",
+                ].map((req) => (
+                  <div key={req} className="flex items-center gap-2">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                    {req}
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
         </div>
       )}
     </div>
