@@ -8,7 +8,7 @@ function setBaseRequiredEnv() {
   process.env.DATABASE_URL = "postgresql://example";
   process.env.OWNER_EMAIL = "owner@example.com";
   process.env.OWNER_PASSWORD = "z".repeat(16);
-  process.env.CRON_SECRET = "c".repeat(20);
+  process.env.CRON_SECRET = "c".repeat(32); // Changed to 32 chars
 }
 
 describe("validateServerEnv", () => {
@@ -39,16 +39,16 @@ describe("validateServerEnv", () => {
     expect(() => envModule.validateServerEnv()).not.toThrow();
   });
 
-  it("does not throw when CRON_SECRET is absent in production (emits warning only)", async () => {
+  it("requires CRON_SECRET to be at least 32 chars in production", async () => {
     setBaseRequiredEnv();
     process.env.NODE_ENV = "production";
-    delete process.env.CRON_SECRET;
+    process.env.CRON_SECRET = "short"; // Less than 32 chars
     process.env.OPENAI_API_KEY = "sk-test-value";
     process.env.ANTHROPIC_API_KEY = "sk-ant-test";
 
     const envModule = await import("./_core/env");
 
-    expect(() => envModule.validateServerEnv()).not.toThrow();
+    expect(() => envModule.validateServerEnv()).toThrow("CRON_SECRET must be at least 32 characters");
   });
 
   it("accepts a complete production env including both AI provider keys", async () => {

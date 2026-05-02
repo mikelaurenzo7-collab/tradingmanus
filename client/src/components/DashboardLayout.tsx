@@ -93,7 +93,13 @@ export default function DashboardLayout({
   const [loginError, setLoginError] = useState<string | null>(null);
   const utils = trpc.useUtils();
   const loginMutation = trpc.auth.login.useMutation({
-    onSuccess: async (loggedInUser) => {
+    onSuccess: async (data: any) => {
+      if (data && typeof data === 'object' && 'requiresTwoFactor' in data && data.requiresTwoFactor) {
+        // Handle 2FA requirement
+        setLoginError(data.message || 'Two-factor authentication required');
+        return;
+      }
+      const loggedInUser = data && typeof data === 'object' && 'user' in data ? data.user : data;
       utils.auth.me.setData(undefined, loggedInUser);
       setPassword("");
       setLoginError(null);
