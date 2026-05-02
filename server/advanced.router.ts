@@ -9,6 +9,7 @@ import * as sentiment from "./_core/kalshiSentiment";
 import * as portfolio from "./_core/kalshiPortfolioOptimization";
 import * as risk from "./_core/kalshiAdvancedRisk";
 import * as backtest from "./_core/kalshiBacktest";
+import { runStrategyBacktest } from "./_core/strategyBacktest";
 
 const backtestTradeSchema = z.object({
   marketId: z.string(),
@@ -345,6 +346,55 @@ export const advancedRouter = router({
           monteCarlo,
           walkForward,
         };
+      }),
+
+    /**
+     * Run a synthetic-data backtest of the live signal generators.
+     *
+     * Replays the chosen platform's signal generator across N synthetic
+     * markets with known true probabilities, simulates fills with fees +
+     * slippage, and returns aggregated stats (win rate, Sharpe, max
+     * drawdown, realized accuracy, etc.).
+     *
+     * Use this BEFORE enabling real-money trading: if the strategy can't
+     * make money on data with deterministic edge, it won't on live markets.
+     */
+    runStrategyBacktest: protectedProcedure
+      .input(
+        z.object({
+          platform: z.enum(["kalshi", "polymarket"]).default("kalshi"),
+          numMarkets: z.number().int().min(1).max(500).default(25),
+          ticksPerMarket: z.number().int().min(2).max(500).default(60),
+          minConfidence: z.number().min(0).max(1).default(0.55),
+          feePerLeg: z.number().min(0).max(0.1).default(0.005),
+          slippagePerLeg: z.number().min(0).max(0.1).default(0.0025),
+          positionSizeUsd: z.number().positive().max(10000).default(10),
+          maxHoldTicks: z.number().int().positive().max(1000).optional(),
+          seed: z.number().int().default(1),
+          initialDisplacement: z.number().min(0).max(0.45).default(0.18),
+          noise: z.number().min(0).max(0.2).default(0.02),
+          meanReversion: z.number().min(0).max(1).default(0.05),
+          driftToTruth: z.number().min(0).max(1).default(0.005),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        return await runStrategyBacktest({
+          platform: input.platform,
+          minConfidence: input.minConfidence,
+          feePerLeg: input.feePerLeg,
+          slippagePerLeg: input.slippagePerLeg,
+          positionSizeUsd: input.positionSizeUsd,
+          maxHoldTicks: input.maxHoldTicks ?? Number.POSITIVE_INFINITY,
+          synthetic: {
+            numMarkets: input.numMarkets,
+            ticksPerMarket: input.ticksPerMarket,
+            seed: input.seed,
+            initialDisplacement: input.initialDisplacement,
+            noise: input.noise,
+            meanReversion: input.meanReversion,
+            driftToTruth: input.driftToTruth,
+          },
+        });
       }),
   }),
 });
