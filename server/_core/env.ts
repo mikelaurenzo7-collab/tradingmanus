@@ -44,6 +44,9 @@ export const ENV = {
   kalshiApiKey: normalize(process.env.KALSHI_API_KEY),
   isProduction: process.env.NODE_ENV === "production",
   gnewsApiKey: normalize(process.env.GNEWS_API_KEY),
+  // Optional: URL to receive webhook POST alerts for critical operational events
+  // (consecutive autonomy failures, equity drops, exchange rejections).
+  alertWebhookUrl: normalize(process.env.ALERT_WEBHOOK_URL),
 };
 
 const REQUIRED_SERVER_ENV = [

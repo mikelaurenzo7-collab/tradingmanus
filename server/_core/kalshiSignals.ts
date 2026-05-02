@@ -37,6 +37,8 @@ export interface KalshiSignal {
     marketDataQuality?: number;
     marketCategory?: string;
     strategyProfile?: StrategyProfileKey;
+    /** ISO-8601 resolution date from Kalshi, used for time-to-resolution scoring. */
+    resolutionDate?: string;
   };
 }
 
@@ -374,6 +376,7 @@ export async function generateSignalsForMarket(
         ...signal.metadata,
         marketCategory: market.category ?? "unknown",
         strategyProfile,
+        resolutionDate: market.resolutionDate ?? undefined,
       },
     }))
     .map((signal) => attachLiquidityMetadata(signal, feed));
@@ -488,6 +491,30 @@ export function scoreSignalForExecution(signal: KalshiSignal): number {
   const totalVolume = Number(signal.metadata?.totalVolume ?? 0);
   if (Number.isFinite(totalVolume) && totalVolume >= 5000) {
     score += 0.03;
+  }
+
+  // Time-to-resolution factor: prefer markets with moderate time remaining.
+  // Markets resolving very soon (< 2 h) are risky (adverse selection, thin
+  // liquidity spike).  Markets resolving > 30 days out have a longer theta
+  // drag and higher uncertainty; sweet-spot is 2 h – 7 days.
+  const resolutionDate = signal.metadata?.resolutionDate;
+  if (resolutionDate) {
+    const hoursToResolution = (new Date(resolutionDate).getTime() - Date.now()) / (1000 * 60 * 60);
+    if (Number.isFinite(hoursToResolution)) {
+      if (hoursToResolution < 0) {
+        // Already past resolution — penalise heavily; market should be settled.
+        score -= 0.15;
+      } else if (hoursToResolution < 2) {
+        // Imminent resolution — execution adverse-selection risk is high.
+        score -= 0.1;
+      } else if (hoursToResolution <= 168) {
+        // 2 h – 7 days: sweet spot, slight bonus.
+        score += 0.04;
+      } else if (hoursToResolution > 720) {
+        // More than 30 days out: long time-horizon drag.
+        score -= 0.04;
+      }
+    }
   }
 
   return Math.max(0, Math.min(1, score));

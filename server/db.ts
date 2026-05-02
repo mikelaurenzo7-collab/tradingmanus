@@ -13,7 +13,7 @@ import {
   tradingPreferences,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
-import { eq, and, desc, gte, inArray, ne } from "drizzle-orm";
+import { eq, and, desc, gte, inArray, ne, sql } from "drizzle-orm";
 import { neon } from "@neondatabase/serverless";
 import { drizzle as drizzleInit } from "drizzle-orm/neon-http";
 import { assertPositiveIntegerUserId } from "./_core/userScope";
@@ -916,4 +916,117 @@ export async function getAuditLog(
     .from(auditLog)
     .where(conditions)
     .orderBy(desc(auditLog.createdAt));
+}
+
+/**
+ * Lightweight DB connectivity probe — used by the /api/health endpoint.
+ * Returns true if the database responds, false otherwise.
+ */
+export async function pingDb(): Promise<boolean> {
+  const database = await getDb();
+  if (!database) return false;
+
+  try {
+    await database.execute(sql`SELECT 1`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Kalshi fill queries
+export async function createKalshiFill(fill: {
+  userId: number;
+  orderId: string;
+  marketId: string;
+  fillPrice: number;
+  fillQuantity: number;
+}) {
+  const scopedUserId = assertPositiveIntegerUserId(fill.userId, "createKalshiFill userId");
+  const database = await getDb();
+  if (!database) return null;
+
+  const result = await database.insert(kalshiFills).values({
+    userId: scopedUserId,
+    orderId: fill.orderId,
+    marketId: fill.marketId,
+    fillPrice: fill.fillPrice,
+    fillQuantity: fill.fillQuantity,
+  });
+
+  return result;
+}
+
+export async function getKalshiFillsByOrder(orderId: string, userId: number) {
+  const scopedUserId = assertPositiveIntegerUserId(userId, "getKalshiFillsByOrder userId");
+  const database = await getDb();
+  if (!database) return [];
+
+  return await database
+    .select()
+    .from(kalshiFills)
+    .where(
+      and(
+        eq(kalshiFills.orderId, orderId),
+        eq(kalshiFills.userId, scopedUserId)
+      )
+    )
+    .orderBy(desc(kalshiFills.fillTime));
+}
+
+// Autonomy run detail query
+export async function getAutonomyRunDetail(runId: string, userId: number) {
+  const scopedUserId = assertPositiveIntegerUserId(userId, "getAutonomyRunDetail userId");
+  const database = await getDb();
+  if (!database) return null;
+
+  const result = await database
+    .select()
+    .from(autonomyRuns)
+    .where(
+      and(
+        eq(autonomyRuns.runId, runId),
+        eq(autonomyRuns.userId, scopedUserId)
+      )
+    )
+    .limit(1);
+
+  return result[0] ?? null;
+}
+
+// Beta access helpers
+export async function setBetaAccessLevel(
+  userId: number,
+  level: "none" | "internal" | "invited" | "public"
+) {
+  const scopedUserId = assertPositiveIntegerUserId(userId, "setBetaAccessLevel userId");
+  const database = await getDb();
+  if (!database) throw new Error("Database not available");
+
+  await database
+    .update(users)
+    .set({ betaAccessLevel: level })
+    .where(eq(users.id, scopedUserId));
+
+  const updated = await database
+    .select()
+    .from(users)
+    .where(eq(users.id, scopedUserId))
+    .limit(1);
+
+  return updated[0] ?? null;
+}
+
+export async function getUserBetaAccessLevel(userId: number) {
+  const scopedUserId = assertPositiveIntegerUserId(userId, "getUserBetaAccessLevel userId");
+  const database = await getDb();
+  if (!database) return "none" as const;
+
+  const result = await database
+    .select({ betaAccessLevel: users.betaAccessLevel })
+    .from(users)
+    .where(eq(users.id, scopedUserId))
+    .limit(1);
+
+  return (result[0]?.betaAccessLevel ?? "none") as "none" | "internal" | "invited" | "public";
 }
