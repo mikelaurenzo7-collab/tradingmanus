@@ -138,9 +138,13 @@ describe("scheduled away-from-chat trading", () => {
       {
         id: "KXTEST-1",
         title: "Will demo market resolve yes?",
+        category: "sports",
         yesPrice: 0.43,
         noPrice: 0.57,
+        yesVolume: 1500,
+        noVolume: 1500,
         impliedProbability: 0.57,
+        resolutionDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
       },
     ]);
     mocks.getMarketFeed.mockReturnValue(null);
