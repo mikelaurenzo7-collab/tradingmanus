@@ -20,6 +20,7 @@ import Analytics from "./pages/Analytics";
 import TradingAutonomy from "./pages/TradingAutonomy";
 import Funding from "./pages/Funding";
 import ClusterMonitor from "./pages/ClusterMonitor";
+import Strategies from "./pages/Strategies";
 
 function Router() {
   return (
@@ -32,6 +33,7 @@ function Router() {
       <Route path={"/trades"} component={() => <DashboardLayout><Trades /></DashboardLayout>} />
       <Route path={"/signals"} component={() => <DashboardLayout><Signals /></DashboardLayout>} />
       <Route path={"/cluster-monitor"} component={() => <DashboardLayout><ClusterMonitor /></DashboardLayout>} />
+      <Route path={"/strategies"} component={() => <DashboardLayout><Strategies /></DashboardLayout>} />
       <Route path={"/risk-controls"} component={() => <DashboardLayout><RiskControls /></DashboardLayout>} />
       <Route path={"/audit"} component={() => <DashboardLayout><AuditLog /></DashboardLayout>} />
       <Route path={"/training"} component={() => <DashboardLayout><Training /></DashboardLayout>} />
