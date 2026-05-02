@@ -37,6 +37,10 @@ import { assertPositiveIntegerUserId } from "./userScope";
 import { recordPolymarketTradeEntry } from "./polymarketLearning";
 import { isShadowModeEnabled, recordPolymarketShadowOrder } from "./shadowMode";
 import { computeKellyBet, beliefFromSignal } from "./positionSizing";
+import {
+  buildCalibrationFromHistory,
+  calibrateConfidence,
+} from "./signalCalibration";
 import { ENV } from "./env";
 
 const MAX_SCHEDULED_MARKETS = 80;
@@ -397,7 +401,14 @@ export async function runPolymarketAutonomousTrading(
   // cap from the signal's confidence and clamp scaledSize to it.  Existing
   // hard caps still apply.  When Kelly returns 0 (no edge), veto.
   if (ENV.enableKellySizing && bankroll > 0 && best.limitPrice > 0 && best.limitPrice < 1) {
-    const beliefYes = beliefFromSignal(best.side, best.confidence);
+    const calibrationCurve = ENV.enableConfidenceCalibration
+      ? await buildCalibrationFromHistory(scopedUserId)
+      : null;
+    const beliefYes = beliefFromSignal(best.side, best.confidence, {
+      calibration: calibrationCurve
+        ? (raw) => calibrateConfidence(raw, calibrationCurve)
+        : undefined,
+    });
     const kelly = computeKellyBet({
       side: best.side,
       marketYesPrice: best.side === "yes" ? best.limitPrice : 1 - best.limitPrice,
@@ -596,7 +607,8 @@ export async function runPolymarketAutonomousTrading(
       best.side,
       best.limitPrice,
       scaledSize,
-      best.reasoning
+      best.reasoning,
+      { confidence: best.confidence },
     );
 
     return {

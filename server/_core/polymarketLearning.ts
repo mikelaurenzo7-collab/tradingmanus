@@ -409,7 +409,8 @@ export async function recordPolymarketTradeEntry(
   side: "yes" | "no",
   entryPrice: number,
   entrySizeUsdc: number,
-  reasoning: string
+  reasoning: string,
+  options: { confidence?: number } = {},
 ): Promise<PolymarketTradeRecord> {
   const scopedUserId = assertPositiveIntegerUserId(
     userId,
@@ -443,6 +444,9 @@ export async function recordPolymarketTradeEntry(
       entrySizeUsdc,
       signalType,
       reasoning,
+      // Persist signal confidence so the calibration curve can later
+      // bucket trades by claimed confidence and measure realized win rate.
+      confidence: options.confidence ?? null,
     }),
     `user:${scopedUserId}`
   );

@@ -68,6 +68,10 @@ export const ENV = {
     const parsed = Number.parseFloat(process.env.KELLY_FRACTION ?? "");
     return Number.isFinite(parsed) && parsed > 0 && parsed <= 1 ? parsed : 0.25;
   })(),
+  // Calibrate signal.confidence against the user's historical hit rate
+  // before passing it to Kelly.  Falls back to identity when there isn't
+  // enough closed-trade history yet (< 10 trades).
+  enableConfidenceCalibration: normalizeBoolean(process.env.ENABLE_CONFIDENCE_CALIBRATION, true),
   // Hard cap on any single bet as a fraction of equity, regardless of
   // Kelly's recommendation.  Default 5%.
   kellyMaxFractionOfEquity: (() => {

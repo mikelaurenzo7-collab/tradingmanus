@@ -185,40 +185,50 @@ async function stopLossScanHandler(req: AppRequest, res: AppResponse) {
       trigger.openId,
     );
 
-    const { runStopLossScan } = await import("./stopLossScanner");
+    const { runStopLossScan, runPolymarketStopLossScan } = await import(
+      "./stopLossScanner"
+    );
     const results: Array<{
       userId: number;
       openId: string;
-      scannedPositions: number;
-      closesAttempted: number;
-      closesSucceeded: number;
-      errors: string[];
+      kalshi: { scannedPositions: number; closesAttempted: number; closesSucceeded: number; errors: string[] };
+      polymarket: { scannedPositions: number; closesAttempted: number; closesSucceeded: number; errors: string[] };
     }> = [];
 
     for (const user of scopedUsers as Array<{ id: number; openId: string }>) {
+      const summary = {
+        userId: user.id,
+        openId: user.openId,
+        kalshi: { scannedPositions: 0, closesAttempted: 0, closesSucceeded: 0, errors: [] as string[] },
+        polymarket: { scannedPositions: 0, closesAttempted: 0, closesSucceeded: 0, errors: [] as string[] },
+      };
       try {
-        const result = await runStopLossScan(user.id, {
+        const k = await runStopLossScan(user.id, { triggeredByOpenId: trigger.openId });
+        summary.kalshi = {
+          scannedPositions: k.scannedPositions,
+          closesAttempted: k.closesAttempted,
+          closesSucceeded: k.closesSucceeded,
+          errors: k.errors,
+        };
+      } catch (error) {
+        logger.error({ error, userId: user.id }, "Kalshi StopLossScan user failed");
+        summary.kalshi.errors.push(error instanceof Error ? error.message : String(error));
+      }
+      try {
+        const p = await runPolymarketStopLossScan(user.id, {
           triggeredByOpenId: trigger.openId,
         });
-        results.push({
-          userId: user.id,
-          openId: user.openId,
-          scannedPositions: result.scannedPositions,
-          closesAttempted: result.closesAttempted,
-          closesSucceeded: result.closesSucceeded,
-          errors: result.errors,
-        });
+        summary.polymarket = {
+          scannedPositions: p.scannedPositions,
+          closesAttempted: p.closesAttempted,
+          closesSucceeded: p.closesSucceeded,
+          errors: p.errors,
+        };
       } catch (error) {
-        logger.error({ error, userId: user.id }, "StopLossScan user failed");
-        results.push({
-          userId: user.id,
-          openId: user.openId,
-          scannedPositions: 0,
-          closesAttempted: 0,
-          closesSucceeded: 0,
-          errors: [error instanceof Error ? error.message : String(error)],
-        });
+        logger.error({ error, userId: user.id }, "Polymarket StopLossScan user failed");
+        summary.polymarket.errors.push(error instanceof Error ? error.message : String(error));
       }
+      results.push(summary);
     }
 
     res.json({

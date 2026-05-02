@@ -25,6 +25,10 @@ import { isShadowModeEnabled, recordKalshiShadowOrder } from "./shadowMode";
 import { computeKellyBet, beliefFromSignal } from "./positionSizing";
 import { computeColdStartScale } from "./coldStart";
 import { checkConcentration, type ExistingExposure } from "./concentrationLimits";
+import {
+  buildCalibrationFromHistory,
+  calibrateConfidence,
+} from "./signalCalibration";
 import { ENV } from "./env";
 
 const BASE_RISK_LIMITS = {
@@ -903,10 +907,20 @@ export async function runScheduledAutonomousTrading(
   // signal's confidence and apply it as a budget shrinker.  Existing
   // hard caps (per-trade risk, equity fraction) still apply.  This only
   // SHRINKS the budget — it never increases it past the configured caps.
+  // Confidence is run through the calibration curve so Kelly sees the
+  // empirical hit rate at this confidence level rather than the raw
+  // heuristic value.
   let kellyShrunk = false;
   let kellyDetails: ReturnType<typeof computeKellyBet> | null = null;
   if (ENV.enableKellySizing && availableCapital > 0 && limitPrice > 0 && limitPrice < 1) {
-    const beliefYes = beliefFromSignal(eligibleSignal.side, eligibleSignal.confidence);
+    const calibrationCurve = ENV.enableConfidenceCalibration
+      ? await buildCalibrationFromHistory(userId)
+      : null;
+    const beliefYes = beliefFromSignal(eligibleSignal.side, eligibleSignal.confidence, {
+      calibration: calibrationCurve
+        ? (raw) => calibrateConfidence(raw, calibrationCurve)
+        : undefined,
+    });
     kellyDetails = computeKellyBet({
       side: eligibleSignal.side,
       marketYesPrice:

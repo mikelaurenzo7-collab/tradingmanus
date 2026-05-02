@@ -898,6 +898,218 @@ export async function getLatestAuditEventByType(
 }
 
 /**
+ * Collect (confidence, won) observations from this user's closed-trade
+ * audit history.  Used by the calibration builder.
+ *
+ * Polymarket: match polymarket_trade_entry to polymarket_trade_exit by
+ *   tradeId; won = realizedPnl > 0.  Entries without `confidence`
+ *   recorded (older trades) are skipped.
+ *
+ * Kalshi: match kalshiSignals to closed kalshiPositions by marketId; won =
+ *   realizedPnl > 0.  When multiple signals exist for one market we take
+ *   the most recent prior to the position openedAt.
+ */
+export async function collectClosedTradeObservations(
+  userId: number,
+): Promise<Array<{ confidence: number; won: boolean }>> {
+  const scopedUserId = assertPositiveIntegerUserId(
+    userId,
+    "collectClosedTradeObservations userId",
+  );
+  const database = await getDb();
+  if (!database) return [];
+
+  const observations: Array<{ confidence: number; won: boolean }> = [];
+
+  try {
+    // ---- Polymarket: tradeId join via audit log details ----
+    const openId = `user:${scopedUserId}`;
+    const [pmEntries, pmExits] = await Promise.all([
+      database
+        .select()
+        .from(auditLog)
+        .where(
+          and(
+            eq(auditLog.eventType, "polymarket_trade_entry"),
+            eq(auditLog.triggeredByOpenId, openId),
+          ),
+        ),
+      database
+        .select()
+        .from(auditLog)
+        .where(
+          and(
+            eq(auditLog.eventType, "polymarket_trade_exit"),
+            eq(auditLog.triggeredByOpenId, openId),
+          ),
+        ),
+    ]);
+
+    const exitByTradeId = new Map<string, number>();
+    for (const row of pmExits) {
+      try {
+        const parsed = JSON.parse(String(row.details ?? "{}"));
+        if (parsed.tradeId && Number.isFinite(parsed.realizedPnl)) {
+          exitByTradeId.set(String(parsed.tradeId), Number(parsed.realizedPnl));
+        }
+      } catch {
+        // skip
+      }
+    }
+    for (const row of pmEntries) {
+      try {
+        const parsed = JSON.parse(String(row.details ?? "{}"));
+        const tradeId = String(parsed.tradeId ?? "");
+        const confidence = Number(parsed.confidence);
+        if (!tradeId || !Number.isFinite(confidence)) continue;
+        const pnl = exitByTradeId.get(tradeId);
+        if (pnl === undefined) continue; // still open
+        observations.push({ confidence, won: pnl > 0 });
+      } catch {
+        // skip
+      }
+    }
+
+    // ---- Kalshi: signal confidence × closed position realizedPnl ----
+    const closedPositions = await database
+      .select()
+      .from(kalshiPositions)
+      .where(
+        and(
+          eq(kalshiPositions.userId, scopedUserId),
+          eq(kalshiPositions.positionStatus, "closed"),
+        ),
+      );
+
+    for (const pos of closedPositions) {
+      // Find the most recent signal for this market+side that predates the
+      // position open time.
+      const candidates = await database
+        .select()
+        .from(kalshiSignals)
+        .where(
+          and(
+            eq(kalshiSignals.userId, scopedUserId),
+            eq(kalshiSignals.marketId, pos.marketId),
+            eq(kalshiSignals.side, pos.side),
+          ),
+        );
+      let chosen: any = null;
+      const openedAt = new Date(pos.openedAt as any).getTime();
+      for (const c of candidates) {
+        const cAt = new Date((c as any).createdAt ?? 0).getTime();
+        if (cAt > openedAt) continue; // signal after open
+        if (!chosen || cAt > new Date((chosen as any).createdAt ?? 0).getTime()) chosen = c;
+      }
+      if (!chosen) continue;
+      const confidence = Number((chosen as any).confidence);
+      const realizedPnl = Number((pos as any).realizedPnl);
+      if (!Number.isFinite(confidence) || !Number.isFinite(realizedPnl)) continue;
+      observations.push({ confidence, won: realizedPnl > 0 });
+    }
+  } catch (error) {
+    console.error("[Database] collectClosedTradeObservations failed:", error);
+  }
+
+  return observations;
+}
+
+/**
+ * Synthesize Polymarket open-position records from the audit log.
+ *
+ * Polymarket positions live on the CLOB, not in our Postgres.  Rather than
+ * adding a new schema-migration table just for the stop-loss scanner, we
+ * derive "open" positions by scanning audit events: every
+ * polymarket_trade_entry is open until a matching polymarket_trade_exit
+ * event with the same tradeId arrives.  That gives us enough context
+ * (entry price, size, side, marketId, openedAt) to run stop-loss
+ * decisions without a schema change.
+ */
+export type PolymarketOpenPosition = {
+  tradeId: string;
+  marketId: string;
+  tokenId: string;
+  side: "yes" | "no";
+  entryPrice: number;
+  entrySizeUsdc: number;
+  signalType?: string;
+  openedAt: Date;
+};
+
+export async function getOpenPolymarketPositions(
+  userId: number,
+): Promise<PolymarketOpenPosition[]> {
+  const scopedUserId = assertPositiveIntegerUserId(
+    userId,
+    "getOpenPolymarketPositions userId",
+  );
+  const database = await getDb();
+  if (!database) return [];
+
+  const openId = `user:${scopedUserId}`;
+
+  try {
+    const [entries, exits] = await Promise.all([
+      database
+        .select()
+        .from(auditLog)
+        .where(
+          and(
+            eq(auditLog.eventType, "polymarket_trade_entry"),
+            eq(auditLog.triggeredByOpenId, openId),
+          ),
+        ),
+      database
+        .select()
+        .from(auditLog)
+        .where(
+          and(
+            eq(auditLog.eventType, "polymarket_trade_exit"),
+            eq(auditLog.triggeredByOpenId, openId),
+          ),
+        ),
+    ]);
+
+    const exitedTradeIds = new Set<string>();
+    for (const row of exits) {
+      try {
+        const parsed = JSON.parse(String(row.details ?? "{}"));
+        if (parsed.tradeId) exitedTradeIds.add(String(parsed.tradeId));
+      } catch {
+        // Malformed exit row — ignore so a single bad event can't hide a
+        // real open position.
+      }
+    }
+
+    const open: PolymarketOpenPosition[] = [];
+    for (const row of entries) {
+      try {
+        const parsed = JSON.parse(String(row.details ?? "{}"));
+        const tradeId = String(parsed.tradeId ?? "");
+        if (!tradeId || exitedTradeIds.has(tradeId)) continue;
+        open.push({
+          tradeId,
+          marketId: String(parsed.marketId ?? ""),
+          tokenId: String(parsed.tokenId ?? ""),
+          side: parsed.side === "no" ? "no" : "yes",
+          entryPrice: Number(parsed.entryPrice ?? 0),
+          entrySizeUsdc: Number(parsed.entrySizeUsdc ?? 0),
+          signalType:
+            typeof parsed.signalType === "string" ? parsed.signalType : undefined,
+          openedAt: new Date(row.createdAt),
+        });
+      } catch {
+        // Malformed entry — skip.
+      }
+    }
+    return open;
+  } catch (error) {
+    console.error("[Database] getOpenPolymarketPositions failed:", error);
+    return [];
+  }
+}
+
+/**
  * Cold-start sizing inputs for a user: account age in days plus the count
  * of completed trades across both platforms (closed Kalshi positions +
  * polymarket_trade_exit audit events).
