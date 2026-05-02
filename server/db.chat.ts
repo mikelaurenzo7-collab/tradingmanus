@@ -1,5 +1,5 @@
 import { botConfigs, chatMessages } from "../drizzle/schema";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, inArray } from "drizzle-orm";
 import { getDb } from "./db";
 
 type Platform = "kalshi" | "polymarket";
@@ -101,9 +101,7 @@ export async function addChatMessage(payload: {
 
   if (allIds.length > MAX_HISTORY) {
     const toDelete = allIds.slice(MAX_HISTORY).map((r: { id: number }) => r.id);
-    for (const id of toDelete) {
-      await database.delete(chatMessages).where(eq(chatMessages.id, id));
-    }
+    await database.delete(chatMessages).where(inArray(chatMessages.id, toDelete));
   }
 
   return row;

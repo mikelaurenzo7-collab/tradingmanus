@@ -10,6 +10,7 @@ import { z } from "zod";
 import Anthropic from "@anthropic-ai/sdk";
 import { ENV } from "./_core/env";
 import * as chatDb from "./db.chat";
+import type { ChatMessage } from "../drizzle/schema";
 import * as db from "./db";
 import { assertPositiveIntegerUserId } from "./_core/userScope";
 import { fetchKalshiMarkets } from "./_core/kalshiMarketData";
@@ -180,7 +181,7 @@ async function executeTool(
         .where(eq(kalshiSignals.userId, userId))
         .orderBy(desc(kalshiSignals.createdAt))
         .limit(limit);
-      const filtered = signals.filter((s: any) => s.confidence >= minConf);
+      const filtered = signals.filter((s: { confidence: number }) => s.confidence >= minConf);
       return { result: filtered, actionType: "get_signals" };
     }
 
@@ -208,7 +209,7 @@ async function executeTool(
       try {
         const markets = await fetchPolymarketMarkets({ limit: 40 });
         const signals = await generatePolymarketSignals(markets.slice(0, 30));
-        const top = signals.filter((s: any) => (s.confidence ?? 0) >= 0.65).slice(0, 10);
+        const top = signals.filter((s: { confidence?: number }) => (s.confidence ?? 0) >= 0.65).slice(0, 10);
         return { result: { signalsGenerated: signals.length, topSignals: top }, actionType: "run_signals" };
       } catch (err) {
         return { result: { error: String(err) }, actionType: "run_signals" };
@@ -268,7 +269,7 @@ async function maybeCompressMemory(
 
   const client = new Anthropic({ apiKey: ENV.anthropicApiKey });
   const transcript = toCompress
-    .map((m: { role: string; content: string }) => `${m.role.toUpperCase()}: ${m.content}`)
+    .map((m: Pick<ChatMessage, "role" | "content">) => `${m.role.toUpperCase()}: ${m.content}`)
     .join("\n");
 
   const existing = existingConfig?.memorySummary ?? "";
@@ -424,7 +425,7 @@ export const chatRouter = router({
       const contextMessages = history
         .slice(0, -1) // drop the message we just persisted
         .slice(-MAX_CONTEXT_MESSAGES)
-        .map((m: { role: string; content: string }) => ({
+        .map((m: Pick<ChatMessage, "role" | "content">) => ({
           role: m.role as "user" | "assistant",
           content: m.content,
         }));

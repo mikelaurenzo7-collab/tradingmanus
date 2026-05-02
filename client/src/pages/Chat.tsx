@@ -81,7 +81,7 @@ type ChatMessage = {
 
 function parseActionData(raw: string | null): unknown {
   if (!raw) return null;
-  try { return JSON.parse(raw); } catch { return null; }
+  try { return JSON.parse(raw); } catch (e) { console.warn("[Chat] Failed to parse action data:", e); return null; }
 }
 
 function ActionCard({ actionType, actionData }: { actionType: string | null; actionData: string | null }) {
