@@ -13,7 +13,8 @@ import { runScheduledAutonomousTradingBatch } from "./kalshiAutonomy";
 import { syncPendingOrders, syncLivePositions } from "./kalshiOrderSync";
 import { logger } from "./logger";
 import { correlationIdMiddleware } from "./correlationId";
-import { apiLimiter, scheduledLimiter } from "./rateLimiter";
+import { apiLimiter, authLimiter, scheduledLimiter } from "./rateLimiter";
+import { csrfProtection } from "./csrf";
 import { createAutonomousTradingLock, createOrderSyncLock } from "./distributedLock";
 
 type AppRequest = IncomingMessage & {
@@ -70,7 +71,9 @@ export function scopeScheduledUsersToTrigger(
   users: EligibleScheduledUser[],
   triggerOpenId: string
 ) {
-  if (triggerOpenId === "vercel_cron") {
+  // Both the Vercel cron trigger and the local Node.js scheduler scope
+  // execution to the configured owner only.
+  if (triggerOpenId === "vercel_cron" || triggerOpenId === "local_scheduler") {
     const ownerEmail = ENV.ownerEmail.trim().toLowerCase();
     if (!ownerEmail) {
       return users;
@@ -264,7 +267,7 @@ export async function createApp(options: { runStartupMigrations?: boolean } = {}
   // CORS configuration
   app.use(cors({
     origin: ENV.isProduction
-      ? [/\.vercel\.app$/, /tradingmanus\.com$/] // Adjust domains as needed
+      ? [/^https:\/\/[a-zA-Z0-9-]+\.vercel\.app$/, /^https:\/\/(?:[a-zA-Z0-9-]+\.)?tradingmanus\.com$/]
       : ["http://localhost:5008", "http://127.0.0.1:5008"],
     credentials: true,
   }));
@@ -275,12 +278,19 @@ export async function createApp(options: { runStartupMigrations?: boolean } = {}
   // Correlation ID middleware for request tracing
   app.use(correlationIdMiddleware);
 
-  // Body parsers
-  app.use(express.json({ limit: "10mb" }));
-  app.use(express.urlencoded({ limit: "10mb", extended: true }));
+  // Body parsers — keep limits tight for a trading API.
+  app.use(express.json({ limit: "100kb" }));
+  app.use(express.urlencoded({ limit: "100kb", extended: true }));
 
   // Rate limiting for API endpoints
   app.use("/api/trpc", apiLimiter);
+
+  // Auth endpoints get a stricter limiter to block brute-force credential attacks.
+  app.use("/api/trpc/auth.login", authLimiter);
+  app.use("/api/trpc/auth.refreshToken", authLimiter);
+
+  // CSRF protection for all state-changing tRPC calls (GET/HEAD/OPTIONS are exempt).
+  app.use("/api/trpc", csrfProtection);
 
   app.use(
     "/api/trpc",

@@ -1,6 +1,8 @@
 import { logger } from "./logger";
 import { getDb } from "../db";
-import { sql } from "drizzle-orm";
+import { distributedLocks } from "../../drizzle/schema";
+import { eq, lt } from "drizzle-orm";
+import { nanoid } from "nanoid";
 
 export interface LockOptions {
   ttlMs?: number; // Time to live in milliseconds
@@ -13,33 +15,35 @@ const DEFAULT_RETRY_COUNT = 3;
 const DEFAULT_RETRY_DELAY_MS = 100;
 
 /**
- * Database-based distributed locking for autonomous trading
- * Uses PostgreSQL advisory locks for reliable distributed coordination
+ * Table-based distributed locking for autonomous trading coordination.
+ *
+ * Uses a `distributedLocks` database table instead of PostgreSQL advisory
+ * locks.  Advisory locks are session-scoped in PostgreSQL, but the Neon
+ * serverless HTTP driver issues each query on a fresh connection, so the lock
+ * would be released before the guarded work even starts.  A table row is
+ * durable across separate HTTP round-trips and survives connection pool churn.
+ *
+ * Acquire logic:
+ *  1. Delete any expired row for the same key (stale-lock cleanup).
+ *  2. INSERT the new lock row; rely on the PRIMARY KEY constraint to reject a
+ *     duplicate if the key is already held.  One row in the table == lock held.
+ *
+ * Release logic:
+ *  DELETE the row for the key so the next caller can acquire it.
  */
 export class DistributedLock {
   private lockKey: string;
-  private lockId: number | null = null;
+  private acquiredBy: string | null = null;
+  // Generation counter prevents a stale TTL timeout from releasing a lock
+  // that was already released and re-acquired on the same instance.
+  private generation = 0;
 
   constructor(lockKey: string) {
     this.lockKey = lockKey;
   }
 
   /**
-   * Convert lock key string to integer for PostgreSQL advisory locks
-   */
-  private getLockId(): number {
-    // Use simple hash to convert string to integer
-    let hash = 0;
-    for (let i = 0; i < this.lockKey.length; i++) {
-      const char = this.lockKey.charCodeAt(i);
-      hash = (hash << 5) - hash + char;
-      hash = hash & hash; // Convert to 32-bit integer
-    }
-    return Math.abs(hash);
-  }
-
-  /**
-   * Acquire the lock
+   * Acquire the lock.  Returns true when the lock is held, false otherwise.
    */
   async acquire(options: LockOptions = {}): Promise<boolean> {
     const {
@@ -48,7 +52,7 @@ export class DistributedLock {
       retryDelayMs = DEFAULT_RETRY_DELAY_MS,
     } = options;
 
-    this.lockId = this.getLockId();
+    const holderId = nanoid(16);
 
     for (let attempt = 0; attempt <= retryCount; attempt++) {
       try {
@@ -58,69 +62,85 @@ export class DistributedLock {
           return false;
         }
 
-        // Try to acquire PostgreSQL advisory lock
-        const result = await db.execute(
-          sql`SELECT pg_try_advisory_lock(${this.lockId}) as acquired`
-        );
+        const now = new Date();
+        const expiresAt = new Date(now.getTime() + ttlMs);
 
-        const acquired = result.rows[0]?.acquired === true;
+        // 1. Reap any expired lock row so the INSERT below can succeed.
+        await db
+          .delete(distributedLocks)
+          .where(lt(distributedLocks.expiresAt, now));
+
+        // 2. Attempt to insert; the PRIMARY KEY constraint prevents a second
+        //    holder from inserting while a valid row already exists.
+        const inserted = await db
+          .insert(distributedLocks)
+          .values({
+            lockKey: this.lockKey,
+            acquiredAt: now,
+            expiresAt,
+            acquiredBy: holderId,
+          })
+          .onConflictDoNothing()
+          .returning({ lockKey: distributedLocks.lockKey });
+
+        const acquired = inserted.length > 0;
 
         if (acquired) {
+          this.acquiredBy = holderId;
+          const currentGeneration = ++this.generation;
+
           logger.debug(
-            {
-              lockKey: this.lockKey,
-              lockId: this.lockId,
-              attempt: attempt + 1,
-            },
+            { lockKey: this.lockKey, holderId, attempt: attempt + 1 },
             "Lock acquired"
           );
 
-          // Set up auto-release after TTL
+          // Auto-release after TTL to avoid permanently stuck locks.
+          // The generation check ensures this timer only fires if this
+          // acquisition is still the current one.
           setTimeout(() => {
-            this.release().catch((error) => {
-              logger.error(
-                { error, lockKey: this.lockKey },
-                "Failed to auto-release lock after TTL"
-              );
-            });
+            if (this.generation === currentGeneration) {
+              this.release().catch((error) => {
+                logger.error(
+                  { error, lockKey: this.lockKey },
+                  "Failed to auto-release lock after TTL"
+                );
+              });
+            }
           }, ttlMs);
 
           return true;
         }
 
-        // If not last attempt, wait before retrying
         if (attempt < retryCount) {
           await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
         }
       } catch (error) {
         logger.error(
-          {
-            error,
-            lockKey: this.lockKey,
-            attempt: attempt + 1,
-          },
+          { error, lockKey: this.lockKey, attempt: attempt + 1 },
           "Error acquiring lock"
         );
       }
     }
 
     logger.warn(
-      {
-        lockKey: this.lockKey,
-        retryCount,
-      },
+      { lockKey: this.lockKey, retryCount },
       "Failed to acquire lock after retries"
     );
     return false;
   }
 
   /**
-   * Release the lock
+   * Release the lock.  Clears the holder state before the async DB call so
+   * concurrent calls on the same instance cannot double-delete.
    */
   async release(): Promise<void> {
-    if (this.lockId === null) {
+    const holderId = this.acquiredBy;
+    if (holderId === null) {
       return;
     }
+
+    // Clear immediately to prevent concurrent release calls.
+    this.acquiredBy = null;
 
     try {
       const db = await getDb();
@@ -129,30 +149,18 @@ export class DistributedLock {
         return;
       }
 
-      await db.execute(sql`SELECT pg_advisory_unlock(${this.lockId})`);
+      await db
+        .delete(distributedLocks)
+        .where(eq(distributedLocks.lockKey, this.lockKey));
 
-      logger.debug(
-        {
-          lockKey: this.lockKey,
-          lockId: this.lockId,
-        },
-        "Lock released"
-      );
+      logger.debug({ lockKey: this.lockKey, holderId }, "Lock released");
     } catch (error) {
-      logger.error(
-        {
-          error,
-          lockKey: this.lockKey,
-        },
-        "Error releasing lock"
-      );
-    } finally {
-      this.lockId = null;
+      logger.error({ error, lockKey: this.lockKey }, "Error releasing lock");
     }
   }
 
   /**
-   * Execute a function with the lock
+   * Execute a function while holding the lock.
    */
   async withLock<T>(
     fn: () => Promise<T>,

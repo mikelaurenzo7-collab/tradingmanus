@@ -1,11 +1,12 @@
 import "dotenv/config";
 import { createServer } from "http";
 import net from "net";
-import { createApp } from "./app";
+import { createApp, scopeScheduledUsersToTrigger } from "./app";
 import { serveStatic, setupVite } from "./vite";
 import { getUsersEligibleForAutomaticScheduledTrading } from "../db";
 import { runScheduledAutonomousTradingBatch } from "./kalshiAutonomy";
 import { syncPendingOrders, syncLivePositions } from "./kalshiOrderSync";
+import { createAutonomousTradingLock, createOrderSyncLock } from "./distributedLock";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -54,9 +55,27 @@ const ORDER_SYNC_INTERVAL_MS = 30 * 1000;
 async function runAutonomousScheduler() {
   try {
     const eligibleUsers = await getUsersEligibleForAutomaticScheduledTrading();
-    if (eligibleUsers.length > 0) {
-      console.log(`[Scheduler] Running autonomous trading for ${eligibleUsers.length} eligible user(s)`);
-      await runScheduledAutonomousTradingBatch(eligibleUsers as any, "local_scheduler");
+    // Mirror the HTTP handler: scope to the configured owner only.
+    const scopedUsers = scopeScheduledUsersToTrigger(
+      eligibleUsers as Array<{ id: number; openId: string; email?: string | null }>,
+      "local_scheduler"
+    );
+
+    const ownerUser = scopedUsers[0];
+    if (!ownerUser) return;
+
+    const lock = createAutonomousTradingLock(ownerUser.id);
+    const acquired = await lock.acquire({ ttlMs: 5 * 60 * 1000 });
+    if (!acquired) {
+      console.log("[Scheduler] Autonomous trading already in progress, skipping");
+      return;
+    }
+
+    try {
+      console.log(`[Scheduler] Running autonomous trading for ${scopedUsers.length} eligible user(s)`);
+      await runScheduledAutonomousTradingBatch(scopedUsers as any, "local_scheduler");
+    } finally {
+      await lock.release();
     }
   } catch (error) {
     console.error("[Scheduler] Autonomous trading run failed:", error);
@@ -66,12 +85,26 @@ async function runAutonomousScheduler() {
 async function runOrderSync() {
   try {
     const eligibleUsers = await getUsersEligibleForAutomaticScheduledTrading();
-    for (const user of eligibleUsers) {
+    const scopedUsers = scopeScheduledUsersToTrigger(
+      eligibleUsers as Array<{ id: number; openId: string; email?: string | null }>,
+      "local_scheduler"
+    );
+
+    for (const user of scopedUsers as Array<{ id: number; openId: string }>) {
+      const lock = createOrderSyncLock(user.id);
+      const acquired = await lock.acquire({ ttlMs: 60 * 1000 });
+      if (!acquired) {
+        console.log(`[OrderSync] Sync already in progress for user ${user.id}, skipping`);
+        continue;
+      }
+
       try {
-        await syncPendingOrders((user as any).id);
-        await syncLivePositions((user as any).id);
+        await syncPendingOrders(user.id);
+        await syncLivePositions(user.id);
       } catch (err) {
-        console.error(`[OrderSync] Sync failed for user ${(user as any).id}:`, err);
+        console.error(`[OrderSync] Sync failed for user ${user.id}:`, err);
+      } finally {
+        await lock.release();
       }
     }
   } catch (error) {

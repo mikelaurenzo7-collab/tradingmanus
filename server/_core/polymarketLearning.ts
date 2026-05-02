@@ -374,9 +374,9 @@ export async function getPolymarketPerformanceOverview(
   // In production this would be replaced with dedicated Polymarket balance
   const [capital, trades, signals, openPositions] = await Promise.all([
     db.getKalshiCapital(scopedUserId),
-    db.getKalshiTradeHistory(1000, scopedUserId), // TODO: Create Polymarket-specific trade history
+    db.getKalshiTradeHistory(1000, scopedUserId), // DEBT: replace with Polymarket-specific trade history once polymarketOrders/polymarketFills tables exist
     db.getRecentSignals(1000, scopedUserId),
-    db.getOpenKalshiPositions(scopedUserId), // TODO: Create Polymarket-specific positions
+    db.getOpenKalshiPositions(scopedUserId), // DEBT: replace with Polymarket-specific positions once polymarketPositions table exists
   ]);
 
   const startingBalance = Number(

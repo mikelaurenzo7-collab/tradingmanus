@@ -56,6 +56,17 @@ const trpcClient = trpc.createClient({
     httpBatchLink({
       url: "/api/trpc",
       transformer: superjson,
+      headers() {
+        // Double-submit cookie pattern: read the CSRF token from the cookie
+        // (set by the server on GET requests) and mirror it in the header so
+        // the server can validate it on mutations.
+        const match = document.cookie
+          .split(";")
+          .map((c) => c.trim())
+          .find((c) => c.startsWith("csrf_token="));
+        const csrfToken = match ? match.slice("csrf_token=".length) : undefined;
+        return csrfToken ? { "X-CSRF-Token": csrfToken } : {};
+      },
       fetch(input, init) {
         return globalThis.fetch(input, {
           ...(init ?? {}),
