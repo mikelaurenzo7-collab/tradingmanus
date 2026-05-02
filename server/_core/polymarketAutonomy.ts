@@ -183,7 +183,10 @@ export async function runPolymarketAutonomousTrading(
     };
   }
 
-  // Estimate bankroll from Kalshi capital as a proxy (Polymarket doesn't expose equity separately)
+  // Use Kalshi capital as a proxy for Polymarket bankroll. This is a
+  // reasonable starting point because most users fund both from the same
+  // overall budget, but a dedicated Polymarket balance endpoint (not yet
+  // available in the public CLOB API) should replace this when accessible.
   const kalshiCapital = await db.getKalshiCapital(scopedUserId);
   const bankroll = Math.max(0, Number(kalshiCapital?.currentBalance ?? kalshiCapital?.startingBalance ?? 0));
 

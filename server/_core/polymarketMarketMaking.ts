@@ -95,10 +95,13 @@ function logit(p: number): number {
 }
 
 /**
- * Convert log-odds back to probability (sigmoid).
+ * Convert log-odds back to probability (sigmoid) with numeric stability.
+ * Clamps the input to avoid overflow for extreme values.
  */
 function sigmoid(x: number): number {
-  return 1 / (1 + Math.exp(-x));
+  // Clamp to prevent Math.exp overflow: beyond ±20 the result is ≈ 0 or ≈ 1
+  const safe = Math.max(-20, Math.min(20, x));
+  return 1 / (1 + Math.exp(-safe));
 }
 
 /**

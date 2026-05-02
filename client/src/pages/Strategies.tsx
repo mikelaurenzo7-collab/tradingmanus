@@ -286,8 +286,11 @@ function CrossPlatformArbPanel() {
                 </Badge>
               </div>
               <div className="text-slate-400">
-                Buy {opp.buyPlatform.toUpperCase()} YES @ {(opp.buyPlatform === "kalshi" ? opp.kalshiYesPrice : opp.polymarketYesPrice).toFixed(2)} ·{" "}
-                Sell {opp.sellPlatform.toUpperCase()} YES @ {(opp.sellPlatform === "kalshi" ? opp.kalshiYesPrice : opp.polymarketYesPrice).toFixed(2)}
+                {(() => {
+                  const buyPrice = opp.buyPlatform === "kalshi" ? opp.kalshiYesPrice : opp.polymarketYesPrice;
+                  const sellPrice = opp.sellPlatform === "kalshi" ? opp.kalshiYesPrice : opp.polymarketYesPrice;
+                  return `Buy ${opp.buyPlatform.toUpperCase()} YES @ ${buyPrice.toFixed(2)} · Sell ${opp.sellPlatform.toUpperCase()} YES @ ${sellPrice.toFixed(2)}`;
+                })()}
               </div>
             </div>
           ))}
