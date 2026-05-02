@@ -25,10 +25,13 @@ function getLegacyEncryptionKey() {
 
 function getCredentialEncryptionKey(salt: Buffer, userId: number) {
   const scopedUserId = assertPositiveIntegerUserId(userId, "credential encryption userId");
-  return crypto.scryptSync(
+  // Use PBKDF2 with 100,000 iterations for key derivation (NIST recommended)
+  return crypto.pbkdf2Sync(
     getCredentialEncryptionSecret(),
     `kalshi-credential:${scopedUserId}:${salt.toString("hex")}`,
-    32,
+    100000, // iterations
+    32, // key length
+    "sha256" // digest algorithm
   );
 }
 

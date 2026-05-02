@@ -56,9 +56,9 @@ export function validateServerEnv() {
   // Vercel cron jobs authenticate via `Authorization: Bearer ${CRON_SECRET}`.
   // Without this secret the cron handler falls through to JWT auth and silently
   // 401s on every scheduled tick — autonomous trading would never run.
-  if (ENV.isProduction && ENV.cronSecret.length < 16) {
-    console.warn(
-      "[ENV] CRON_SECRET is not set or too short (<16 chars). Vercel cron-triggered autonomous trading will not work until this is configured."
+  if (ENV.isProduction && ENV.cronSecret.length < 32) {
+    throw new Error(
+      "CRON_SECRET must be at least 32 characters in production. Autonomous trading will not work without a strong CRON_SECRET."
     );
   }
 

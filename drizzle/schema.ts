@@ -37,6 +37,10 @@ export const users = pgTable("users", {
   name: text("name"),
   email: varchar("email", { length: 320 }),
   role: userRoleEnum("role").default("user").notNull(),
+  twoFactorSecret: text("twoFactorSecret"), // Encrypted 2FA secret
+  twoFactorEnabled: integer("twoFactorEnabled").default(0).notNull(), // 0 = disabled, 1 = enabled
+  backupCodesHash: text("backupCodesHash"), // JSON array of hashed backup codes
+  lastSignedIn: timestamp("lastSignedIn", { withTimezone: true }),
   createdAt: createdAt(),
 });
 

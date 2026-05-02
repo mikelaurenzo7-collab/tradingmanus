@@ -2,10 +2,11 @@ import crypto from "crypto";
 import { parse as parseCookieHeader } from "cookie";
 import type { IncomingHttpHeaders } from "node:http";
 import { SignJWT, jwtVerify } from "jose";
-import { COOKIE_NAME, ONE_YEAR_MS } from "../../shared/const";
+import { COOKIE_NAME, REFRESH_COOKIE_NAME, ONE_DAY_MS, SEVEN_DAYS_MS } from "../../shared/const";
 import type { User } from "../../drizzle/schema";
 import * as db from "../db";
 import { ENV } from "./env";
+import { logger } from "./logger";
 
 export type AuthRequest = {
   headers: IncomingHttpHeaders;
@@ -15,6 +16,7 @@ export type SessionPayload = {
   openId: string;
   email: string;
   name: string;
+  type?: "access" | "refresh";
 };
 
 const OWNER_OPEN_ID = "owner:primary";
@@ -70,24 +72,66 @@ export async function createOwnerSessionToken() {
     openId: OWNER_OPEN_ID,
     email: ENV.ownerEmail,
     name: OWNER_NAME,
+    type: "access",
   };
 
+  // Access token expires in 24 hours
   return new SignJWT(payload)
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
-    .setExpirationTime(`${Math.floor(ONE_YEAR_MS / 1000)}s`)
+    .setExpirationTime(`${Math.floor(ONE_DAY_MS / 1000)}s`)
     .sign(getJwtSecret());
 }
 
-export async function verifySessionToken(token: string) {
-  const result = await jwtVerify(token, getJwtSecret());
-  const payload = result.payload as Partial<SessionPayload>;
+export async function createOwnerRefreshToken() {
+  const payload: SessionPayload = {
+    openId: OWNER_OPEN_ID,
+    email: ENV.ownerEmail,
+    name: OWNER_NAME,
+    type: "refresh",
+  };
 
-  if (!payload.openId || typeof payload.openId !== "string") {
+  // Refresh token expires in 7 days
+  return new SignJWT(payload)
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt()
+    .setExpirationTime(`${Math.floor(SEVEN_DAYS_MS / 1000)}s`)
+    .sign(getJwtSecret());
+}
+
+export async function verifySessionToken(token: string, expectedType?: "access" | "refresh") {
+  try {
+    const result = await jwtVerify(token, getJwtSecret());
+    const payload = result.payload as Partial<SessionPayload>;
+
+    if (!payload.openId || typeof payload.openId !== "string") {
+      return null;
+    }
+
+    // If expectedType is specified, verify the token type matches
+    if (expectedType && payload.type !== expectedType) {
+      logger.warn(
+        { expectedType, actualType: payload.type },
+        "Token type mismatch"
+      );
+      return null;
+    }
+
+    return payload.openId;
+  } catch (error) {
+    logger.debug({ error }, "Token verification failed");
+    return null;
+  }
+}
+
+export async function refreshAccessToken(refreshToken: string) {
+  const openId = await verifySessionToken(refreshToken, "refresh");
+  if (!openId) {
     return null;
   }
 
-  return payload.openId;
+  // Generate new access token
+  return createOwnerSessionToken();
 }
 
 export async function authenticateRequest(req: AuthRequest): Promise<User | null> {

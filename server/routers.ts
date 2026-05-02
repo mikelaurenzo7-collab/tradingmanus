@@ -3,7 +3,21 @@ import { publicProcedure, router, protectedProcedure } from "./_core/trpc";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import * as db from "./db";
-import { createOwnerSessionToken, ensureOwnerUser, validateOwnerCredentials } from "./_core/auth";
+import { 
+  createOwnerSessionToken, 
+  createOwnerRefreshToken,
+  refreshAccessToken,
+  ensureOwnerUser, 
+  validateOwnerCredentials 
+} from "./_core/auth";
+import {
+  generateTwoFactorSecret,
+  verifyTwoFactorToken,
+  generateBackupCodes,
+  hashBackupCode,
+  verifyBackupCode,
+} from "./_core/twoFactor";
+import { logger, logAudit } from "./_core/logger";
 import {
   fetchKalshiMarkets,
   fetchKalshiMarketDetails,
@@ -68,7 +82,7 @@ import {
   executeCrossArbLegs,
 } from "./_core/crossBotStrategies";
 
-import { COOKIE_NAME, ONE_YEAR_MS } from "../shared/const";
+import { COOKIE_NAME, REFRESH_COOKIE_NAME, ONE_DAY_MS, SEVEN_DAYS_MS } from "../shared/const";
 
 // How many Polymarket markets to pull when generating signals.
 // More markets = more signal candidates; keep bounded to avoid timeouts.
@@ -306,10 +320,20 @@ export const appRouter = router({
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
     login: publicProcedure
-      .input(z.object({ email: z.string().email(), password: z.string().min(1) }))
+      .input(z.object({ 
+        email: z.string().email(), 
+        password: z.string().min(1),
+        twoFactorToken: z.string().optional(),
+      }))
       .mutation(async ({ input, ctx }) => {
         const valid = validateOwnerCredentials(input.email, input.password);
         if (!valid) {
+          logAudit({
+            action: "login_failed",
+            resource: "auth",
+            details: { email: input.email, reason: "invalid_credentials" },
+            success: false,
+          });
           throw new TRPCError({
             code: "UNAUTHORIZED",
             message: "Invalid email or password.",
@@ -317,15 +341,275 @@ export const appRouter = router({
         }
 
         const user = await ensureOwnerUser();
+
+        // Check if 2FA is enabled
+        if (user.twoFactorEnabled === 1) {
+          if (!input.twoFactorToken) {
+            return { 
+              requiresTwoFactor: true,
+              message: "Two-factor authentication required",
+            };
+          }
+
+          // Verify 2FA token
+          const isValid = user.twoFactorSecret 
+            ? verifyTwoFactorToken(input.twoFactorToken, user.twoFactorSecret)
+            : false;
+
+          if (!isValid) {
+            // Try backup codes
+            let backupCodeValid = false;
+            if (user.backupCodesHash) {
+              try {
+                const backupCodes = JSON.parse(user.backupCodesHash) as string[];
+                for (let i = 0; i < backupCodes.length; i++) {
+                  if (verifyBackupCode(input.twoFactorToken, backupCodes[i])) {
+                    // Remove used backup code
+                    backupCodes.splice(i, 1);
+                    await db.updateUser(user.id, {
+                      backupCodesHash: JSON.stringify(backupCodes),
+                    });
+                    backupCodeValid = true;
+                    logger.info({ userId: user.id }, "Backup code used for authentication");
+                    break;
+                  }
+                }
+              } catch (error) {
+                logger.error({ error }, "Failed to parse backup codes");
+              }
+            }
+
+            if (!backupCodeValid) {
+              logAudit({
+                action: "login_failed_2fa",
+                userId: user.id,
+                openId: user.openId,
+                resource: "auth",
+                details: { reason: "invalid_2fa_token" },
+                success: false,
+              });
+              throw new TRPCError({
+                code: "UNAUTHORIZED",
+                message: "Invalid two-factor authentication code.",
+              });
+            }
+          }
+        }
+
+        // Generate tokens
         const sessionToken = await createOwnerSessionToken();
+        const refreshToken = await createOwnerRefreshToken();
         const cookieOptions = getSessionCookieOptions(ctx.req);
-        ctx.res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
-        return user;
+        
+        // Set session cookie (24 hours)
+        ctx.res.cookie(COOKIE_NAME, sessionToken, { 
+          ...cookieOptions, 
+          maxAge: ONE_DAY_MS 
+        });
+        
+        // Set refresh token cookie (7 days)
+        ctx.res.cookie(REFRESH_COOKIE_NAME, refreshToken, { 
+          ...cookieOptions, 
+          maxAge: SEVEN_DAYS_MS 
+        });
+
+        logAudit({
+          action: "login_success",
+          userId: user.id,
+          openId: user.openId,
+          resource: "auth",
+          success: true,
+        });
+
+        return { user, requiresTwoFactor: false };
       }),
+
+    refreshToken: publicProcedure.mutation(async ({ ctx }) => {
+      const refreshToken = ctx.req.cookies?.[REFRESH_COOKIE_NAME];
+      if (!refreshToken) {
+        throw new TRPCError({
+          code: "UNAUTHORIZED",
+          message: "Refresh token not found",
+        });
+      }
+
+      const newAccessToken = await refreshAccessToken(refreshToken);
+      if (!newAccessToken) {
+        throw new TRPCError({
+          code: "UNAUTHORIZED",
+          message: "Invalid or expired refresh token",
+        });
+      }
+
+      const cookieOptions = getSessionCookieOptions(ctx.req);
+      ctx.res.cookie(COOKIE_NAME, newAccessToken, {
+        ...cookieOptions,
+        maxAge: ONE_DAY_MS,
+      });
+
+      return { success: true };
+    }),
+
     logout: publicProcedure.mutation(({ ctx }) => {
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
+      ctx.res.clearCookie(REFRESH_COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
+      
+      if (ctx.user) {
+        logAudit({
+          action: "logout",
+          userId: ctx.user.id,
+          openId: ctx.user.openId,
+          resource: "auth",
+          success: true,
+        });
+      }
+      
       return { success: true } as const;
+    }),
+
+    // 2FA Management
+    setup2FA: protectedProcedure.mutation(async ({ ctx }) => {
+      const userId = getRequiredUserId(ctx);
+      const user = await db.getUserById(userId);
+      
+      if (!user) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "User not found",
+        });
+      }
+
+      if (user.twoFactorEnabled === 1) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Two-factor authentication is already enabled",
+        });
+      }
+
+      const twoFactorData = await generateTwoFactorSecret(user.email || "");
+      
+      // Store the secret temporarily (not enabled yet)
+      await db.updateUser(userId, {
+        twoFactorSecret: twoFactorData.secret,
+      });
+
+      logAudit({
+        action: "2fa_setup_initiated",
+        userId,
+        openId: user.openId,
+        resource: "auth",
+        success: true,
+      });
+
+      return {
+        secret: twoFactorData.secret,
+        qrCodeDataUrl: twoFactorData.qrCodeDataUrl,
+        otpauthUrl: twoFactorData.otpauthUrl,
+      };
+    }),
+
+    verify2FA: protectedProcedure
+      .input(z.object({ token: z.string() }))
+      .mutation(async ({ input, ctx }) => {
+        const userId = getRequiredUserId(ctx);
+        const user = await db.getUserById(userId);
+        
+        if (!user || !user.twoFactorSecret) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Two-factor setup not initiated",
+          });
+        }
+
+        const isValid = verifyTwoFactorToken(input.token, user.twoFactorSecret);
+        
+        if (!isValid) {
+          throw new TRPCError({
+            code: "UNAUTHORIZED",
+            message: "Invalid verification code",
+          });
+        }
+
+        // Generate backup codes
+        const backupCodes = generateBackupCodes(10);
+        const hashedCodes = backupCodes.map(code => hashBackupCode(code));
+
+        // Enable 2FA
+        await db.updateUser(userId, {
+          twoFactorEnabled: 1,
+          backupCodesHash: JSON.stringify(hashedCodes),
+        });
+
+        logAudit({
+          action: "2fa_enabled",
+          userId,
+          openId: user.openId,
+          resource: "auth",
+          success: true,
+        });
+
+        return {
+          success: true,
+          backupCodes, // Return plaintext codes only once
+        };
+      }),
+
+    disable2FA: protectedProcedure
+      .input(z.object({ token: z.string() }))
+      .mutation(async ({ input, ctx }) => {
+        const userId = getRequiredUserId(ctx);
+        const user = await db.getUserById(userId);
+        
+        if (!user || user.twoFactorEnabled !== 1 || !user.twoFactorSecret) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Two-factor authentication is not enabled",
+          });
+        }
+
+        const isValid = verifyTwoFactorToken(input.token, user.twoFactorSecret);
+        
+        if (!isValid) {
+          throw new TRPCError({
+            code: "UNAUTHORIZED",
+            message: "Invalid verification code",
+          });
+        }
+
+        // Disable 2FA
+        await db.updateUser(userId, {
+          twoFactorEnabled: 0,
+          twoFactorSecret: null,
+          backupCodesHash: null,
+        });
+
+        logAudit({
+          action: "2fa_disabled",
+          userId,
+          openId: user.openId,
+          resource: "auth",
+          success: true,
+        });
+
+        return { success: true };
+      }),
+
+    get2FAStatus: protectedProcedure.query(async ({ ctx }) => {
+      const userId = getRequiredUserId(ctx);
+      const user = await db.getUserById(userId);
+      
+      if (!user) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "User not found",
+        });
+      }
+
+      return {
+        enabled: user.twoFactorEnabled === 1,
+        hasBackupCodes: !!user.backupCodesHash,
+      };
     }),
   }),
 

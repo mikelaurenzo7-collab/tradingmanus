@@ -2,19 +2,39 @@
 
 Single-owner Kalshi trading console with an **OpenAI + Claude autonomous trading duo**. Designed to run on **Vercel** with a **Neon Postgres** database.
 
+## 🔒 Security Features
+
+This application includes comprehensive security features:
+- **2FA/MFA**: Time-based one-time passwords (TOTP) with backup codes
+- **Rate Limiting**: Protection against brute force and DDoS attacks
+- **CSRF Protection**: Double-submit cookie pattern for all mutations
+- **JWT Tokens**: 24-hour access tokens with 7-day refresh tokens
+- **PBKDF2 Encryption**: 100k iterations for credential encryption
+- **Distributed Locking**: PostgreSQL advisory locks for autonomous trading
+- **Structured Logging**: Pino-based logging with sensitive data redaction
+- **Request Tracing**: Correlation IDs for distributed request tracking
+- **Security Headers**: Helmet.js for XSS, clickjacking, and other protections
+
+📖 **See [SECURITY.md](./SECURITY.md) for detailed documentation**
+📖 **See [SECURITY_MIGRATION.md](./SECURITY_MIGRATION.md) for migration guide**
+
 ## Architecture
 
 - **Frontend**: React 19 + Vite + Wouter + tRPC + TanStack Query + Tailwind v4 + shadcn UI
 - **Backend**: Express + tRPC, deployed as a single Vercel function at `api/index.ts`
 - **Database**: Neon Postgres via `@neondatabase/serverless` HTTP driver + `drizzle-orm/neon-http`
-- **Auth**: Owner-only password login. JWT (HS256, 1-year) in an httpOnly `app_session_id` cookie.
+- **Auth**: Owner-only password login with optional 2FA/MFA. JWT access tokens (24h) + refresh tokens (7d) in httpOnly cookies.
+- **Security**: Rate limiting, CSRF protection, PBKDF2 encryption, distributed locking, structured logging
 - **AI**: OpenAI and Claude review every candidate signal before persistence and before any autonomous order. Both providers must approve. Their bounded confidence adjustments `[-0.25, +0.15]` and EV adjustments `[-0.1, +0.1]` are blended. Existing risk guardrails still hard-block.
 - **Scheduling**: Vercel Cron triggers `/api/scheduled/autonomous-trading` (every 15 min) and `/api/scheduled/order-sync` (every 5 min). Local dev uses interval timers.
 
 ## One-time setup
 
 1. **Create a Neon Postgres project** and copy the pooled `DATABASE_URL`.
-2. **Generate strong secrets** for `JWT_SECRET`, `CREDENTIAL_ENCRYPTION_SECRET`, and `CRON_SECRET` (32+ random chars each).
+2. **Generate strong secrets** for `JWT_SECRET`, `CREDENTIAL_ENCRYPTION_SECRET`, and `CRON_SECRET` (32+ random chars each):
+   ```bash
+   openssl rand -base64 32  # Run this 3 times for each secret
+   ```
 3. **Get both an OpenAI API key and an Anthropic API key** for the duo reviewer.
 4. Copy `.env.example` → `.env` and fill in values.
 5. Install deps:

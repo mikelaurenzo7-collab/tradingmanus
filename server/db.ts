@@ -112,7 +112,16 @@ export const db = {
 };
 
 // User queries
-export async function upsertUser(payload: { openId: string; name?: string; email?: string; loginMethod?: string; lastSignedIn?: Date }) {
+export async function upsertUser(payload: { 
+  openId: string; 
+  name?: string; 
+  email?: string; 
+  loginMethod?: string; 
+  lastSignedIn?: Date;
+  twoFactorSecret?: string | null;
+  twoFactorEnabled?: number;
+  backupCodesHash?: string | null;
+}) {
   const database = await getDb();
   if (!database) {
     console.warn("[Database] Connection not available, skipping upsertUser");
@@ -122,10 +131,18 @@ export async function upsertUser(payload: { openId: string; name?: string; email
   const values: any = { openId: payload.openId };
   if (payload.name !== undefined) values.name = payload.name;
   if (payload.email !== undefined) values.email = payload.email;
+  if (payload.lastSignedIn !== undefined) values.lastSignedIn = payload.lastSignedIn;
+  if (payload.twoFactorSecret !== undefined) values.twoFactorSecret = payload.twoFactorSecret;
+  if (payload.twoFactorEnabled !== undefined) values.twoFactorEnabled = payload.twoFactorEnabled;
+  if (payload.backupCodesHash !== undefined) values.backupCodesHash = payload.backupCodesHash;
 
   const updates: any = {};
   if (payload.name !== undefined) updates.name = payload.name;
   if (payload.email !== undefined) updates.email = payload.email;
+  if (payload.lastSignedIn !== undefined) updates.lastSignedIn = payload.lastSignedIn;
+  if (payload.twoFactorSecret !== undefined) updates.twoFactorSecret = payload.twoFactorSecret;
+  if (payload.twoFactorEnabled !== undefined) updates.twoFactorEnabled = payload.twoFactorEnabled;
+  if (payload.backupCodesHash !== undefined) updates.backupCodesHash = payload.backupCodesHash;
 
   try {
     const existingUser = await database.select().from(users).where(eq(users.openId, payload.openId)).then((rows: any[]) => rows[0]);
@@ -144,6 +161,43 @@ export async function upsertUser(payload: { openId: string; name?: string; email
     }
     console.error("[Database] Upsert user failed:", error);
     // Don't throw - allow auth to proceed even if DB sync fails
+  }
+}
+
+export async function getUserById(userId: number) {
+  const database = await getDb();
+  if (!database) {
+    return null;
+  }
+
+  const result = await database.select().from(users).where(eq(users.id, userId)).limit(1);
+  return result[0] ?? null;
+}
+
+export async function updateUser(
+  userId: number,
+  updates: {
+    twoFactorSecret?: string | null;
+    twoFactorEnabled?: number;
+    backupCodesHash?: string | null;
+    lastSignedIn?: Date;
+  }
+) {
+  const database = await getDb();
+  if (!database) {
+    throw new Error("Database not available");
+  }
+
+  try {
+    await database
+      .update(users)
+      .set(updates)
+      .where(eq(users.id, userId));
+    
+    return { success: true };
+  } catch (error) {
+    console.error("[Database] Error updating user:", error);
+    throw error;
   }
 }
 
