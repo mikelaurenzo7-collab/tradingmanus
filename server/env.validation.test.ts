@@ -39,7 +39,7 @@ describe("validateServerEnv", () => {
     expect(() => envModule.validateServerEnv()).not.toThrow();
   });
 
-  it("requires CRON_SECRET to be at least 32 chars in production", async () => {
+  it("does not throw when CRON_SECRET is short in production (emits warning only)", async () => {
     setBaseRequiredEnv();
     process.env.NODE_ENV = "production";
     process.env.CRON_SECRET = "short"; // Less than 32 chars
@@ -48,7 +48,9 @@ describe("validateServerEnv", () => {
 
     const envModule = await import("./_core/env");
 
-    expect(() => envModule.validateServerEnv()).toThrow("CRON_SECRET must be at least 32 characters");
+    // CRON_SECRET too short now emits a console.warn instead of throwing,
+    // so the server can still start (autonomous trading just won't work).
+    expect(() => envModule.validateServerEnv()).not.toThrow();
   });
 
   it("accepts a complete production env including both AI provider keys", async () => {
