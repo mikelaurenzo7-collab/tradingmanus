@@ -1,22 +1,35 @@
 /**
  * Polymarket Signal Generation
  *
- * Implements the same strategy types used for Kalshi:
- *   - value_play: market price significantly deviates from estimated fair value
- *   - momentum:   rapid price movement suggests continued direction
- *   - contrarian: extreme prices are likely to mean-revert
- *   - arbitrage:  related markets have contradictory implied probabilities
- *   - sentiment:  external news/social sentiment diverges from market price
+ * Implements the same strategy types used for Kalshi, plus cluster-based
+ * wash-trading signals derived from the Columbia University paper:
+ *
+ *   - value_play:           market price significantly deviates from fair value
+ *   - momentum:             rapid price movement suggests continued direction
+ *   - contrarian:           extreme prices are likely to mean-revert
+ *   - arbitrage:            related markets have contradictory implied probs
+ *   - sentiment:            external news/social sentiment diverges from price
+ *   - cluster_fade:         coordinated pump detected → fade the retracement
+ *   - cluster_copy:         cluster #3 low-prob political entry to mirror
+ *   - wash_volume_warning:  cluster #4 airdrop farmers inflating volume
  */
 
 import type { PolymarketMarket } from "./polymarketAuth";
+import {
+  detectClusterActivityBatch,
+  buildFadeRecommendations,
+  type MarketSnapshot,
+} from "./polymarketClusterMonitor";
 
 export type PolymarketSignalType =
   | "value_play"
   | "momentum"
   | "contrarian"
   | "arbitrage"
-  | "sentiment";
+  | "sentiment"
+  | "cluster_fade"
+  | "cluster_copy"
+  | "wash_volume_warning";
 
 export interface PolymarketSignal {
   marketId: string;
@@ -79,6 +92,20 @@ export function generatePolymarketSignals(
     fairValues?: Map<string, number>;
     /** Optional: sentiment score per marketId (-1 to 1) */
     sentimentScores?: Map<string, number>;
+    /**
+     * Optional per-market recent volume (USDC in last hour) keyed by
+     * marketId.  Required for cluster detection signals.
+     */
+    recentVolumes?: Map<string, number>;
+    /**
+     * Optional per-market count of distinct maker wallets in the last 90s.
+     * If absent, sync-entry fingerprinting is skipped.
+     */
+    recentDistinctMakers?: Map<string, number>;
+    /** Markets resolving within the next 5 minutes (set of marketIds). */
+    resolvingWithin5Min?: Set<string>;
+    /** Markets resolving within the next 4 hours (set of marketIds). */
+    resolvingWithin4Hours?: Set<string>;
   } = {},
 ): PolymarketSignal[] {
   const {
@@ -86,6 +113,10 @@ export function generatePolymarketSignals(
     minLiquidity = 100,
     fairValues,
     sentimentScores,
+    recentVolumes,
+    recentDistinctMakers,
+    resolvingWithin5Min,
+    resolvingWithin4Hours,
   } = options;
 
   const signals: PolymarketSignal[] = [];
@@ -285,6 +316,102 @@ export function generatePolymarketSignals(
           });
         }
       }
+    }
+  }
+
+  // --- 6. Cluster-based signals (wash-trading detection) ---
+  // Build market snapshots from available data and run cluster detection.
+  const snapshots: MarketSnapshot[] = markets
+    .filter((m) => m.active && !m.closed)
+    .map((m) => ({
+      marketId: m.marketId,
+      question: m.question,
+      category: m.category,
+      impliedProbabilityYes: m.impliedProbabilityYes,
+      recentVolume: recentVolumes?.get(m.marketId) ?? 0,
+      totalVolume: m.volume,
+      liquidity: m.liquidity,
+      recentDistinctMakers: recentDistinctMakers?.get(m.marketId),
+      resolvingWithin5Min: resolvingWithin5Min?.has(m.marketId) ?? false,
+      resolvingWithin4Hours: resolvingWithin4Hours?.has(m.marketId) ?? false,
+    }));
+
+  const clusterSignals = detectClusterActivityBatch(snapshots);
+  const recommendations = buildFadeRecommendations(
+    clusterSignals,
+    0.5, // placeholder; per-market values used inside the loop below
+  );
+
+  for (const rec of recommendations) {
+    const market = markets.find((m) => m.marketId === rec.marketId);
+    if (!market) continue;
+
+    const token = market.tokens.find(
+      (t) => t.outcome.toLowerCase() === rec.side,
+    );
+    if (!token || !token.token_id) continue;
+
+    const p = market.impliedProbabilityYes;
+    const fairValue = fairValues?.get(market.marketId) ?? estimateFairValue(market);
+
+    let signalType: PolymarketSignalType;
+    let limitPrice: number;
+    let ev: number;
+
+    if (rec.action === "skip_market" || rec.action === "exit_now") {
+      // Surface wash-volume warning so the UI can flag the market
+      if (!signals.some(
+        (s) => s.marketId === market.marketId && s.signalType === "wash_volume_warning",
+      )) {
+        signals.push({
+          marketId: market.marketId,
+          conditionId: market.conditionId,
+          question: market.question,
+          signalType: "wash_volume_warning",
+          side: rec.side,
+          confidence: rec.confidence,
+          reasoning: rec.reasoning,
+          impliedProbabilityYes: p,
+          fairValueEstimate: fairValue,
+          tokenId: token.token_id,
+          limitPrice: 0,
+          expectedValue: 0,
+        });
+      }
+      continue;
+    }
+
+    if (rec.action === "copy_buy") {
+      signalType = "cluster_copy";
+      limitPrice = clamp(rec.suggestedLimitPrice, 0.001, 0.98);
+      ev = fairValue > p ? (fairValue - p) / p : 0;
+    } else {
+      signalType = "cluster_fade";
+      limitPrice = clamp(rec.suggestedLimitPrice, 0.02, 0.98);
+      ev = rec.side === "no"
+        ? clamp(((1 - fairValue) - (1 - p)) / (1 - p), -1, 5)
+        : clamp((fairValue - p) / p, -1, 5);
+    }
+
+    if (
+      !signals.some(
+        (s) => s.marketId === market.marketId && s.signalType === signalType,
+      )
+    ) {
+      signals.push({
+        marketId: market.marketId,
+        conditionId: market.conditionId,
+        question: market.question,
+        signalType,
+        side: rec.side,
+        confidence: rec.confidence,
+        reasoning: rec.reasoning,
+        impliedProbabilityYes: p,
+        fairValueEstimate: fairValue,
+        tokenId: token.token_id,
+        limitPrice,
+        expectedValue: clamp(ev, -1, 5),
+      });
     }
   }
 
