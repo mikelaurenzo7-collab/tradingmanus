@@ -287,7 +287,6 @@ export async function runPolymarketAutonomousTrading(
   });
 
   if (reviewedSignals.length === 0) {
-  if (reviewedSignals.length === 0) {
     await db.logAuditEvent(
       "polymarket_autonomy_run_generated_only",
       JSON.stringify({
