@@ -17,7 +17,7 @@ describe("validateServerEnv", () => {
     process.env = { ...ORIGINAL_ENV };
   });
 
-  it("requires OPENAI_API_KEY in production", async () => {
+  it("does not throw when OPENAI_API_KEY is absent in production (emits warning only)", async () => {
     setBaseRequiredEnv();
     process.env.NODE_ENV = "production";
     delete process.env.OPENAI_API_KEY;
@@ -25,12 +25,10 @@ describe("validateServerEnv", () => {
 
     const envModule = await import("./_core/env");
 
-    expect(() => envModule.validateServerEnv()).toThrow(
-      "OPENAI_API_KEY must be set in production for the duo AI trading reviewer"
-    );
+    expect(() => envModule.validateServerEnv()).not.toThrow();
   });
 
-  it("requires ANTHROPIC_API_KEY in production", async () => {
+  it("does not throw when ANTHROPIC_API_KEY is absent in production (emits warning only)", async () => {
     setBaseRequiredEnv();
     process.env.NODE_ENV = "production";
     process.env.OPENAI_API_KEY = "sk-test-value";
@@ -38,9 +36,19 @@ describe("validateServerEnv", () => {
 
     const envModule = await import("./_core/env");
 
-    expect(() => envModule.validateServerEnv()).toThrow(
-      "ANTHROPIC_API_KEY must be set in production for the duo AI trading reviewer"
-    );
+    expect(() => envModule.validateServerEnv()).not.toThrow();
+  });
+
+  it("does not throw when CRON_SECRET is absent in production (emits warning only)", async () => {
+    setBaseRequiredEnv();
+    process.env.NODE_ENV = "production";
+    delete process.env.CRON_SECRET;
+    process.env.OPENAI_API_KEY = "sk-test-value";
+    process.env.ANTHROPIC_API_KEY = "sk-ant-test";
+
+    const envModule = await import("./_core/env");
+
+    expect(() => envModule.validateServerEnv()).not.toThrow();
   });
 
   it("accepts a complete production env including both AI provider keys", async () => {
@@ -52,5 +60,18 @@ describe("validateServerEnv", () => {
     const envModule = await import("./_core/env");
 
     expect(() => envModule.validateServerEnv()).not.toThrow();
+  });
+
+  it("still throws for missing core required vars in production", async () => {
+    process.env.NODE_ENV = "production";
+    delete process.env.JWT_SECRET;
+    delete process.env.CREDENTIAL_ENCRYPTION_SECRET;
+    delete process.env.DATABASE_URL;
+    delete process.env.OWNER_EMAIL;
+    delete process.env.OWNER_PASSWORD;
+
+    const envModule = await import("./_core/env");
+
+    expect(() => envModule.validateServerEnv()).toThrow("Missing required environment variables");
   });
 });
