@@ -367,6 +367,22 @@ export const chatMessages = pgTable("chatMessages", {
   createdAt: createdAt(),
 });
 
+// ── Distributed Locks ─────────────────────────────────────────────────────────
+
+/**
+ * Table-based distributed lock for autonomous trading coordination.
+ * Replaces PostgreSQL advisory locks which are session-scoped and do not
+ * survive the per-request HTTP connections used by the Neon serverless driver.
+ * A row being present means the lock is held; expiry allows stale locks to be
+ * reaped automatically.
+ */
+export const distributedLocks = pgTable("distributedLocks", {
+  lockKey: varchar("lockKey", { length: 255 }).primaryKey(),
+  acquiredAt: timestamp("acquiredAt", { withTimezone: true }).defaultNow().notNull(),
+  expiresAt: timestamp("expiresAt", { withTimezone: true }).notNull(),
+  acquiredBy: varchar("acquiredBy", { length: 128 }).notNull(),
+});
+
 export type User = typeof users.$inferSelect;
 export type BotConfig = typeof botConfigs.$inferSelect;
 export type ChatMessage = typeof chatMessages.$inferSelect;

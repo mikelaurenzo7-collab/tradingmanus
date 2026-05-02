@@ -1,6 +1,123 @@
 # LAURENZO Codebase Audit
 
-## What Stays (Core Framework)
+> **Last updated**: 2026-05-02
+> This document reflects the codebase after the Kalshi-focused refactor is complete and running in production alpha.
+
+## Current Architecture
+
+### Database (active tables)
+- `users` — User authentication, 2FA, beta access level
+- `auditLog` — Immutable event store
+- `autonomyRuns` — Per-run ledger for every scheduled autonomy execution
+- `distributedLocks` — Table-based distributed locking (replaces PostgreSQL advisory locks)
+- `kalshiCredentials` — Encrypted API credentials per user
+- `kalshiMarkets` / `kalshiMarketSnapshots` / `kalshiOrderBook` — Market data
+- `kalshiOrders` / `kalshiFills` / `kalshiPositions` — Order lifecycle
+- `kalshiSignals` / `kalshiPerformance` — Signal generation and attribution
+- `kalshiCapital` — Capital tracking per user
+- `tradingPreferences` — Autonomy mode, cadence, risk posture per user
+- `trainingInstructions` / `instructionRules` / `instructionSchedules` / `instructionHistory` — User-defined trading rules
+- `polymarketCredentials` — Encrypted Polymarket API credentials (Polymarket integration exists but uses Kalshi tables as proxies for performance data — see open items below)
+- `userPlatformSubscriptions` — Which platforms each user is subscribed to
+- `deskMemory` / `botConfigs` / `chatMessages` — AI desk memory and chatbot
+
+---
+
+## Backend Services (active)
+
+### Core Infrastructure
+- `server/_core/context.ts` — Auth context
+- `server/_core/trpc.ts` — tRPC setup with `protectedProcedure`
+- `server/_core/app.ts` — Express app, CORS, CSRF, rate limiting, scheduled endpoints
+- `server/_core/index.ts` — Node.js server entry (local scheduler with locking + owner scoping)
+- `server/_core/env.ts` — Environment variable validation
+- `server/_core/auth.ts` — JWT token management
+- `server/_core/cookies.ts` — Secure cookie options
+- `server/_core/csrf.ts` — CSRF double-submit cookie middleware (wired)
+- `server/_core/rateLimiter.ts` — `apiLimiter`, `authLimiter`, `scheduledLimiter`, `tradingLimiter`
+- `server/_core/distributedLock.ts` — Table-based distributed lock (PostgreSQL advisory locks removed)
+- `server/_core/correlationId.ts` — Request correlation ID middleware
+- `server/_core/logger.ts` — Pino structured logging
+- `server/_core/notification.ts` — Owner notifications
+
+### Authentication
+- `server/_core/twoFactor.ts` — TOTP 2FA
+- `server/_core/kalshiAuth.ts` — Kalshi credential encryption (PBKDF2)
+- `server/_core/polymarketAuth.ts` — Polymarket credential validation + market/order proxy
+
+### Trading
+- `server/_core/kalshiMarketData.ts` — Kalshi market data adapter
+- `server/_core/kalshiMarketFeed.ts` — Polling-based market feed
+- `server/_core/kalshiMarketSnapshots.ts` — Market snapshot persistence
+- `server/_core/kalshiExecution.ts` — Order placement, cancellation, position closing
+- `server/_core/kalshiOrderSync.ts` — Order/position reconciliation
+- `server/_core/kalshiSignals.ts` — Signal generation framework
+- `server/_core/kalshiRisk.ts` — Pre-trade risk checks
+- `server/_core/kalshiAdvancedRisk.ts` — Advanced risk models
+- `server/_core/kalshiLearning.ts` — Trade attribution and performance
+- `server/_core/kalshiAutonomy.ts` — Scheduled autonomous trading batch
+- `server/_core/kalshiCombinatorial.ts` — Combinatorial arbitrage detection
+- `server/_core/kalshiBacktest.ts` — Backtesting framework
+- `server/_core/kalshiPortfolioOptimization.ts` — Portfolio optimization
+- `server/_core/kalshiFunding.ts` — Funding tracking
+- `server/_core/kalshiSentiment.ts` — Sentiment analysis
+- `server/_core/kalshiArbitrage.ts` — Arbitrage signal detection
+
+### Polymarket (secondary platform — uses Kalshi tables as proxy for performance)
+- `server/_core/polymarketSignals.ts` — Signal generation
+- `server/_core/polymarketSignalReviewer.ts` — AI-powered signal review
+- `server/_core/polymarketRisk.ts` — Risk management
+- `server/_core/polymarketAutonomy.ts` — Autonomous trading
+- `server/_core/polymarketLearning.ts` — Performance attribution
+- `server/_core/polymarketClusterMonitor.ts` — Cluster detection
+- `server/_core/polymarketMarketMaking.ts` — Market making
+
+### AI
+- `server/_core/llm.ts` — LLM integration (OpenAI + Anthropic)
+- `server/_core/aiToolbelt.ts` — AI toolbelt (web search, extended thinking, prompt cache)
+- `server/_core/tradingReviewer.ts` — Kalshi AI trading reviewer
+- `server/_core/arbitrageReviewer.ts` — Arbitrage AI reviewer
+- `server/_core/crossBotStrategies.ts` — Cross-platform signal merging
+- `server/_core/crossPlatformArbitrage.ts` — Cross-platform arbitrage
+- `server/_core/categoryPersonas.ts` — Category-specific reviewer personas
+- `server/_core/marketCategoryRouter.ts` — Market category routing
+- `server/_core/alerting.ts` — Operational alerts (webhook)
+
+---
+
+## Frontend Pages (active)
+- `client/src/pages/Dashboard.tsx` — Main dashboard
+- `client/src/pages/Positions.tsx` — Open positions
+- `client/src/pages/Trades.tsx` — Trade history
+- `client/src/pages/Signals.tsx` — Signal generation and performance
+- `client/src/pages/RiskControls.tsx` — Risk controls (adapted for $100 capital)
+- `client/src/pages/AuditLog.tsx` — Audit log viewer
+- `client/src/pages/Connect.tsx` — Kalshi account connection onboarding
+- `client/src/pages/Training.tsx` — User-defined trading instructions
+- `client/src/pages/Performance.tsx` — Learning dashboard
+- `client/src/pages/TradingAutonomy.tsx` — Autonomy settings and run history
+- `client/src/pages/SentimentAnalysis.tsx` — Sentiment analysis
+- `client/src/pages/PortfolioOptimization.tsx` — Portfolio optimization
+- `client/src/pages/Backtesting.tsx` — Backtesting
+- `client/src/pages/Analytics.tsx` — Analytics
+- `client/src/pages/Funding.tsx` — Funding
+- `client/src/pages/ClusterMonitor.tsx` — Polymarket cluster monitor
+- `client/src/pages/Strategies.tsx` — Strategies overview
+- `client/src/pages/Chat.tsx` — AI chatbot
+
+---
+
+## Open Items / Known Gaps
+
+### Polymarket Performance Data (DEBT)
+`server/_core/polymarketLearning.ts` uses Kalshi trade history and positions as a proxy for Polymarket performance metrics (`getKalshiTradeHistory`, `getOpenKalshiPositions`). These should be replaced with dedicated Polymarket-specific tables (`polymarketOrders`, `polymarketFills`, `polymarketPositions`) once the Polymarket trading loop is production-ready.
+
+### Distributed Lock Schema
+Run `corepack pnpm db:push` to create the `distributedLocks` table before deploying.
+
+### CRON_SECRET Required in Production
+Without `CRON_SECRET` (≥ 32 chars), the Vercel cron trigger falls back to JWT auth and silently fails — autonomous trading will not run. See `server/_core/env.ts`.
+
 
 **Database:**
 - `users` - User authentication

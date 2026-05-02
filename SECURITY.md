@@ -21,7 +21,7 @@ This document provides comprehensive documentation for all security improvements
 
 ## Overview
 
-The TradingManus application now includes comprehensive security improvements to protect against common vulnerabilities and attacks. These improvements cover authentication, authorization, data encryption, rate limiting, logging, and distributed system coordination.
+The TradingManus application includes comprehensive security improvements to protect against common vulnerabilities and attacks. These improvements cover authentication, authorization, data encryption, rate limiting, logging, and distributed system coordination.
 
 ## Dependency Security
 
@@ -59,9 +59,9 @@ Rate limiting is implemented using `express-rate-limit` with different limits fo
 
 #### 2. Authentication Endpoints
 - **Limit**: 5 requests per 15 minutes per IP
-- **Applies to**: Login and authentication operations
+- **Applies to**: `/api/trpc/auth.login`, `/api/trpc/auth.refreshToken`
 - **Special**: Skips counting successful requests
-- **Location**: `server/_core/rateLimiter.ts` - `authLimiter`
+- **Location**: `server/_core/rateLimiter.ts` - `authLimiter`; wired in `server/_core/app.ts`
 
 #### 3. Scheduled/Cron Endpoints
 - **Limit**: 20 requests per minute
@@ -70,8 +70,8 @@ Rate limiting is implemented using `express-rate-limit` with different limits fo
 
 #### 4. Trading Endpoints
 - **Limit**: 30 requests per minute per user
-- **Applies to**: Order placement and trading operations
-- **Location**: `server/_core/rateLimiter.ts` - `tradingLimiter`
+- **Defined in**: `server/_core/rateLimiter.ts` - `tradingLimiter`
+- **Note**: Applied inside individual tRPC procedures as needed.
 
 ### Protected Against
 - Brute force attacks on authentication
@@ -168,13 +168,15 @@ Previously used `scryptSync`, now uses `pbkdf2Sync` for better compatibility and
 Double-submit cookie pattern for CSRF protection.
 
 ### How It Works
-1. Server generates CSRF token on GET requests
-2. Token stored in cookie (readable by JavaScript)
-3. Client includes token in `X-CSRF-Token` header for mutations
-4. Server validates token matches cookie using timing-safe comparison
+1. Server generates CSRF token on GET requests to `/api/trpc`
+2. Token stored in cookie (readable by JavaScript): `csrf_token`
+3. tRPC client reads the cookie and includes the token in `X-CSRF-Token` header for all requests
+4. Server validates that the header token matches the cookie using timing-safe comparison
 
 ### Code Location
-- `server/_core/csrf.ts` - CSRF middleware
+- `server/_core/csrf.ts` - `csrfProtection` middleware
+- `server/_core/app.ts` - Middleware wired to `/api/trpc`
+- `client/src/main.tsx` - tRPC client sends `X-CSRF-Token` header
 - Cookie: `csrf_token` (NOT httpOnly, secure in production, sameSite: strict)
 
 ### Exempted Methods
@@ -353,13 +355,16 @@ Unique IDs assigned to each request for distributed tracing.
 ## Distributed Locking
 
 ### Implementation
-PostgreSQL advisory locks for distributed coordination of autonomous trading.
+Table-based distributed locking using the `distributedLocks` PostgreSQL table.
+
+**Why not advisory locks?** PostgreSQL session-level advisory locks (`pg_advisory_lock`) are tied to the database connection. The Neon serverless HTTP driver uses a fresh connection for every query, so the lock would be released before the guarded work begins. The table-based approach stores the lock as a row that persists across separate HTTP round-trips.
 
 ### Features
-- **Advisory Locks**: Built-in PostgreSQL feature
-- **Non-blocking**: Try-lock pattern with retries
-- **Auto-release**: TTL-based automatic release
-- **Safe**: Multiple instances can't process same user simultaneously
+- **Table-based**: Uses a `distributedLocks` table with `lockKey` (PK), `expiresAt`, and `acquiredBy` columns
+- **Atomic INSERT**: The PRIMARY KEY constraint prevents two holders from acquiring simultaneously
+- **Stale-lock reaping**: Expired rows are deleted before each acquire attempt
+- **TTL auto-release**: A `setTimeout` fires after the configured TTL if the lock wasn't released manually; a generation counter prevents stale timers from releasing newer acquisitions
+- **Safe**: Multiple instances can't process the same user simultaneously
 
 ### Lock Types
 
@@ -397,9 +402,14 @@ await lock.withLock(async () => {
 }
 ```
 
+### Schema
+Run `corepack pnpm db:push` to apply the `distributedLocks` table to the database.
+
 ### Code Location
 - `server/_core/distributedLock.ts` - Lock implementation
-- `server/_core/app.ts` - Used in scheduled handlers
+- `drizzle/schema.ts` - `distributedLocks` table definition
+- `server/_core/app.ts` - Used in scheduled HTTP handlers
+- `server/_core/index.ts` - Used in local Node.js scheduler
 
 ### Protected Against
 - Concurrent processing of autonomous trading
@@ -424,8 +434,9 @@ Helmet middleware for security headers.
 
 ### CORS Configuration
 ```typescript
+// Production: only allow requests from *.vercel.app and *.tradingmanus.com (HTTPS only)
 {
-  origin: [/\.vercel\.app$/, /tradingmanus\.com$/],
+  origin: [/^https:\/\/[a-zA-Z0-9-]+\.vercel\.app$/, /^https:\/\/(?:[a-zA-Z0-9-]+\.)?tradingmanus\.com$/],
   credentials: true,
 }
 ```
@@ -437,7 +448,7 @@ Helmet middleware for security headers.
 - XSS (Cross-Site Scripting)
 - Clickjacking
 - MIME sniffing attacks
-- CORS attacks
+- CORS attacks from unexpected origins
 - Man-in-the-middle attacks (via HSTS)
 
 ---
@@ -448,9 +459,9 @@ Helmet middleware for security headers.
 
 - [ ] Update `.env` with strong secrets (32+ chars)
 - [ ] Run `corepack pnpm audit` and fix vulnerabilities
-- [ ] Run `corepack pnpm db:push` to apply 2FA schema changes
+- [ ] Run `corepack pnpm db:push` to apply schema changes (including `distributedLocks` table)
 - [ ] Test 2FA setup and login flow
-- [ ] Verify rate limiting is working
+- [ ] Verify rate limiting is working (auth endpoints limited to 5 req/15 min)
 - [ ] Check logs for sensitive data leakage
 - [ ] Test CSRF protection on mutation endpoints
 - [ ] Verify distributed locks in scheduled jobs
@@ -479,11 +490,14 @@ Helmet middleware for security headers.
 UPDATE users SET twoFactorEnabled = 0 WHERE email = 'owner@example.com';
 ```
 
-### Issue: Distributed lock timeout
-**Solution**: Increase TTL in lock configuration or check for long-running operations
+### Issue: Distributed lock timeout / stale lock
+**Solution**: Manually clear the stuck lock row:
+```sql
+DELETE FROM "distributedLocks" WHERE "lockKey" = 'autonomous_trading_user_1';
+```
 
 ### Issue: CSRF token missing
-**Solution**: Ensure client sends `X-CSRF-Token` header for mutations
+**Solution**: Ensure the browser has the `csrf_token` cookie (set by a GET request to `/api/trpc`). The tRPC client reads and forwards it automatically.
 
 ### Issue: JWT expired
 **Solution**: Use refresh token endpoint: `/api/trpc/auth.refreshToken`
@@ -498,3 +512,4 @@ UPDATE users SET twoFactorEnabled = 0 WHERE email = 'owner@example.com';
 - [Express Rate Limit](https://github.com/express-rate-limit/express-rate-limit)
 - [Helmet.js](https://helmetjs.github.io/)
 - [Pino Logger](https://getpino.io/)
+
