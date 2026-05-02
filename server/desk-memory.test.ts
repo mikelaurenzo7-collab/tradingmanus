@@ -78,6 +78,20 @@ describe("formatDeskMemoryForPrompt", () => {
     ).toBeNull();
   });
 
+  it("summarizeTradeAsDeskNote handles Polymarket-style USDC quantities", () => {
+    const note = summarizeTradeAsDeskNote({
+      side: "yes",
+      entryPrice: 0.42,
+      exitPrice: 0.61,
+      quantity: 12.5, // USDC notional
+      realizedPnl: 5.6,
+      marketTitle: "Bitcoin > 100k by year end",
+    });
+    expect(note.outcome).toBe("win");
+    expect(note.note).toContain("qty 12.5");
+    expect(note.note).toContain("Bitcoin");
+  });
+
   it("summarizeTradeAsDeskNote produces a compact lesson with derived outcome", () => {
     const win = summarizeTradeAsDeskNote({
       side: "yes",

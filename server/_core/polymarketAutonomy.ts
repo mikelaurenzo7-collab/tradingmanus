@@ -281,14 +281,39 @@ export async function runPolymarketAutonomousTrading(
   // Claude is the primary reviewer (with optional OpenAI fallback /
   // high-stakes second opinion).  Passing userId enables per-desk memory
   // injection — each Polymarket desk loads its prior win/loss tape from
-  // the deskMemory table before this call.
+  // the deskMemory table before this call.  Telemetry captures cache hit
+  // rate, web_search invocations, and triage stats for the audit log.
+  const { newReviewerTelemetry, getCacheHitRatio } = await import("./aiToolbelt");
+  const telemetry = newReviewerTelemetry();
   const reviewedSignals = await reviewPolymarketSignalsWithTrader(
     {
       markets: filteredMarkets,
       signals: executableSignals,
       maxSignals: 12,
     },
-    { userId: scopedUserId },
+    { userId: scopedUserId, telemetry },
+  );
+
+  await db.logAuditEvent(
+    "polymarket_reviewer_telemetry",
+    JSON.stringify({
+      desks: telemetry.desks,
+      cacheHitRatio: Number(getCacheHitRatio(telemetry).toFixed(3)),
+      cacheReadInputTokens: telemetry.cacheReadInputTokens,
+      cacheCreationInputTokens: telemetry.cacheCreationInputTokens,
+      inputTokens: telemetry.inputTokens,
+      outputTokens: telemetry.outputTokens,
+      webSearchInvocations: telemetry.webSearchInvocations,
+      extendedThinkingInvocations: telemetry.extendedThinkingInvocations,
+      triageRan: telemetry.triageRan,
+      triageInputCount: telemetry.triageInputCount,
+      triageKeptCount: telemetry.triageKeptCount,
+      anthropicCalls: telemetry.anthropicCalls,
+      anthropicFailures: telemetry.anthropicFailures,
+      openaiCalls: telemetry.openaiCalls,
+      openaiFailures: telemetry.openaiFailures,
+    }),
+    triggeredByOpenId,
   );
 
   if (reviewedSignals.length === 0) {

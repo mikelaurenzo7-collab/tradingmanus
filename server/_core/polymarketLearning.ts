@@ -454,13 +454,28 @@ export async function recordPolymarketTradeEntry(
 }
 
 /**
- * Record Polymarket trade exit and calculate P&L
+ * Record Polymarket trade exit and calculate P&L.
+ *
+ * Optionally writes to the per-desk learning tape when `tradeContext` is
+ * provided.  Polymarket markets aren't cached locally so the caller must
+ * supply the market title + category tag + side + entry/exit prices from
+ * the original trade record so we can classify which desk this lesson
+ * belongs to.  When omitted, exit is logged but no memory write occurs
+ * (degrades gracefully — preserves prior behavior for legacy callers).
  */
 export async function recordPolymarketTradeExit(
   userId: number,
   tradeId: string,
   exitPrice: number,
-  exitSizeUsdc: number
+  exitSizeUsdc: number,
+  tradeContext?: {
+    marketId: string;
+    marketTitle?: string | null;
+    marketCategoryTag?: string | null;
+    side: "yes" | "no";
+    entryPrice: number;
+    realizedPnl: number;
+  },
 ): Promise<void> {
   const scopedUserId = assertPositiveIntegerUserId(
     userId,
@@ -476,6 +491,21 @@ export async function recordPolymarketTradeExit(
     }),
     `user:${scopedUserId}`
   );
+
+  if (tradeContext) {
+    const { tryRecordPolymarketCloseToDeskMemory } = await import("../db.desk-memory");
+    await tryRecordPolymarketCloseToDeskMemory({
+      userId: scopedUserId,
+      marketId: tradeContext.marketId,
+      marketTitle: tradeContext.marketTitle,
+      marketCategoryTag: tradeContext.marketCategoryTag,
+      side: tradeContext.side,
+      entryPrice: tradeContext.entryPrice,
+      exitPrice,
+      sizeUsdc: exitSizeUsdc,
+      realizedPnl: tradeContext.realizedPnl,
+    });
+  }
 
   console.log(
     `[PolymarketLearning] Trade closed: ${tradeId} @ $${exitPrice} (${exitSizeUsdc} USDC)`

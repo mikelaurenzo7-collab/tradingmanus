@@ -197,6 +197,91 @@ export function buildToolList<T extends { name: string }>(
 }
 
 /**
+ * Per-run telemetry — operators want to know how the AI toolbelt is actually
+ * performing in production: cache hit ratio, web search invocations, triage
+ * drop counts, extended-thinking invocations, etc.  Reviewers populate this
+ * struct over a single run and the caller can serialize it into an audit log
+ * entry without coupling to specific provider response shapes.
+ */
+export type ReviewerTelemetry = {
+  desks: string[];
+  // Anthropic prompt-cache stats (sum across all calls in a run).
+  cacheCreationInputTokens: number;
+  cacheReadInputTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  // Tool / feature usage counts.
+  webSearchInvocations: number;
+  extendedThinkingInvocations: number;
+  // Triage stats.
+  triageRan: boolean;
+  triageInputCount: number;
+  triageKeptCount: number;
+  // Provider call counts.
+  anthropicCalls: number;
+  anthropicFailures: number;
+  openaiCalls: number;
+  openaiFailures: number;
+};
+
+export function newReviewerTelemetry(): ReviewerTelemetry {
+  return {
+    desks: [],
+    cacheCreationInputTokens: 0,
+    cacheReadInputTokens: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    webSearchInvocations: 0,
+    extendedThinkingInvocations: 0,
+    triageRan: false,
+    triageInputCount: 0,
+    triageKeptCount: 0,
+    anthropicCalls: 0,
+    anthropicFailures: 0,
+    openaiCalls: 0,
+    openaiFailures: 0,
+  };
+}
+
+/**
+ * Update telemetry from an Anthropic response.  Reads `usage` (where the
+ * cache stats live) and counts `web_search_tool_result` blocks.  Fail-safe
+ * for stub responses that don't include `usage`.
+ */
+export function recordAnthropicResponseTelemetry(
+  telemetry: ReviewerTelemetry,
+  response: { content?: Array<unknown>; usage?: Record<string, unknown> },
+  flags: { extendedThinkingUsed?: boolean } = {},
+): void {
+  telemetry.anthropicCalls += 1;
+  const usage = response.usage ?? {};
+  telemetry.cacheCreationInputTokens += Number(usage.cache_creation_input_tokens ?? 0) || 0;
+  telemetry.cacheReadInputTokens += Number(usage.cache_read_input_tokens ?? 0) || 0;
+  telemetry.inputTokens += Number(usage.input_tokens ?? 0) || 0;
+  telemetry.outputTokens += Number(usage.output_tokens ?? 0) || 0;
+  if (Array.isArray(response.content)) {
+    for (const block of response.content) {
+      if (typeof block === "object" && block !== null && (block as any).type === "web_search_tool_result") {
+        telemetry.webSearchInvocations += 1;
+      }
+    }
+  }
+  if (flags.extendedThinkingUsed) {
+    telemetry.extendedThinkingInvocations += 1;
+  }
+}
+
+/**
+ * Cache-hit ratio across all Anthropic calls captured in this run.  Returns
+ * 0 when no input tokens have been observed yet.
+ */
+export function getCacheHitRatio(telemetry: ReviewerTelemetry): number {
+  const totalCacheable = telemetry.cacheReadInputTokens + telemetry.cacheCreationInputTokens;
+  if (totalCacheable === 0) return 0;
+  return telemetry.cacheReadInputTokens / totalCacheable;
+}
+
+/**
  * Memory injection helper.  Wraps the caller-formatted desk-memory string in
  * a separately-cacheable system block.  We split it from the persona block so
  * that updating the tape only invalidates this single block instead of busting

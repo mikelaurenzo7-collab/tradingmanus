@@ -8,7 +8,10 @@ import {
   extractAnthropicText,
   extractCitations,
   formatCitationsForReasoning,
+  getCacheHitRatio,
   isHighStakes,
+  newReviewerTelemetry,
+  recordAnthropicResponseTelemetry,
   runHaikuTriage,
   selectAnthropicModel,
 } from "./_core/aiToolbelt";
@@ -225,6 +228,62 @@ describe("aiToolbelt", () => {
       const keep = await runHaikuTriage({ messages: { create } }, [], { timeoutMs: 100 });
       expect(keep?.size).toBe(0);
       expect(create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("ReviewerTelemetry", () => {
+    it("starts zeroed", () => {
+      const t = newReviewerTelemetry();
+      expect(t.cacheReadInputTokens).toBe(0);
+      expect(t.cacheCreationInputTokens).toBe(0);
+      expect(t.webSearchInvocations).toBe(0);
+      expect(getCacheHitRatio(t)).toBe(0);
+    });
+
+    it("accumulates cache + token usage from Anthropic responses", () => {
+      const t = newReviewerTelemetry();
+      recordAnthropicResponseTelemetry(t, {
+        usage: {
+          input_tokens: 1000,
+          output_tokens: 200,
+          cache_creation_input_tokens: 800,
+          cache_read_input_tokens: 0,
+        },
+      });
+      recordAnthropicResponseTelemetry(t, {
+        usage: {
+          input_tokens: 1100,
+          output_tokens: 250,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 800,
+        },
+      });
+      expect(t.anthropicCalls).toBe(2);
+      expect(t.cacheReadInputTokens).toBe(800);
+      expect(t.cacheCreationInputTokens).toBe(800);
+      expect(t.inputTokens).toBe(2100);
+      expect(t.outputTokens).toBe(450);
+      expect(getCacheHitRatio(t)).toBe(0.5);
+    });
+
+    it("counts web_search_tool_result blocks per response", () => {
+      const t = newReviewerTelemetry();
+      recordAnthropicResponseTelemetry(t, {
+        content: [
+          { type: "web_search_tool_result" },
+          { type: "text", text: "ok" },
+          { type: "web_search_tool_result" },
+        ],
+      });
+      expect(t.webSearchInvocations).toBe(2);
+    });
+
+    it("flags extended thinking when the caller indicates it was used", () => {
+      const t = newReviewerTelemetry();
+      recordAnthropicResponseTelemetry(t, {}, { extendedThinkingUsed: true });
+      recordAnthropicResponseTelemetry(t, {});
+      expect(t.extendedThinkingInvocations).toBe(1);
+      expect(t.anthropicCalls).toBe(2);
     });
   });
 });

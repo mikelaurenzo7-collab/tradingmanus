@@ -15,9 +15,11 @@ import {
   getTriageThreshold,
   isHighStakes,
   isTriageEnabled,
+  recordAnthropicResponseTelemetry,
   runHaikuTriage,
   selectAnthropicModel,
   type CitationSummary,
+  type ReviewerTelemetry,
   type StakesContext,
   type TriageCandidate,
 } from "./aiToolbelt";
@@ -108,6 +110,12 @@ export type TradingReviewerOptions = {
   deskMemoryByDeskId?: Map<string, DeskMemoryRecord>;
   /** Override the default Haiku triage threshold for tests. */
   triageThresholdOverride?: number;
+  /**
+   * Optional sink for per-run telemetry (cache hit rate, web_search count,
+   * triage drops).  Caller passes a fresh object via newReviewerTelemetry()
+   * and reads it after the review returns.
+   */
+  telemetry?: ReviewerTelemetry;
 };
 
 export type TradingReviewer = {
@@ -428,6 +436,15 @@ async function requestAnthropicReviews(
     "Anthropic review",
   );
 
+  if (options.telemetry) {
+    recordAnthropicResponseTelemetry(options.telemetry, response as { content?: Array<unknown>; usage?: Record<string, unknown> }, {
+      extendedThinkingUsed: Boolean(thinking),
+    });
+    if (persona && !options.telemetry.desks.includes(persona.id)) {
+      options.telemetry.desks.push(persona.id);
+    }
+  }
+
   const citations = ENV.enableAiCitations
     ? extractCitations(response as { content: Array<unknown> })
     : [];
@@ -520,6 +537,9 @@ async function callProvider(
       provider === "openai"
         ? await requestOpenAiReviews(reviewPayload, options, persona)
         : await requestAnthropicReviews(reviewPayload, options, persona, stakes, memorySnippet);
+    if (options.telemetry && provider === "openai") {
+      options.telemetry.openaiCalls += 1;
+    }
     return {
       provider,
       reviewsByMarket: new Map(response.reviews.map((review) => [review.marketId, review])),
@@ -527,6 +547,14 @@ async function callProvider(
       citations: "citations" in response ? response.citations : [],
     };
   } catch (error) {
+    if (options.telemetry) {
+      if (provider === "openai") {
+        options.telemetry.openaiCalls += 1;
+        options.telemetry.openaiFailures += 1;
+      } else {
+        options.telemetry.anthropicFailures += 1;
+      }
+    }
     logger.warn(
       `[TradingReviewer] ${provider} review failed for desk=${persona?.id ?? "default"}: ${error instanceof Error ? error.message : String(error)}`,
     );
@@ -685,6 +713,11 @@ async function applyTriageFilter(
     timeoutMs: Math.min(options.anthropicTimeoutMs ?? ENV.anthropicTimeoutMs, 8000),
     logger,
   });
+  if (options.telemetry) {
+    options.telemetry.triageRan = true;
+    options.telemetry.triageInputCount = signals.length;
+    options.telemetry.triageKeptCount = keep ? Math.max(0, keep.size) : signals.length;
+  }
   if (!keep) return signals;
   const filtered = signals.filter((signal) => keep.has(signal.marketId));
   // Safety floor: if triage drops everything, fall back to the original list.

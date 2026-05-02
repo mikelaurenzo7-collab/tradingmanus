@@ -20,6 +20,7 @@ import { placeKalshiOrder } from "./kalshiExecution";
 import { calculateKalshiBuyOrderRisk, estimateContractsForRiskBudget } from "./kalshiRisk";
 import { assertPositiveIntegerUserId } from "./userScope";
 import { reviewSignalsWithTrader } from "./tradingReviewer";
+import { getCacheHitRatio, newReviewerTelemetry } from "./aiToolbelt";
 
 const BASE_RISK_LIMITS = {
   maxLossPerTrade: 5,
@@ -415,14 +416,38 @@ async function generateScheduledSignals(userId: number, minConfidence: number, a
   // Claude is the primary reviewer (with optional OpenAI fallback /
   // high-stakes second opinion).  Passing userId enables per-desk memory
   // injection — each desk loads its prior win/loss tape from the deskMemory
-  // table before this call.
+  // table before this call.  Telemetry captures cache hit rate, web_search
+  // invocations, and triage stats for the audit log.
+  const telemetry = newReviewerTelemetry();
   const savedSignals = await reviewSignalsWithTrader(
     {
       markets: actionableMarkets,
       signals: instructionFilteredSignals,
       maxSignals: 12,
     },
-    { userId },
+    { userId, telemetry },
+  );
+
+  await db.logAuditEvent(
+    "kalshi_reviewer_telemetry",
+    JSON.stringify({
+      desks: telemetry.desks,
+      cacheHitRatio: Number(getCacheHitRatio(telemetry).toFixed(3)),
+      cacheReadInputTokens: telemetry.cacheReadInputTokens,
+      cacheCreationInputTokens: telemetry.cacheCreationInputTokens,
+      inputTokens: telemetry.inputTokens,
+      outputTokens: telemetry.outputTokens,
+      webSearchInvocations: telemetry.webSearchInvocations,
+      extendedThinkingInvocations: telemetry.extendedThinkingInvocations,
+      triageRan: telemetry.triageRan,
+      triageInputCount: telemetry.triageInputCount,
+      triageKeptCount: telemetry.triageKeptCount,
+      anthropicCalls: telemetry.anthropicCalls,
+      anthropicFailures: telemetry.anthropicFailures,
+      openaiCalls: telemetry.openaiCalls,
+      openaiFailures: telemetry.openaiFailures,
+    }),
+    `user:${userId}`,
   );
 
   await saveSignals(savedSignals, userId);

@@ -254,8 +254,7 @@ describe("scheduled away-from-chat trading", () => {
     expect(result.decision?.orderExposure).toBeCloseTo(4.73, 6);
     expect(result.decision?.maxLossOnTrade).toBeCloseTo(4.73, 6);
     expect(mocks.placeKalshiOrder).toHaveBeenCalledWith(7, "KXTEST-1", "yes", 11, 0.43);
-    expect(mocks.logAuditEvent).toHaveBeenNthCalledWith(
-      2,
+    expect(mocks.logAuditEvent).toHaveBeenCalledWith(
       "scheduled_autonomy_order_placed",
       expect.stringContaining('"orderExposure":4.729'),
       "away-open-id"

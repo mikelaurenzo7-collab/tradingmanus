@@ -98,6 +98,14 @@ When a category bucket has more than `AI_TRIAGE_THRESHOLD` (default 12) candidat
 
 When Claude uses `web_search_20250305` to gather context, the reviewer parses the response's citation blocks and appends a short `[cites: espn.com, nyt.com]` tag to the saved signal reasoning so the audit trail shows which sources supported the call. Disable with `ENABLE_AI_CITATIONS=false`.
 
+### Cross-platform arbitrage AI desk
+
+`server/_core/arbitrageReviewer.ts` adds a Claude-only review layer on top of the deterministic `crossPlatformArbitrage.ts` scanner. The scanner finds Kalshi ↔ Polymarket pairs whose YES prices diverge enough that arbitrage is theoretically profitable; the reviewer rejects the ones that look like edge but actually aren't (different resolution criteria, stale data on one side, evaporating liquidity, settlement asymmetry). Approved opportunities come back annotated with a `sizeFraction ∈ [0, 1]` so the caller's risk-budget layer can scale leg sizing accordingly. Always uses extended thinking + web_search since multi-leg trades are by definition high-stakes.
+
+### Reviewer telemetry
+
+Each autonomy run captures per-run telemetry — Anthropic prompt-cache read/creation tokens, cache-hit ratio, web_search invocations, extended-thinking invocations, triage drop counts, per-provider call/failure counts — and writes it to the audit log under `kalshi_reviewer_telemetry` / `polymarket_reviewer_telemetry`. Tail those events to see how well caching is paying off in production and how often the bots are reaching for fresh news.
+
 ### Specialized desks
 
 | Platform | Desk | Focus |
