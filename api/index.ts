@@ -8,6 +8,34 @@ type ExpressLikeApp = {
 
 let appPromise: Promise<ExpressLikeApp> | null = null;
 
+// Vercel runs each cold start as a fresh Node process, but Node 18/20 defaults
+// to `--unhandled-rejections=throw`, which terminates the process on any stray
+// async rejection. When that happens mid-request, Vercel can't deliver our
+// Express JSON error response and instead returns its plain-text platform crash
+// page ("A server error has occurred / FUNCTION_INVOCATION_FAILED"). Express 4
+// in particular does not auto-forward async middleware rejections to its error
+// handler, so a single missed `await` anywhere in the request pipeline takes
+// down the entire function.
+//
+// Register process-level guards once per cold start so unexpected rejections
+// are logged and surfaced as ordinary 500 responses by Express's global error
+// handler instead of crashing the runtime. We intentionally do NOT call
+// `process.exit` — keeping the worker alive lets in-flight requests finish and
+// subsequent requests reuse the cached app.
+type GlobalWithGuards = typeof globalThis & {
+  __tradingmanusProcessGuardsInstalled?: boolean;
+};
+const globalWithGuards = globalThis as GlobalWithGuards;
+if (!globalWithGuards.__tradingmanusProcessGuardsInstalled) {
+  globalWithGuards.__tradingmanusProcessGuardsInstalled = true;
+  process.on("unhandledRejection", (reason) => {
+    console.error("[api/index] unhandledRejection:", reason);
+  });
+  process.on("uncaughtException", (error) => {
+    console.error("[api/index] uncaughtException:", error);
+  });
+}
+
 function getApp() {
   if (!appPromise) {
     appPromise = createApp({ runStartupMigrations: false })
