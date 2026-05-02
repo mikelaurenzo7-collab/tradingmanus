@@ -9,7 +9,12 @@ import * as sentiment from "./_core/kalshiSentiment";
 import * as portfolio from "./_core/kalshiPortfolioOptimization";
 import * as risk from "./_core/kalshiAdvancedRisk";
 import * as backtest from "./_core/kalshiBacktest";
-import { runStrategyBacktest } from "./_core/strategyBacktest";
+import {
+  runStrategyBacktest,
+  runBacktestSweep,
+  runWalkForwardBacktest,
+  findBreakevenFee,
+} from "./_core/strategyBacktest";
 
 const backtestTradeSchema = z.object({
   marketId: z.string(),
@@ -375,6 +380,7 @@ export const advancedRouter = router({
           noise: z.number().min(0).max(0.2).default(0.02),
           meanReversion: z.number().min(0).max(1).default(0.05),
           driftToTruth: z.number().min(0).max(1).default(0.005),
+          signalTypeAllowlist: z.array(z.string()).optional(),
         }),
       )
       .mutation(async ({ input }) => {
@@ -385,6 +391,7 @@ export const advancedRouter = router({
           slippagePerLeg: input.slippagePerLeg,
           positionSizeUsd: input.positionSizeUsd,
           maxHoldTicks: input.maxHoldTicks ?? Number.POSITIVE_INFINITY,
+          signalTypeAllowlist: input.signalTypeAllowlist,
           synthetic: {
             numMarkets: input.numMarkets,
             ticksPerMarket: input.ticksPerMarket,
@@ -395,6 +402,135 @@ export const advancedRouter = router({
             driftToTruth: input.driftToTruth,
           },
         });
+      }),
+
+    /**
+     * Sweep the engine across a grid of fees, slippages, confidence
+     * floors, and hold horizons.  Reports per-cell stats plus the
+     * profitable-fraction — a robust strategy profits across most of the
+     * grid; a fragile one only at one specific point.
+     */
+    runStrategyBacktestSweep: protectedProcedure
+      .input(
+        z.object({
+          platform: z.enum(["kalshi", "polymarket"]).default("kalshi"),
+          numMarkets: z.number().int().min(1).max(200).default(25),
+          ticksPerMarket: z.number().int().min(2).max(200).default(40),
+          positionSizeUsd: z.number().positive().max(10000).default(10),
+          seed: z.number().int().default(1),
+          initialDisplacement: z.number().min(0).max(0.45).default(0.3),
+          signalTypeAllowlist: z.array(z.string()).optional(),
+          feesPerLeg: z.array(z.number().min(0).max(0.1)).optional(),
+          slippagesPerLeg: z.array(z.number().min(0).max(0.1)).optional(),
+          minConfidences: z.array(z.number().min(0).max(1)).optional(),
+          maxHoldTicksOptions: z.array(z.number().int().positive().max(1000)).optional(),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        return await runBacktestSweep(
+          {
+            platform: input.platform,
+            positionSizeUsd: input.positionSizeUsd,
+            signalTypeAllowlist: input.signalTypeAllowlist,
+            synthetic: {
+              numMarkets: input.numMarkets,
+              ticksPerMarket: input.ticksPerMarket,
+              seed: input.seed,
+              initialDisplacement: input.initialDisplacement,
+            },
+          },
+          {
+            feesPerLeg: input.feesPerLeg,
+            slippagesPerLeg: input.slippagesPerLeg,
+            minConfidences: input.minConfidences,
+            maxHoldTicksOptions: input.maxHoldTicksOptions,
+          },
+        );
+      }),
+
+    /**
+     * Walk-forward: split into N independent synthetic windows (different
+     * seeds), run the engine on each, and report whether the strategy is
+     * consistently profitable or seed-fragile.
+     */
+    runStrategyWalkForward: protectedProcedure
+      .input(
+        z.object({
+          platform: z.enum(["kalshi", "polymarket"]).default("kalshi"),
+          numMarkets: z.number().int().min(1).max(200).default(25),
+          ticksPerMarket: z.number().int().min(2).max(200).default(40),
+          minConfidence: z.number().min(0).max(1).default(0.45),
+          feePerLeg: z.number().min(0).max(0.1).default(0.005),
+          slippagePerLeg: z.number().min(0).max(0.1).default(0.0025),
+          positionSizeUsd: z.number().positive().max(10000).default(10),
+          maxHoldTicks: z.number().int().positive().max(1000).optional(),
+          numWindows: z.number().int().min(2).max(20).default(5),
+          seed: z.number().int().default(1),
+          initialDisplacement: z.number().min(0).max(0.45).default(0.3),
+          signalTypeAllowlist: z.array(z.string()).optional(),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        return await runWalkForwardBacktest(
+          {
+            platform: input.platform,
+            minConfidence: input.minConfidence,
+            feePerLeg: input.feePerLeg,
+            slippagePerLeg: input.slippagePerLeg,
+            positionSizeUsd: input.positionSizeUsd,
+            maxHoldTicks: input.maxHoldTicks ?? Number.POSITIVE_INFINITY,
+            signalTypeAllowlist: input.signalTypeAllowlist,
+            synthetic: {
+              numMarkets: input.numMarkets,
+              ticksPerMarket: input.ticksPerMarket,
+              seed: input.seed,
+              initialDisplacement: input.initialDisplacement,
+            },
+          },
+          input.numWindows,
+        );
+      }),
+
+    /**
+     * Solve for the per-leg fee at which the strategy stops being
+     * profitable.  Useful as a sanity check: a healthy strategy survives
+     * fees several multiples of the realistic exchange rate.
+     */
+    findBreakevenFee: protectedProcedure
+      .input(
+        z.object({
+          platform: z.enum(["kalshi", "polymarket"]).default("kalshi"),
+          numMarkets: z.number().int().min(1).max(200).default(50),
+          ticksPerMarket: z.number().int().min(2).max(200).default(40),
+          minConfidence: z.number().min(0).max(1).default(0.45),
+          slippagePerLeg: z.number().min(0).max(0.1).default(0),
+          positionSizeUsd: z.number().positive().max(10000).default(10),
+          maxHoldTicks: z.number().int().positive().max(1000).optional(),
+          seed: z.number().int().default(1),
+          initialDisplacement: z.number().min(0).max(0.45).default(0.3),
+          signalTypeAllowlist: z.array(z.string()).optional(),
+          tolerance: z.number().min(0.0001).max(0.01).default(0.0005),
+          upperBoundFee: z.number().min(0.001).max(0.5).default(0.05),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        return await findBreakevenFee(
+          {
+            platform: input.platform,
+            minConfidence: input.minConfidence,
+            slippagePerLeg: input.slippagePerLeg,
+            positionSizeUsd: input.positionSizeUsd,
+            maxHoldTicks: input.maxHoldTicks ?? Number.POSITIVE_INFINITY,
+            signalTypeAllowlist: input.signalTypeAllowlist,
+            synthetic: {
+              numMarkets: input.numMarkets,
+              ticksPerMarket: input.ticksPerMarket,
+              seed: input.seed,
+              initialDisplacement: input.initialDisplacement,
+            },
+          },
+          { tolerance: input.tolerance, upperBoundFee: input.upperBoundFee },
+        );
       }),
   }),
 });

@@ -220,8 +220,20 @@ export function mergePlatformSignals(
  * Leg A: buy YES on the cheaper platform.
  * Leg B: buy NO (i.e., sell YES) on the more expensive platform.
  *
- * Both legs are attempted concurrently.  If either fails the function still
- * returns details for each leg so the caller can take corrective action.
+ * Sequential by default: place leg A first, only fire leg B if A
+ * succeeded.  This is the safe behavior — if A fills and B fails we still
+ * have a single-sided directional position (bad), but if we fired both
+ * concurrently and A failed while B filled we'd be naked-long on the wrong
+ * side without ever wanting to be there.  Sequential gives the caller a
+ * chance to abort before that happens.
+ *
+ * The legA platform defaults to Kalshi (heuristic: Kalshi's order rejects
+ * faster than Polymarket's CLOB).  Pass `legAPlatform: "polymarket"` to
+ * flip the order if you'd rather get the slower side committed first.
+ *
+ * Pass `parallel: true` to opt into the legacy concurrent behavior — only
+ * use this when you've validated that both venues fill reliably and the
+ * extra latency saved is worth the partial-fill risk.
  */
 export async function executeCrossArbLegs(
   opportunity: CrossPlatformArbitrageOpportunity,
@@ -234,6 +246,16 @@ export async function executeCrossArbLegs(
     polymarketTokenIdYes: string;
     /** Polymarket NO token ID for the target market */
     polymarketTokenIdNo: string;
+    /**
+     * Which platform's order fires first.  Default: kalshi.  The second
+     * leg is only attempted if the first succeeds.
+     */
+    legAPlatform?: "kalshi" | "polymarket";
+    /**
+     * Opt-in concurrent execution (legacy behavior).  Default false —
+     * sequential is safer.
+     */
+    parallel?: boolean;
   },
   executors: {
     placeKalshiOrder: (
@@ -255,6 +277,8 @@ export async function executeCrossArbLegs(
     polymarketSizeUsdc,
     polymarketTokenIdYes,
     polymarketTokenIdNo,
+    legAPlatform = "kalshi",
+    parallel = false,
   } = params;
 
   const { buyPlatform, kalshiYesPrice, polymarketYesPrice } = opportunity;
@@ -268,56 +292,85 @@ export async function executeCrossArbLegs(
   const polymarketPrice =
     buyPlatform === "polymarket" ? polymarketYesPrice : 1 - polymarketYesPrice;
 
-  // --- Execute concurrently ---
-  const [kalshiResult, polymarketResult] = await Promise.allSettled([
+  const fireKalshi = () =>
     executors.placeKalshiOrder(
       opportunity.kalshiMarketId,
       kalshiSide,
       kalshiContracts,
       kalshiPrice,
-    ),
+    );
+
+  const firePolymarket = () =>
     executors.placePolymarketOrder(
       polymarketTokenId,
       polymarketSide,
       polymarketPrice,
       polymarketSizeUsdc,
-    ),
-  ]);
+    );
 
-  const kalshiLeg =
-    kalshiResult.status === "fulfilled"
-      ? {
-          attempted: true,
-          success: kalshiResult.value.success,
-          orderId: kalshiResult.value.orderId,
-          error: kalshiResult.value.error,
-        }
-      : {
-          attempted: true,
-          success: false,
-          error: String(kalshiResult.reason),
-        };
+  function legResultFromSettled(
+    settled: PromiseSettledResult<{ success: boolean; orderId?: string; error?: string }>,
+  ) {
+    if (settled.status === "fulfilled") {
+      return {
+        attempted: true,
+        success: settled.value.success,
+        orderId: settled.value.orderId,
+        error: settled.value.error,
+      };
+    }
+    return {
+      attempted: true,
+      success: false,
+      error: String(settled.reason),
+    };
+  }
 
-  const polymarketLeg =
-    polymarketResult.status === "fulfilled"
-      ? {
-          attempted: true,
-          success: polymarketResult.value.success,
-          orderId: polymarketResult.value.orderId,
-          error: polymarketResult.value.error,
-        }
-      : {
-          attempted: true,
-          success: false,
-          error: String(polymarketResult.reason),
-        };
+  let kalshiLeg: CrossArbExecutionResult["kalshiLeg"];
+  let polymarketLeg: CrossArbExecutionResult["polymarketLeg"];
+
+  if (parallel) {
+    const [kalshiResult, polymarketResult] = await Promise.allSettled([
+      fireKalshi(),
+      firePolymarket(),
+    ]);
+    kalshiLeg = legResultFromSettled(kalshiResult);
+    polymarketLeg = legResultFromSettled(polymarketResult);
+  } else {
+    // Sequential: leg A first, leg B only if A succeeded.
+    const skippedLeg = {
+      attempted: false as const,
+      success: false as const,
+      error: "skipped: leg A did not fill, refusing to take a single-sided exposure",
+    };
+
+    if (legAPlatform === "kalshi") {
+      const legA = await Promise.allSettled([fireKalshi()]).then((r) => r[0]!);
+      kalshiLeg = legResultFromSettled(legA);
+      if (kalshiLeg.success) {
+        const legB = await Promise.allSettled([firePolymarket()]).then((r) => r[0]!);
+        polymarketLeg = legResultFromSettled(legB);
+      } else {
+        polymarketLeg = { ...skippedLeg };
+      }
+    } else {
+      const legA = await Promise.allSettled([firePolymarket()]).then((r) => r[0]!);
+      polymarketLeg = legResultFromSettled(legA);
+      if (polymarketLeg.success) {
+        const legB = await Promise.allSettled([fireKalshi()]).then((r) => r[0]!);
+        kalshiLeg = legResultFromSettled(legB);
+      } else {
+        kalshiLeg = { ...skippedLeg };
+      }
+    }
+  }
 
   const bothLegsExecuted = kalshiLeg.success && polymarketLeg.success;
 
   const reasoning =
     bothLegsExecuted
       ? `Both legs executed. Kalshi ${kalshiSide.toUpperCase()} @ ${(kalshiPrice * 100).toFixed(1)}¢ (order ${kalshiLeg.orderId ?? "?"}), Polymarket ${buyPlatform === "polymarket" ? "YES" : "NO"} @ ${(polymarketPrice * 100).toFixed(1)}¢ (order ${polymarketLeg.orderId ?? "?"}).  Net edge: ${(opportunity.netEdge * 100).toFixed(1)}pp.`
-      : `Partial execution. Kalshi: ${kalshiLeg.success ? "OK" : `FAIL – ${kalshiLeg.error}`}. Polymarket: ${polymarketLeg.success ? "OK" : `FAIL – ${polymarketLeg.error}`}.`;
+      : `Partial execution. Kalshi: ${kalshiLeg.success ? "OK" : kalshiLeg.attempted ? `FAIL – ${kalshiLeg.error}` : "SKIPPED – leg A failed first"}. Polymarket: ${polymarketLeg.success ? "OK" : polymarketLeg.attempted ? `FAIL – ${polymarketLeg.error}` : "SKIPPED – leg A failed first"}.`;
 
   return {
     success: bothLegsExecuted,

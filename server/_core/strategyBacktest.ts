@@ -373,3 +373,238 @@ export async function runStrategyBacktest(
     slippagePerLeg: config.slippagePerLeg,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Higher-level analytics
+//
+// Single backtest runs are necessary but not sufficient — they tell you
+// whether one specific configuration profits on one specific synthetic
+// dataset.  They don't tell you whether the strategy's edge is robust to
+// fee/slippage realism, parameter choice, or out-of-sample drift.  The
+// helpers below fill those gaps.
+// ---------------------------------------------------------------------------
+
+export type SweepAxis = {
+  feesPerLeg?: number[];
+  slippagesPerLeg?: number[];
+  minConfidences?: number[];
+  maxHoldTicksOptions?: number[];
+};
+
+export type SweepCellResult = {
+  feePerLeg: number;
+  slippagePerLeg: number;
+  minConfidence: number;
+  maxHoldTicks: number;
+  totalTrades: number;
+  totalPnL: number;
+  winRate: number;
+  sharpeRatio: number;
+  maxDrawdown: number;
+  realizedAccuracy: number;
+  positionsOpened: number;
+};
+
+export type SweepResult = {
+  cells: SweepCellResult[];
+  /** Cell with the highest totalPnL. */
+  best: SweepCellResult | null;
+  /** Cell with the highest Sharpe (risk-adjusted). */
+  bestRiskAdjusted: SweepCellResult | null;
+  /** Fraction of cells that had positive totalPnL. */
+  profitableFraction: number;
+};
+
+/**
+ * Run the engine across a grid of (fee, slippage, minConfidence, maxHold)
+ * configurations and report the per-cell stats.  Use this to validate that
+ * the strategy's edge isn't a single fragile point in parameter space.
+ *
+ * If a strategy only profits at one specific fee + minConfidence combo, it
+ * was overfit to that combo on this synthetic dataset.  A robust strategy
+ * shows positive PnL across a meaningful fraction of the grid.
+ */
+export async function runBacktestSweep(
+  baseConfig: Partial<StrategyBacktestConfig> = {},
+  axes: SweepAxis = {},
+): Promise<SweepResult> {
+  const fees = axes.feesPerLeg ?? [0.001, 0.005, 0.01];
+  const slippages = axes.slippagesPerLeg ?? [0, 0.0025];
+  const confidences = axes.minConfidences ?? [0.3, 0.5, 0.7];
+  const maxHolds = axes.maxHoldTicksOptions ?? [Number.POSITIVE_INFINITY];
+
+  const cells: SweepCellResult[] = [];
+  for (const feePerLeg of fees) {
+    for (const slippagePerLeg of slippages) {
+      for (const minConfidence of confidences) {
+        for (const maxHoldTicks of maxHolds) {
+          const result = await runStrategyBacktest({
+            ...baseConfig,
+            feePerLeg,
+            slippagePerLeg,
+            minConfidence,
+            maxHoldTicks,
+          });
+          cells.push({
+            feePerLeg,
+            slippagePerLeg,
+            minConfidence,
+            maxHoldTicks,
+            totalTrades: result.totalTrades,
+            totalPnL: result.totalPnL,
+            winRate: result.winRate,
+            sharpeRatio: result.sharpeRatio,
+            maxDrawdown: result.maxDrawdown,
+            realizedAccuracy: result.realizedAccuracy,
+            positionsOpened: result.positionsOpened,
+          });
+        }
+      }
+    }
+  }
+
+  const profitableCells = cells.filter((c) => c.totalPnL > 0);
+  const best = cells.length === 0
+    ? null
+    : cells.reduce((acc, c) => (acc && acc.totalPnL >= c.totalPnL ? acc : c), null as SweepCellResult | null);
+  const bestRiskAdjusted = cells.length === 0
+    ? null
+    : cells.reduce((acc, c) => (acc && acc.sharpeRatio >= c.sharpeRatio ? acc : c), null as SweepCellResult | null);
+
+  return {
+    cells,
+    best,
+    bestRiskAdjusted,
+    profitableFraction: cells.length === 0 ? 0 : profitableCells.length / cells.length,
+  };
+}
+
+/**
+ * Walk-forward analysis: split the synthetic dataset into N sequential
+ * windows, run the engine on each independently, and report per-window
+ * stats.  A strategy whose PnL is positive in window 1 but negative in
+ * windows 2-5 is overfit to early data; reject it.
+ */
+export type WalkForwardWindowResult = {
+  windowIndex: number;
+  startSeed: number;
+  numMarkets: number;
+  totalTrades: number;
+  totalPnL: number;
+  winRate: number;
+  sharpeRatio: number;
+  maxDrawdown: number;
+};
+
+export type WalkForwardResult = {
+  windows: WalkForwardWindowResult[];
+  /** Mean win rate across windows. */
+  meanWinRate: number;
+  /** StdDev of win rate (lower = more consistent). */
+  winRateStdDev: number;
+  /** Mean total PnL across windows. */
+  meanPnL: number;
+  /** Fraction of windows with positive PnL. */
+  positivePnlFraction: number;
+};
+
+export async function runWalkForwardBacktest(
+  baseConfig: Partial<StrategyBacktestConfig> = {},
+  numWindows: number = 5,
+): Promise<WalkForwardResult> {
+  const baseSeed = baseConfig.synthetic?.seed ?? 1;
+  const numMarkets = baseConfig.synthetic?.numMarkets ?? 25;
+  const windows: WalkForwardWindowResult[] = [];
+
+  for (let i = 0; i < numWindows; i++) {
+    // Each window uses a different seed → different synthetic markets,
+    // simulating different "time periods".  This is the in-sample/out-of-
+    // sample split for synthetic backtesting: if all windows profit, the
+    // strategy isn't seed-fragile.
+    const seed = baseSeed + i * 1009; // prime offset to avoid LCG correlation
+    const result = await runStrategyBacktest({
+      ...baseConfig,
+      synthetic: { ...(baseConfig.synthetic ?? {}), seed },
+    });
+    windows.push({
+      windowIndex: i,
+      startSeed: seed,
+      numMarkets,
+      totalTrades: result.totalTrades,
+      totalPnL: result.totalPnL,
+      winRate: result.winRate,
+      sharpeRatio: result.sharpeRatio,
+      maxDrawdown: result.maxDrawdown,
+    });
+  }
+
+  const winRates = windows.map((w) => w.winRate);
+  const pnls = windows.map((w) => w.totalPnL);
+  const meanWinRate =
+    winRates.length === 0 ? 0 : winRates.reduce((a, b) => a + b, 0) / winRates.length;
+  const winRateVariance =
+    winRates.length === 0
+      ? 0
+      : winRates.reduce((sum, wr) => sum + (wr - meanWinRate) ** 2, 0) / winRates.length;
+  const meanPnL =
+    pnls.length === 0 ? 0 : pnls.reduce((a, b) => a + b, 0) / pnls.length;
+  const positivePnl = windows.filter((w) => w.totalPnL > 0).length;
+
+  return {
+    windows,
+    meanWinRate,
+    winRateStdDev: Math.sqrt(winRateVariance),
+    meanPnL,
+    positivePnlFraction: windows.length === 0 ? 0 : positivePnl / windows.length,
+  };
+}
+
+/**
+ * Solve for the breakeven fee level: the per-leg fee at which total PnL
+ * crosses zero.  Bisection on the fee axis with the same dataset so the
+ * only thing varying is cost.  If breakeven fee >> realistic exchange fee
+ * (e.g., > 200 bps), the strategy has comfortable margin; if < 50 bps,
+ * it's a marginal strategy that won't survive real-world friction.
+ *
+ * Returns null if even fee=0 isn't profitable (no edge to capture).
+ */
+export async function findBreakevenFee(
+  baseConfig: Partial<StrategyBacktestConfig> = {},
+  options: { tolerance?: number; maxIterations?: number; upperBoundFee?: number } = {},
+): Promise<{ breakevenFeePerLeg: number; iterations: number } | null> {
+  const tolerance = options.tolerance ?? 0.0005; // 5 bps precision
+  const maxIterations = options.maxIterations ?? 24;
+  let lo = 0;
+  let hi = options.upperBoundFee ?? 0.05; // up to 500 bps per leg
+
+  // Sanity: if no edge at fee=0, bail.
+  const zeroFee = await runStrategyBacktest({
+    ...baseConfig,
+    feePerLeg: 0,
+    slippagePerLeg: baseConfig.slippagePerLeg ?? 0,
+  });
+  if (zeroFee.totalPnL <= 0) return null;
+
+  // If the strategy still profits at the upper bound, breakeven is above it.
+  const hiProbe = await runStrategyBacktest({
+    ...baseConfig,
+    feePerLeg: hi,
+    slippagePerLeg: baseConfig.slippagePerLeg ?? 0,
+  });
+  if (hiProbe.totalPnL > 0) return { breakevenFeePerLeg: hi, iterations: 0 };
+
+  let iterations = 0;
+  while (hi - lo > tolerance && iterations < maxIterations) {
+    const mid = (lo + hi) / 2;
+    const probe = await runStrategyBacktest({
+      ...baseConfig,
+      feePerLeg: mid,
+      slippagePerLeg: baseConfig.slippagePerLeg ?? 0,
+    });
+    if (probe.totalPnL > 0) lo = mid;
+    else hi = mid;
+    iterations += 1;
+  }
+
+  return { breakevenFeePerLeg: (lo + hi) / 2, iterations };
+}

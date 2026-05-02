@@ -7,7 +7,12 @@ import {
   toPolymarketSnapshot,
   DEFAULT_SYNTHETIC_CONFIG,
 } from "./_core/syntheticMarkets";
-import { runStrategyBacktest } from "./_core/strategyBacktest";
+import {
+  runStrategyBacktest,
+  runBacktestSweep,
+  runWalkForwardBacktest,
+  findBreakevenFee,
+} from "./_core/strategyBacktest";
 
 describe("syntheticMarkets", () => {
   it("createPrng returns the same sequence for the same seed", () => {
@@ -191,6 +196,30 @@ describe("runStrategyBacktest", () => {
     expect(highFloor.totalTrades).toBeLessThanOrEqual(lowFloor.totalTrades);
   });
 
+  it("Polymarket value-play strategy is profitable on synthetic data", async () => {
+    // Same floor test but for the Polymarket signal generator path.  The
+    // generator's value detector expects fairValues — the engine wires
+    // the synthetic truth in, so this is a pure alpha test.
+    const result = await runStrategyBacktest({
+      platform: "polymarket",
+      synthetic: {
+        numMarkets: 80,
+        ticksPerMarket: 40,
+        seed: 21,
+        initialDisplacement: 0.4,
+      },
+      feePerLeg: 0,
+      slippagePerLeg: 0,
+      positionSizeUsd: 25,
+      minConfidence: 0.3,
+      maxHoldTicks: 12,
+      signalTypeAllowlist: ["value_play"],
+    });
+
+    expect(result.totalTrades).toBeGreaterThan(5);
+    expect(result.totalPnL).toBeGreaterThan(0);
+  });
+
   it("maxHoldTicks forces earlier exits", async () => {
     const longHold = await runStrategyBacktest({
       platform: "kalshi",
@@ -214,5 +243,169 @@ describe("runStrategyBacktest", () => {
     // Trade count should be >= because each market can produce more
     // entry/exit cycles when forced out early.
     expect(shortHold.totalTrades).toBeGreaterThanOrEqual(longHold.totalTrades);
+  });
+});
+
+describe("runBacktestSweep", () => {
+  it("returns a non-empty grid with best + bestRiskAdjusted picks", async () => {
+    const result = await runBacktestSweep(
+      {
+        platform: "kalshi",
+        positionSizeUsd: 10,
+        signalTypeAllowlist: ["value_play"],
+        synthetic: {
+          numMarkets: 30,
+          ticksPerMarket: 30,
+          seed: 41,
+          initialDisplacement: 0.4,
+        },
+      },
+      {
+        feesPerLeg: [0, 0.01],
+        slippagesPerLeg: [0],
+        minConfidences: [0.3, 0.6],
+        maxHoldTicksOptions: [12],
+      },
+    );
+
+    // 2 fees × 1 slippage × 2 confidences × 1 hold = 4 cells
+    expect(result.cells).toHaveLength(4);
+    expect(result.best).not.toBeNull();
+    expect(result.bestRiskAdjusted).not.toBeNull();
+    expect(result.profitableFraction).toBeGreaterThanOrEqual(0);
+    expect(result.profitableFraction).toBeLessThanOrEqual(1);
+    // Best PnL cell should equal max-PnL across cells.
+    const maxPnl = Math.max(...result.cells.map((c) => c.totalPnL));
+    expect(result.best!.totalPnL).toBe(maxPnl);
+  });
+
+  it("a robust value strategy profits across the bulk of the grid", async () => {
+    // Frictionless to mid-fee, varying confidence and hold.  A robust
+    // value detector should be profitable in most cells.
+    const result = await runBacktestSweep(
+      {
+        platform: "kalshi",
+        positionSizeUsd: 10,
+        signalTypeAllowlist: ["value_play"],
+        synthetic: {
+          numMarkets: 60,
+          ticksPerMarket: 40,
+          seed: 33,
+          initialDisplacement: 0.4,
+        },
+      },
+      {
+        feesPerLeg: [0, 0.002, 0.005],
+        slippagesPerLeg: [0],
+        minConfidences: [0.3, 0.5],
+        maxHoldTicksOptions: [10, 20],
+      },
+    );
+
+    // 3*1*2*2 = 12 cells.  At least half should be profitable for a
+    // strategy that genuinely has edge.
+    expect(result.profitableFraction).toBeGreaterThanOrEqual(0.5);
+  });
+});
+
+describe("runWalkForwardBacktest", () => {
+  it("returns one window per requested split with mean stats", async () => {
+    const result = await runWalkForwardBacktest(
+      {
+        platform: "kalshi",
+        positionSizeUsd: 10,
+        feePerLeg: 0,
+        slippagePerLeg: 0,
+        minConfidence: 0.3,
+        maxHoldTicks: 12,
+        signalTypeAllowlist: ["value_play"],
+        synthetic: {
+          numMarkets: 40,
+          ticksPerMarket: 30,
+          seed: 100,
+          initialDisplacement: 0.4,
+        },
+      },
+      4,
+    );
+
+    expect(result.windows).toHaveLength(4);
+    expect(result.windows.map((w) => w.windowIndex)).toEqual([0, 1, 2, 3]);
+    expect(result.meanWinRate).toBeGreaterThanOrEqual(0);
+    expect(result.meanWinRate).toBeLessThanOrEqual(1);
+    expect(result.winRateStdDev).toBeGreaterThanOrEqual(0);
+    // Each window uses a different seed → different markets.
+    const seeds = new Set(result.windows.map((w) => w.startSeed));
+    expect(seeds.size).toBe(4);
+  });
+
+  it("a profitable strategy is positive in most walk-forward windows", async () => {
+    const result = await runWalkForwardBacktest(
+      {
+        platform: "kalshi",
+        positionSizeUsd: 10,
+        feePerLeg: 0,
+        slippagePerLeg: 0,
+        minConfidence: 0.3,
+        maxHoldTicks: 12,
+        signalTypeAllowlist: ["value_play"],
+        synthetic: {
+          numMarkets: 60,
+          ticksPerMarket: 40,
+          seed: 50,
+          initialDisplacement: 0.4,
+        },
+      },
+      5,
+    );
+    // Frictionless value_play with deterministic edge should pass the
+    // bulk of windows.  A seed-fragile strategy would fail here.
+    expect(result.positivePnlFraction).toBeGreaterThanOrEqual(0.6);
+  });
+});
+
+describe("findBreakevenFee", () => {
+  it("returns null when there is no edge to capture", async () => {
+    // Tight confidence floor + very small initial displacement → no
+    // mispriced entries → no edge → no breakeven fee exists.
+    const result = await findBreakevenFee({
+      platform: "kalshi",
+      positionSizeUsd: 10,
+      slippagePerLeg: 0,
+      minConfidence: 0.95,
+      maxHoldTicks: 12,
+      signalTypeAllowlist: ["value_play"],
+      synthetic: {
+        numMarkets: 30,
+        ticksPerMarket: 25,
+        seed: 7,
+        initialDisplacement: 0.05,
+      },
+    });
+    expect(result).toBeNull();
+  });
+
+  it("returns a positive breakeven fee for a profitable strategy", async () => {
+    const result = await findBreakevenFee(
+      {
+        platform: "kalshi",
+        positionSizeUsd: 10,
+        slippagePerLeg: 0,
+        minConfidence: 0.3,
+        maxHoldTicks: 12,
+        signalTypeAllowlist: ["value_play"],
+        synthetic: {
+          numMarkets: 60,
+          ticksPerMarket: 40,
+          seed: 9,
+          initialDisplacement: 0.4,
+        },
+      },
+      { tolerance: 0.001, upperBoundFee: 0.05 },
+    );
+    expect(result).not.toBeNull();
+    expect(result!.breakevenFeePerLeg).toBeGreaterThan(0);
+    expect(result!.breakevenFeePerLeg).toBeLessThanOrEqual(0.05);
+    expect(result!.iterations).toBeGreaterThanOrEqual(0);
   });
 });

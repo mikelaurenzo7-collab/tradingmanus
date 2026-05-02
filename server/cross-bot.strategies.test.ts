@@ -225,7 +225,8 @@ describe("executeCrossArbLegs", () => {
     expect(result.reasoning).toContain("Both legs executed");
   });
 
-  it("returns bothLegsExecuted=false when Kalshi leg fails", async () => {
+  it("Kalshi leg failure short-circuits — Polymarket leg is NOT attempted (sequential default)", async () => {
+    let polymarketAttempts = 0;
     const result = await executeCrossArbLegs(
       sampleArbitrageOpp,
       {
@@ -239,19 +240,52 @@ describe("executeCrossArbLegs", () => {
           success: false,
           error: "Insufficient funds on Kalshi",
         }),
-        placePolymarketOrder: async () => ({
-          success: true,
-          orderId: "p-order-1",
-        }),
+        placePolymarketOrder: async () => {
+          polymarketAttempts += 1;
+          return { success: true, orderId: "p-order-1" };
+        },
       },
     );
 
     expect(result.success).toBe(false);
     expect(result.bothLegsExecuted).toBe(false);
     expect(result.kalshiLeg.success).toBe(false);
-    expect(result.polymarketLeg.success).toBe(true);
-    expect(result.reasoning).toContain("Partial");
+    expect(result.kalshiLeg.attempted).toBe(true);
+    // Critical: Polymarket leg must NOT have been attempted, otherwise we'd
+    // be naked-long on the Polymarket side.
+    expect(polymarketAttempts).toBe(0);
+    expect(result.polymarketLeg.success).toBe(false);
+    expect(result.polymarketLeg.attempted).toBe(false);
     expect(result.reasoning).toContain("Insufficient funds on Kalshi");
+    expect(result.reasoning).toContain("SKIPPED");
+  });
+
+  it("parallel mode preserves the legacy concurrent-fire behavior when explicitly opted in", async () => {
+    let polymarketAttempts = 0;
+    const result = await executeCrossArbLegs(
+      sampleArbitrageOpp,
+      {
+        kalshiContracts: 5,
+        polymarketSizeUsdc: 10,
+        polymarketTokenIdYes: "token-yes-123",
+        polymarketTokenIdNo: "token-no-123",
+        parallel: true,
+      },
+      {
+        placeKalshiOrder: async () => ({
+          success: false,
+          error: "Insufficient funds on Kalshi",
+        }),
+        placePolymarketOrder: async () => {
+          polymarketAttempts += 1;
+          return { success: true, orderId: "p-order-1" };
+        },
+      },
+    );
+
+    expect(result.kalshiLeg.success).toBe(false);
+    expect(result.polymarketLeg.success).toBe(true);
+    expect(polymarketAttempts).toBe(1);
   });
 
   it("returns bothLegsExecuted=false when Polymarket leg fails", async () => {
