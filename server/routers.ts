@@ -56,6 +56,12 @@ import {
 import { trainingRouter } from "./training.router";
 import { advancedRouter } from "./advanced.router";
 import { calculateKalshiBuyOrderRisk, MAX_KALSHI_ORDER_CONTRACTS } from "./_core/kalshiRisk";
+import {
+  generateMMQuotePairs,
+  detectYesNoMispricings,
+} from "./_core/polymarketMarketMaking";
+import { detectCrossPlatformArbitrage } from "./_core/crossPlatformArbitrage";
+import { runPolymarketAutonomousTrading } from "./_core/polymarketAutonomy";
 
 import { COOKIE_NAME, ONE_YEAR_MS } from "../shared/const";
 
@@ -1544,6 +1550,106 @@ export const appRouter = router({
           return { success: false, signals: [], error: String(error) };
         }
       }),
+
+    // --- Market Making ---
+
+    /**
+     * Generate two-sided Avellaneda-Stoikov market-making quotes for
+     * Polymarket binary markets.  Returns bid/ask pairs ready for submission.
+     */
+    getMMQuotes: protectedProcedure
+      .input(
+        z
+          .object({
+            minLiquidity: z.number().min(0).optional().default(500),
+            orderSizeUsdc: z.number().min(1).max(500).optional().default(20),
+            minHalfSpread: z.number().min(0.005).max(0.1).optional().default(0.01),
+            maxHalfSpread: z.number().min(0.01).max(0.2).optional().default(0.06),
+          })
+          .optional(),
+      )
+      .query(async ({ input }) => {
+        try {
+          const markets = await fetchPolymarketMarkets({
+            limit: POLYMARKET_SIGNAL_GENERATION_MARKET_LIMIT,
+          });
+
+          const fairValues = new Map(
+            markets.map((m) => [m.marketId, m.impliedProbabilityYes]),
+          );
+
+          const quotes = generateMMQuotePairs(
+            markets,
+            fairValues,
+            new Map(),
+            {
+              orderSizeUsdc: input?.orderSizeUsdc ?? 20,
+              minHalfSpread: input?.minHalfSpread ?? 0.01,
+              maxHalfSpread: input?.maxHalfSpread ?? 0.06,
+            },
+            { minLiquidity: input?.minLiquidity ?? 500 },
+          );
+
+          return { quotes, marketsScanned: markets.length };
+        } catch (error) {
+          console.error("[Polymarket] MM quote generation error:", error);
+          return { quotes: [], marketsScanned: 0 };
+        }
+      }),
+
+    /**
+     * Detect YES+NO mispricing arbitrage: when YES + NO < $1, buying both
+     * sides locks in a guaranteed profit at resolution.
+     */
+    detectYesNoMispricings: protectedProcedure
+      .input(
+        z
+          .object({
+            minProfitPct: z.number().min(0.005).max(0.5).optional().default(0.02),
+          })
+          .optional(),
+      )
+      .query(async ({ input }) => {
+        try {
+          const markets = await fetchPolymarketMarkets({
+            limit: POLYMARKET_SIGNAL_GENERATION_MARKET_LIMIT,
+          });
+          const mispricings = detectYesNoMispricings(
+            markets,
+            input?.minProfitPct ?? 0.02,
+          );
+          return { mispricings, marketsScanned: markets.length };
+        } catch (error) {
+          console.error("[Polymarket] YES/NO mispricing detection error:", error);
+          return { mispricings: [], marketsScanned: 0 };
+        }
+      }),
+
+    // --- Polymarket Autonomy ---
+
+    /**
+     * Trigger one autonomous Polymarket trading cycle for the authenticated
+     * user.  Respects trading preferences, risk limits, and autonomy mode.
+     */
+    runAutonomousTrading: protectedProcedure.mutation(async ({ ctx }) => {
+      try {
+        const userId = getRequiredUserId(ctx);
+        const result = await runPolymarketAutonomousTrading(userId, {
+          triggeredByOpenId: ctx.user!.openId,
+        });
+        return result;
+      } catch (error) {
+        console.error("[Polymarket] Autonomous trading error:", error);
+        return {
+          success: false,
+          status: "error" as const,
+          reason: error instanceof Error ? error.message : String(error),
+          signalsGenerated: 0,
+          executionCandidates: 0,
+          orderPlaced: false,
+        };
+      }
+    }),
   }),
 
   // --------------------------------------------------------------------------
@@ -1632,6 +1738,68 @@ export const appRouter = router({
         } catch (error) {
           console.error("[Combinatorial] Polymarket arbitrage detection error:", error);
           return { opportunities: [], marketsAnalyzed: 0 };
+        }
+      }),
+
+    /**
+     * Detect cross-platform arbitrage opportunities between Kalshi and Polymarket.
+     * Matches events by question-text similarity and flags price discrepancies.
+     */
+    detectCrossPlatformArbitrage: protectedProcedure
+      .input(
+        z
+          .object({
+            minSimilarity: z.number().min(0.1).max(1).optional().default(0.35),
+            minSpread: z.number().min(0.01).max(0.5).optional().default(0.03),
+            minLiquidity: z.number().min(0).optional().default(100),
+          })
+          .optional(),
+      )
+      .query(async ({ input }) => {
+        try {
+          const [rawKalshi, rawPolymarket] = await Promise.all([
+            fetchKalshiMarkets({ status: "open" }),
+            fetchPolymarketMarkets({ limit: POLYMARKET_SIGNAL_GENERATION_MARKET_LIMIT }),
+          ]);
+
+          const kalshiMarkets = rawKalshi
+            .filter((m) => m.status === "open")
+            .map((m) => ({
+              marketId: m.id,
+              title: m.title,
+              category: m.category,
+              yesPrice: Number(m.yesPrice ?? 0),
+              noPrice: Number(m.noPrice ?? 0),
+              liquidity: Number(m.yesVolume ?? 0) + Number(m.noVolume ?? 0),
+            }));
+
+          const polymarketMarkets = rawPolymarket.map((m) => ({
+            marketId: m.marketId,
+            question: m.question,
+            category: m.category,
+            yesPrice: m.tokens.find((t) => t.outcome.toLowerCase() === "yes")?.price ?? m.impliedProbabilityYes,
+            noPrice: m.tokens.find((t) => t.outcome.toLowerCase() === "no")?.price ?? (1 - m.impliedProbabilityYes),
+            liquidity: m.liquidity,
+          }));
+
+          const opportunities = detectCrossPlatformArbitrage(
+            kalshiMarkets,
+            polymarketMarkets,
+            {
+              minSimilarity: input?.minSimilarity ?? 0.35,
+              minSpread: input?.minSpread ?? 0.03,
+              minLiquidity: input?.minLiquidity ?? 100,
+            },
+          );
+
+          return {
+            opportunities,
+            kalshiMarketsScanned: kalshiMarkets.length,
+            polymarketMarketsScanned: polymarketMarkets.length,
+          };
+        } catch (error) {
+          console.error("[Combinatorial] Cross-platform arbitrage detection error:", error);
+          return { opportunities: [], kalshiMarketsScanned: 0, polymarketMarketsScanned: 0 };
         }
       }),
   }),
