@@ -1,4 +1,7 @@
 import express from "express";
+import helmet from "helmet";
+import cors from "cors";
+import cookieParser from "cookie-parser";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:http";
 import { appRouter } from "../routers";
@@ -8,6 +11,10 @@ import { getDb, runMigrations, getUsersEligibleForAutomaticScheduledTrading } fr
 import { authenticateRequest } from "./auth";
 import { runScheduledAutonomousTradingBatch } from "./kalshiAutonomy";
 import { syncPendingOrders, syncLivePositions } from "./kalshiOrderSync";
+import { logger } from "./logger";
+import { correlationIdMiddleware } from "./correlationId";
+import { apiLimiter, scheduledLimiter } from "./rateLimiter";
+import { createAutonomousTradingLock, createOrderSyncLock } from "./distributedLock";
 
 type AppRequest = IncomingMessage & {
   headers: IncomingHttpHeaders;
@@ -107,15 +114,55 @@ async function autonomousTradingHandler(req: AppRequest, res: AppResponse) {
       return;
     }
 
-    const summary = await runScheduledAutonomousTradingBatch(
-      scopedUsers as any,
-      trigger.openId
-    );
+    // Use distributed lock to prevent concurrent autonomous trading runs
+    const ownerUser = scopedUsers[0];
+    if (ownerUser) {
+      const lock = createAutonomousTradingLock(ownerUser.id);
+      const acquired = await lock.acquire({ ttlMs: 5 * 60 * 1000 }); // 5 minute timeout
 
-    const statusCode = summary.errorUsers > 0 && summary.processedUsers === summary.errorUsers ? 500 : 200;
-    res.status(statusCode).json(summary);
+      if (!acquired) {
+        logger.warn(
+          { userId: ownerUser.id, triggeredBy: trigger.openId },
+          "Autonomous trading already in progress, skipping"
+        );
+        res.json({
+          success: true,
+          mode: "eligible_users_autonomous_trading",
+          triggeredByOpenId: trigger.openId,
+          eligibleUsers: eligibleUsers.length,
+          processedUsers: 0,
+          successfulUsers: 0,
+          skippedUsers: scopedUsers.length,
+          blockedUsers: 0,
+          errorUsers: 0,
+          results: [],
+          reason: "Autonomous trading already in progress (distributed lock held).",
+        });
+        return;
+      }
+
+      try {
+        const summary = await runScheduledAutonomousTradingBatch(
+          scopedUsers as any,
+          trigger.openId
+        );
+
+        const statusCode = summary.errorUsers > 0 && summary.processedUsers === summary.errorUsers ? 500 : 200;
+        res.status(statusCode).json(summary);
+      } finally {
+        await lock.release();
+      }
+    } else {
+      const summary = await runScheduledAutonomousTradingBatch(
+        scopedUsers as any,
+        trigger.openId
+      );
+
+      const statusCode = summary.errorUsers > 0 && summary.processedUsers === summary.errorUsers ? 500 : 200;
+      res.status(statusCode).json(summary);
+    }
   } catch (error) {
-    console.error("[ScheduledAutonomy] Route error:", error);
+    logger.error({ error }, "ScheduledAutonomy route error");
     res.status(500).json({
       success: false,
       status: "error",
@@ -140,18 +187,39 @@ async function orderSyncHandler(req: AppRequest, res: AppResponse) {
     const results = [];
 
     for (const user of scopedUsers as Array<{ id: number; openId: string }>) {
+      // Use distributed lock to prevent concurrent order syncs for the same user
+      const lock = createOrderSyncLock(user.id);
+      const acquired = await lock.acquire({ ttlMs: 60 * 1000 }); // 1 minute timeout
+
+      if (!acquired) {
+        logger.warn(
+          { userId: user.id, triggeredBy: trigger.openId },
+          "Order sync already in progress, skipping"
+        );
+        results.push({
+          userId: user.id,
+          openId: user.openId,
+          success: false,
+          skipped: true,
+          error: "Order sync already in progress",
+        });
+        continue;
+      }
+
       try {
         await syncPendingOrders(user.id);
         await syncLivePositions(user.id);
         results.push({ userId: user.id, openId: user.openId, success: true });
       } catch (error) {
-        console.error(`[OrderSync] Sync failed for user ${user.id}:`, error);
+        logger.error({ error, userId: user.id }, "OrderSync failed for user");
         results.push({
           userId: user.id,
           openId: user.openId,
           success: false,
           error: error instanceof Error ? error.message : String(error),
         });
+      } finally {
+        await lock.release();
       }
     }
 
@@ -165,7 +233,7 @@ async function orderSyncHandler(req: AppRequest, res: AppResponse) {
       results,
     });
   } catch (error) {
-    console.error("[OrderSync] Route error:", error);
+    logger.error({ error }, "OrderSync route error");
     res.status(500).json({
       success: false,
       status: "error",
@@ -186,8 +254,33 @@ export async function createApp(options: { runStartupMigrations?: boolean } = {}
 
   const app = express();
   app.set("trust proxy", true);
+
+  // Security middleware
+  app.use(helmet({
+    contentSecurityPolicy: ENV.isProduction ? undefined : false, // Disable CSP in dev for HMR
+    crossOriginEmbedderPolicy: false, // Allow embedding for iframe support
+  }));
+
+  // CORS configuration
+  app.use(cors({
+    origin: ENV.isProduction
+      ? [/\.vercel\.app$/, /tradingmanus\.com$/] // Adjust domains as needed
+      : ["http://localhost:5008", "http://127.0.0.1:5008"],
+    credentials: true,
+  }));
+
+  // Cookie parser for CSRF tokens and session cookies
+  app.use(cookieParser());
+
+  // Correlation ID middleware for request tracing
+  app.use(correlationIdMiddleware);
+
+  // Body parsers
   app.use(express.json({ limit: "10mb" }));
   app.use(express.urlencoded({ limit: "10mb", extended: true }));
+
+  // Rate limiting for API endpoints
+  app.use("/api/trpc", apiLimiter);
 
   app.use(
     "/api/trpc",
@@ -206,8 +299,33 @@ export async function createApp(options: { runStartupMigrations?: boolean } = {}
     });
   });
 
-  app.all("/api/scheduled/autonomous-trading", toExpressHandler(autonomousTradingHandler));
-  app.all("/api/scheduled/order-sync", toExpressHandler(orderSyncHandler));
+  // Apply rate limiting to scheduled endpoints
+  app.all("/api/scheduled/autonomous-trading", scheduledLimiter, toExpressHandler(autonomousTradingHandler));
+  app.all("/api/scheduled/order-sync", scheduledLimiter, toExpressHandler(orderSyncHandler));
+
+  // Global error handler
+  app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    logger.error(
+      {
+        error: err,
+        path: req.path,
+        method: req.method,
+      },
+      "Unhandled error"
+    );
+    res.status(500).json({
+      error: "Internal server error",
+      message: ENV.isProduction ? "An unexpected error occurred" : err.message,
+    });
+  });
+
+  logger.info(
+    {
+      nodeEnv: process.env.NODE_ENV,
+      runtime: process.env.VERCEL ? "vercel" : "node",
+    },
+    "Application initialized successfully"
+  );
 
   return app;
 }
