@@ -41,6 +41,17 @@ export const ENV = {
   aiTriageThreshold: normalizePositiveInt(process.env.AI_TRIAGE_THRESHOLD, 12),
   // Surface web_search citations in the audit-log reasoning blurb.
   enableAiCitations: normalizeBoolean(process.env.ENABLE_AI_CITATIONS, true),
+  // Gate cross-platform arbitrage execution behind the Claude arbitrage desk.
+  // ON by default — multi-leg trades are too easy to misjudge to ship without
+  // AI sign-off.  When ON but ANTHROPIC_API_KEY is missing the reviewer
+  // returns an empty list (fail-closed), so executeCrossArb refuses to fire.
+  enableAiArbitrageReview: normalizeBoolean(process.env.ENABLE_AI_ARBITRAGE_REVIEW, true),
+  // Minimum sizeFraction the arbitrage reviewer must return for a trade to
+  // proceed.  Anything lower is treated as a soft veto.
+  aiArbitrageMinSizeFraction: (() => {
+    const parsed = Number.parseFloat(process.env.AI_ARBITRAGE_MIN_SIZE_FRACTION ?? "");
+    return Number.isFinite(parsed) && parsed > 0 && parsed <= 1 ? parsed : 0.1;
+  })(),
   kalshiApiKey: normalize(process.env.KALSHI_API_KEY),
   isProduction: process.env.NODE_ENV === "production",
   gnewsApiKey: normalize(process.env.GNEWS_API_KEY),

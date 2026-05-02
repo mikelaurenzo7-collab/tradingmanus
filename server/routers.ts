@@ -76,6 +76,15 @@ import {
   detectYesNoMispricings,
 } from "./_core/polymarketMarketMaking";
 import { detectCrossPlatformArbitrage } from "./_core/crossPlatformArbitrage";
+import {
+  reviewArbitrageOpportunities,
+  isArbReviewerConfigured,
+} from "./_core/arbitrageReviewer";
+import {
+  newReviewerTelemetry,
+  getCacheHitRatio,
+} from "./_core/aiToolbelt";
+import { ENV } from "./_core/env";
 import { runPolymarketAutonomousTrading } from "./_core/polymarketAutonomy";
 import {
   mergePlatformSignals,
@@ -2043,6 +2052,13 @@ export const appRouter = router({
             minSimilarity: z.number().min(0.1).max(1).optional().default(0.35),
             minSpread: z.number().min(0.01).max(0.5).optional().default(0.03),
             minLiquidity: z.number().min(0).optional().default(100),
+            /**
+             * Run the deterministic-scanner output through the Claude
+             * arbitrage desk before returning. Opt-in (default false) so
+             * passive UI refetches don't burn tokens; the live execution
+             * path enforces its own gate regardless.
+             */
+            applyAiReview: z.boolean().optional().default(false),
           })
           .optional(),
       )
@@ -2083,14 +2099,62 @@ export const appRouter = router({
             },
           );
 
+          const wantAiReview =
+            (input?.applyAiReview ?? false) &&
+            ENV.enableAiArbitrageReview &&
+            opportunities.length > 0;
+          const aiReviewerConfigured = isArbReviewerConfigured();
+
+          let reviewedOpportunities: Array<
+            (typeof opportunities)[number] & {
+              pairId?: string;
+              sizeFraction?: number;
+              reviewerReasoning?: string;
+            }
+          > = opportunities;
+          let aiReviewerStatus:
+            | "skipped"
+            | "ran"
+            | "unavailable"
+            | "errored" = "skipped";
+
+          if (wantAiReview) {
+            if (!aiReviewerConfigured) {
+              aiReviewerStatus = "unavailable";
+            } else {
+              try {
+                const reviewed = await reviewArbitrageOpportunities(opportunities, {
+                  skipInTest: false,
+                });
+                reviewedOpportunities = reviewed;
+                aiReviewerStatus = "ran";
+              } catch (error) {
+                console.error("[ArbReviewer] detect query review failed:", error);
+                aiReviewerStatus = "errored";
+              }
+            }
+          }
+
           return {
-            opportunities,
+            opportunities: reviewedOpportunities,
             kalshiMarketsScanned: kalshiMarkets.length,
             polymarketMarketsScanned: polymarketMarkets.length,
+            aiReviewerStatus,
+            aiReviewerConfigured,
+            scannerOpportunityCount: opportunities.length,
+            reviewedOpportunityCount: reviewedOpportunities.length,
           };
         } catch (error) {
           console.error("[Combinatorial] Cross-platform arbitrage detection error:", error);
-          return { opportunities: [], kalshiMarketsScanned: 0, polymarketMarketsScanned: 0 };
+          return {
+            opportunities: [],
+            kalshiMarketsScanned: 0,
+            polymarketMarketsScanned: 0,
+            aiReviewerStatus: "errored" as const,
+            aiReviewerConfigured: false,
+            scannerOpportunityCount: 0,
+            reviewedOpportunityCount: 0,
+          };
         }
       }),
   }),
@@ -2290,6 +2354,92 @@ export const appRouter = router({
             minLiquidity: 0,
           };
 
+          // ----------------------------------------------------------------
+          // AI gate: every live cross-arb passes through the Claude
+          // arbitrage desk before legs are placed.  A veto blocks the trade
+          // outright; an approval returns sizeFraction in [0..1] which we
+          // multiply into the requested leg sizes (with a minimum of 1
+          // Kalshi contract / $1 Polymarket so we don't issue zero-sized
+          // orders due to rounding).
+          // ----------------------------------------------------------------
+          let kalshiContracts = input.kalshiContracts;
+          let polymarketSizeUsdc = input.polymarketSizeUsdc;
+          let aiSizeFraction = 1;
+          let aiReasoning = "AI arbitrage review disabled";
+
+          if (ENV.enableAiArbitrageReview) {
+            const arbTelemetry = newReviewerTelemetry();
+            let reviewed: Awaited<ReturnType<typeof reviewArbitrageOpportunities>> = [];
+            try {
+              reviewed = await reviewArbitrageOpportunities([opportunity], {
+                skipInTest: false,
+                telemetry: arbTelemetry,
+              });
+            } catch (error) {
+              console.error("[ArbReviewer] executeCrossArb review threw:", error);
+            }
+
+            await db.logAuditEvent(
+              "cross_bot_arb_reviewer_telemetry",
+              JSON.stringify({
+                kalshiMarketId: input.kalshiMarketId,
+                polymarketMarketId: input.polymarketMarketId,
+                approved: reviewed.length > 0,
+                cacheHitRatio: Number(getCacheHitRatio(arbTelemetry).toFixed(3)),
+                inputTokens: arbTelemetry.inputTokens,
+                outputTokens: arbTelemetry.outputTokens,
+                webSearchInvocations: arbTelemetry.webSearchInvocations,
+                anthropicCalls: arbTelemetry.anthropicCalls,
+                anthropicFailures: arbTelemetry.anthropicFailures,
+              }),
+              ctx.user!.openId,
+            );
+
+            const approved = reviewed[0];
+            if (!approved) {
+              await db.logAuditEvent(
+                "cross_bot_arb_ai_vetoed",
+                JSON.stringify({
+                  kalshiMarketId: input.kalshiMarketId,
+                  polymarketMarketId: input.polymarketMarketId,
+                  reason: isArbReviewerConfigured()
+                    ? "ai_reviewer_vetoed_or_failed"
+                    : "ai_reviewer_not_configured",
+                }),
+                ctx.user!.openId,
+              );
+              return {
+                success: false,
+                error: isArbReviewerConfigured()
+                  ? "AI arbitrage reviewer vetoed this opportunity. Refusing to place legs."
+                  : "AI arbitrage reviewer is not configured (ANTHROPIC_API_KEY missing). Set the key or disable ENABLE_AI_ARBITRAGE_REVIEW to proceed.",
+              };
+            }
+
+            aiSizeFraction = Math.max(0, Math.min(1, approved.sizeFraction));
+            aiReasoning = approved.reviewerReasoning;
+            if (aiSizeFraction < ENV.aiArbitrageMinSizeFraction) {
+              await db.logAuditEvent(
+                "cross_bot_arb_ai_vetoed",
+                JSON.stringify({
+                  kalshiMarketId: input.kalshiMarketId,
+                  polymarketMarketId: input.polymarketMarketId,
+                  reason: "ai_size_fraction_below_minimum",
+                  sizeFraction: aiSizeFraction,
+                  minSizeFraction: ENV.aiArbitrageMinSizeFraction,
+                }),
+                ctx.user!.openId,
+              );
+              return {
+                success: false,
+                error: `AI arbitrage reviewer recommended a size fraction (${aiSizeFraction.toFixed(2)}) below the configured minimum (${ENV.aiArbitrageMinSizeFraction}). Refusing to place legs.`,
+              };
+            }
+
+            kalshiContracts = Math.max(1, Math.round(input.kalshiContracts * aiSizeFraction));
+            polymarketSizeUsdc = Math.max(1, input.polymarketSizeUsdc * aiSizeFraction);
+          }
+
           const {
             apiKey: pmKey,
             apiSecret: pmSecret,
@@ -2299,8 +2449,8 @@ export const appRouter = router({
           const result = await executeCrossArbLegs(
             opportunity,
             {
-              kalshiContracts: input.kalshiContracts,
-              polymarketSizeUsdc: input.polymarketSizeUsdc,
+              kalshiContracts,
+              polymarketSizeUsdc,
               polymarketTokenIdYes: tokenIdYes,
               polymarketTokenIdNo: tokenIdNo,
             },
@@ -2328,11 +2478,23 @@ export const appRouter = router({
               netEdge: input.netEdge,
               kalshiSuccess: result.kalshiLeg.success,
               polymarketSuccess: result.polymarketLeg.success,
+              aiSizeFraction,
+              aiReasoning,
+              kalshiContractsRequested: input.kalshiContracts,
+              kalshiContractsExecuted: kalshiContracts,
+              polymarketUsdcRequested: input.polymarketSizeUsdc,
+              polymarketUsdcExecuted: polymarketSizeUsdc,
             }),
             ctx.user!.openId,
           );
 
-          return result;
+          return {
+            ...result,
+            aiSizeFraction,
+            aiReasoning,
+            kalshiContractsExecuted: kalshiContracts,
+            polymarketUsdcExecuted: polymarketSizeUsdc,
+          };
         } catch (error) {
           console.error("[CrossBot] Execute cross-arb error:", error);
           return { success: false, error: String(error) };

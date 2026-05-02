@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { reviewArbitrageOpportunities } from "./_core/arbitrageReviewer";
+import { newReviewerTelemetry } from "./_core/aiToolbelt";
 import type { CrossPlatformArbitrageOpportunity } from "./_core/crossPlatformArbitrage";
 
 const baseOpp: CrossPlatformArbitrageOpportunity = {
@@ -110,6 +111,50 @@ describe("arbitrageReviewer", () => {
       anthropicClient: { messages: { create } },
     });
     expect(result).toEqual([]);
+  });
+
+  it("populates telemetry sink with cache + web_search counts", async () => {
+    const create = vi.fn().mockResolvedValue({
+      content: [
+        { type: "text", text: approvedReviewJson("KX-1::PM-1", 0.4) },
+      ],
+      usage: {
+        cache_read_input_tokens: 1200,
+        cache_creation_input_tokens: 300,
+        input_tokens: 1500,
+        output_tokens: 220,
+      },
+    });
+
+    const telemetry = newReviewerTelemetry();
+    await reviewArbitrageOpportunities([baseOpp], {
+      skipInTest: false,
+      anthropicApiKey: "anthropic-key",
+      anthropicClient: { messages: { create } },
+      telemetry,
+    });
+
+    expect(telemetry.desks).toContain("arbitrage");
+    expect(telemetry.anthropicCalls).toBe(1);
+    expect(telemetry.anthropicFailures).toBe(0);
+    expect(telemetry.cacheReadInputTokens).toBe(1200);
+    expect(telemetry.cacheCreationInputTokens).toBe(300);
+    expect(telemetry.inputTokens).toBe(1500);
+    expect(telemetry.outputTokens).toBe(220);
+  });
+
+  it("counts a failed Anthropic call in telemetry", async () => {
+    const create = vi.fn().mockRejectedValue(new Error("503"));
+    const telemetry = newReviewerTelemetry();
+    const result = await reviewArbitrageOpportunities([baseOpp], {
+      skipInTest: false,
+      anthropicApiKey: "anthropic-key",
+      anthropicClient: { messages: { create } },
+      telemetry,
+    });
+    expect(result).toEqual([]);
+    expect(telemetry.anthropicCalls).toBe(1);
+    expect(telemetry.anthropicFailures).toBe(1);
   });
 
   it("appends [cites: ...] to reasoning when web_search returned citations", async () => {

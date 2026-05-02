@@ -33,7 +33,9 @@ import {
   extractCitations,
   formatCitationsForReasoning,
   buildToolList,
+  recordAnthropicResponseTelemetry,
   type CitationSummary,
+  type ReviewerTelemetry,
   type SystemBlock,
 } from "./aiToolbelt";
 import type { CrossPlatformArbitrageOpportunity } from "./crossPlatformArbitrage";
@@ -80,6 +82,8 @@ export type ArbReviewerOptions = {
   anthropicClient?: {
     messages: { create: (input: unknown) => Promise<{ content: Array<{ type: string; text?: string }> }> };
   };
+  /** Optional telemetry sink — populated with cache, web_search, and call stats. */
+  telemetry?: ReviewerTelemetry;
 };
 
 export type ReviewedArbitrageOpportunity = CrossPlatformArbitrageOpportunity & {
@@ -212,6 +216,10 @@ export async function reviewArbitrageOpportunities(
   }
   if (tools) messageInput.tools = tools;
 
+  if (options.telemetry && !options.telemetry.desks.includes("arbitrage")) {
+    options.telemetry.desks.push("arbitrage");
+  }
+
   let parsedReviews: ParsedReview[] = [];
   let citations: CitationSummary[] = [];
   try {
@@ -223,11 +231,22 @@ export async function reviewArbitrageOpportunities(
       options.anthropicTimeoutMs ?? ENV.anthropicTimeoutMs,
       "ArbReviewer",
     );
+    if (options.telemetry) {
+      recordAnthropicResponseTelemetry(
+        options.telemetry,
+        response as { content?: Array<unknown>; usage?: Record<string, unknown> },
+        { extendedThinkingUsed: ENV.enableAiExtendedThinking },
+      );
+    }
     parsedReviews = parseReviews(extractAnthropicText(response));
     if (ENV.enableAiCitations) {
       citations = extractCitations(response as { content: Array<unknown> });
     }
   } catch (error) {
+    if (options.telemetry) {
+      options.telemetry.anthropicCalls += 1;
+      options.telemetry.anthropicFailures += 1;
+    }
     logger.error(
       `[ArbReviewer] Claude review failed: ${error instanceof Error ? error.message : String(error)}; dropping all arbitrage candidates.`,
     );
