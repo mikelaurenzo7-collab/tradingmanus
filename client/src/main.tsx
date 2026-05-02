@@ -67,10 +67,48 @@ const trpcClient = trpc.createClient({
         const csrfToken = match ? match.slice("csrf_token=".length) : undefined;
         return csrfToken ? { "X-CSRF-Token": csrfToken } : {};
       },
-      fetch(input, init) {
-        return globalThis.fetch(input, {
+      async fetch(input, init) {
+        const response = await globalThis.fetch(input, {
           ...(init ?? {}),
           credentials: "include",
+        });
+
+        // Vercel (and other platforms) return plain-text crash pages like
+        // "A server error has occurred" when the serverless function itself
+        // fails before our app can respond. tRPC then tries to JSON.parse the
+        // body and surfaces a cryptic "Unexpected token 'A'..." error to the
+        // user. Convert any non-JSON response into a proper tRPC error
+        // envelope so the UI shows something meaningful.
+        const contentType = response.headers.get("content-type") ?? "";
+        if (contentType.includes("application/json")) {
+          return response;
+        }
+
+        const rawBody = await response.text();
+        const snippet = rawBody.trim().slice(0, 200) || response.statusText || "Unknown error";
+        const message =
+          response.status >= 500
+            ? `Server error (${response.status}): ${snippet}. Please try again in a moment.`
+            : `Request failed (${response.status}): ${snippet}`;
+
+        const errorEnvelope = [
+          {
+            error: {
+              json: {
+                message,
+                code: response.status >= 500 ? -32603 : -32600,
+                data: {
+                  code: response.status >= 500 ? "INTERNAL_SERVER_ERROR" : "BAD_REQUEST",
+                  httpStatus: response.status,
+                },
+              },
+            },
+          },
+        ];
+
+        return new Response(JSON.stringify(errorEnvelope), {
+          status: response.status,
+          headers: { "content-type": "application/json" },
         });
       },
     }),
