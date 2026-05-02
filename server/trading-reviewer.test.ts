@@ -335,6 +335,109 @@ describe("AI trader reviewer (Claude-primary)", () => {
     expect(payload.signals[0]?.reasoning.endsWith("…")).toBe(true);
   });
 
+  it("injects pre-loaded desk memory as a separate cached system block", async () => {
+    const anthropicCreate = vi.fn().mockResolvedValue(
+      anthropicResponse(approvedReviewJson("KXTEST-1", "OK.")),
+    );
+
+    await reviewSignalsWithTrader(
+      {
+        markets: [{ ...baseMarket, category: "sports", title: "Lakers vs Celtics" } as any],
+        signals: [baseSignal as any],
+        maxSignals: 1,
+      },
+      {
+        skipInTest: false,
+        anthropicApiKey: "anthropic-key",
+        anthropicClient: { messages: { create: anthropicCreate } },
+        deskMemoryByDeskId: new Map([
+          [
+            "kalshi.sports",
+            {
+              userId: 1,
+              platform: "kalshi" as const,
+              deskId: "kalshi.sports",
+              notes: [
+                { ts: "2025-01-01T00:00:00Z", outcome: "loss" as const, note: "lost on stale halftime momentum" },
+              ],
+              tradeCount: 1,
+              winCount: 0,
+              lossCount: 1,
+            },
+          ],
+        ]),
+      },
+    );
+
+    const [callInput] = anthropicCreate.mock.calls[0] ?? [];
+    const blocks = Array.isArray(callInput.system) ? callInput.system : [callInput.system];
+    expect(blocks.length).toBeGreaterThanOrEqual(2);
+    const memoryBlock = blocks.find((b: any) =>
+      typeof b === "object" && b.text?.includes("Desk learning tape"),
+    );
+    expect(memoryBlock).toBeDefined();
+    expect(memoryBlock.cache_control).toEqual({ type: "ephemeral" });
+    expect(memoryBlock.text).toContain("stale halftime momentum");
+  });
+
+  it("appends a [cites: ...] tag to reasoning when web_search returned citations", async () => {
+    const anthropicCreate = vi.fn().mockResolvedValue({
+      content: [
+        {
+          type: "web_search_tool_result",
+          content: [{ url: "https://www.espn.com/nba", title: "ESPN NBA" }],
+        },
+        { type: "text", text: approvedReviewJson("KXTEST-1", "Edge confirmed.") },
+      ],
+    });
+
+    const result = await reviewSignalsWithTrader(
+      {
+        markets: [baseMarket as any],
+        signals: [baseSignal as any],
+        maxSignals: 1,
+      },
+      {
+        skipInTest: false,
+        anthropicApiKey: "anthropic-key",
+        anthropicClient: { messages: { create: anthropicCreate } },
+      },
+    );
+
+    expect(result).toHaveLength(1);
+    expect(result[0]?.reasoning).toContain("[cites: espn.com]");
+  });
+
+  it("runs Haiku triage when batch exceeds threshold and only forwards survivors", async () => {
+    const anthropicCreate = vi
+      .fn()
+      // 1st call: triage response
+      .mockResolvedValueOnce(anthropicResponse(JSON.stringify({ keep: ["KXTEST-1"] })))
+      // 2nd call: full review of survivors
+      .mockResolvedValueOnce(anthropicResponse(approvedReviewJson("KXTEST-1", "OK.")));
+
+    const signals = [
+      { ...baseSignal, marketId: "KXTEST-1" },
+      { ...baseSignal, marketId: "KXTEST-2" },
+      { ...baseSignal, marketId: "KXTEST-3" },
+    ];
+    const markets = signals.map((s) => ({ ...baseMarket, id: s.marketId }));
+
+    const result = await reviewSignalsWithTrader(
+      { markets: markets as any, signals: signals as any, maxSignals: 5 },
+      {
+        skipInTest: false,
+        anthropicApiKey: "anthropic-key",
+        anthropicClient: { messages: { create: anthropicCreate } },
+        triageThresholdOverride: 2,
+      },
+    );
+
+    expect(anthropicCreate).toHaveBeenCalledTimes(2);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.marketId).toBe("KXTEST-1");
+  });
+
   it("uses category-specific persona in the Claude system prompt (sports)", async () => {
     const anthropicCreate = vi
       .fn()

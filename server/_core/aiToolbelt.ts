@@ -195,3 +195,172 @@ export function buildToolList<T extends { name: string }>(
   }
   return tools.length > 0 ? tools : undefined;
 }
+
+/**
+ * Memory injection helper.  Wraps the caller-formatted desk-memory string in
+ * a separately-cacheable system block.  We split it from the persona block so
+ * that updating the tape only invalidates this single block instead of busting
+ * the whole prompt cache.
+ */
+export function buildMemorySystemBlock(memorySnippet: string | null): SystemBlock | null {
+  if (!memorySnippet) return null;
+  return {
+    type: "text",
+    text: memorySnippet.trim(),
+    cache_control: { type: "ephemeral" },
+  };
+}
+
+/**
+ * Citation extraction.  Anthropic's web_search tool emits two relevant block
+ * types in the message content:
+ *   - `web_search_tool_result` blocks: contain { content: [{ url, title, ... }] }
+ *   - `text` blocks: may contain a `citations` array referencing earlier results
+ * We dedupe by URL and return short, audit-log-friendly citation summaries.
+ */
+export type CitationSummary = {
+  url: string;
+  title: string;
+};
+
+const MAX_CITATIONS = 8;
+
+export function extractCitations(response: { content: Array<unknown> }): CitationSummary[] {
+  const out: CitationSummary[] = [];
+  const seen = new Set<string>();
+
+  const pushIfNew = (url: unknown, title: unknown) => {
+    if (typeof url !== "string" || url.length === 0) return;
+    if (seen.has(url)) return;
+    seen.add(url);
+    out.push({
+      url,
+      title: typeof title === "string" && title.length > 0 ? title.slice(0, 120) : url,
+    });
+  };
+
+  for (const block of response.content) {
+    if (typeof block !== "object" || block === null) continue;
+    const b = block as Record<string, unknown>;
+    if (b.type === "web_search_tool_result" && Array.isArray(b.content)) {
+      for (const item of b.content as Array<Record<string, unknown>>) {
+        pushIfNew(item.url, item.title);
+      }
+    }
+    if (b.type === "text" && Array.isArray(b.citations)) {
+      for (const cite of b.citations as Array<Record<string, unknown>>) {
+        pushIfNew(cite.url, cite.title);
+      }
+    }
+    if (out.length >= MAX_CITATIONS) break;
+  }
+
+  return out.slice(0, MAX_CITATIONS);
+}
+
+export function formatCitationsForReasoning(citations: CitationSummary[]): string {
+  if (citations.length === 0) return "";
+  const sources = citations
+    .map((c) => {
+      try {
+        return new URL(c.url).hostname.replace(/^www\./, "");
+      } catch {
+        return c.title;
+      }
+    })
+    .filter((value, index, arr) => value && arr.indexOf(value) === index)
+    .slice(0, 4);
+  return sources.length > 0 ? ` [cites: ${sources.join(", ")}]` : "";
+}
+
+/**
+ * Haiku triage: when the candidate batch is large, run a single cheap Haiku
+ * call to drop obvious junk before paying Sonnet/Opus prices.  Returns the set
+ * of marketIds to KEEP for full review.  On failure, returns null so callers
+ * fall through to reviewing everything (capital preservation > cost).
+ */
+export const TRIAGE_THRESHOLD_DEFAULT = 12;
+
+export function isTriageEnabled(): boolean {
+  return ENV.enableAiTriage === true;
+}
+
+export function getTriageThreshold(): number {
+  return ENV.aiTriageThreshold > 0 ? ENV.aiTriageThreshold : TRIAGE_THRESHOLD_DEFAULT;
+}
+
+export type TriageCandidate = {
+  marketId: string;
+  title: string;
+  category: string;
+  signalType: string;
+  side: "yes" | "no";
+  confidence: number;
+  expectedValue: number;
+  impliedProbability: number;
+};
+
+export type AnthropicTriageClient = {
+  messages: {
+    create: (input: unknown) => Promise<{ content: Array<{ type: string; text?: string }> }>;
+  };
+};
+
+export async function runHaikuTriage(
+  client: AnthropicTriageClient,
+  candidates: TriageCandidate[],
+  options: { timeoutMs: number; logger?: Pick<Console, "warn"> } = { timeoutMs: 8000 },
+): Promise<Set<string> | null> {
+  if (candidates.length === 0) return new Set();
+  try {
+    const triageInput = {
+      task: "Drop obviously bad candidates before deeper review.",
+      keepIfAny: [
+        "Liquidity looks healthy AND confidence>=0.6 AND |EV|>=0.05",
+        "Implied probability sits between 0.05 and 0.95",
+        "Signal type is not pure heuristic momentum on a stale market",
+      ],
+      dropIfAny: [
+        "Confidence below 0.5 with no clear catalyst",
+        "Implied probability outside 0.03..0.97",
+        "Expected value at or near zero",
+      ],
+      candidates,
+    };
+
+    const response = await Promise.race([
+      client.messages.create({
+        model: selectAnthropicModel("triage"),
+        max_tokens: 600,
+        temperature: 0,
+        system: [
+          {
+            type: "text",
+            text: "You are a fast Kalshi/Polymarket pre-filter. Output JSON only: {\"keep\":[marketId,...]} listing only marketIds that survive triage. Be aggressive — when in doubt, drop.",
+            cache_control: { type: "ephemeral" },
+          },
+        ],
+        messages: [{ role: "user", content: JSON.stringify(triageInput) }],
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("triage timed out")), options.timeoutMs),
+      ),
+    ]);
+
+    const text = extractAnthropicText(response);
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    const parsed = JSON.parse(match[0]) as { keep?: unknown };
+    if (!Array.isArray(parsed.keep)) return null;
+    const keep = new Set<string>();
+    for (const id of parsed.keep) {
+      if (typeof id === "string" && id.length > 0) keep.add(id);
+    }
+    return keep;
+  } catch (error) {
+    options.logger?.warn(
+      `[aiToolbelt] Haiku triage failed: ${error instanceof Error ? error.message : String(error)}; falling back to full review.`,
+    );
+    return null;
+  }
+}

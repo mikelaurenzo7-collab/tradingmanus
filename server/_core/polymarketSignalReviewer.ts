@@ -19,12 +19,20 @@ import { z } from "zod";
 import {
   buildCachedSystemPrompt,
   buildExtendedThinking,
+  buildMemorySystemBlock,
   buildToolList,
   callAnthropicWithTimeout,
   extractAnthropicText,
+  extractCitations,
+  formatCitationsForReasoning,
+  getTriageThreshold,
   isHighStakes,
+  isTriageEnabled,
+  runHaikuTriage,
   selectAnthropicModel,
+  type CitationSummary,
   type StakesContext,
+  type TriageCandidate,
 } from "./aiToolbelt";
 import {
   classifyMarketCategory,
@@ -32,6 +40,11 @@ import {
   type MarketCategory,
 } from "./marketCategoryRouter";
 import { getCategoryPersona, type CategoryPersona } from "./categoryPersonas";
+import {
+  formatDeskMemoryForPrompt,
+  getDeskMemoryBatch,
+  type DeskMemoryRecord,
+} from "../db.desk-memory";
 
 type ProviderName = "openai" | "anthropic";
 
@@ -92,6 +105,9 @@ export type PolymarketReviewerOptions = {
   anthropicModel?: string;
   anthropicTimeoutMs?: number;
   anthropicClient?: AnthropicClient;
+  userId?: number;
+  deskMemoryByDeskId?: Map<string, DeskMemoryRecord>;
+  triageThresholdOverride?: number;
 };
 
 export type PolymarketReviewer = {
@@ -345,6 +361,7 @@ async function requestAnthropicReviews(
   options: PolymarketReviewerOptions,
   persona?: CategoryPersona,
   stakes: StakesContext = {},
+  memorySnippet: string | null = null,
 ) {
   const timeoutMs = options.anthropicTimeoutMs ?? ENV.anthropicTimeoutMs;
   const client =
@@ -359,9 +376,11 @@ async function requestAnthropicReviews(
     allowWebSearch: true,
     maxWebSearchUses: useDeepModel ? 4 : 2,
   });
-  const cachedSystem = ENV.enableAiPromptCache
+
+  const personaBlocks = ENV.enableAiPromptCache
     ? buildCachedSystemPrompt(buildAnthropicBaseMandate(persona))
-    : undefined;
+    : null;
+  const memoryBlock = ENV.enableAiDeskMemory ? buildMemorySystemBlock(memorySnippet) : null;
 
   const messageInput: Record<string, unknown> = {
     model,
@@ -369,7 +388,13 @@ async function requestAnthropicReviews(
     temperature: 0,
     messages: [{ role: "user", content: JSON.stringify(reviewPayload) }],
   };
-  messageInput.system = cachedSystem ?? buildAnthropicBaseMandate(persona);
+  if (personaBlocks) {
+    messageInput.system = memoryBlock ? [...personaBlocks, memoryBlock] : personaBlocks;
+  } else {
+    messageInput.system = memorySnippet
+      ? `${buildAnthropicBaseMandate(persona)}\n\n${memorySnippet}`
+      : buildAnthropicBaseMandate(persona);
+  }
   if (thinking) messageInput.thinking = thinking;
   if (tools) messageInput.tools = tools;
 
@@ -382,9 +407,14 @@ async function requestAnthropicReviews(
     "Anthropic Polymarket review",
   );
 
+  const citations = ENV.enableAiCitations
+    ? extractCitations(response as { content: Array<unknown> })
+    : [];
+
   return {
     provider: "anthropic" as const,
     reviews: parseTradingReviews(extractAnthropicText(response)),
+    citations,
   };
 }
 
@@ -393,6 +423,7 @@ function combineApprovedSignal(
   providerReviews: Array<{ provider: ProviderName; review: TradingSignalReview }>,
   logger: Pick<Console, "warn" | "error">,
   desk?: string,
+  citations: CitationSummary[] = [],
 ) {
   if (providerReviews.length === 0) {
     logger.warn(
@@ -433,12 +464,13 @@ function combineApprovedSignal(
     ? `${providerReviews[0]?.provider === "anthropic" ? "Claude" : "OpenAI"} solo review`
     : "AI trader duo";
   const deskLabel = desk ? ` [${desk}]` : "";
+  const citationLabel = formatCitationsForReasoning(citations);
 
   return {
     ...signal,
     confidence: clamp(signal.confidence + confidenceAdjustment, 0.01, 0.99),
     expectedValue: Math.max(0, signal.expectedValue + expectedValueAdjustment),
-    reasoning: `${signal.reasoning} | ${ledger}${deskLabel}: ${reviewerReasoning}`,
+    reasoning: `${signal.reasoning} | ${ledger}${deskLabel}: ${reviewerReasoning}${citationLabel}`,
   };
 }
 
@@ -446,6 +478,7 @@ type ProviderBatchResult = {
   provider: ProviderName;
   reviewsByMarket: Map<string, TradingSignalReview>;
   failed: boolean;
+  citations: CitationSummary[];
 };
 
 async function callProvider(
@@ -455,22 +488,24 @@ async function callProvider(
   persona: CategoryPersona | undefined,
   stakes: StakesContext,
   logger: Pick<Console, "warn" | "error">,
+  memorySnippet: string | null = null,
 ): Promise<ProviderBatchResult> {
   try {
     const response =
       provider === "openai"
         ? await requestOpenAiReviews(reviewPayload, options, persona)
-        : await requestAnthropicReviews(reviewPayload, options, persona, stakes);
+        : await requestAnthropicReviews(reviewPayload, options, persona, stakes, memorySnippet);
     return {
       provider,
       reviewsByMarket: new Map(response.reviews.map((review) => [review.marketId, review])),
       failed: false,
+      citations: "citations" in response ? response.citations : [],
     };
   } catch (error) {
     logger.warn(
       `[PolymarketReviewer] ${provider} review failed for desk=${persona?.id ?? "default"}: ${error instanceof Error ? error.message : String(error)}`,
     );
-    return { provider, reviewsByMarket: new Map(), failed: true };
+    return { provider, reviewsByMarket: new Map(), failed: true, citations: [] };
   }
 }
 
@@ -481,6 +516,7 @@ async function runCategoryReview(
   persona: CategoryPersona | undefined,
   stakes: StakesContext,
   logger: Pick<Console, "warn" | "error">,
+  memorySnippet: string | null = null,
 ): Promise<PolymarketSignal[]> {
   const markets = signals
     .map((signal) => marketsById.get(signal.marketId))
@@ -506,7 +542,9 @@ async function runCategoryReview(
 
   const providerCalls: Promise<ProviderBatchResult>[] = [];
   if (claudeConfigured) {
-    providerCalls.push(callProvider("anthropic", reviewPayload, options, persona, stakes, logger));
+    providerCalls.push(
+      callProvider("anthropic", reviewPayload, options, persona, stakes, logger, memorySnippet),
+    );
   }
   if (openaiConfigured) {
     providerCalls.push(callProvider("openai", reviewPayload, options, persona, stakes, logger));
@@ -518,6 +556,7 @@ async function runCategoryReview(
   );
   const claudeBatch = byProvider.get("anthropic");
   const openaiBatch = byProvider.get("openai");
+  const claudeCitations = claudeBatch?.citations ?? [];
 
   return signals
     .map((signal) => {
@@ -542,6 +581,7 @@ async function runCategoryReview(
             ],
             logger,
             persona?.label,
+            claudeCitations,
           );
         }
         return combineApprovedSignal(
@@ -549,6 +589,7 @@ async function runCategoryReview(
           [{ provider: "anthropic", review: claudeReview }],
           logger,
           persona?.label,
+          claudeCitations,
         );
       }
 
@@ -567,6 +608,64 @@ async function runCategoryReview(
       );
     })
     .filter((signal): signal is PolymarketSignal => Boolean(signal));
+}
+
+async function applyTriageFilter(
+  signals: PolymarketSignal[],
+  marketsById: Map<string, PolymarketMarket>,
+  options: PolymarketReviewerOptions,
+  logger: Pick<Console, "warn" | "error">,
+): Promise<PolymarketSignal[]> {
+  if (!isTriageEnabled()) return signals;
+  if (!isPolymarketReviewerConfigured(options)) return signals;
+
+  const threshold = options.triageThresholdOverride ?? getTriageThreshold();
+  if (signals.length <= threshold) return signals;
+
+  const triageClient = options.anthropicClient ?? new Anthropic({
+    apiKey: (options.anthropicApiKey ?? ENV.anthropicApiKey).trim(),
+  });
+
+  const triageInput: TriageCandidate[] = signals.map((signal) => {
+    const market = marketsById.get(signal.marketId);
+    return {
+      marketId: signal.marketId,
+      title: market?.question ?? "",
+      category: market?.category ?? "",
+      signalType: signal.signalType,
+      side: signal.side,
+      confidence: signal.confidence,
+      expectedValue: signal.expectedValue,
+      impliedProbability: signal.impliedProbabilityYes,
+    };
+  });
+
+  const keep = await runHaikuTriage(triageClient as { messages: { create: (input: unknown) => Promise<{ content: Array<{ type: string; text?: string }> }> } }, triageInput, {
+    timeoutMs: Math.min(options.anthropicTimeoutMs ?? ENV.anthropicTimeoutMs, 8000),
+    logger,
+  });
+  if (!keep) return signals;
+  const filtered = signals.filter((signal) => keep.has(signal.marketId));
+  return filtered.length > 0 ? filtered : signals;
+}
+
+async function loadDeskMemoryForBuckets(
+  buckets: Map<MarketCategory, PolymarketSignal[]>,
+  options: PolymarketReviewerOptions,
+): Promise<Map<string, DeskMemoryRecord>> {
+  if (options.deskMemoryByDeskId) return options.deskMemoryByDeskId;
+  if (!ENV.enableAiDeskMemory) return new Map();
+  if (!options.userId) return new Map();
+
+  const deskIds = Array.from(buckets.keys()).map((category) => getCategoryPersona("polymarket", category).id);
+  try {
+    return await getDeskMemoryBatch(options.userId, "polymarket", deskIds);
+  } catch (error) {
+    options.logger?.warn?.(
+      `[PolymarketReviewer] Failed to load desk memory: ${error instanceof Error ? error.message : String(error)}; continuing without memory.`,
+    );
+    return new Map();
+  }
 }
 
 export async function reviewPolymarketSignalsWithTrader(
@@ -599,27 +698,40 @@ export async function reviewPolymarketSignalsWithTrader(
   const cappedSignals = input.signals.slice(0, cap);
   const marketsById = new Map(input.markets.map((market) => [market.marketId, market]));
 
+  const triagedSignals = await applyTriageFilter(cappedSignals, marketsById, options, logger);
+
   if (!ENV.enableAiCategoryRouting) {
     return runCategoryReview(
-      cappedSignals,
+      triagedSignals,
       marketsById,
       options,
       undefined,
-      stakesForSignals(cappedSignals),
+      stakesForSignals(triagedSignals),
       logger,
     );
   }
 
-  const buckets = groupByCategory(cappedSignals, (signal) => {
+  const buckets = groupByCategory(triagedSignals, (signal) => {
     const market = marketsById.get(signal.marketId);
     return { category: market?.category, question: market?.question };
   });
+
+  const memoryByDeskId = await loadDeskMemoryForBuckets(buckets, options);
 
   const batches = await Promise.all(
     Array.from(buckets.entries()).map(([category, batchSignals]) => {
       const persona = getCategoryPersona("polymarket", category);
       const stakes = stakesForSignals(batchSignals);
-      return runCategoryReview(batchSignals, marketsById, options, persona, stakes, logger);
+      const memorySnippet = formatDeskMemoryForPrompt(memoryByDeskId.get(persona.id) ?? null);
+      return runCategoryReview(
+        batchSignals,
+        marketsById,
+        options,
+        persona,
+        stakes,
+        logger,
+        memorySnippet,
+      );
     }),
   );
 
@@ -629,7 +741,7 @@ export async function reviewPolymarketSignalsWithTrader(
       approved.set(signal.marketId, signal);
     }
   }
-  return cappedSignals
+  return triagedSignals
     .map((signal) => approved.get(signal.marketId))
     .filter((signal): signal is PolymarketSignal => Boolean(signal));
 }

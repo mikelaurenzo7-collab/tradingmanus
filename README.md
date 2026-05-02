@@ -86,6 +86,18 @@ corepack pnpm build
 7. The execution layer ranks remaining signals, computes risk-budgeted contract sizes, and only places an order if every guardrail passes (`kalshiRisk.ts`, `polymarketRisk.ts`).
 8. In `NODE_ENV=test`, AI review is bypassed for deterministic tests unless a test explicitly forces provider calls (`skipInTest: false`).
 
+### Per-desk memory tape
+
+Each desk keeps its own persistent learning tape in the `deskMemory` Postgres table — one row per `(userId, platform, deskId)`. After a trade resolves, callers append a short lesson via `recordDeskTradeOutcome({ userId, platform, marketCategory, outcome, note })`. Before each review run, the tape (capped to the last 12 lessons + win-rate header) is loaded and injected into the Claude system prompt as a *separate* cached block so the persona block stays cache-warm even when memory updates between runs. Disable with `ENABLE_AI_DESK_MEMORY=false`.
+
+### Haiku triage pre-filter
+
+When a category bucket has more than `AI_TRIAGE_THRESHOLD` (default 12) candidates, the bot first runs a single cheap Haiku call (`ANTHROPIC_TRIAGE_MODEL`, default `claude-haiku-4-5`) that returns the marketIds worth keeping. Sonnet/Opus then only review the survivors. If triage fails for any reason, the bot falls through to reviewing everything (capital preservation > cost). Disable with `ENABLE_AI_TRIAGE=false`.
+
+### Citations on reasoning
+
+When Claude uses `web_search_20250305` to gather context, the reviewer parses the response's citation blocks and appends a short `[cites: espn.com, nyt.com]` tag to the saved signal reasoning so the audit trail shows which sources supported the call. Disable with `ENABLE_AI_CITATIONS=false`.
+
 ### Specialized desks
 
 | Platform | Desk | Focus |

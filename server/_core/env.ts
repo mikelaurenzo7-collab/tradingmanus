@@ -34,6 +34,13 @@ export const ENV = {
   // gated per-call by stakes / availability inside aiToolbelt.
   enableAiWebSearch: normalizeBoolean(process.env.ENABLE_AI_WEB_SEARCH, true),
   enableAiExtendedThinking: normalizeBoolean(process.env.ENABLE_AI_EXTENDED_THINKING, true),
+  // Per-desk persistent learning tape (loaded into the cached system prompt).
+  enableAiDeskMemory: normalizeBoolean(process.env.ENABLE_AI_DESK_MEMORY, true),
+  // Cheap Haiku pre-filter when the candidate batch is large.
+  enableAiTriage: normalizeBoolean(process.env.ENABLE_AI_TRIAGE, true),
+  aiTriageThreshold: normalizePositiveInt(process.env.AI_TRIAGE_THRESHOLD, 12),
+  // Surface web_search citations in the audit-log reasoning blurb.
+  enableAiCitations: normalizeBoolean(process.env.ENABLE_AI_CITATIONS, true),
   kalshiApiKey: normalize(process.env.KALSHI_API_KEY),
   isProduction: process.env.NODE_ENV === "production",
   gnewsApiKey: normalize(process.env.GNEWS_API_KEY),

@@ -298,6 +298,33 @@ export const userPlatformSubscriptions = pgTable("userPlatformSubscriptions", {
   updatedAt: updatedAt(),
 });
 
+// ── AI Desk Memory (per-user, per-platform, per-category persistent learnings) ─
+
+export const deskPlatformEnum = pgEnum("desk_platform", ["kalshi", "polymarket"]);
+export const deskOutcomeEnum = pgEnum("desk_outcome", ["win", "loss", "scratch"]);
+
+/**
+ * One row per (userId, platform, deskId).  Each row is the rolling tape of
+ * lessons the AI reviewer has learned for that desk.  `notes` is a small
+ * append-only list of short bullets ("won 3 NBA total points contracts when
+ * vegas line was within 1 point of Kalshi implied").  We cap the field
+ * server-side before each insert so the cached system prompt stays tight.
+ */
+export const deskMemory = pgTable("deskMemory", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull(),
+  platform: deskPlatformEnum("platform").notNull(),
+  // e.g. "kalshi.sports", "poly.crypto" — matches CategoryPersona.id.
+  deskId: varchar("deskId", { length: 64 }).notNull(),
+  // JSON array of { ts, outcome, note } objects.  Capped at ~4KB before write.
+  notes: text("notes").default("[]").notNull(),
+  tradeCount: integer("tradeCount").default(0).notNull(),
+  winCount: integer("winCount").default(0).notNull(),
+  lossCount: integer("lossCount").default(0).notNull(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
 // ── Chatbot ────────────────────────────────────────────────────────────────────
 
 export const chatBotPlatformEnum = pgEnum("chat_bot_platform", ["kalshi", "polymarket"]);

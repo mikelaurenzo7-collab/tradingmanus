@@ -1,11 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildCachedSystemPrompt,
   buildExtendedThinking,
+  buildMemorySystemBlock,
   buildToolList,
   buildWebSearchTool,
   extractAnthropicText,
+  extractCitations,
+  formatCitationsForReasoning,
   isHighStakes,
+  runHaikuTriage,
   selectAnthropicModel,
 } from "./_core/aiToolbelt";
 
@@ -110,6 +114,117 @@ describe("aiToolbelt", () => {
 
     it("handles missing text fields gracefully", () => {
       expect(extractAnthropicText({ content: [{ type: "text" }] })).toBe("");
+    });
+  });
+
+  describe("buildMemorySystemBlock", () => {
+    it("returns null for empty memory", () => {
+      expect(buildMemorySystemBlock(null)).toBeNull();
+      expect(buildMemorySystemBlock("")).toBeNull();
+    });
+
+    it("returns a cached system block for non-empty memory", () => {
+      const block = buildMemorySystemBlock("Recent learnings: stay away from XYZ");
+      expect(block).not.toBeNull();
+      expect(block!.type).toBe("text");
+      expect(block!.cache_control).toEqual({ type: "ephemeral" });
+      expect(block!.text).toContain("Recent learnings");
+    });
+  });
+
+  describe("extractCitations", () => {
+    it("dedupes and caps web_search_tool_result citations", () => {
+      const citations = extractCitations({
+        content: [
+          {
+            type: "web_search_tool_result",
+            content: [
+              { url: "https://espn.com/article", title: "ESPN article" },
+              { url: "https://espn.com/article", title: "Duplicate" },
+              { url: "https://nyt.com/story", title: "NYT" },
+            ],
+          },
+        ],
+      });
+      expect(citations).toHaveLength(2);
+      expect(citations[0].url).toBe("https://espn.com/article");
+      expect(citations[1].url).toBe("https://nyt.com/story");
+    });
+
+    it("pulls citations from inline text-block citations array", () => {
+      const citations = extractCitations({
+        content: [
+          {
+            type: "text",
+            text: "Some reasoning",
+            citations: [{ url: "https://reuters.com/x", title: "Reuters" }],
+          },
+        ],
+      });
+      expect(citations).toHaveLength(1);
+      expect(citations[0].url).toBe("https://reuters.com/x");
+    });
+
+    it("returns empty array when there are no citation blocks", () => {
+      expect(extractCitations({ content: [{ type: "text", text: "hi" }] })).toEqual([]);
+    });
+  });
+
+  describe("formatCitationsForReasoning", () => {
+    it("returns empty string when no citations", () => {
+      expect(formatCitationsForReasoning([])).toBe("");
+    });
+
+    it("renders unique hostnames as a short [cites: ...] tag", () => {
+      const formatted = formatCitationsForReasoning([
+        { url: "https://www.espn.com/x", title: "x" },
+        { url: "https://espn.com/y", title: "y" },
+        { url: "https://nyt.com/z", title: "z" },
+      ]);
+      expect(formatted).toBe(" [cites: espn.com, nyt.com]");
+    });
+  });
+
+  describe("runHaikuTriage", () => {
+    it("returns the keep-set parsed from the model response", async () => {
+      const create = vi.fn().mockResolvedValue({
+        content: [
+          {
+            type: "text",
+            text: '{"keep":["MKT-1","MKT-3"]}',
+          },
+        ],
+      });
+
+      const keep = await runHaikuTriage(
+        { messages: { create } },
+        [
+          { marketId: "MKT-1", title: "", category: "", signalType: "momentum", side: "yes", confidence: 0.7, expectedValue: 0.1, impliedProbability: 0.4 },
+          { marketId: "MKT-2", title: "", category: "", signalType: "momentum", side: "yes", confidence: 0.5, expectedValue: 0.05, impliedProbability: 0.5 },
+          { marketId: "MKT-3", title: "", category: "", signalType: "momentum", side: "no", confidence: 0.8, expectedValue: 0.12, impliedProbability: 0.6 },
+        ],
+        { timeoutMs: 100 },
+      );
+
+      expect(keep).not.toBeNull();
+      expect(keep!.has("MKT-1")).toBe(true);
+      expect(keep!.has("MKT-2")).toBe(false);
+      expect(keep!.has("MKT-3")).toBe(true);
+    });
+
+    it("returns null when the model errors so callers fall through to full review", async () => {
+      const create = vi.fn().mockRejectedValue(new Error("503"));
+      const keep = await runHaikuTriage({ messages: { create } }, [
+        { marketId: "MKT-1", title: "", category: "", signalType: "momentum", side: "yes", confidence: 0.7, expectedValue: 0.1, impliedProbability: 0.4 },
+      ], { timeoutMs: 100 });
+      expect(keep).toBeNull();
+    });
+
+    it("returns empty set for empty input", async () => {
+      const create = vi.fn();
+      const keep = await runHaikuTriage({ messages: { create } }, [], { timeoutMs: 100 });
+      expect(keep?.size).toBe(0);
+      expect(create).not.toHaveBeenCalled();
     });
   });
 });

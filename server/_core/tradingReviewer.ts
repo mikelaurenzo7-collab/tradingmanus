@@ -6,12 +6,20 @@ import { z } from "zod";
 import {
   buildCachedSystemPrompt,
   buildExtendedThinking,
+  buildMemorySystemBlock,
   buildToolList,
   callAnthropicWithTimeout,
   extractAnthropicText,
+  extractCitations,
+  formatCitationsForReasoning,
+  getTriageThreshold,
   isHighStakes,
+  isTriageEnabled,
+  runHaikuTriage,
   selectAnthropicModel,
+  type CitationSummary,
   type StakesContext,
+  type TriageCandidate,
 } from "./aiToolbelt";
 import {
   classifyMarketCategory,
@@ -19,6 +27,11 @@ import {
   type MarketCategory,
 } from "./marketCategoryRouter";
 import { getCategoryPersona, type CategoryPersona } from "./categoryPersonas";
+import {
+  formatDeskMemoryForPrompt,
+  getDeskMemoryBatch,
+  type DeskMemoryRecord,
+} from "../db.desk-memory";
 
 type ProviderName = "openai" | "anthropic";
 
@@ -85,6 +98,16 @@ export type TradingReviewerOptions = {
   anthropicModel?: string;
   anthropicTimeoutMs?: number;
   anthropicClient?: AnthropicClient;
+  /**
+   * If provided, the reviewer loads the per-desk learning tape for this user
+   * and injects it into the cached system prompt.  Without a userId, memory
+   * is skipped (test/no-DB path).
+   */
+  userId?: number;
+  /** Inject pre-loaded desk memory instead of hitting the DB (test path). */
+  deskMemoryByDeskId?: Map<string, DeskMemoryRecord>;
+  /** Override the default Haiku triage threshold for tests. */
+  triageThresholdOverride?: number;
 };
 
 export type TradingReviewer = {
@@ -343,6 +366,7 @@ async function requestAnthropicReviews(
   options: TradingReviewerOptions,
   persona?: CategoryPersona,
   stakes: StakesContext = {},
+  memorySnippet: string | null = null,
 ) {
   const timeoutMs = options.anthropicTimeoutMs ?? ENV.anthropicTimeoutMs;
   const client = options.anthropicClient ?? new Anthropic({
@@ -357,9 +381,15 @@ async function requestAnthropicReviews(
     allowWebSearch: true,
     maxWebSearchUses: useDeepModel ? 4 : 2,
   });
-  const cachedSystem = ENV.enableAiPromptCache
+
+  // Build the system prompt as up to two cached blocks: persona mandate
+  // (changes rarely) + desk memory (updates after every trade outcome).
+  // Splitting them lets the persona block stay cache-warm even when memory
+  // changes between runs.
+  const personaBlocks = ENV.enableAiPromptCache
     ? buildCachedSystemPrompt(buildAnthropicBaseMandate(persona))
-    : undefined;
+    : null;
+  const memoryBlock = ENV.enableAiDeskMemory ? buildMemorySystemBlock(memorySnippet) : null;
 
   const messageInput: Record<string, unknown> = {
     model,
@@ -372,10 +402,12 @@ async function requestAnthropicReviews(
       },
     ],
   };
-  if (cachedSystem) {
-    messageInput.system = cachedSystem;
+  if (personaBlocks) {
+    messageInput.system = memoryBlock ? [...personaBlocks, memoryBlock] : personaBlocks;
   } else {
-    messageInput.system = buildAnthropicBaseMandate(persona);
+    messageInput.system = memorySnippet
+      ? `${buildAnthropicBaseMandate(persona)}\n\n${memorySnippet}`
+      : buildAnthropicBaseMandate(persona);
   }
   if (thinking) {
     messageInput.thinking = thinking;
@@ -396,9 +428,14 @@ async function requestAnthropicReviews(
     "Anthropic review",
   );
 
+  const citations = ENV.enableAiCitations
+    ? extractCitations(response as { content: Array<unknown> })
+    : [];
+
   return {
     provider: "anthropic" as const,
     reviews: parseTradingReviews(extractAnthropicText(response)),
+    citations,
   };
 }
 
@@ -407,6 +444,7 @@ function combineApprovedSignal(
   providerReviews: Array<{ provider: ProviderName; review: TradingSignalReview; weight?: number }>,
   logger: Pick<Console, "warn" | "error">,
   desk?: string,
+  citations: CitationSummary[] = [],
 ) {
   if (providerReviews.length === 0) {
     logger.warn(
@@ -447,12 +485,13 @@ function combineApprovedSignal(
     ? `${providerReviews[0]?.provider === "anthropic" ? "Claude" : "OpenAI"} solo review`
     : "AI trader duo";
   const deskLabel = desk ? ` [${desk}]` : "";
+  const citationLabel = formatCitationsForReasoning(citations);
 
   return {
     ...signal,
     confidence: clamp(signal.confidence + confidenceAdjustment, 0.01, 0.99),
     expectedValue: Math.max(0, signal.expectedValue + expectedValueAdjustment),
-    reasoning: `${signal.reasoning} | ${ledger}${deskLabel}: ${reviewerReasoning}`,
+    reasoning: `${signal.reasoning} | ${ledger}${deskLabel}: ${reviewerReasoning}${citationLabel}`,
   };
 }
 
@@ -464,6 +503,7 @@ type ProviderBatchResult = {
   provider: ProviderName;
   reviewsByMarket: Map<string, TradingSignalReview>;
   failed: boolean;
+  citations: CitationSummary[];
 };
 
 async function callProvider(
@@ -473,22 +513,24 @@ async function callProvider(
   persona: CategoryPersona | undefined,
   stakes: StakesContext,
   logger: Pick<Console, "warn" | "error">,
+  memorySnippet: string | null = null,
 ): Promise<ProviderBatchResult> {
   try {
     const response =
       provider === "openai"
         ? await requestOpenAiReviews(reviewPayload, options, persona)
-        : await requestAnthropicReviews(reviewPayload, options, persona, stakes);
+        : await requestAnthropicReviews(reviewPayload, options, persona, stakes, memorySnippet);
     return {
       provider,
       reviewsByMarket: new Map(response.reviews.map((review) => [review.marketId, review])),
       failed: false,
+      citations: "citations" in response ? response.citations : [],
     };
   } catch (error) {
     logger.warn(
       `[TradingReviewer] ${provider} review failed for desk=${persona?.id ?? "default"}: ${error instanceof Error ? error.message : String(error)}`,
     );
-    return { provider, reviewsByMarket: new Map(), failed: true };
+    return { provider, reviewsByMarket: new Map(), failed: true, citations: [] };
   }
 }
 
@@ -507,6 +549,7 @@ async function runCategoryReview(
   persona: CategoryPersona | undefined,
   stakes: StakesContext,
   logger: Pick<Console, "warn" | "error">,
+  memorySnippet: string | null = null,
 ): Promise<KalshiSignal[]> {
   const markets = signals
     .map((signal) => marketsById.get(signal.marketId))
@@ -530,11 +573,11 @@ async function runCategoryReview(
     return [];
   }
 
-  // Claude always runs when configured; OpenAI runs whenever it's configured
-  // (it's cheap insurance — fallback when Claude misses, escalation when stakes high).
   const providerCalls: Promise<ProviderBatchResult>[] = [];
   if (claudeConfigured) {
-    providerCalls.push(callProvider("anthropic", reviewPayload, options, persona, stakes, logger));
+    providerCalls.push(
+      callProvider("anthropic", reviewPayload, options, persona, stakes, logger, memorySnippet),
+    );
   }
   if (openaiConfigured) {
     providerCalls.push(callProvider("openai", reviewPayload, options, persona, stakes, logger));
@@ -546,6 +589,7 @@ async function runCategoryReview(
   );
   const claudeBatch = byProvider.get("anthropic");
   const openaiBatch = byProvider.get("openai");
+  const claudeCitations = claudeBatch?.citations ?? [];
 
   return signals
     .map((signal) => {
@@ -553,11 +597,9 @@ async function runCategoryReview(
       const openaiReview = openaiBatch?.reviewsByMarket.get(signal.marketId);
       const usingClaude = Boolean(claudeReview);
 
-      // Case 1: Claude reviewed. Use Claude as the gate.
       if (usingClaude) {
         if (!claudeReview!.approved) return null;
 
-        // High-stakes escalation: require OpenAI second opinion if available.
         if (escalateToOpenAi) {
           if (!openaiReview) {
             logger.warn(
@@ -574,6 +616,7 @@ async function runCategoryReview(
             ],
             logger,
             persona?.label,
+            claudeCitations,
           );
         }
 
@@ -582,10 +625,10 @@ async function runCategoryReview(
           [{ provider: "anthropic", review: claudeReview! }],
           logger,
           persona?.label,
+          claudeCitations,
         );
       }
 
-      // Case 2: Claude missing → OpenAI fallback path.
       if (!openaiReview) {
         logger.warn(
           `[TradingReviewer] Both providers missing review for marketId=${signal.marketId} (desk=${persona?.id ?? "default"}); dropping signal.`,
@@ -601,6 +644,74 @@ async function runCategoryReview(
       );
     })
     .filter((signal): signal is KalshiSignal => Boolean(signal));
+}
+
+/**
+ * Optional Haiku pre-filter: when the candidate batch is large, drop obvious
+ * junk before paying Sonnet/Opus prices.  Returns the surviving signal list.
+ * On failure, returns the input unchanged (capital preservation > cost).
+ */
+async function applyTriageFilter(
+  signals: KalshiSignal[],
+  marketsById: Map<string, KalshiMarket>,
+  options: TradingReviewerOptions,
+  logger: Pick<Console, "warn" | "error">,
+): Promise<KalshiSignal[]> {
+  if (!isTriageEnabled()) return signals;
+  if (!isTradingReviewerConfigured(options)) return signals;
+
+  const threshold = options.triageThresholdOverride ?? getTriageThreshold();
+  if (signals.length <= threshold) return signals;
+
+  const triageClient = options.anthropicClient ?? new Anthropic({
+    apiKey: (options.anthropicApiKey ?? ENV.anthropicApiKey).trim(),
+  });
+
+  const triageInput: TriageCandidate[] = signals.map((signal) => {
+    const market = marketsById.get(signal.marketId);
+    return {
+      marketId: signal.marketId,
+      title: market?.title ?? "",
+      category: market?.category ?? "",
+      signalType: signal.signalType,
+      side: signal.side,
+      confidence: signal.confidence,
+      expectedValue: signal.expectedValue,
+      impliedProbability: signal.impliedProbability,
+    };
+  });
+
+  const keep = await runHaikuTriage(triageClient as { messages: { create: (input: unknown) => Promise<{ content: Array<{ type: string; text?: string }> }> } }, triageInput, {
+    timeoutMs: Math.min(options.anthropicTimeoutMs ?? ENV.anthropicTimeoutMs, 8000),
+    logger,
+  });
+  if (!keep) return signals;
+  const filtered = signals.filter((signal) => keep.has(signal.marketId));
+  // Safety floor: if triage drops everything, fall back to the original list.
+  return filtered.length > 0 ? filtered : signals;
+}
+
+/**
+ * Load desk memory for the buckets that will be reviewed.  Caller passes a
+ * pre-loaded map for tests; otherwise we hit the DB only if a userId is set.
+ */
+async function loadDeskMemoryForBuckets(
+  buckets: Map<MarketCategory, KalshiSignal[]>,
+  options: TradingReviewerOptions,
+): Promise<Map<string, DeskMemoryRecord>> {
+  if (options.deskMemoryByDeskId) return options.deskMemoryByDeskId;
+  if (!ENV.enableAiDeskMemory) return new Map();
+  if (!options.userId) return new Map();
+
+  const deskIds = Array.from(buckets.keys()).map((category) => getCategoryPersona("kalshi", category).id);
+  try {
+    return await getDeskMemoryBatch(options.userId, "kalshi", deskIds);
+  } catch (error) {
+    options.logger?.warn?.(
+      `[TradingReviewer] Failed to load desk memory: ${error instanceof Error ? error.message : String(error)}; continuing without memory.`,
+    );
+    return new Map();
+  }
 }
 
 export async function reviewSignalsWithTrader(
@@ -633,29 +744,45 @@ export async function reviewSignalsWithTrader(
   const cappedSignals = input.signals.slice(0, cap);
   const marketsById = new Map(input.markets.map((market) => [market.id, market]));
 
+  // Optional Haiku pre-filter so large batches don't burn Sonnet/Opus tokens
+  // on obvious junk.  Returns the input unchanged when the batch is small
+  // enough or triage is disabled / fails.
+  const triagedSignals = await applyTriageFilter(cappedSignals, marketsById, options, logger);
+
   // When category routing is disabled, fall back to a single combined batch so
   // the public behavior still matches the original single-mandate reviewer.
   if (!ENV.enableAiCategoryRouting) {
     return runCategoryReview(
-      cappedSignals,
+      triagedSignals,
       marketsById,
       options,
       undefined,
-      stakesForSignals(cappedSignals),
+      stakesForSignals(triagedSignals),
       logger,
     );
   }
 
-  const buckets = groupByCategory(cappedSignals, (signal) => {
+  const buckets = groupByCategory(triagedSignals, (signal) => {
     const market = marketsById.get(signal.marketId);
     return { category: market?.category, title: market?.title };
   });
+
+  const memoryByDeskId = await loadDeskMemoryForBuckets(buckets, options);
 
   const batches = await Promise.all(
     Array.from(buckets.entries()).map(([category, batchSignals]) => {
       const persona = getCategoryPersona("kalshi", category);
       const stakes = stakesForSignals(batchSignals);
-      return runCategoryReview(batchSignals, marketsById, options, persona, stakes, logger);
+      const memorySnippet = formatDeskMemoryForPrompt(memoryByDeskId.get(persona.id) ?? null);
+      return runCategoryReview(
+        batchSignals,
+        marketsById,
+        options,
+        persona,
+        stakes,
+        logger,
+        memorySnippet,
+      );
     }),
   );
 
@@ -666,7 +793,7 @@ export async function reviewSignalsWithTrader(
       approved.set(signal.marketId, signal);
     }
   }
-  return cappedSignals
+  return triagedSignals
     .map((signal) => approved.get(signal.marketId))
     .filter((signal): signal is KalshiSignal => Boolean(signal));
 }
