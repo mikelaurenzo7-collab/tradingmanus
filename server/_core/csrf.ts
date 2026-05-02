@@ -54,11 +54,13 @@ export function csrfProtection(req: Request, res: Response, next: NextFunction) 
     return;
   }
 
-  // Use timing-safe comparison
-  const isValid = crypto.timingSafeEqual(
-    Buffer.from(tokenFromHeader),
-    Buffer.from(tokenFromCookie)
-  );
+  // Use timing-safe comparison. timingSafeEqual throws RangeError when
+  // buffers differ in length, so reject mismatched lengths up front.
+  const headerBuf = Buffer.from(tokenFromHeader);
+  const cookieBuf = Buffer.from(tokenFromCookie);
+  const isValid =
+    headerBuf.length === cookieBuf.length &&
+    crypto.timingSafeEqual(headerBuf, cookieBuf);
 
   if (!isValid) {
     logger.warn(
