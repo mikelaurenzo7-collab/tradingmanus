@@ -50,29 +50,110 @@ function getApp() {
   return appPromise;
 }
 
-export default async function handler(req: any, res: any) {
+// Vercel's serverless wrapper considers the invocation complete when the
+// returned promise resolves *and* `res.end()` has been called. If our handler
+// returns before Express finishes writing the response, the platform may
+// surface FUNCTION_INVOCATION_FAILED instead of our intended JSON envelope.
+// This helper resolves only after the underlying response stream has actually
+// finished (or closed), and it guarantees a JSON response is sent in every
+// failure path — including stalled middleware, throws during dispatch, and
+// app-bootstrap errors.
+//
+// A safety timeout (slightly under Vercel's `maxDuration` of 60s) ensures a
+// hung middleware chain is converted into a visible JSON 504 instead of a
+// platform-level invocation failure.
+const RESPONSE_TIMEOUT_MS = 55_000;
+
+function sendJsonError(
+  res: ServerResponse,
+  statusCode: number,
+  payload: Record<string, unknown>
+) {
+  if (res.headersSent || res.writableEnded) {
+    return;
+  }
+  try {
+    const helperRes = res as ServerResponse & {
+      status?: (code: number) => unknown;
+      json?: (body: unknown) => unknown;
+    };
+    if (typeof helperRes.status === "function" && typeof helperRes.json === "function") {
+      helperRes.status(statusCode);
+      helperRes.json(payload);
+      return;
+    }
+  } catch {
+    // Fall through to raw response below.
+  }
+  try {
+    res.writeHead(statusCode, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(payload));
+  } catch (writeError) {
+    console.error("[api/index] Failed to send error response:", writeError);
+  }
+}
+
+function dispatchToApp(
+  app: ExpressLikeApp,
+  req: IncomingMessage,
+  res: ServerResponse
+): Promise<void> {
+  return new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
+
+    const timer = setTimeout(() => {
+      if (settled) return;
+      console.error(
+        "[api/index] Request exceeded safety timeout; returning JSON 504 instead of letting the function crash."
+      );
+      sendJsonError(res, 504, {
+        success: false,
+        error: "Request timed out",
+      });
+      finish();
+    }, RESPONSE_TIMEOUT_MS);
+
+    res.on("finish", finish);
+    res.on("close", finish);
+    res.on("error", (err) => {
+      console.error("[api/index] Response stream error:", err);
+      finish();
+    });
+
+    try {
+      app.handle(req, res);
+    } catch (error) {
+      // Express 4 *can* throw synchronously from inside a middleware that
+      // doesn't `next(err)`. Translate it into a JSON 500 so the platform
+      // never sees an unhandled exception.
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("[api/index] Synchronous dispatch error:", message);
+      sendJsonError(res, 500, {
+        success: false,
+        error: "Internal server error",
+      });
+      finish();
+    }
+  });
+}
+
+export default async function handler(req: IncomingMessage, res: ServerResponse) {
   try {
     const app = await getApp();
-    return app.handle(req, res);
+    await dispatchToApp(app, req, res);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error("[api/index] createApp failed:", message);
-    const errorPayload = { success: false, error: "Server initialization failed", detail: message };
-    const body = JSON.stringify(errorPayload);
-    try {
-      // Prefer Express/Vercel helper methods when available.
-      if (typeof res.status === "function" && typeof res.json === "function") {
-        res.status(500).json(errorPayload);
-        return;
-      }
-    } catch (helperMethodError) {
-      // Fall through to raw Node.js response.
-    }
-    try {
-      res.writeHead(500, { "Content-Type": "application/json" });
-      res.end(body);
-    } catch (writeError) {
-      console.error("[api/index] Failed to send error response:", writeError);
-    }
+    sendJsonError(res, 500, {
+      success: false,
+      error: "Server initialization failed",
+      detail: message,
+    });
   }
 }
