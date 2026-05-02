@@ -10,6 +10,7 @@ import {
 } from "drizzle-orm/pg-core";
 
 export const userRoleEnum = pgEnum("user_role", ["user", "admin"]);
+export const betaAccessLevelEnum = pgEnum("beta_access_level", ["none", "internal", "invited", "public"]);
 export const instructionTypeEnum = pgEnum("instruction_type", ["market_filter", "signal_filter", "position_limit", "time_window", "custom"]);
 export const instructionRuleTypeEnum = pgEnum("instruction_rule_type", ["include", "exclude", "require", "forbid"]);
 export const instructionScheduleTypeEnum = pgEnum("instruction_schedule_type", ["always", "time_window", "day_of_week", "market_condition"]);
@@ -37,6 +38,7 @@ export const users = pgTable("users", {
   name: text("name"),
   email: varchar("email", { length: 320 }),
   role: userRoleEnum("role").default("user").notNull(),
+  betaAccessLevel: betaAccessLevelEnum("betaAccessLevel").default("none").notNull(),
   twoFactorSecret: text("twoFactorSecret"), // Encrypted 2FA secret
   twoFactorEnabled: integer("twoFactorEnabled").default(0).notNull(), // 0 = disabled, 1 = enabled
   backupCodesHash: text("backupCodesHash"), // JSON array of hashed backup codes

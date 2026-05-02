@@ -7,7 +7,7 @@ import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { validateServerEnv, ENV } from "./env";
-import { getDb, runMigrations, getUsersEligibleForAutomaticScheduledTrading } from "../db";
+import { getDb, runMigrations, getUsersEligibleForAutomaticScheduledTrading, pingDb } from "../db";
 import { authenticateRequest } from "./auth";
 import { runScheduledAutonomousTradingBatch } from "./kalshiAutonomy";
 import { syncPendingOrders, syncLivePositions } from "./kalshiOrderSync";
@@ -290,12 +290,36 @@ export async function createApp(options: { runStartupMigrations?: boolean } = {}
     })
   );
 
-  app.get("/api/health", (_req: unknown, res: unknown) => {
-    (res as AppResponse).json({
-      status: "ok",
+  app.get("/api/health", async (_req: unknown, res: unknown) => {
+    const startMs = Date.now();
+    let dbStatus: "ok" | "error" = "ok";
+    let dbLatencyMs: number | null = null;
+
+    try {
+      const t0 = Date.now();
+      const alive = await pingDb();
+      dbLatencyMs = Date.now() - t0;
+      if (!alive) dbStatus = "error";
+    } catch {
+      dbStatus = "error";
+    }
+
+    const overall = dbStatus === "ok" ? "ok" : "degraded";
+    const statusCode = overall === "ok" ? 200 : 503;
+
+    (res as AppResponse).status(statusCode).json({
+      status: overall,
       runtime: process.env.VERCEL ? "vercel" : "node",
       scheduler: process.env.VERCEL ? "vercel-cron" : "node-interval",
       interval_minutes: 15,
+      checks: {
+        database: {
+          status: dbStatus,
+          latencyMs: dbLatencyMs,
+        },
+      },
+      uptimeMs: process.uptime() * 1000,
+      responseMs: Date.now() - startMs,
     });
   });
 

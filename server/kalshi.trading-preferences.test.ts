@@ -32,6 +32,7 @@ vi.mock("./db", () => ({
   createKalshiSignal: vi.fn(),
   syncKalshiCapitalWithLiveEquity: vi.fn(),
   logAuditEvent: mocks.logAuditEvent,
+  getUserBetaAccessLevel: vi.fn(async () => "internal"),
 }));
 
 vi.mock("./db.kalshi-credentials", () => ({

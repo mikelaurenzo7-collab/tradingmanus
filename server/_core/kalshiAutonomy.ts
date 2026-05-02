@@ -21,6 +21,11 @@ import { calculateKalshiBuyOrderRisk, estimateContractsForRiskBudget } from "./k
 import { assertPositiveIntegerUserId } from "./userScope";
 import { reviewSignalsWithTrader } from "./tradingReviewer";
 import { getCacheHitRatio, newReviewerTelemetry } from "./aiToolbelt";
+import {
+  alertIfConsecutiveFailures,
+  alertEquityDrop,
+  alertExchangeRejection,
+} from "./alerting";
 
 const BASE_RISK_LIMITS = {
   maxLossPerTrade: 5,
@@ -34,7 +39,12 @@ const HOURLY_SCAN_MIN_INTERVAL_MS = 55 * 60 * 1000;
 const RECENT_MANUAL_ORDER_COOLDOWN_MS = 5 * 60 * 1000;
 const AUTONOMY_RUN_DEDUPLICATION_WINDOW_MS = 15 * 60 * 1000;
 const MARKET_DATA_STALE_AFTER_MS = 30 * 1000;
-const MAX_SCHEDULED_MARKETS = 24;
+// Total market pool scanned per scheduled run — larger pool improves diversity
+// and gives the AI reviewer more high-quality candidates to choose from.
+const MAX_SCHEDULED_MARKETS = 48;
+// Maximum markets sampled from any single category to prevent category
+// concentration bias (e.g., not all 48 slots going to sports).
+const MAX_MARKETS_PER_CATEGORY = 8;
 
 export type AwayTradingDecisionDetails = {
   marketId: string | null;
@@ -330,6 +340,52 @@ function extractActionableMarkets(markets: Awaited<ReturnType<typeof fetchKalshi
   });
 }
 
+/**
+ * Select up to `maxTotal` markets with category diversity.
+ * Markets are grouped by category; at most `perCategory` are kept from each
+ * bucket so no single category monopolises the candidate pool.  Remaining
+ * slots are filled round-robin across categories until `maxTotal` is reached.
+ */
+function selectDiverseMarkets<T extends { category?: string | null }>(
+  markets: T[],
+  maxTotal: number,
+  perCategory: number
+): T[] {
+  const buckets = new Map<string, T[]>();
+
+  for (const market of markets) {
+    const key = String(market.category ?? "other").toLowerCase();
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key)!.push(market);
+  }
+
+  const selected: T[] = [];
+
+  // First pass: take up to perCategory from each bucket.
+  const queues: T[][] = [];
+  for (const [, bucket] of Array.from(buckets)) {
+    selected.push(...bucket.slice(0, perCategory));
+    if (bucket.length > perCategory) {
+      queues.push(bucket.slice(perCategory));
+    }
+  }
+
+  // Second pass: fill remaining slots round-robin from overflow queues.
+  let qi = 0;
+  while (selected.length < maxTotal && queues.length > 0) {
+    const idx = qi % queues.length;
+    const queue = queues[idx];
+    if (queue && queue.length > 0) {
+      selected.push(queue.shift()!);
+    } else {
+      queues.splice(idx, 1);
+    }
+    qi++;
+  }
+
+  return selected.slice(0, maxTotal);
+}
+
 function applyInstructionsToMarkets(
   markets: Awaited<ReturnType<typeof fetchKalshiMarkets>>,
   activeInstructions: any[]
@@ -369,7 +425,11 @@ function applyInstructionsToMarkets(
 async function generateScheduledSignals(userId: number, minConfidence: number, activeInstructions: any[] = []) {
   const markets = await fetchKalshiMarkets({ status: "open" });
   const filteredMarkets = applyInstructionsToMarkets(markets, activeInstructions);
-  const actionableMarkets = extractActionableMarkets(filteredMarkets).slice(0, MAX_SCHEDULED_MARKETS);
+  const actionableMarkets = selectDiverseMarkets(
+    extractActionableMarkets(filteredMarkets),
+    MAX_SCHEDULED_MARKETS,
+    MAX_MARKETS_PER_CATEGORY
+  );
 
   if (actionableMarkets.length === 0) {
     return {
@@ -686,6 +746,12 @@ export async function runScheduledAutonomousTrading(
     });
   }
 
+  // Alert if equity has dropped significantly since the last sync.
+  const previousEquity = Number(creds.accountEquity ?? 0);
+  if (previousEquity > 0) {
+    void alertEquityDrop(userId, previousEquity, equityResult.equity);
+  }
+
   await Promise.all([
     kalshiCredDb.updateKalshiAccountEquity(userId, equityResult.equity),
     db.syncKalshiCapitalWithLiveEquity(equityResult.equity, userId),
@@ -1000,6 +1066,15 @@ export async function runScheduledAutonomousTrading(
       triggeredByOpenId
     );
 
+    // Fire-and-forget alert for exchange rejections.
+    void alertExchangeRejection(userId, runId, {
+      marketId: eligibleSignal.marketId,
+      side: eligibleSignal.side,
+      quantity,
+      limitPrice,
+      error: result.error ?? "unknown",
+    });
+
     return finalize({
       status: "blocked",
       reason: result.error ?? "order placement failed",
@@ -1098,6 +1173,19 @@ export async function runScheduledAutonomousTradingBatch(
       executedMarketId: result.executedMarketId,
       candidateMarketId: result.candidateMarketId,
     });
+
+    // Alert if consecutive errors have accumulated for this user.
+    if (result.status === "error") {
+      try {
+        const recentRuns = await db.getRecentAutonomyRuns(user.id, 6);
+        void alertIfConsecutiveFailures(
+          user.id,
+          recentRuns.map((r: any) => ({ status: String(r.status), runId: r.runId ?? undefined }))
+        );
+      } catch {
+        // Never block the batch for alerting failures.
+      }
+    }
   }
 
   return {

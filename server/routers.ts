@@ -930,6 +930,61 @@ export const appRouter = router({
       }
     }),
 
+    getRecentAutonomyRuns: protectedProcedure
+      .input(
+        z.object({ limit: z.number().int().min(1).max(50).optional().default(20) }).optional()
+      )
+      .query(async ({ input, ctx }) => {
+        try {
+          return await db.getRecentAutonomyRuns(getRequiredUserId(ctx), input?.limit ?? 20);
+        } catch (error) {
+          console.error("[Kalshi] Get recent autonomy runs error:", error);
+          return [];
+        }
+      }),
+
+    getAutonomyRunDetail: protectedProcedure
+      .input(z.object({ runId: z.string().min(1).max(64) }))
+      .query(async ({ input, ctx }) => {
+        try {
+          const run = await db.getAutonomyRunDetail(input.runId, getRequiredUserId(ctx));
+          if (!run) return null;
+
+          const auditDetails = parseAuditDetails(run.decision as string | null);
+          const candidateSetPayload = parseAuditDetails(run.candidateSet as string | null);
+          const rejectedCandidatesPayload = parseAuditDetails(run.rejectedCandidates as string | null);
+          const decision = parseDecisionDetails(
+            auditDetails ? { decision: auditDetails } : null
+          );
+
+          return {
+            runId: run.runId,
+            status: run.status,
+            reason: run.reason,
+            startedAt: run.startedAt,
+            completedAt: run.completedAt ?? null,
+            autonomyMode: run.autonomyMode,
+            executionCadence: run.executionCadence,
+            triggerSource: run.triggerSource,
+            signalsGenerated: Number(run.signalsGenerated ?? 0),
+            executionCandidates: Number(run.executionCandidates ?? 0),
+            orderPlaced: isOrderPlacedFlag(run.orderPlaced),
+            orderId: typeof run.orderId === "string" ? run.orderId : null,
+            executedMarketId: typeof run.executedMarketId === "string" ? run.executedMarketId : null,
+            candidateMarketId: typeof run.candidateMarketId === "string" ? run.candidateMarketId : null,
+            reconciliationStatus: typeof run.reconciliationStatus === "string" ? run.reconciliationStatus : null,
+            reconciliationReason: typeof run.reconciliationReason === "string" ? run.reconciliationReason : null,
+            appliedGuardrails: parseAuditDetails(run.appliedGuardrails as string | null),
+            decision,
+            candidateSet: Array.isArray(candidateSetPayload) ? candidateSetPayload : [],
+            rejectedCandidates: Array.isArray(rejectedCandidatesPayload) ? rejectedCandidatesPayload : [],
+          };
+        } catch (error) {
+          console.error("[Kalshi] Get autonomy run detail error:", error);
+          return null;
+        }
+      }),
+
     // Risk controls
     killSwitch: protectedProcedure.mutation(async ({ ctx }) => {
       try {
@@ -1414,6 +1469,18 @@ export const appRouter = router({
             });
           }
 
+          // Beta gate: live trading with autonomous modes requires beta access.
+          // Internal and invited beta users can arm live trading.
+          // "none" access blocks arming until explicitly granted by an admin.
+          const betaLevel = await db.getUserBetaAccessLevel(userId);
+          if (betaLevel === "none") {
+            throw new TRPCError({
+              code: "FORBIDDEN",
+              message:
+                "Live autonomous trading is in closed beta. Request beta access to arm live trading.",
+            });
+          }
+
           const saved = await tradingPreferencesDb.saveTradingPreferences(userId, {
             ...preferences,
             liveTradingEnabled: true,
@@ -1453,6 +1520,61 @@ export const appRouter = router({
         return { success: false, error: String(error) };
       }
     }),
+  }),
+
+  // Beta access management
+  beta: router({
+    /** Return the current user's beta access level. */
+    getStatus: protectedProcedure.query(async ({ ctx }) => {
+      try {
+        const userId = getRequiredUserId(ctx);
+        const betaAccessLevel = await db.getUserBetaAccessLevel(userId);
+        return {
+          betaAccessLevel,
+          hasLiveAccess: betaAccessLevel !== "none",
+        };
+      } catch (error) {
+        console.error("[Beta] Get beta status error:", error);
+        return { betaAccessLevel: "none" as const, hasLiveAccess: false };
+      }
+    }),
+
+    /** Admin-only: grant or revoke beta access for a user by their integer id. */
+    setAccess: protectedProcedure
+      .input(
+        z.object({
+          targetUserId: z.number().int().positive(),
+          level: z.enum(["none", "internal", "invited", "public"]),
+        })
+      )
+      .mutation(async ({ input, ctx }) => {
+        try {
+          const requestingUser = ctx.user;
+          if (requestingUser?.role !== "admin") {
+            throw new TRPCError({
+              code: "FORBIDDEN",
+              message: "Only admins can modify beta access.",
+            });
+          }
+
+          const updated = await db.setBetaAccessLevel(input.targetUserId, input.level);
+          await db.logAuditEvent(
+            "beta_access_updated",
+            JSON.stringify({ targetUserId: input.targetUserId, level: input.level }),
+            requestingUser.openId
+          );
+
+          return { success: true, user: updated };
+        } catch (error) {
+          if (error instanceof TRPCError) throw error;
+          console.error("[Beta] Set beta access error:", error);
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Unable to update beta access level",
+            cause: error,
+          });
+        }
+      }),
   }),
 
   polymarket: router({
