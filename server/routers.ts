@@ -1843,9 +1843,10 @@ export const appRouter = router({
             fetchPolymarketMarkets({ limit: POLYMARKET_SIGNAL_GENERATION_MARKET_LIMIT }),
           ]);
 
-          // Build Kalshi feeds + signals
+          // Build Kalshi feeds + signals (limit how many markets we check for feeds)
+          const KALSHI_FEED_MARKET_LIMIT = 24;
           const feeds = new Map();
-          for (const m of kalshiMarkets.slice(0, 24)) {
+          for (const m of kalshiMarkets.slice(0, KALSHI_FEED_MARKET_LIMIT)) {
             const feed = getMarketFeed(m.id);
             if (feed) feeds.set(m.id, feed);
           }
@@ -1916,6 +1917,8 @@ export const appRouter = router({
      * Execute both legs of a cross-platform arbitrage opportunity.
      *
      * Requires valid credentials on both platforms.
+     * Token IDs for the Polymarket leg are resolved server-side by fetching
+     * the current market data for the given polymarketMarketId.
      */
     executeCrossArb: protectedProcedure
       .input(
@@ -1924,8 +1927,6 @@ export const appRouter = router({
           kalshiYesPrice: z.number().min(0.01).max(0.99),
           polymarketMarketId: z.string().min(1),
           polymarketYesPrice: z.number().min(0.01).max(0.99),
-          polymarketTokenIdYes: z.string().min(1),
-          polymarketTokenIdNo: z.string().min(1),
           buyPlatform: z.enum(["kalshi", "polymarket"]),
           netEdge: z.number(),
           /** Size for the Kalshi leg in contracts */
@@ -1964,6 +1965,24 @@ export const appRouter = router({
             return { success: false, error: "Arm live trading before executing cross-arb orders." };
           }
 
+          // Fetch live Polymarket market data to resolve actual token IDs
+          const pmMarkets = await fetchPolymarketMarkets({ limit: POLYMARKET_SIGNAL_GENERATION_MARKET_LIMIT });
+          const pmMarket = pmMarkets.find((m) => m.marketId === input.polymarketMarketId);
+          if (!pmMarket) {
+            return {
+              success: false,
+              error: `Polymarket market ${input.polymarketMarketId} not found in current market data.`,
+            };
+          }
+          const tokenIdYes = pmMarket.tokens.find((t) => t.outcome.toLowerCase() === "yes")?.token_id;
+          const tokenIdNo = pmMarket.tokens.find((t) => t.outcome.toLowerCase() === "no")?.token_id;
+          if (!tokenIdYes || !tokenIdNo) {
+            return {
+              success: false,
+              error: "Could not resolve YES/NO token IDs for the Polymarket market.",
+            };
+          }
+
           const opportunity = {
             type: (input.buyPlatform === "kalshi"
               ? "buy_kalshi_yes_sell_polymarket_yes"
@@ -1973,7 +1992,7 @@ export const appRouter = router({
             kalshiMarketId: input.kalshiMarketId,
             kalshiTitle: input.kalshiMarketId,
             polymarketMarketId: input.polymarketMarketId,
-            polymarketQuestion: input.polymarketMarketId,
+            polymarketQuestion: pmMarket.question,
             kalshiYesPrice: input.kalshiYesPrice,
             polymarketYesPrice: input.polymarketYesPrice,
             spread: Math.abs(input.kalshiYesPrice - input.polymarketYesPrice),
@@ -1987,7 +2006,6 @@ export const appRouter = router({
             minLiquidity: 0,
           };
 
-          const { apiKey: kalshiKey, privateKey: kalshiPrivKey } = kalshiCreds;
           const {
             apiKey: pmKey,
             apiSecret: pmSecret,
@@ -1999,8 +2017,8 @@ export const appRouter = router({
             {
               kalshiContracts: input.kalshiContracts,
               polymarketSizeUsdc: input.polymarketSizeUsdc,
-              polymarketTokenIdYes: input.polymarketTokenIdYes,
-              polymarketTokenIdNo: input.polymarketTokenIdNo,
+              polymarketTokenIdYes: tokenIdYes,
+              polymarketTokenIdNo: tokenIdNo,
             },
             {
               placeKalshiOrder: (marketId, side, quantity, limitPrice) =>

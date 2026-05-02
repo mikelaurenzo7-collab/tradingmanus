@@ -581,11 +581,7 @@ function CrossArbExecutionPanel() {
 
   const opportunities = (arbQuery.data?.opportunities ?? []).slice(0, 5);
 
-  const handleExecute = async (
-    opp: (typeof opportunities)[number],
-    polymarketTokenIdYes: string,
-    polymarketTokenIdNo: string,
-  ) => {
+  const handleExecute = async (opp: (typeof opportunities)[number]) => {
     const key = `${opp.kalshiMarketId}-${opp.polymarketMarketId}`;
     setExecuting(key);
     try {
@@ -594,8 +590,6 @@ function CrossArbExecutionPanel() {
         kalshiYesPrice: opp.kalshiYesPrice,
         polymarketMarketId: opp.polymarketMarketId,
         polymarketYesPrice: opp.polymarketYesPrice,
-        polymarketTokenIdYes,
-        polymarketTokenIdNo,
         buyPlatform: opp.buyPlatform,
         netEdge: opp.netEdge,
         kalshiContracts: 1,
@@ -679,11 +673,7 @@ function CrossArbExecutionPanel() {
                       className="text-[11px] h-6 px-2 bg-emerald-600/80 hover:bg-emerald-500 text-white"
                       disabled={isExec}
                       onClick={() =>
-                        handleExecute(
-                          opp,
-                          `${opp.polymarketMarketId}-yes`,
-                          `${opp.polymarketMarketId}-no`,
-                        )
+                        handleExecute(opp)
                       }
                     >
                       {isExec ? (

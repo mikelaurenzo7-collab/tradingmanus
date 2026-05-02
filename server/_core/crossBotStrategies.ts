@@ -70,6 +70,11 @@ export type CrossArbExecutionResult = {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** Maximum conviction boost added when a consensus partner is found */
+const MAX_CONSENSUS_BOOST = 0.15;
+/** How much of the Jaccard similarity score maps to conviction boost */
+const SIMILARITY_BOOST_MULTIPLIER = 0.3;
+
 function normalise(text: string): string {
   return text
     .toLowerCase()
@@ -171,7 +176,7 @@ export function mergePlatformSignals(
     }
 
     if (bestMatch) {
-      const boost = Math.min(0.15, bestScore * 0.3);
+      const boost = Math.min(MAX_CONSENSUS_BOOST, bestScore * SIMILARITY_BOOST_MULTIPLIER);
       ks.consensusPartner = {
         platform: "polymarket",
         marketId: bestMatch.marketId,
