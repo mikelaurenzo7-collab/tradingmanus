@@ -321,7 +321,7 @@ export const appRouter = router({
     me: publicProcedure.query(opts => opts.ctx.user),
     login: publicProcedure
       .input(z.object({ 
-        email: z.string().email(), 
+        email: z.string().min(1), 
         password: z.string().min(1),
         twoFactorToken: z.string().optional(),
       }))
