@@ -55,6 +55,7 @@ import {
 } from "./_core/kalshiCombinatorial";
 import { trainingRouter } from "./training.router";
 import { advancedRouter } from "./advanced.router";
+import { chatRouter } from "./chat.router";
 import { calculateKalshiBuyOrderRisk, MAX_KALSHI_ORDER_CONTRACTS } from "./_core/kalshiRisk";
 import {
   generateMMQuotePairs,
@@ -1653,8 +1654,10 @@ export const appRouter = router({
   }),
 
   // --------------------------------------------------------------------------
-  // Combinatorial arbitrage (works across both Kalshi and Polymarket markets)
+  // AI Chatbot workspaces (Kalshi + Polymarket, persistent memory)
   // --------------------------------------------------------------------------
+  chat: chatRouter,
+
   combinatorial: router({
     /**
      * Detect cross-market combinatorial arbitrage on Kalshi markets.

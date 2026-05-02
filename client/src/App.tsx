@@ -21,6 +21,7 @@ import TradingAutonomy from "./pages/TradingAutonomy";
 import Funding from "./pages/Funding";
 import ClusterMonitor from "./pages/ClusterMonitor";
 import Strategies from "./pages/Strategies";
+import Chat from "./pages/Chat";
 
 function Router() {
   return (
@@ -43,6 +44,7 @@ function Router() {
       <Route path={"/backtest"} component={() => <DashboardLayout><Backtesting /></DashboardLayout>} />
       <Route path={"/analytics"} component={() => <DashboardLayout><Analytics /></DashboardLayout>} />
       <Route path={"/funding"} component={() => <DashboardLayout><Funding /></DashboardLayout>} />
+      <Route path={"/chat"} component={() => <DashboardLayout><Chat /></DashboardLayout>} />
       <Route path={"/404"} component={NotFound} />
       <Route component={NotFound} />
     </Switch>

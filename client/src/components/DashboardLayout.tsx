@@ -21,7 +21,7 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { useAuth } from "@/_core/hooks/useAuth";
-import { LayoutDashboard, LogOut, TrendingUp, Shield, FileText, Plug, BookOpen, BarChart3, Brain, Briefcase, LineChart, SlidersHorizontal, AlertTriangle, Loader2, ListChecks, Wallet, Activity, Network, Bot } from "lucide-react";
+import { LayoutDashboard, LogOut, TrendingUp, Shield, FileText, Plug, BookOpen, BarChart3, Brain, Briefcase, LineChart, SlidersHorizontal, AlertTriangle, Loader2, ListChecks, Wallet, Activity, Network, Bot, MessageSquare } from "lucide-react";
 import { CSSProperties, FormEvent, useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
@@ -41,6 +41,7 @@ const navSections: { label: string; items: NavItem[] }[] = [
       { icon: Bot, label: "Strategies", path: "/strategies" },
       { icon: ListChecks, label: "Positions", path: "/positions" },
       { icon: Activity, label: "Trades", path: "/trades" },
+      { icon: MessageSquare, label: "AI Bots", path: "/chat" },
     ],
   },
   {
