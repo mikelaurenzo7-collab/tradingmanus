@@ -488,6 +488,11 @@ export async function recordPolymarketTradeExit(
       tradeId,
       exitPrice,
       exitSizeUsdc,
+      // Persist realizedPnl so the daily-loss circuit breaker can sum it
+      // out of the audit log without needing a separate positions table.
+      realizedPnl: tradeContext?.realizedPnl ?? null,
+      marketId: tradeContext?.marketId ?? null,
+      side: tradeContext?.side ?? null,
     }),
     `user:${scopedUserId}`
   );

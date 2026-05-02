@@ -282,6 +282,56 @@ export function getCacheHitRatio(telemetry: ReviewerTelemetry): number {
 }
 
 /**
+ * Per-million-token Anthropic pricing (USD).  Cache reads are billed at 10%
+ * of the base input rate; cache creation at 1.25x.  Numbers are rough as of
+ * late-2025 and serve as a budgeting heuristic, not exact billing — when
+ * Anthropic publishes new prices update this table.
+ *
+ * Models not in this map are priced as Sonnet (the default review tier) so
+ * the estimate is never zero for an unknown model.
+ */
+const ANTHROPIC_PRICING_PER_MTOK: Record<string, { input: number; output: number }> = {
+  "claude-haiku-4-5": { input: 0.8, output: 4 },
+  "claude-haiku-4-5-20251001": { input: 0.8, output: 4 },
+  "claude-sonnet-4-5": { input: 3, output: 15 },
+  "claude-sonnet-4-6": { input: 3, output: 15 },
+  "claude-opus-4-7": { input: 15, output: 75 },
+  default: { input: 3, output: 15 },
+};
+
+function priceFor(model: string | undefined): { input: number; output: number } {
+  const key = (model ?? "").toLowerCase();
+  for (const candidate of Object.keys(ANTHROPIC_PRICING_PER_MTOK)) {
+    if (candidate !== "default" && key.startsWith(candidate.toLowerCase())) {
+      return ANTHROPIC_PRICING_PER_MTOK[candidate]!;
+    }
+  }
+  return ANTHROPIC_PRICING_PER_MTOK.default!;
+}
+
+/**
+ * Estimated USD cost summed across every Anthropic call captured in this
+ * telemetry run.  Conservative: cache_read at 10% of input, cache_creation
+ * at 1.25x input.  Operators can compare this number to realized PnL from
+ * the same run to confirm AI cost stays well below edge.
+ *
+ * Defaults to the Sonnet review price when telemetry doesn't tag a model.
+ * If you want per-call accuracy, add `model` tagging at the call site.
+ */
+export function getEstimatedUsdCost(
+  telemetry: ReviewerTelemetry,
+  model?: string,
+): number {
+  const { input, output } = priceFor(model);
+  const million = 1_000_000;
+  const inputCost = (telemetry.inputTokens / million) * input;
+  const outputCost = (telemetry.outputTokens / million) * output;
+  const cacheReadCost = (telemetry.cacheReadInputTokens / million) * input * 0.1;
+  const cacheCreateCost = (telemetry.cacheCreationInputTokens / million) * input * 1.25;
+  return Number((inputCost + outputCost + cacheReadCost + cacheCreateCost).toFixed(4));
+}
+
+/**
  * Memory injection helper.  Wraps the caller-formatted desk-memory string in
  * a separately-cacheable system block.  We split it from the persona block so
  * that updating the tape only invalidates this single block instead of busting

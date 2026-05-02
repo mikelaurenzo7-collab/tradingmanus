@@ -35,6 +35,7 @@ import {
 } from "./polymarketRisk";
 import { assertPositiveIntegerUserId } from "./userScope";
 import { recordPolymarketTradeEntry } from "./polymarketLearning";
+import { isShadowModeEnabled, recordPolymarketShadowOrder } from "./shadowMode";
 
 const MAX_SCHEDULED_MARKETS = 80;
 const BASE_RISK_LIMITS = {
@@ -283,7 +284,9 @@ export async function runPolymarketAutonomousTrading(
   // injection — each Polymarket desk loads its prior win/loss tape from
   // the deskMemory table before this call.  Telemetry captures cache hit
   // rate, web_search invocations, and triage stats for the audit log.
-  const { newReviewerTelemetry, getCacheHitRatio } = await import("./aiToolbelt");
+  const { newReviewerTelemetry, getCacheHitRatio, getEstimatedUsdCost } = await import(
+    "./aiToolbelt"
+  );
   const telemetry = newReviewerTelemetry();
   const reviewedSignals = await reviewPolymarketSignalsWithTrader(
     {
@@ -299,6 +302,7 @@ export async function runPolymarketAutonomousTrading(
     JSON.stringify({
       desks: telemetry.desks,
       cacheHitRatio: Number(getCacheHitRatio(telemetry).toFixed(3)),
+      estimatedUsdCost: getEstimatedUsdCost(telemetry),
       cacheReadInputTokens: telemetry.cacheReadInputTokens,
       cacheCreationInputTokens: telemetry.cacheCreationInputTokens,
       inputTokens: telemetry.inputTokens,
@@ -412,6 +416,32 @@ export async function runPolymarketAutonomousTrading(
     };
   }
 
+  // --- 4b. Daily-loss circuit breaker (parity with Kalshi autonomy).
+  // Reads accumulated negative realizedPnl from today's
+  // polymarket_trade_exit audit events; when it crosses the dynamic
+  // maxLossPerDay we disarm for the rest of the day rather than burn
+  // capital trying to dig out.
+  const todayPolymarketLoss = await db.getTodayPolymarketRealizedLoss(scopedUserId);
+  if (todayPolymarketLoss >= riskLimits.maxLossPerDay) {
+    await db.logAuditEvent(
+      "polymarket_autonomy_daily_loss_circuit_breaker",
+      JSON.stringify({
+        marketId: best.marketId,
+        todayPolymarketLoss,
+        maxLossPerDay: riskLimits.maxLossPerDay,
+      }),
+      triggeredByOpenId,
+    );
+    return {
+      success: true,
+      status: "blocked",
+      reason: "daily loss limit reached",
+      signalsGenerated: allSignals.length,
+      executionCandidates: candidates.length,
+      orderPlaced: false,
+    };
+  }
+
   // --- 5. Gating: semi-autonomous requires approval above threshold ---
   if (
     preferences.autonomyMode === "semi_autonomous" &&
@@ -429,17 +459,31 @@ export async function runPolymarketAutonomousTrading(
 
   // --- 6. Place the order ---
   try {
-    const orderResult = await placePolymarketOrder(
-      creds.apiKey,
-      creds.apiSecret,
-      creds.apiPassphrase,
-      {
-        tokenId: best.tokenId,
-        side: "BUY",
-        price: best.limitPrice,
-        size: scaledSize,
-      },
-    );
+    const orderResult = isShadowModeEnabled()
+      ? await recordPolymarketShadowOrder({
+          userId: scopedUserId,
+          triggeredByOpenId,
+          marketId: best.marketId,
+          question: best.question ?? null,
+          tokenId: best.tokenId,
+          side: best.side,
+          limitPrice: best.limitPrice,
+          sizeUsdc: scaledSize,
+          signalConfidence: best.confidence,
+          signalType: best.signalType,
+          signalReasoning: best.reasoning ?? "",
+        })
+      : await placePolymarketOrder(
+          creds.apiKey,
+          creds.apiSecret,
+          creds.apiPassphrase,
+          {
+            tokenId: best.tokenId,
+            side: "BUY",
+            price: best.limitPrice,
+            size: scaledSize,
+          },
+        );
 
     if (!orderResult.success) {
       await db.logAuditEvent(

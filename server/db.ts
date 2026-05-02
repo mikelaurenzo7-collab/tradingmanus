@@ -897,6 +897,60 @@ export async function getLatestAuditEventByType(
   return result[0] || null;
 }
 
+/**
+ * Sum today's realized loss from Polymarket trade-exit audit events.
+ *
+ * Polymarket exits don't write to a positions table; we encode realizedPnl
+ * into the `polymarket_trade_exit` audit event's JSON details.  This helper
+ * scans events for the given user since the start of today and returns the
+ * absolute total of negative PnL.  Returns 0 if the DB is unavailable so
+ * the autonomy loop fails open rather than blocking trading on a query
+ * outage (the per-trade risk gate still applies).
+ */
+export async function getTodayPolymarketRealizedLoss(userId: number) {
+  const scopedUserId = assertPositiveIntegerUserId(
+    userId,
+    "getTodayPolymarketRealizedLoss userId",
+  );
+  const database = await getDb();
+  if (!database) return 0;
+
+  const startOfDay = new Date();
+  startOfDay.setHours(0, 0, 0, 0);
+
+  try {
+    const rows = await database
+      .select()
+      .from(auditLog)
+      .where(
+        and(
+          eq(auditLog.eventType, "polymarket_trade_exit"),
+          eq(auditLog.triggeredByOpenId, `user:${scopedUserId}`),
+          gte(auditLog.createdAt, startOfDay),
+        ),
+      );
+
+    return rows.reduce((total: number, row: any) => {
+      try {
+        const parsed = JSON.parse(String(row.details ?? "{}"));
+        const pnl = Number(parsed.realizedPnl);
+        if (Number.isFinite(pnl) && pnl < 0) {
+          return total + Math.abs(pnl);
+        }
+      } catch {
+        // Older exit events without realizedPnl simply contribute 0.
+      }
+      return total;
+    }, 0);
+  } catch (error) {
+    console.error(
+      "[Database] getTodayPolymarketRealizedLoss failed:",
+      error,
+    );
+    return 0;
+  }
+}
+
 export async function getAuditLog(
   limitDays: number = 7,
   triggeredByOpenId: string,

@@ -20,7 +20,8 @@ import { placeKalshiOrder } from "./kalshiExecution";
 import { calculateKalshiBuyOrderRisk, estimateContractsForRiskBudget } from "./kalshiRisk";
 import { assertPositiveIntegerUserId } from "./userScope";
 import { reviewSignalsWithTrader } from "./tradingReviewer";
-import { getCacheHitRatio, newReviewerTelemetry } from "./aiToolbelt";
+import { getCacheHitRatio, newReviewerTelemetry, getEstimatedUsdCost } from "./aiToolbelt";
+import { isShadowModeEnabled, recordKalshiShadowOrder } from "./shadowMode";
 
 const BASE_RISK_LIMITS = {
   maxLossPerTrade: 5,
@@ -433,6 +434,7 @@ async function generateScheduledSignals(userId: number, minConfidence: number, a
     JSON.stringify({
       desks: telemetry.desks,
       cacheHitRatio: Number(getCacheHitRatio(telemetry).toFixed(3)),
+      estimatedUsdCost: getEstimatedUsdCost(telemetry),
       cacheReadInputTokens: telemetry.cacheReadInputTokens,
       cacheCreationInputTokens: telemetry.cacheCreationInputTokens,
       inputTokens: telemetry.inputTokens,
@@ -968,13 +970,28 @@ export async function runScheduledAutonomousTrading(
     });
   }
 
-  const result = await placeKalshiOrder(
-    userId,
-    eligibleSignal.marketId,
-    eligibleSignal.side,
-    orderRisk.quantity,
-    orderRisk.limitPrice
-  );
+  const result = isShadowModeEnabled()
+    ? await recordKalshiShadowOrder({
+        userId,
+        triggeredByOpenId,
+        marketId: eligibleSignal.marketId,
+        side: eligibleSignal.side,
+        quantity: orderRisk.quantity,
+        limitPrice: orderRisk.limitPrice,
+        signalConfidence: eligibleSignal.confidence,
+        signalReasoning: eligibleSignal.reasoning ?? "",
+        expectedValue: eligibleSignal.expectedValue,
+        availableCapital,
+        orderExposure,
+        maxLossOnTrade,
+      })
+    : await placeKalshiOrder(
+        userId,
+        eligibleSignal.marketId,
+        eligibleSignal.side,
+        orderRisk.quantity,
+        orderRisk.limitPrice
+      );
 
   if (!result.success) {
     await db.logAuditEvent(
