@@ -103,9 +103,17 @@ export function createTradingReviewer(options: TradingReviewerOptions = {}): Tra
   };
 }
 
+/**
+ * The reviewer is "configured" as long as Claude is available.  OpenAI is
+ * optional — it acts as an automatic fallback when Claude fails for a market
+ * and as a second-opinion escalation for high-stakes trades.
+ */
 export function isTradingReviewerConfigured(options: TradingReviewerOptions = {}) {
-  const activeProviders = getActiveProviders(options);
-  return DEFAULT_DUO_PROVIDERS.every((provider) => activeProviders.includes(provider));
+  return getActiveProviders(options).includes("anthropic");
+}
+
+export function isOpenAiFallbackConfigured(options: TradingReviewerOptions = {}) {
+  return getActiveProviders(options).includes("openai");
 }
 
 function clamp(value: number, minimum: number, maximum: number) {
@@ -257,13 +265,6 @@ function getOpenAiText(payload: unknown) {
   throw new Error("OpenAI response did not include JSON message content");
 }
 
-function getAnthropicText(payload: Awaited<ReturnType<AnthropicClient["messages"]["create"]>>) {
-  return payload.content
-    .map((block) => (block.type === "text" ? block.text ?? "" : ""))
-    .join("\n")
-    .trim();
-}
-
 function buildOpenAiSystemPrompt(persona?: CategoryPersona): string {
   const desk = persona?.label ?? "Kalshi Generalist Desk";
   const personaMandate = persona?.systemMandate
@@ -403,12 +404,13 @@ async function requestAnthropicReviews(
 
 function combineApprovedSignal(
   signal: KalshiSignal,
-  providerReviews: Array<{ provider: ProviderName; review: TradingSignalReview }>,
-  logger: Pick<Console, "warn" | "error">
+  providerReviews: Array<{ provider: ProviderName; review: TradingSignalReview; weight?: number }>,
+  logger: Pick<Console, "warn" | "error">,
+  desk?: string,
 ) {
   if (providerReviews.length === 0) {
     logger.warn(
-      `[TradingReviewer] No provider approvals for marketId=${signal.marketId}; dropping signal.`
+      `[TradingReviewer] No provider approvals for marketId=${signal.marketId} (desk=${desk ?? "default"}); dropping signal.`
     );
     return null;
   }
@@ -441,18 +443,66 @@ function combineApprovedSignal(
     })
     .join(" | ");
 
+  const ledger = providerReviews.length === 1
+    ? `${providerReviews[0]?.provider === "anthropic" ? "Claude" : "OpenAI"} solo review`
+    : "AI trader duo";
+  const deskLabel = desk ? ` [${desk}]` : "";
+
   return {
     ...signal,
     confidence: clamp(signal.confidence + confidenceAdjustment, 0.01, 0.99),
     expectedValue: Math.max(0, signal.expectedValue + expectedValueAdjustment),
-    reasoning: `${signal.reasoning} | AI trader duo: ${reviewerReasoning}`,
+    reasoning: `${signal.reasoning} | ${ledger}${deskLabel}: ${reviewerReasoning}`,
   };
 }
 
-async function runDuoReview(
+/**
+ * Result of asking one provider to review one batch of category-bucketed signals.
+ * `reviews` may be empty if the request failed; callers handle fallback per-market.
+ */
+type ProviderBatchResult = {
+  provider: ProviderName;
+  reviewsByMarket: Map<string, TradingSignalReview>;
+  failed: boolean;
+};
+
+async function callProvider(
+  provider: ProviderName,
+  reviewPayload: ReturnType<typeof getReviewPayload>,
+  options: TradingReviewerOptions,
+  persona: CategoryPersona | undefined,
+  stakes: StakesContext,
+  logger: Pick<Console, "warn" | "error">,
+): Promise<ProviderBatchResult> {
+  try {
+    const response =
+      provider === "openai"
+        ? await requestOpenAiReviews(reviewPayload, options, persona)
+        : await requestAnthropicReviews(reviewPayload, options, persona, stakes);
+    return {
+      provider,
+      reviewsByMarket: new Map(response.reviews.map((review) => [review.marketId, review])),
+      failed: false,
+    };
+  } catch (error) {
+    logger.warn(
+      `[TradingReviewer] ${provider} review failed for desk=${persona?.id ?? "default"}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return { provider, reviewsByMarket: new Map(), failed: true };
+  }
+}
+
+/**
+ * Per-category review with Claude-primary topology:
+ *   - Claude is always called and is the gate for normal-stakes trades.
+ *   - OpenAI (if configured) is called in parallel and only matters in two cases:
+ *       (a) Claude failed/missing for a market → OpenAI fallback acts as the gate.
+ *       (b) Trade is high-stakes → OpenAI acts as second-opinion (both must approve).
+ *   - If neither provider has an approval for a market, the signal is dropped.
+ */
+async function runCategoryReview(
   signals: KalshiSignal[],
   marketsById: Map<string, KalshiMarket>,
-  activeProviders: ProviderName[],
   options: TradingReviewerOptions,
   persona: CategoryPersona | undefined,
   stakes: StakesContext,
@@ -469,57 +519,88 @@ async function runDuoReview(
     persona,
   });
 
-  try {
-    const responses = await Promise.all(
-      activeProviders.map((provider) =>
-        provider === "openai"
-          ? requestOpenAiReviews(reviewPayload, options, persona)
-          : requestAnthropicReviews(reviewPayload, options, persona, stakes),
-      ),
+  const claudeConfigured = isTradingReviewerConfigured(options);
+  const openaiConfigured = isOpenAiFallbackConfigured(options);
+  const escalateToOpenAi = isHighStakes(stakes) && openaiConfigured;
+
+  if (!claudeConfigured && !openaiConfigured) {
+    logger.error(
+      "[TradingReviewer] No reviewer providers configured; dropping all candidates so autonomous trading fails closed.",
     );
+    return [];
+  }
 
-    const reviewsByProvider = new Map<ProviderName, Map<string, TradingSignalReview>>();
-    for (const response of responses) {
-      reviewsByProvider.set(
-        response.provider,
-        new Map(response.reviews.map((review) => [review.marketId, review])),
-      );
-    }
+  // Claude always runs when configured; OpenAI runs whenever it's configured
+  // (it's cheap insurance — fallback when Claude misses, escalation when stakes high).
+  const providerCalls: Promise<ProviderBatchResult>[] = [];
+  if (claudeConfigured) {
+    providerCalls.push(callProvider("anthropic", reviewPayload, options, persona, stakes, logger));
+  }
+  if (openaiConfigured) {
+    providerCalls.push(callProvider("openai", reviewPayload, options, persona, stakes, logger));
+  }
 
-    return signals
-      .map((signal) => {
-        const providerReviews = activeProviders.map((provider) => {
-          const review = reviewsByProvider.get(provider)?.get(signal.marketId);
-          if (!review) {
+  const batchResults = await Promise.all(providerCalls);
+  const byProvider = new Map<ProviderName, ProviderBatchResult>(
+    batchResults.map((result) => [result.provider, result]),
+  );
+  const claudeBatch = byProvider.get("anthropic");
+  const openaiBatch = byProvider.get("openai");
+
+  return signals
+    .map((signal) => {
+      const claudeReview = claudeBatch?.reviewsByMarket.get(signal.marketId);
+      const openaiReview = openaiBatch?.reviewsByMarket.get(signal.marketId);
+      const usingClaude = Boolean(claudeReview);
+
+      // Case 1: Claude reviewed. Use Claude as the gate.
+      if (usingClaude) {
+        if (!claudeReview!.approved) return null;
+
+        // High-stakes escalation: require OpenAI second opinion if available.
+        if (escalateToOpenAi) {
+          if (!openaiReview) {
             logger.warn(
-              `[TradingReviewer] ${provider} did not return a review for marketId=${signal.marketId}; dropping signal.`,
+              `[TradingReviewer] OpenAI second-opinion missing for high-stakes marketId=${signal.marketId}; dropping for safety.`,
             );
             return null;
           }
-          return { provider, review };
-        });
-
-        if (providerReviews.some((review) => review === null)) {
-          return null;
+          if (!openaiReview.approved) return null;
+          return combineApprovedSignal(
+            signal,
+            [
+              { provider: "anthropic", review: claudeReview! },
+              { provider: "openai", review: openaiReview },
+            ],
+            logger,
+            persona?.label,
+          );
         }
 
         return combineApprovedSignal(
           signal,
-          providerReviews.filter(
-            (review): review is { provider: ProviderName; review: TradingSignalReview } =>
-              Boolean(review),
-          ),
+          [{ provider: "anthropic", review: claudeReview! }],
           logger,
+          persona?.label,
         );
-      })
-      .filter((signal): signal is KalshiSignal => Boolean(signal));
-  } catch (error) {
-    logger.error(
-      `[TradingReviewer] Duo AI review failed for desk=${persona?.id ?? "default"}; dropping that batch (capital preservation):`,
-      error,
-    );
-    return [];
-  }
+      }
+
+      // Case 2: Claude missing → OpenAI fallback path.
+      if (!openaiReview) {
+        logger.warn(
+          `[TradingReviewer] Both providers missing review for marketId=${signal.marketId} (desk=${persona?.id ?? "default"}); dropping signal.`,
+        );
+        return null;
+      }
+      if (!openaiReview.approved) return null;
+      return combineApprovedSignal(
+        signal,
+        [{ provider: "openai", review: openaiReview }],
+        logger,
+        persona?.label,
+      );
+    })
+    .filter((signal): signal is KalshiSignal => Boolean(signal));
 }
 
 export async function reviewSignalsWithTrader(
@@ -536,12 +617,16 @@ export async function reviewSignalsWithTrader(
   }
 
   const logger = options.logger ?? console;
-  const activeProviders = getActiveProviders(options);
-  if (!DEFAULT_DUO_PROVIDERS.every((provider) => activeProviders.includes(provider))) {
+  if (!isTradingReviewerConfigured(options) && !isOpenAiFallbackConfigured(options)) {
     logger.error(
-      "[TradingReviewer] OpenAI + Claude duo is not fully configured; dropping all candidates so autonomous trading fails closed."
+      "[TradingReviewer] No reviewer provider configured (need ANTHROPIC_API_KEY at minimum, OPENAI_API_KEY optional fallback); dropping all candidates.",
     );
     return [];
+  }
+  if (!isTradingReviewerConfigured(options)) {
+    logger.warn(
+      "[TradingReviewer] ANTHROPIC_API_KEY missing; running OpenAI-only fallback mode. This is a degraded configuration.",
+    );
   }
 
   const cap = input.maxSignals ?? DEFAULT_MAX_SIGNALS;
@@ -551,10 +636,9 @@ export async function reviewSignalsWithTrader(
   // When category routing is disabled, fall back to a single combined batch so
   // the public behavior still matches the original single-mandate reviewer.
   if (!ENV.enableAiCategoryRouting) {
-    return runDuoReview(
+    return runCategoryReview(
       cappedSignals,
       marketsById,
-      activeProviders,
       options,
       undefined,
       stakesForSignals(cappedSignals),
@@ -571,15 +655,7 @@ export async function reviewSignalsWithTrader(
     Array.from(buckets.entries()).map(([category, batchSignals]) => {
       const persona = getCategoryPersona("kalshi", category);
       const stakes = stakesForSignals(batchSignals);
-      return runDuoReview(
-        batchSignals,
-        marketsById,
-        activeProviders,
-        options,
-        persona,
-        stakes,
-        logger,
-      );
+      return runCategoryReview(batchSignals, marketsById, options, persona, stakes, logger);
     }),
   );
 

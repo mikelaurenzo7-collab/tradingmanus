@@ -30,8 +30,10 @@ export const ENV = {
   // Feature toggles for the AI toolbelt.
   enableAiPromptCache: normalizeBoolean(process.env.ENABLE_AI_PROMPT_CACHE, true),
   enableAiCategoryRouting: normalizeBoolean(process.env.ENABLE_AI_CATEGORY_ROUTING, true),
-  enableAiWebSearch: normalizeBoolean(process.env.ENABLE_AI_WEB_SEARCH, false),
-  enableAiExtendedThinking: normalizeBoolean(process.env.ENABLE_AI_EXTENDED_THINKING, false),
+  // Defaults are ON now that Claude is the primary reviewer; both features are
+  // gated per-call by stakes / availability inside aiToolbelt.
+  enableAiWebSearch: normalizeBoolean(process.env.ENABLE_AI_WEB_SEARCH, true),
+  enableAiExtendedThinking: normalizeBoolean(process.env.ENABLE_AI_EXTENDED_THINKING, true),
   kalshiApiKey: normalize(process.env.KALSHI_API_KEY),
   isProduction: process.env.NODE_ENV === "production",
   gnewsApiKey: normalize(process.env.GNEWS_API_KEY),

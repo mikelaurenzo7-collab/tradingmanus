@@ -1,6 +1,6 @@
 # Laurenzo Kalshi Trading Dashboard
 
-Single-owner Kalshi trading console with an **OpenAI + Claude autonomous trading duo**. Designed to run on **Vercel** with a **Neon Postgres** database.
+Single-owner Kalshi + Polymarket trading console with a **Claude-primary, category-specialized AI reviewer** (and OpenAI as an optional fallback / high-stakes second opinion). Designed to run on **Vercel** with a **Neon Postgres** database.
 
 ## 🔒 Security Features
 
@@ -25,7 +25,7 @@ This application includes comprehensive security features:
 - **Database**: Neon Postgres via `@neondatabase/serverless` HTTP driver + `drizzle-orm/neon-http`
 - **Auth**: Owner-only password login with optional 2FA/MFA. JWT access tokens (24h) + refresh tokens (7d) in httpOnly cookies.
 - **Security**: Rate limiting, CSRF protection, PBKDF2 encryption, distributed locking, structured logging
-- **AI**: OpenAI and Claude review every candidate signal before persistence and before any autonomous order. Both providers must approve. Their bounded confidence adjustments `[-0.25, +0.15]` and EV adjustments `[-0.1, +0.1]` are blended. Existing risk guardrails still hard-block.
+- **AI**: Claude is the primary reviewer for every candidate signal on both Kalshi and Polymarket. Each candidate is routed by category (sports / crypto / politics / economics / tech / culture / weather) to a domain-expert desk persona. Claude calls use prompt caching, the `web_search_20250305` tool for fresh news context, and extended thinking on high-stakes trades. OpenAI is an optional **fallback** (used when Claude fails to return a review for a market) and an optional **second-opinion escalation** (consulted on high-stakes trades, where both providers must approve). Bounded confidence adjustments `[-0.25, +0.15]` and EV adjustments `[-0.1, +0.1]` are blended. Existing risk guardrails still hard-block.
 - **Scheduling**: Vercel Cron triggers `/api/scheduled/autonomous-trading` (every 15 min) and `/api/scheduled/order-sync` (every 5 min). Local dev uses interval timers.
 
 ## One-time setup
@@ -35,7 +35,7 @@ This application includes comprehensive security features:
    ```bash
    openssl rand -base64 32  # Run this 3 times for each secret
    ```
-3. **Get both an OpenAI API key and an Anthropic API key** for the duo reviewer.
+3. **Get an Anthropic API key** (required — Claude is the primary reviewer). An **OpenAI API key** is optional but recommended for fallback + high-stakes second opinion.
 4. Copy `.env.example` → `.env` and fill in values.
 5. Install deps:
    ```bash
@@ -72,13 +72,32 @@ corepack pnpm build
    - `*/5 * * * *` → order/position sync
    Cron jobs authenticate via `Authorization: Bearer ${CRON_SECRET}`.
 
-## How the AI duo trades
+## How the AI bots trade
 
-1. The autonomy job pulls open Kalshi markets and runs the heuristic signal generator (price/volume/sentiment/liquidity).
+1. The autonomy job pulls open Kalshi (and/or Polymarket) markets and runs the heuristic signal generator (price/volume/sentiment/liquidity, plus Polymarket cluster-monitor signals).
 2. Heuristic signals are filtered by confidence, market conditions, and any active training instructions.
-3. **OpenAI + Claude are the final reviewers** (`server/_core/tradingReviewer.ts`). Each returns JSON shaped like `{ reviews: [{ marketId, approved, confidenceAdjustment, expectedValueAdjustment, reasoning }] }`. Any veto, omission, malformed response, or timeout drops the signal. Dual approvals get bounded adjustments blended together.
-4. The execution layer ranks remaining signals, computes risk-budgeted contract sizes, and only places an order if every guardrail passes (`kalshiRisk.ts`).
-5. In `NODE_ENV=test`, duo review is bypassed for deterministic tests unless a test explicitly forces provider calls.
+3. **Per-category dispatch.** Each candidate signal is classified into `sports | crypto | politics | economics | tech | culture | weather | other` (`server/_core/marketCategoryRouter.ts`) and routed to a domain-expert desk persona (`server/_core/categoryPersonas.ts`). There are 16 personas total — one per `(platform, category)` — so a Kalshi crypto signal and a Polymarket politics signal are reviewed under different specialist mandates.
+4. **Claude reviews everything.** The Anthropic call uses prompt caching on the static system mandate (cuts input cost ~90% at high cadence), enables the hosted `web_search_20250305` tool so the reviewer can pull fresh news for fast-moving markets, and turns on extended thinking for high-stakes trades. Model tier is automatic: Sonnet for normal review, Opus when the trade is high-stakes.
+5. **OpenAI is optional fallback + second opinion.**
+   - Normal-stakes trade, Claude approves → trade proceeds on Claude's verdict alone.
+   - Normal-stakes trade, Claude omits a market → OpenAI's review acts as the fallback gate (if configured).
+   - High-stakes trade (notional ≥ $25, near-resolution, or `confidence ≥ 0.9`) → both Claude and OpenAI must approve.
+6. Each reviewer returns JSON shaped like `{ reviews: [{ marketId, approved, confidenceAdjustment, expectedValueAdjustment, reasoning }] }`. Vetoes drop the signal. Approvals get bounded adjustments blended together.
+7. The execution layer ranks remaining signals, computes risk-budgeted contract sizes, and only places an order if every guardrail passes (`kalshiRisk.ts`, `polymarketRisk.ts`).
+8. In `NODE_ENV=test`, AI review is bypassed for deterministic tests unless a test explicitly forces provider calls (`skipInTest: false`).
+
+### Specialized desks
+
+| Platform | Desk | Focus |
+|---|---|---|
+| Kalshi / Polymarket | Sports | Win-probability vs sportsbook consensus, lineup/injury news |
+| Kalshi / Polymarket | Crypto | Price-threshold vs event contracts, vol calibration, oracle risk |
+| Kalshi / Polymarket | Politics | Polls + base rates, indictment/court-date risk, candidate viability |
+| Kalshi / Polymarket | Economics | Consensus vs surprise, FOMC blackout windows, release timing |
+| Kalshi / Polymarket | Tech | Launch-slip discounting, firm-dated vs rumored catalysts |
+| Kalshi / Polymarket | Culture | Awards forecasts, opening-weekend tracking, recency bias |
+| Kalshi / Polymarket | Weather | Ensemble spread, climate base rates |
+| Kalshi / Polymarket | Generalist | Fallback for unmapped markets — defaults to skepticism |
 
 ## Disarming live trading
 

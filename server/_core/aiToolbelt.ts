@@ -156,7 +156,8 @@ export function extractAnthropicText(
   response: { content: Array<{ type: string; text?: string }> }
 ): string {
   return response.content
-    .map((block) => (block.type === "text" ? block.text ?? "" : ""))
+    .filter((block) => block.type === "text" && (block.text ?? "").length > 0)
+    .map((block) => block.text ?? "")
     .join("\n")
     .trim();
 }
