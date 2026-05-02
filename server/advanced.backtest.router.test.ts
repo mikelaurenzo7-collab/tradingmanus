@@ -10,9 +10,11 @@ function createProtectedContext(): TrpcContext {
       email: "backtest@example.com",
       name: "Backtest User",
       role: "user",
-      loginMethod: "manus",
+      betaAccessLevel: "none" as const,
+      twoFactorSecret: null,
+      twoFactorEnabled: 0,
+      backupCodesHash: null,
       createdAt: new Date(),
-      updatedAt: new Date(),
       lastSignedIn: new Date(),
     },
     req: {
@@ -21,7 +23,7 @@ function createProtectedContext(): TrpcContext {
     } as TrpcContext["req"],
     res: {
       clearCookie: vi.fn(),
-    } as TrpcContext["res"],
+    } as unknown as TrpcContext["res"],
   };
 }
 

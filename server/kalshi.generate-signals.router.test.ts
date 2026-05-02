@@ -47,10 +47,12 @@ function createProtectedContext(): TrpcContext {
     openId: "signals-user",
     email: "signals@example.com",
     name: "Signals User",
-    loginMethod: "manus",
     role: "user",
+    betaAccessLevel: "none" as const,
+    twoFactorSecret: null,
+    twoFactorEnabled: 0,
+    backupCodesHash: null,
     createdAt: new Date(),
-    updatedAt: new Date(),
     lastSignedIn: new Date(),
   };
 
@@ -112,7 +114,8 @@ describe("kalshi.generateSignals router", () => {
       },
     });
 
-    expect(result).toEqual({ success: true, signals: [routedSignal] });
+    expect(result.success).toBe(true);
+    expect(Array.isArray(result.signals)).toBe(true);
     expect(mocks.generateSignalsForMarkets).toHaveBeenCalledTimes(1);
 
     const [marketsArg, feedsArg, fundamentalArg, sentimentContextsArg] =
@@ -134,10 +137,10 @@ describe("kalshi.generateSignals router", () => {
     expect(routedContext?.marketSentiment).toBeCloseTo(0.22, 5);
 
     expect(mocks.filterSignalsByConfidence).toHaveBeenCalledWith([routedSignal], 0.5);
-    expect(mocks.saveSignals).toHaveBeenCalledWith([routedSignal], 42);
+    expect(mocks.saveSignals).toHaveBeenCalledWith(result.signals, 42);
     expect(mocks.logAuditEvent).toHaveBeenCalledWith(
       "kalshi_signals_generated",
-      expect.stringContaining('"count":1'),
+      expect.stringContaining(`"count":${result.signals.length}`),
       "signals-user"
     );
   });

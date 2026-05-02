@@ -5,37 +5,39 @@ import { MarketFeed } from "./_core/kalshiMarketFeed";
 
 describe("Signal Generation - Momentum Confidence & NaN/Infinity Guards", () => {
   // Helper to create a valid market
-  const createMarket = (overrides?: Partial<KalshiMarket>): KalshiMarket => ({
-    id: "test-market-1",
-    title: "Test Market",
-    category: "politics",
-    description: "Test market description",
-    yesPrice: 0.5,
-    noPrice: 0.5,
-    impliedProbability: 0.5,
-    volume24h: 10000,
-    openInterest: 50000,
-    resolutionDate: new Date(Date.now() + 86400000),
-    ...overrides,
-  });
+  const createMarket = (overrides?: Record<string, unknown>): KalshiMarket =>
+    ({
+      id: "test-market-1",
+      title: "Test Market",
+      category: "politics",
+      description: "Test market description",
+      yesPrice: 0.5,
+      noPrice: 0.5,
+      impliedProbability: 0.5,
+      volume24h: 10000,
+      openInterest: 50000,
+      resolutionDate: new Date(Date.now() + 86400000),
+      ...overrides,
+    }) as unknown as KalshiMarket;
 
   // Helper to create a valid market feed
-  const createFeed = (overrides?: Partial<MarketFeed>): MarketFeed => ({
-    marketId: "test-market-1",
-    priceHistory: [
-      { timestamp: Date.now() - 60000, yesPrice: 0.48, noPrice: 0.52, volume: 1000 },
-      { timestamp: Date.now() - 30000, yesPrice: 0.50, noPrice: 0.50, volume: 1500 },
-      { timestamp: Date.now(), yesPrice: 0.52, noPrice: 0.48, volume: 2000 },
-    ],
-    volumeHistory: [
-      { timestamp: Date.now() - 60000, volume: 1000 },
-      { timestamp: Date.now() - 30000, volume: 1500 },
-      { timestamp: Date.now(), volume: 2000 },
-    ],
-    dataQuality: 0.95,
-    lastUpdated: Date.now(),
-    ...overrides,
-  });
+  const createFeed = (overrides?: Record<string, unknown>): MarketFeed =>
+    ({
+      marketId: "test-market-1",
+      priceHistory: [
+        { timestamp: Date.now() - 60000, yesPrice: 0.48, noPrice: 0.52, volume: 1000 },
+        { timestamp: Date.now() - 30000, yesPrice: 0.50, noPrice: 0.50, volume: 1500 },
+        { timestamp: Date.now(), yesPrice: 0.52, noPrice: 0.48, volume: 2000 },
+      ],
+      volumeHistory: [
+        { timestamp: Date.now() - 60000, volume: 1000 },
+        { timestamp: Date.now() - 30000, volume: 1500 },
+        { timestamp: Date.now(), volume: 2000 },
+      ],
+      dataQuality: 0.95,
+      lastUpdated: Date.now(),
+      ...overrides,
+    }) as unknown as MarketFeed;
 
   describe("NaN/Infinity Guard Tests", () => {
     it("should reject markets with NaN impliedProbability", async () => {

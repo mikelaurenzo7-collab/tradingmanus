@@ -86,8 +86,9 @@ describe("AI trader reviewer (Claude-primary)", () => {
         openaiApiKey: "openai-key",
       }),
     ).toBe(true);
-    expect(isTradingReviewerConfigured({ openaiApiKey: "openai-key" })).toBe(false);
-    expect(isTradingReviewerConfigured({})).toBe(false);
+    // Pin anthropic to empty so this assertion is not affected by local .env keys.
+    expect(isTradingReviewerConfigured({ openaiApiKey: "openai-key", anthropicApiKey: "" })).toBe(false);
+    expect(isTradingReviewerConfigured({ anthropicApiKey: "", openaiApiKey: "" })).toBe(false);
   });
 
   it("reports the OpenAI fallback as configured when its key is present", () => {

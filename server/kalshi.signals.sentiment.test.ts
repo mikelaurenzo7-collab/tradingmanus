@@ -28,9 +28,9 @@ const createMarket = (overrides: Partial<KalshiMarket> = {}): KalshiMarket => ({
   closeTime: Date.now() + 7 * 24 * 60 * 60 * 1000,
   status: "open",
   category: "economics",
-  resolutionDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+  resolutionDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
   ...overrides,
-});
+} as unknown as KalshiMarket);
 
 describe("Sentiment-aware signal generation", () => {
   beforeEach(() => {

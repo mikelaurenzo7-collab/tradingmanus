@@ -103,10 +103,12 @@ const testUser = {
   openId: "away-open-id",
   email: "laurenzo@example.com",
   name: "Laurenzo Operator",
-  loginMethod: "manus",
   role: "user" as const,
+  betaAccessLevel: "none" as const,
+  twoFactorSecret: null,
+  twoFactorEnabled: 0,
+  backupCodesHash: null,
   createdAt: new Date(),
-  updatedAt: new Date(),
   lastSignedIn: new Date(),
 };
 

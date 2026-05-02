@@ -115,10 +115,12 @@ function createProtectedContext(): TrpcContext {
     openId: "kalshi-open-id",
     email: "kalshi@example.com",
     name: "Kalshi User",
-    loginMethod: "manus",
     role: "user",
+    betaAccessLevel: "none" as const,
+    twoFactorSecret: null,
+    twoFactorEnabled: 0,
+    backupCodesHash: null,
     createdAt: new Date(),
-    updatedAt: new Date(),
     lastSignedIn: new Date(),
   };
 

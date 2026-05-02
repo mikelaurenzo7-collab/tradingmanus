@@ -17,11 +17,11 @@ const market = {
   closeTime: Date.now() + 7 * 24 * 60 * 60 * 1000,
 };
 
-function createFeed(overrides: Partial<MarketFeed> = {}): MarketFeed {
+function createFeed(overrides: Record<string, unknown> = {}): MarketFeed {
   const now = Date.now();
   return {
     marketId: market.id,
-    status: "active",
+    status: "open",
     currentSnapshot: {
       marketId: market.id,
       timestamp: now,
@@ -57,7 +57,7 @@ function createFeed(overrides: Partial<MarketFeed> = {}): MarketFeed {
     ],
     dataQualityScore: 0.92,
     ...overrides,
-  };
+  } as unknown as MarketFeed;
 }
 
 describe("liquidity-adjusted signal filtering", () => {

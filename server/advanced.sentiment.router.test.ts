@@ -27,7 +27,7 @@ function createPublicContext(): TrpcContext {
     } as TrpcContext["req"],
     res: {
       clearCookie: vi.fn(),
-    } as TrpcContext["res"],
+    } as unknown as TrpcContext["res"],
   };
 }
 
