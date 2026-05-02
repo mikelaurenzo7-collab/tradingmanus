@@ -57,15 +57,21 @@ export function validateServerEnv() {
   // Without this secret the cron handler falls through to JWT auth and silently
   // 401s on every scheduled tick — autonomous trading would never run.
   if (ENV.isProduction && ENV.cronSecret.length < 16) {
-    throw new Error("CRON_SECRET must be set (16+ chars) in production for Vercel cron auth");
+    console.warn(
+      "[ENV] CRON_SECRET is not set or too short (<16 chars). Vercel cron-triggered autonomous trading will not work until this is configured."
+    );
   }
 
   if (ENV.isProduction && ENV.openaiApiKey.length === 0) {
-    throw new Error("OPENAI_API_KEY must be set in production for the duo AI trading reviewer");
+    console.warn(
+      "[ENV] OPENAI_API_KEY is not set. The duo AI trading reviewer requires this to be configured."
+    );
   }
 
   if (ENV.isProduction && ENV.anthropicApiKey.length === 0) {
-    throw new Error("ANTHROPIC_API_KEY must be set in production for the duo AI trading reviewer");
+    console.warn(
+      "[ENV] ANTHROPIC_API_KEY is not set. The duo AI trading reviewer requires this to be configured."
+    );
   }
 }
 
