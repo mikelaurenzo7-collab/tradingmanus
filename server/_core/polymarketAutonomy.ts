@@ -12,12 +12,20 @@
  *   - Reads Polymarket credentials from polymarketCredDb.
  *   - Does NOT use the Kalshi-specific DB tables (autonomyRuns, positions).
  *     Instead it logs via the shared audit log.
+ *
+ * Enhanced capabilities (matching Kalshi):
+ *   - AI trader duo review (OpenAI + Claude)
+ *   - Dynamic risk limits based on capital and posture
+ *   - Training instructions support
+ *   - Comprehensive signal filtering
+ *   - Performance metrics tracking
  */
 
 import * as db from "../db";
 import * as polymarketCredDb from "../db.polymarket-credentials";
 import * as tradingPreferencesDb from "../db.trading-preferences";
 import type { RiskPosture } from "../db.trading-preferences";
+import { getUserTrainingInstructions, isInstructionActiveNow, applyInstructionsToSignals } from "../db.training";
 import { fetchPolymarketMarkets, placePolymarketOrder } from "./polymarketAuth";
 import { generatePolymarketSignals, type PolymarketSignal } from "./polymarketSignals";
 import {
@@ -26,13 +34,20 @@ import {
   MAX_POLYMARKET_ORDER_USDC,
 } from "./polymarketRisk";
 import { assertPositiveIntegerUserId } from "./userScope";
+import { recordPolymarketTradeEntry } from "./polymarketLearning";
 
 const MAX_SCHEDULED_MARKETS = 80;
+const BASE_RISK_LIMITS = {
+  maxLossPerTrade: 5,
+  maxLossPerDay: 10,
+  maxPositionSize: 20,
+  maxOpenPositions: 5,
+} as const;
 
-const POSTURE_MULTIPLIERS: Record<RiskPosture, { sizeScale: number; confidenceBoost: number }> = {
-  conservative: { sizeScale: 0.5,  confidenceBoost: 0.08  },
-  balanced:     { sizeScale: 1.0,  confidenceBoost: 0.0   },
-  aggressive:   { sizeScale: 1.5,  confidenceBoost: -0.05 },
+const POSTURE_MULTIPLIERS: Record<RiskPosture, { sizeScale: number; confidenceBoost: number; positionScale: number }> = {
+  conservative: { sizeScale: 0.5,  confidenceBoost: 0.08,  positionScale: 0.6 },
+  balanced:     { sizeScale: 1.0,  confidenceBoost: 0.0,   positionScale: 1.0 },
+  aggressive:   { sizeScale: 1.5,  confidenceBoost: -0.05, positionScale: 1.4 },
 };
 
 export type PolymarketAutonomyRunResult = {
@@ -52,6 +67,55 @@ export type PolymarketAutonomyRunResult = {
 
 function clamp(v: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, Number.isFinite(v) ? v : lo));
+}
+
+/**
+ * Calculate dynamic risk limits based on capital and risk posture
+ */
+async function getDynamicRiskLimitsForPolymarket(
+  riskPosture: RiskPosture,
+  userId: number
+) {
+  const scopedUserId = assertPositiveIntegerUserId(
+    userId,
+    "polymarket risk limits userId"
+  );
+  const capital = await db.getKalshiCapital(scopedUserId);
+  const maxCapital = Math.max(
+    0,
+    Number(capital?.currentBalance ?? capital?.startingBalance ?? 0)
+  );
+
+  if (maxCapital <= 0) {
+    return {
+      maxCapital,
+      maxLossPerTrade: 0,
+      maxLossPerDay: 0,
+      maxPositionSize: 0,
+      maxOpenPositions: 0,
+      effectiveMinConfidence: 0,
+    };
+  }
+
+  const { positionScale, confidenceBoost } =
+    POSTURE_MULTIPLIERS[riskPosture] ?? POSTURE_MULTIPLIERS.balanced;
+
+  return {
+    maxCapital,
+    maxLossPerTrade: clamp(
+      maxCapital * 0.05 * positionScale,
+      1,
+      BASE_RISK_LIMITS.maxLossPerTrade
+    ),
+    maxLossPerDay: clamp(maxCapital * 0.1, 2, BASE_RISK_LIMITS.maxLossPerDay),
+    maxPositionSize: clamp(
+      maxCapital * 0.2 * positionScale,
+      2,
+      BASE_RISK_LIMITS.maxPositionSize
+    ),
+    maxOpenPositions: BASE_RISK_LIMITS.maxOpenPositions,
+    effectiveMinConfidence: confidenceBoost,
+  };
 }
 
 function sortSignals(signals: PolymarketSignal[]): PolymarketSignal[] {
@@ -135,42 +199,121 @@ export async function runPolymarketAutonomousTrading(
     };
   }
 
+  // Load training instructions and apply to signals
+  const allInstructions = await getUserTrainingInstructions(scopedUserId);
+  const activeInstructions = allInstructions.filter(isInstructionActiveNow);
+
+  // Apply instructions to filter markets before signal generation
+  let filteredMarkets = markets;
+  if (activeInstructions.length > 0) {
+    filteredMarkets = markets.filter((market) => {
+      for (const instruction of activeInstructions) {
+        for (const rule of instruction.rules ?? []) {
+          if (rule.ruleType === "exclude" || rule.ruleType === "forbid") {
+            if (
+              rule.ruleKey === "category" &&
+              String(market.category ?? "")
+                .toLowerCase()
+                .includes(String(rule.ruleValue).toLowerCase())
+            ) {
+              return false;
+            }
+            if (
+              rule.ruleKey === "question" &&
+              String(market.question ?? "")
+                .toLowerCase()
+                .includes(String(rule.ruleValue).toLowerCase())
+            ) {
+              return false;
+            }
+          }
+          if (rule.ruleType === "include" || rule.ruleType === "require") {
+            if (rule.ruleKey === "category") {
+              if (
+                !String(market.category ?? "")
+                  .toLowerCase()
+                  .includes(String(rule.ruleValue).toLowerCase())
+              ) {
+                return false;
+              }
+            }
+          }
+        }
+      }
+      return true;
+    });
+  }
+
   const { sizeScale, confidenceBoost } =
-    POSTURE_MULTIPLIERS[preferences.riskPosture as RiskPosture] ?? POSTURE_MULTIPLIERS.balanced;
+    POSTURE_MULTIPLIERS[preferences.riskPosture as RiskPosture] ??
+    POSTURE_MULTIPLIERS.balanced;
 
   const baseMinConfidence = clamp(preferences.minSignalConfidence, 0.5, 0.99);
-  const effectiveMinConfidence = clamp(baseMinConfidence + confidenceBoost, 0.5, 0.99);
+  const effectiveMinConfidence = clamp(
+    baseMinConfidence + confidenceBoost,
+    0.5,
+    0.99
+  );
 
-  const allSignals = generatePolymarketSignals(markets, {
+  const allSignals = generatePolymarketSignals(filteredMarkets, {
     minConfidence: effectiveMinConfidence,
     minLiquidity: 200,
   });
 
   // Filter out wash-volume warnings (not executable)
-  const executableSignals = allSignals.filter(
-    (s) => s.signalType !== "wash_volume_warning",
+  let executableSignals = allSignals.filter(
+    (s) => s.signalType !== "wash_volume_warning"
   );
 
-  if (executableSignals.length === 0) {
+  // Apply training instructions to signals
+  if (activeInstructions.length > 0) {
+    executableSignals = applyInstructionsToSignals(
+      executableSignals,
+      activeInstructions
+    );
+  }
+
+  // Import and use AI trader duo review
+  const { reviewPolymarketSignalsWithTrader } = await import(
+    "./polymarketSignalReviewer"
+  );
+
+  // OpenAI + Claude act as the final autonomous trader duo: both must approve
+  // before confidence/EV are blended into any execution decision.
+  const reviewedSignals = await reviewPolymarketSignalsWithTrader({
+    markets: filteredMarkets,
+    signals: executableSignals,
+    maxSignals: 12,
+  });
+
+  if (reviewedSignals.length === 0) {
     await db.logAuditEvent(
       "polymarket_autonomy_run_generated_only",
-      JSON.stringify({ signalsGenerated: 0, reason: "no executable signals above confidence threshold" }),
-      triggeredByOpenId,
+      JSON.stringify({
+        signalsGenerated: allSignals.length,
+        reason: "no signals passed AI trader duo review",
+      }),
+      triggeredByOpenId
     );
     return {
       success: true,
       status: "generated_only",
-      reason: "no executable signals above confidence threshold",
+      reason: "no signals passed AI trader duo review",
       signalsGenerated: allSignals.length,
       executionCandidates: 0,
       orderPlaced: false,
     };
   }
 
-  const sorted = sortSignals(executableSignals);
+  const sorted = sortSignals(reviewedSignals);
   const candidates = sorted.slice(0, 5);
 
-  // --- 4. Pick best candidate and size position ---
+  // --- 4. Pick best candidate and size position with dynamic risk limits ---
+  const riskLimits = await getDynamicRiskLimitsForPolymarket(
+    preferences.riskPosture as RiskPosture,
+    scopedUserId
+  );
+
   const best = candidates[0];
   if (!best) {
     return {
@@ -188,16 +331,31 @@ export async function runPolymarketAutonomousTrading(
   // overall budget, but a dedicated Polymarket balance endpoint (not yet
   // available in the public CLOB API) should replace this when accessible.
   const kalshiCapital = await db.getKalshiCapital(scopedUserId);
-  const bankroll = Math.max(0, Number(kalshiCapital?.currentBalance ?? kalshiCapital?.startingBalance ?? 0));
+  const bankroll = Math.max(
+    0,
+    Number(
+      kalshiCapital?.currentBalance ??
+        kalshiCapital?.startingBalance ??
+        riskLimits.maxCapital ??
+        0
+    )
+  );
+
+  const maxBudget = Math.min(
+    preferences.maxOrderNotional,
+    riskLimits.maxPositionSize,
+    riskLimits.maxLossPerTrade,
+    bankroll
+  );
 
   const rawSize = estimateSizeForRiskBudget(
     bankroll,
     best.fairValueEstimate,
     best.limitPrice,
     MAX_POLYMARKET_ORDER_USDC,
-    0.25,
+    0.25
   );
-  const scaledSize = clamp(rawSize * sizeScale, 0.01, preferences.maxOrderNotional);
+  const scaledSize = clamp(rawSize * sizeScale, 0.01, maxBudget);
 
   const riskCheck = validatePolymarketOrderRisk(
     { price: best.limitPrice, size: scaledSize },
@@ -282,7 +440,20 @@ export async function runPolymarketAutonomousTrading(
         signalType: best.signalType,
         reasoning: best.reasoning,
       }),
-      triggeredByOpenId,
+      triggeredByOpenId
+    );
+
+    // Record trade entry for learning loop
+    await recordPolymarketTradeEntry(
+      scopedUserId,
+      best.marketId,
+      best.tokenId,
+      `signal-${Date.now()}`,
+      best.signalType,
+      best.side,
+      best.limitPrice,
+      scaledSize,
+      best.reasoning
     );
 
     return {
