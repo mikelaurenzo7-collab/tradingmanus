@@ -412,13 +412,18 @@ async function generateScheduledSignals(userId: number, minConfidence: number, a
     ? applyInstructionsToSignals(conditionFilteredSignals, activeInstructions)
     : conditionFilteredSignals;
 
-  // OpenAI + Claude act as the final autonomous trader duo: both must approve
-  // before confidence/EV are blended into any execution decision.
-  const savedSignals = await reviewSignalsWithTrader({
-    markets: actionableMarkets,
-    signals: instructionFilteredSignals,
-    maxSignals: 12,
-  });
+  // Claude is the primary reviewer (with optional OpenAI fallback /
+  // high-stakes second opinion).  Passing userId enables per-desk memory
+  // injection — each desk loads its prior win/loss tape from the deskMemory
+  // table before this call.
+  const savedSignals = await reviewSignalsWithTrader(
+    {
+      markets: actionableMarkets,
+      signals: instructionFilteredSignals,
+      maxSignals: 12,
+    },
+    { userId },
+  );
 
   await saveSignals(savedSignals, userId);
 

@@ -278,13 +278,18 @@ export async function runPolymarketAutonomousTrading(
     "./polymarketSignalReviewer"
   );
 
-  // OpenAI + Claude act as the final autonomous trader duo: both must approve
-  // before confidence/EV are blended into any execution decision.
-  const reviewedSignals = await reviewPolymarketSignalsWithTrader({
-    markets: filteredMarkets,
-    signals: executableSignals,
-    maxSignals: 12,
-  });
+  // Claude is the primary reviewer (with optional OpenAI fallback /
+  // high-stakes second opinion).  Passing userId enables per-desk memory
+  // injection — each Polymarket desk loads its prior win/loss tape from
+  // the deskMemory table before this call.
+  const reviewedSignals = await reviewPolymarketSignalsWithTrader(
+    {
+      markets: filteredMarkets,
+      signals: executableSignals,
+      maxSignals: 12,
+    },
+    { userId: scopedUserId },
+  );
 
   if (reviewedSignals.length === 0) {
     await db.logAuditEvent(

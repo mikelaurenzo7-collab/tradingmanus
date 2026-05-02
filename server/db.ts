@@ -497,6 +497,24 @@ export async function closeKalshiPosition(positionId: number, exitPrice: number,
     .where(
       and(eq(kalshiPositions.id, positionId), eq(kalshiPositions.userId, scopedUserId))
     );
+
+  // Side-effect: grow the desk's learning tape with what just happened.
+  // Wrapped + swallowed inside tryRecordKalshiCloseToDeskMemory so a memory
+  // failure can never block a real trade close.
+  try {
+    const { tryRecordKalshiCloseToDeskMemory } = await import("./db.desk-memory");
+    await tryRecordKalshiCloseToDeskMemory({
+      userId: scopedUserId,
+      marketId: position.marketId,
+      side: position.side,
+      entryPrice: Number(position.entryPrice),
+      exitPrice,
+      quantity: Number(position.quantity),
+      realizedPnl,
+    });
+  } catch {
+    // Already swallowed inside the helper; this catch is belt-and-suspenders.
+  }
 }
 
 export async function getOpenKalshiPositions(userId: number) {

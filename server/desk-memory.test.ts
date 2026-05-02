@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { __TEST_ONLY__, formatDeskMemoryForPrompt } from "./db.desk-memory";
+import {
+  __TEST_ONLY__,
+  formatDeskMemoryForPrompt,
+  summarizeTradeAsDeskNote,
+} from "./db.desk-memory";
 
 const { serializeNotes, safeParseNotes, MAX_NOTES, MAX_NOTES_PAYLOAD_BYTES } = __TEST_ONLY__;
 
@@ -72,6 +76,40 @@ describe("formatDeskMemoryForPrompt", () => {
         lossCount: 0,
       }),
     ).toBeNull();
+  });
+
+  it("summarizeTradeAsDeskNote produces a compact lesson with derived outcome", () => {
+    const win = summarizeTradeAsDeskNote({
+      side: "yes",
+      entryPrice: 0.42,
+      exitPrice: 0.78,
+      quantity: 10,
+      realizedPnl: 3.6,
+      marketTitle: "Lakers win NBA Finals",
+    });
+    expect(win.outcome).toBe("win");
+    expect(win.note).toMatch(/^BUY YES @ 0\.42 → 0\.78/);
+    expect(win.note).toContain("+$3.60 (win)");
+    expect(win.note).toContain("Lakers");
+
+    const loss = summarizeTradeAsDeskNote({
+      side: "no",
+      entryPrice: 0.31,
+      exitPrice: 0.55,
+      quantity: 5,
+      realizedPnl: -1.2,
+    });
+    expect(loss.outcome).toBe("loss");
+    expect(loss.note).toContain("-$1.20 (loss)");
+
+    const scratch = summarizeTradeAsDeskNote({
+      side: "yes",
+      entryPrice: 0.5,
+      exitPrice: 0.5,
+      quantity: 1,
+      realizedPnl: 0,
+    });
+    expect(scratch.outcome).toBe("scratch");
   });
 
   it("renders win-rate header and last 12 lessons", () => {

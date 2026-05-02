@@ -215,6 +215,82 @@ export async function recordDeskTradeOutcome(input: {
   );
 }
 
+/**
+ * Build a one-line lesson note from a closed-position summary.  Kept short
+ * to fit the per-note cap and be useful when read back inside the cached
+ * system prompt.
+ *
+ *   "BUY YES @ 0.42 → 0.78 | qty 10 | +$3.60 (win)"
+ *   "BUY NO @ 0.31 → 0.10 | qty 5  | +$1.05 (win)"
+ *   "BUY YES @ 0.65 → 0.40 | qty 8  | -$2.00 (loss)"
+ */
+export function summarizeTradeAsDeskNote(input: {
+  side: "yes" | "no";
+  entryPrice: number;
+  exitPrice: number;
+  quantity: number;
+  realizedPnl: number;
+  marketTitle?: string | null;
+}): { outcome: DeskOutcome; note: string } {
+  const outcome: DeskOutcome =
+    input.realizedPnl > 0 ? "win" : input.realizedPnl < 0 ? "loss" : "scratch";
+  const sign = input.realizedPnl >= 0 ? "+" : "-";
+  const absPnl = Math.abs(input.realizedPnl).toFixed(2);
+  const tail = input.marketTitle ? ` :: ${input.marketTitle.slice(0, 80)}` : "";
+  const note = `BUY ${input.side.toUpperCase()} @ ${input.entryPrice.toFixed(
+    2,
+  )} → ${input.exitPrice.toFixed(2)} | qty ${input.quantity} | ${sign}$${absPnl} (${outcome})${tail}`;
+  return { outcome, note };
+}
+
+/**
+ * Side-effect-free wrapper used by the trade-close path.  Classifies the
+ * market into a desk and appends the lesson.  Swallows + logs errors so
+ * memory write never blocks or fails a trade close.
+ */
+export async function tryRecordKalshiCloseToDeskMemory(input: {
+  userId: number;
+  marketId: string;
+  side: "yes" | "no";
+  entryPrice: number;
+  exitPrice: number;
+  quantity: number;
+  realizedPnl: number;
+  logger?: Pick<Console, "warn">;
+}): Promise<void> {
+  try {
+    const [{ getKalshiMarket }, { classifyMarketCategory }] = await Promise.all([
+      import("./db"),
+      import("./_core/marketCategoryRouter"),
+    ]);
+
+    const market = await getKalshiMarket(input.marketId);
+    const category = classifyMarketCategory({
+      category: (market as any)?.category,
+      title: (market as any)?.title,
+    });
+    const { outcome, note } = summarizeTradeAsDeskNote({
+      side: input.side,
+      entryPrice: input.entryPrice,
+      exitPrice: input.exitPrice,
+      quantity: input.quantity,
+      realizedPnl: input.realizedPnl,
+      marketTitle: (market as any)?.title,
+    });
+    await recordDeskTradeOutcome({
+      userId: input.userId,
+      platform: "kalshi",
+      marketCategory: category,
+      outcome,
+      note,
+    });
+  } catch (error) {
+    (input.logger ?? console).warn(
+      `[deskMemory] Kalshi close memory write failed for marketId=${input.marketId}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
 // ── Test-only helpers ────────────────────────────────────────────────────────
 export const __TEST_ONLY__ = {
   serializeNotes,
