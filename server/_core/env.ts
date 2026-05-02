@@ -3,6 +3,11 @@ const normalizePositiveInt = (value: string | undefined, fallback: number) => {
   const parsed = Number.parseInt(value?.trim() ?? "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
+const normalizeBoolean = (value: string | undefined, fallback = false) => {
+  const trimmed = value?.trim().toLowerCase();
+  if (trimmed === undefined || trimmed === "") return fallback;
+  return trimmed === "1" || trimmed === "true" || trimmed === "yes" || trimmed === "on";
+};
 
 export const ENV = {
   cookieSecret: normalize(process.env.JWT_SECRET),
@@ -17,6 +22,16 @@ export const ENV = {
   anthropicApiKey: normalize(process.env.ANTHROPIC_API_KEY),
   anthropicModel: normalize(process.env.ANTHROPIC_MODEL) || "claude-sonnet-4-5",
   anthropicTimeoutMs: normalizePositiveInt(process.env.ANTHROPIC_TIMEOUT_MS, 12000),
+  // Tiered Claude models for the per-category trading reviewers.
+  // Triage: cheap/fast Haiku for large candidate sets and low-stakes filtering.
+  // Deep: Opus for high-stakes trades that warrant extended thinking.
+  anthropicTriageModel: normalize(process.env.ANTHROPIC_TRIAGE_MODEL),
+  anthropicDeepModel: normalize(process.env.ANTHROPIC_DEEP_MODEL),
+  // Feature toggles for the AI toolbelt.
+  enableAiPromptCache: normalizeBoolean(process.env.ENABLE_AI_PROMPT_CACHE, true),
+  enableAiCategoryRouting: normalizeBoolean(process.env.ENABLE_AI_CATEGORY_ROUTING, true),
+  enableAiWebSearch: normalizeBoolean(process.env.ENABLE_AI_WEB_SEARCH, false),
+  enableAiExtendedThinking: normalizeBoolean(process.env.ENABLE_AI_EXTENDED_THINKING, false),
   kalshiApiKey: normalize(process.env.KALSHI_API_KEY),
   isProduction: process.env.NODE_ENV === "production",
   gnewsApiKey: normalize(process.env.GNEWS_API_KEY),

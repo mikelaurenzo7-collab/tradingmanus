@@ -3,6 +3,22 @@ import type { KalshiMarket } from "./kalshiMarketData";
 import type { KalshiSignal } from "./kalshiSignals";
 import { ENV } from "./env";
 import { z } from "zod";
+import {
+  buildCachedSystemPrompt,
+  buildExtendedThinking,
+  buildToolList,
+  callAnthropicWithTimeout,
+  extractAnthropicText,
+  isHighStakes,
+  selectAnthropicModel,
+  type StakesContext,
+} from "./aiToolbelt";
+import {
+  classifyMarketCategory,
+  groupByCategory,
+  type MarketCategory,
+} from "./marketCategoryRouter";
+import { getCategoryPersona, type CategoryPersona } from "./categoryPersonas";
 
 type ProviderName = "openai" | "anthropic";
 
@@ -186,6 +202,7 @@ function getReviewPayload(input: {
   markets: KalshiMarket[];
   signals: KalshiSignal[];
   maxSignals: number;
+  persona?: CategoryPersona;
 }) {
   const signalsForReview = input.signals.slice(0, input.maxSignals);
   const marketById = new Map(input.markets.map((market) => [market.id, market]));
@@ -193,6 +210,7 @@ function getReviewPayload(input: {
   return {
     mandate:
       "Review candidate Kalshi signals. Approve only if the trade has a clear reason, adequate liquidity, bounded binary-market downside, and no obvious stale/thin-market issue. Veto vague, purely heuristic, low-EV, or weak-liquidity candidates. Do not invent market facts beyond the payload.",
+    desk: input.persona?.label ?? "Kalshi Generalist Desk",
     outputSchema:
       "{ reviews: Array<{marketId:string, approved:boolean, confidenceAdjustment:number between -0.25 and 0.15, expectedValueAdjustment:number between -0.1 and 0.1, reasoning:string <= 240 chars}> }",
     markets: signalsForReview.map((signal) => {
@@ -201,6 +219,26 @@ function getReviewPayload(input: {
     }),
     signals: signalsForReview.map(summarizeSignal),
   };
+}
+
+function stakesForSignals(signals: KalshiSignal[]): StakesContext {
+  let topConfidence = 0;
+  let topNotional = 0;
+  for (const signal of signals) {
+    if (signal.confidence > topConfidence) topConfidence = signal.confidence;
+    const notional = Number(signal.marketPrice ?? 0) * 100;
+    if (notional > topNotional) topNotional = notional;
+  }
+  return { confidence: topConfidence, orderNotional: topNotional };
+}
+
+function categoryOfSignal(
+  signal: KalshiSignal,
+  marketsById: Map<string, KalshiMarket>,
+): MarketCategory {
+  const market = marketsById.get(signal.marketId);
+  if (!market) return "other";
+  return classifyMarketCategory({ category: market.category, title: market.title });
 }
 
 function getOpenAiText(payload: unknown) {
@@ -226,9 +264,32 @@ function getAnthropicText(payload: Awaited<ReturnType<AnthropicClient["messages"
     .trim();
 }
 
+function buildOpenAiSystemPrompt(persona?: CategoryPersona): string {
+  const desk = persona?.label ?? "Kalshi Generalist Desk";
+  const personaMandate = persona?.systemMandate
+    ? `\n\nDesk-specific mandate (${desk}):\n${persona.systemMandate}`
+    : "";
+  return (
+    "You are OpenAI acting as a conservative Kalshi trading reviewer for one founder's small live account. You never place trades directly. You only approve, veto, or modestly adjust signal confidence and expected value. Capital preservation, liquidity, bounded downside, and avoiding weak heuristic trades are mandatory. Respond with a JSON object shaped as {\"reviews\":[...]} and nothing else." +
+    personaMandate
+  );
+}
+
+function buildAnthropicBaseMandate(persona?: CategoryPersona): string {
+  const desk = persona?.label ?? "Kalshi Generalist Desk";
+  const personaMandate = persona?.systemMandate
+    ? `\n\nDesk-specific mandate (${desk}):\n${persona.systemMandate}`
+    : "";
+  return (
+    "You are Claude acting as a conservative Kalshi trading reviewer for one founder's small live account. You do not place trades directly. You only approve, veto, or modestly adjust signal confidence and expected value. Capital preservation, liquidity, bounded downside, and avoiding weak heuristic trades are mandatory. Respond with JSON only as {\"reviews\":[...]}." +
+    personaMandate
+  );
+}
+
 async function requestOpenAiReviews(
   reviewPayload: ReturnType<typeof getReviewPayload>,
-  options: TradingReviewerOptions
+  options: TradingReviewerOptions,
+  persona?: CategoryPersona,
 ) {
   const controller = new AbortController();
   const timeoutMs = options.openaiTimeoutMs ?? ENV.openaiTimeoutMs;
@@ -251,8 +312,7 @@ async function requestOpenAiReviews(
           messages: [
             {
               role: "system",
-              content:
-                "You are OpenAI acting as a conservative Kalshi trading reviewer for one founder's small live account. You never place trades directly. You only approve, veto, or modestly adjust signal confidence and expected value. Capital preservation, liquidity, bounded downside, and avoiding weak heuristic trades are mandatory. Respond with a JSON object shaped as {\"reviews\":[...]} and nothing else.",
+              content: buildOpenAiSystemPrompt(persona),
             },
             {
               role: "user",
@@ -279,35 +339,65 @@ async function requestOpenAiReviews(
 
 async function requestAnthropicReviews(
   reviewPayload: ReturnType<typeof getReviewPayload>,
-  options: TradingReviewerOptions
+  options: TradingReviewerOptions,
+  persona?: CategoryPersona,
+  stakes: StakesContext = {},
 ) {
   const timeoutMs = options.anthropicTimeoutMs ?? ENV.anthropicTimeoutMs;
   const client = options.anthropicClient ?? new Anthropic({
     apiKey: (options.anthropicApiKey ?? ENV.anthropicApiKey).trim(),
   });
 
-  const response = await Promise.race([
-    client.messages.create({
-      model: options.anthropicModel ?? ENV.anthropicModel,
-      max_tokens: 1800,
-      temperature: 0,
-      system:
-        "You are Claude acting as a conservative Kalshi trading reviewer for one founder's small live account. You do not place trades directly. You only approve, veto, or modestly adjust signal confidence and expected value. Capital preservation, liquidity, bounded downside, and avoiding weak heuristic trades are mandatory. Respond with JSON only as {\"reviews\":[...]}.",
-      messages: [
-        {
-          role: "user",
-          content: JSON.stringify(reviewPayload),
-        },
-      ],
-    }),
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("Anthropic review timed out")), timeoutMs)
-    ),
-  ]);
+  const useDeepModel = isHighStakes(stakes);
+  const tier = useDeepModel ? "deep" : "review";
+  const model = selectAnthropicModel(tier, options.anthropicModel);
+  const thinking = buildExtendedThinking(stakes);
+  const tools = buildToolList([], {
+    allowWebSearch: true,
+    maxWebSearchUses: useDeepModel ? 4 : 2,
+  });
+  const cachedSystem = ENV.enableAiPromptCache
+    ? buildCachedSystemPrompt(buildAnthropicBaseMandate(persona))
+    : undefined;
+
+  const messageInput: Record<string, unknown> = {
+    model,
+    max_tokens: useDeepModel ? 3200 : 1800,
+    temperature: 0,
+    messages: [
+      {
+        role: "user",
+        content: JSON.stringify(reviewPayload),
+      },
+    ],
+  };
+  if (cachedSystem) {
+    messageInput.system = cachedSystem;
+  } else {
+    messageInput.system = buildAnthropicBaseMandate(persona);
+  }
+  if (thinking) {
+    messageInput.thinking = thinking;
+  }
+  if (tools) {
+    messageInput.tools = tools;
+  }
+
+  // Anthropic SDK accepts our extended shape (system as block list, optional
+  // thinking/tools) but our minimal AnthropicClient interface is intentionally
+  // narrow.  Cast through unknown so test stubs don't need the full surface.
+  const response = await callAnthropicWithTimeout(
+    client as unknown as {
+      messages: { create: (input: unknown) => Promise<{ content: Array<{ type: string; text?: string }> }> };
+    },
+    messageInput,
+    timeoutMs,
+    "Anthropic review",
+  );
 
   return {
     provider: "anthropic" as const,
-    reviews: parseTradingReviews(getAnthropicText(response)),
+    reviews: parseTradingReviews(extractAnthropicText(response)),
   };
 }
 
@@ -359,6 +449,79 @@ function combineApprovedSignal(
   };
 }
 
+async function runDuoReview(
+  signals: KalshiSignal[],
+  marketsById: Map<string, KalshiMarket>,
+  activeProviders: ProviderName[],
+  options: TradingReviewerOptions,
+  persona: CategoryPersona | undefined,
+  stakes: StakesContext,
+  logger: Pick<Console, "warn" | "error">,
+): Promise<KalshiSignal[]> {
+  const markets = signals
+    .map((signal) => marketsById.get(signal.marketId))
+    .filter((market): market is KalshiMarket => Boolean(market));
+
+  const reviewPayload = getReviewPayload({
+    markets,
+    signals,
+    maxSignals: signals.length,
+    persona,
+  });
+
+  try {
+    const responses = await Promise.all(
+      activeProviders.map((provider) =>
+        provider === "openai"
+          ? requestOpenAiReviews(reviewPayload, options, persona)
+          : requestAnthropicReviews(reviewPayload, options, persona, stakes),
+      ),
+    );
+
+    const reviewsByProvider = new Map<ProviderName, Map<string, TradingSignalReview>>();
+    for (const response of responses) {
+      reviewsByProvider.set(
+        response.provider,
+        new Map(response.reviews.map((review) => [review.marketId, review])),
+      );
+    }
+
+    return signals
+      .map((signal) => {
+        const providerReviews = activeProviders.map((provider) => {
+          const review = reviewsByProvider.get(provider)?.get(signal.marketId);
+          if (!review) {
+            logger.warn(
+              `[TradingReviewer] ${provider} did not return a review for marketId=${signal.marketId}; dropping signal.`,
+            );
+            return null;
+          }
+          return { provider, review };
+        });
+
+        if (providerReviews.some((review) => review === null)) {
+          return null;
+        }
+
+        return combineApprovedSignal(
+          signal,
+          providerReviews.filter(
+            (review): review is { provider: ProviderName; review: TradingSignalReview } =>
+              Boolean(review),
+          ),
+          logger,
+        );
+      })
+      .filter((signal): signal is KalshiSignal => Boolean(signal));
+  } catch (error) {
+    logger.error(
+      `[TradingReviewer] Duo AI review failed for desk=${persona?.id ?? "default"}; dropping that batch (capital preservation):`,
+      error,
+    );
+    return [];
+  }
+}
+
 export async function reviewSignalsWithTrader(
   input: {
     markets: KalshiMarket[];
@@ -381,62 +544,56 @@ export async function reviewSignalsWithTrader(
     return [];
   }
 
-  const reviewPayload = getReviewPayload({
-    markets: input.markets,
-    signals: input.signals,
-    maxSignals: input.maxSignals ?? DEFAULT_MAX_SIGNALS,
+  const cap = input.maxSignals ?? DEFAULT_MAX_SIGNALS;
+  const cappedSignals = input.signals.slice(0, cap);
+  const marketsById = new Map(input.markets.map((market) => [market.id, market]));
+
+  // When category routing is disabled, fall back to a single combined batch so
+  // the public behavior still matches the original single-mandate reviewer.
+  if (!ENV.enableAiCategoryRouting) {
+    return runDuoReview(
+      cappedSignals,
+      marketsById,
+      activeProviders,
+      options,
+      undefined,
+      stakesForSignals(cappedSignals),
+      logger,
+    );
+  }
+
+  const buckets = groupByCategory(cappedSignals, (signal) => {
+    const market = marketsById.get(signal.marketId);
+    return { category: market?.category, title: market?.title };
   });
 
-  try {
-    const responses = await Promise.all(
-      activeProviders.map((provider) =>
-        provider === "openai"
-          ? requestOpenAiReviews(reviewPayload, options)
-          : requestAnthropicReviews(reviewPayload, options)
-      )
-    );
-
-    const reviewsByProvider = new Map<ProviderName, Map<string, TradingSignalReview>>();
-    for (const response of responses) {
-      reviewsByProvider.set(
-        response.provider,
-        new Map(response.reviews.map((review) => [review.marketId, review]))
+  const batches = await Promise.all(
+    Array.from(buckets.entries()).map(([category, batchSignals]) => {
+      const persona = getCategoryPersona("kalshi", category);
+      const stakes = stakesForSignals(batchSignals);
+      return runDuoReview(
+        batchSignals,
+        marketsById,
+        activeProviders,
+        options,
+        persona,
+        stakes,
+        logger,
       );
+    }),
+  );
+
+  // Preserve original signal ordering rather than category grouping order.
+  const approved = new Map<string, KalshiSignal>();
+  for (const batch of batches) {
+    for (const signal of batch) {
+      approved.set(signal.marketId, signal);
     }
-
-    return input.signals
-      .map((signal) => {
-        const providerReviews = activeProviders.map((provider) => {
-          const review = reviewsByProvider.get(provider)?.get(signal.marketId);
-          if (!review) {
-            logger.warn(
-              `[TradingReviewer] ${provider} did not return a review for marketId=${signal.marketId}; dropping signal.`
-            );
-            return null;
-          }
-
-          return { provider, review };
-        });
-
-        if (providerReviews.some((review) => review === null)) {
-          return null;
-        }
-
-        return combineApprovedSignal(
-          signal,
-          providerReviews.filter(
-            (review): review is { provider: ProviderName; review: TradingSignalReview } =>
-              Boolean(review)
-          ),
-          logger
-        );
-      })
-      .filter((signal): signal is KalshiSignal => Boolean(signal));
-  } catch (error) {
-    logger.error(
-      "[TradingReviewer] Duo AI review failed; dropping all candidates (no autonomous execution without explicit OpenAI + Claude approval):",
-      error
-    );
-    return [];
   }
+  return cappedSignals
+    .map((signal) => approved.get(signal.marketId))
+    .filter((signal): signal is KalshiSignal => Boolean(signal));
 }
+
+// Re-export the category helper for downstream use (tests, dashboards).
+export { categoryOfSignal };
