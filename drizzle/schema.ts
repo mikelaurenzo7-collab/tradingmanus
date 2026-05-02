@@ -294,4 +294,46 @@ export const userPlatformSubscriptions = pgTable("userPlatformSubscriptions", {
   updatedAt: updatedAt(),
 });
 
+// ── Chatbot ────────────────────────────────────────────────────────────────────
+
+export const chatBotPlatformEnum = pgEnum("chat_bot_platform", ["kalshi", "polymarket"]);
+export const chatRoleEnum = pgEnum("chat_role", ["user", "assistant"]);
+export const botToneEnum = pgEnum("bot_tone", ["professional", "casual", "aggressive", "analytical"]);
+
+/**
+ * Per-user, per-platform bot configuration.
+ * Stores personality, custom system instructions, a rolling memory summary,
+ * and safety flags for action triggering.
+ */
+export const botConfigs = pgTable("botConfigs", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull(),
+  platform: chatBotPlatformEnum("platform").notNull(),
+  persona: text("persona"),
+  systemInstructions: text("systemInstructions"),
+  tone: botToneEnum("tone").default("professional").notNull(),
+  memorySummary: text("memorySummary"),
+  triggerSignalsEnabled: integer("triggerSignalsEnabled").default(1).notNull(),
+  triggerOrdersEnabled: integer("triggerOrdersEnabled").default(0).notNull(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+/**
+ * Individual chat messages for each platform workspace.
+ * actionType / actionData carry structured results when the bot triggers a tool.
+ */
+export const chatMessages = pgTable("chatMessages", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull(),
+  platform: chatBotPlatformEnum("platform").notNull(),
+  role: chatRoleEnum("role").notNull(),
+  content: text("content").notNull(),
+  actionType: varchar("actionType", { length: 64 }),
+  actionData: text("actionData"),
+  createdAt: createdAt(),
+});
+
 export type User = typeof users.$inferSelect;
+export type BotConfig = typeof botConfigs.$inferSelect;
+export type ChatMessage = typeof chatMessages.$inferSelect;
