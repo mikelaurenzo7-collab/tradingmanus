@@ -77,6 +77,31 @@ export function validateServerEnv() {
   );
 
   if (missing.length > 0) {
+    // Surface a diagnostic that tells the operator *what their runtime
+    // actually sees*, not just which names we expected.  When Railway/Vercel
+    // fail to inject variables (most often because a shared-variable group
+    // wasn't attached to this service, or the service hasn't been
+    // redeployed since the var was added), the operator's instinct is
+    // "but I set those!" — proving the variable is genuinely absent from
+    // process.env saves a long debugging cycle.
+    const present = REQUIRED_SERVER_ENV
+      .filter(([, value]) => value.length > 0)
+      .map(([name]) => name);
+    const otherEnvKeyCount = Object.keys(process.env).length;
+
+    console.error(
+      "[ENV] Missing required environment variables.\n" +
+        `       Missing: ${missing.join(", ")}\n` +
+        `       Present (from this required list): ${present.join(", ") || "(none)"}\n` +
+        `       Total env vars visible to the process: ${otherEnvKeyCount}\n` +
+        "       If the variables are configured in Railway/Vercel but not visible here:\n" +
+        "         1. Confirm they are attached to THIS service & environment (not a sibling).\n" +
+        "         2. Confirm there is no typo in the variable name (case-sensitive).\n" +
+        "         3. Redeploy the service — env vars only inject at container start.\n" +
+        "         4. If using shared variables, reference them as ${{shared.VAR_NAME}}\n" +
+        "            in the service's Variables tab, or attach the shared-variable group."
+    );
+
     throw new Error(
       `Missing required environment variables: ${missing.join(", ")}`
     );

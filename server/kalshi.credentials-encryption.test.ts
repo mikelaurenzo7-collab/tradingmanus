@@ -17,7 +17,7 @@ describe("Kalshi credential encryption", () => {
   it("does not decrypt a user-bound credential with another user context", () => {
     const encrypted = encryptCredential("api-key", 7);
 
-    expect(() => decryptCredential(encrypted, 8)).toThrow("Failed to decrypt credential");
+    expect(() => decryptCredential(encrypted, 8)).toThrow("Stored credential cannot be decrypted");
   });
 
   it("uses a fresh random envelope for each encryption", () => {

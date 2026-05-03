@@ -37,15 +37,45 @@ async function startServer() {
     serveStatic(app);
   }
 
-  const preferredPort = parseInt(process.env.PORT || "3000");
-  const port = await findAvailablePort(preferredPort);
+  // PaaS contract: when `PORT` is provided (Railway, Render, Fly, Heroku,
+  // Cloud Run, etc.) we MUST listen on exactly that port, on `0.0.0.0`.
+  // Probing for a "free" alternate port is dangerous on those platforms:
+  //   • the probe + bind sequence has a race window where the port can be
+  //     considered busy and we silently fall back to a port the platform's
+  //     ingress cannot route to (manifests as "Application failed to
+  //     respond" while our logs say the server is up); and
+  //   • IPv6/IPv4 dual-stack quirks make the probe bind one family while
+  //     the real listener picks the other.
+  // We only fall back to alternate-port discovery in local dev where the
+  // port might genuinely be in use by another instance of the same dev
+  // server.
+  const portFromEnv = process.env.PORT;
+  const inProduction = process.env.NODE_ENV === "production";
+  const host = process.env.HOST || "0.0.0.0";
 
-  if (port !== preferredPort) {
-    console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
+  let port: number;
+  if (portFromEnv) {
+    const parsed = parseInt(portFromEnv, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 65535) {
+      throw new Error(`Invalid PORT environment variable: ${portFromEnv}`);
+    }
+    port = parsed;
+  } else if (inProduction) {
+    // Production with no PORT set is almost certainly a misconfigured
+    // deployment — fail loudly so the platform restarts us instead of
+    // running a zombie process the operator can't reach.
+    throw new Error("PORT environment variable must be set in production");
+  } else {
+    port = await findAvailablePort(3000);
   }
 
-  server.listen(port, () => {
-    console.log(`Server running on http://localhost:${port}/`);
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, host, () => {
+      server.off("error", reject);
+      console.log(`Server running on http://${host}:${port}/`);
+      resolve();
+    });
   });
 }
 
@@ -112,10 +142,28 @@ async function runOrderSync() {
   }
 }
 
-startServer().then(() => {
-  setInterval(runAutonomousScheduler, AUTONOMOUS_TRADING_INTERVAL_MS);
-  setInterval(runOrderSync, ORDER_SYNC_INTERVAL_MS);
-  setTimeout(runAutonomousScheduler, 2 * 60 * 1000);
-  console.log("[Scheduler] Autonomous trading scheduler started (15-min interval)");
-  console.log("[OrderSync] Order sync started (30-sec interval)");
-}).catch(console.error);
+startServer()
+  .then(() => {
+    setInterval(runAutonomousScheduler, AUTONOMOUS_TRADING_INTERVAL_MS);
+    setInterval(runOrderSync, ORDER_SYNC_INTERVAL_MS);
+    setTimeout(runAutonomousScheduler, 2 * 60 * 1000);
+    console.log("[Scheduler] Autonomous trading scheduler started (15-min interval)");
+    console.log("[OrderSync] Order sync started (30-sec interval)");
+  })
+  .catch((error) => {
+    // Crash hard so the platform's restart policy kicks in. Logging only and
+    // staying alive leaves a zombie process that fails every health-check —
+    // the exact "Application failed to respond" symptom we keep seeing.
+    console.error("[Startup] Fatal error during server start:", error);
+    process.exit(1);
+  });
+
+// Surface unhandled rejections / uncaught exceptions in the long-running
+// process so they appear in the Railway log stream instead of being silently
+// dropped (which can mask scheduler or DB issues until the next restart).
+process.on("unhandledRejection", (reason) => {
+  console.error("[Process] unhandledRejection:", reason);
+});
+process.on("uncaughtException", (error) => {
+  console.error("[Process] uncaughtException:", error);
+});

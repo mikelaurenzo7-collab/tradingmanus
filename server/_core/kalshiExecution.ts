@@ -75,7 +75,13 @@ async function resolveCredentials(
 ): Promise<CredentialInput | null> {
   if (typeof userIdOrApiKey === "number") {
     const stored = await kalshiCredDb.getKalshiCredentials(userIdOrApiKey);
-    if (!stored?.apiKey || !stored?.privateKey) {
+    // `getKalshiCredentials` returns a discriminated union: when the stored
+    // credential record signals `needsReauth: true` it does not include the
+    // apiKey/privateKey fields. Narrow on that flag before touching them.
+    if (!stored || ("needsReauth" in stored && stored.needsReauth)) {
+      return null;
+    }
+    if (!stored.apiKey || !stored.privateKey) {
       return null;
     }
 
