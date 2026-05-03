@@ -1,6 +1,6 @@
 # Security Migration Guide
 
-This guide helps you migrate your existing TradingManus deployment to use the new security features.
+This guide helps you migrate your existing Laurenzo Dashboard deployment to use the new security features.
 
 ## Quick Start
 
