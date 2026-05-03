@@ -92,6 +92,36 @@ function parseDollarValue(value: unknown): number {
   return 0;
 }
 
+/**
+ * Convert a Kalshi cent-scale price (0..100) to dollars (0..1).
+ * Returns `undefined` if the input is missing or cannot be coerced
+ * to a finite number, so it can be skipped in fallback chains.
+ */
+function centsToDollars(value: unknown): number | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) {
+    return undefined;
+  }
+  return numeric / 100;
+}
+
+/**
+ * Pick the first finite candidate price from `candidates` that falls
+ * inside the [0, 1] dollar range Kalshi advertises. Returns `undefined`
+ * when no candidate qualifies, signalling the caller to drop the row.
+ */
+function pickPriceDollars(candidates: ReadonlyArray<number | undefined | null>): number | undefined {
+  for (const candidate of candidates) {
+    if (typeof candidate !== "number" || !Number.isFinite(candidate)) continue;
+    if (candidate < 0 || candidate > 1) continue;
+    return candidate;
+  }
+  return undefined;
+}
+
 function mapMarketStatus(status: unknown): "open" | "closed" | "resolved" {
   switch (status) {
     case "settled":
@@ -108,30 +138,66 @@ function mapMarketStatus(status: unknown): "open" | "closed" | "resolved" {
 }
 
 function normalizeKalshiMarket(rawMarket: any): KalshiMarket | null {
-  const id = cleanText(rawMarket.id ?? rawMarket.marketId ?? rawMarket.market_id ?? rawMarket.ticker, "unknown-market", 128);
+  // Reject obviously malformed payloads before we coerce anything. The
+  // upstream API can occasionally return null entries inside `markets`
+  // arrays, partial objects during partial outages, or strings/arrays
+  // when an internal proxy stringifies the body. Coercing those would
+  // silently produce phantom markets with prices like 0/0/0.5.
+  if (rawMarket == null || typeof rawMarket !== "object" || Array.isArray(rawMarket)) {
+    return null;
+  }
+
+  const rawId = rawMarket.id ?? rawMarket.marketId ?? rawMarket.market_id ?? rawMarket.ticker;
+  if (typeof rawId !== "string" && typeof rawId !== "number") {
+    return null;
+  }
+  const id = cleanText(rawId, "unknown-market", 128);
+  if (!id || id === "unknown-market") {
+    return null;
+  }
+
   const normalizedTitle = cleanText(rawMarket.title ?? rawMarket.subtitle ?? id, id, 255);
 
   if (looksLikeCompositeMarket(rawMarket, id, normalizedTitle)) {
     return null;
   }
 
-  const yesPrice = parseDollarValue(
-    rawMarket.yesPrice ??
-      rawMarket.yes_price ??
-      rawMarket.last_price_dollars ??
-      rawMarket.yes_ask_dollars ??
-      rawMarket.yes_bid_dollars
-  );
-  const noPrice = parseDollarValue(
-    rawMarket.noPrice ??
-      rawMarket.no_price ??
-      rawMarket.no_ask_dollars ??
-      rawMarket.no_bid_dollars ??
-      (yesPrice > 0 ? 1 - yesPrice : 0)
-  );
+  const yesPrice = pickPriceDollars([
+    rawMarket.yesPrice,
+    rawMarket.last_price_dollars,
+    rawMarket.yes_ask_dollars,
+    rawMarket.yes_bid_dollars,
+    centsToDollars(rawMarket.yes_price),
+    centsToDollars(rawMarket.last_price),
+    centsToDollars(rawMarket.yes_ask),
+    centsToDollars(rawMarket.yes_bid),
+  ]);
+  const noPrice = pickPriceDollars([
+    rawMarket.noPrice,
+    rawMarket.no_ask_dollars,
+    rawMarket.no_bid_dollars,
+    centsToDollars(rawMarket.no_price),
+    centsToDollars(rawMarket.no_ask),
+    centsToDollars(rawMarket.no_bid),
+    yesPrice !== undefined ? 1 - yesPrice : undefined,
+  ]);
   const totalVolume = parseDollarValue(rawMarket.volume_fp ?? rawMarket.volume ?? 0);
   const yesVolume = parseDollarValue(rawMarket.yesVolume ?? rawMarket.yes_volume ?? totalVolume / 2);
   const noVolume = parseDollarValue(rawMarket.noVolume ?? rawMarket.no_volume ?? totalVolume / 2);
+
+  // Sanity-check coerced numerics. Kalshi prices are expressed in dollars
+  // bounded by [0, 1]; volumes must be finite and non-negative. If any of
+  // these break, drop the row instead of producing a misleading display.
+  if (
+    yesPrice === undefined ||
+    noPrice === undefined ||
+    !Number.isFinite(yesVolume) ||
+    !Number.isFinite(noVolume) ||
+    yesVolume < 0 ||
+    noVolume < 0
+  ) {
+    return null;
+  }
 
   return {
     id,
