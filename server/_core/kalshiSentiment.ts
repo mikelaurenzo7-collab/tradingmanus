@@ -473,11 +473,12 @@ export async function fetchLiveSocialSummary(topic: string): Promise<LiveSocialS
 
   const subreddit = pickSocialSubreddit(cleanTopic);
   // Use Reddit's public JSON search endpoint — no API key or OAuth required for
-  // read-only queries. Results are scoped to the last 24 hours and sorted by
-  // relevance so we surface trending discussion around the topic.
+  // read-only queries. restrict_sr=1 scopes results to the chosen subreddit so
+  // the signal stays on-topic. Results are capped to the last 24 hours and
+  // sorted by relevance so we surface trending discussion around the topic.
   const url =
     `https://www.reddit.com/r/${encodeURIComponent(subreddit)}/search.json` +
-    `?q=${encodeURIComponent(cleanTopic)}&sort=relevance&limit=10&t=day&restrict_sr=0`;
+    `?q=${encodeURIComponent(cleanTopic)}&sort=relevance&limit=10&t=day&restrict_sr=1`;
 
   try {
     const response = await fetchWithRetry(url, {
@@ -526,6 +527,8 @@ export async function fetchLiveSocialSummary(topic: string): Promise<LiveSocialS
             typeof d.created_utc === "number"
               ? new Date(d.created_utc * 1000)
               : new Date(),
+          // Per-post sentiment is derived from title keywords by extractSocialSentiment
+          // rather than stored here; the field exists for display/audit purposes only.
           sentiment: 0,
           relevance: 1,
         };
