@@ -3,12 +3,13 @@
  * Polls Kalshi for pending order fills and syncs live positions into the local DB.
  */
 
-import { db } from "../db";
+import { db, logAuditEvent } from "../db";
 import { kalshiOrders, kalshiPositions } from "../../drizzle/schema";
 import { eq, and, inArray } from "drizzle-orm";
 import { getKalshiOrderStatus, createPositionFromFill, closePositionFromFill } from "./kalshiExecution";
 import * as kalshiCredDb from "../db.kalshi-credentials";
 import { assertPositiveIntegerUserId } from "./userScope";
+import { reconcilePendingOrders } from "./orderReconciler";
 
 // Guards against two concurrent sync intervals processing the same user's pending orders
 const _syncRunningByUser = new Set<string>();
@@ -97,6 +98,10 @@ export async function syncPendingOrders(userId: number): Promise<void> {
         console.error(`[OrderSync] Failed to sync order ${order.orderId}:`, err);
       }
     }
+
+    // Reconcile any orders that have aged past the threshold and may be stuck
+    const reconcileResult = await reconcilePendingOrders(scopedUserId, syncKey);
+    await logAuditEvent("order_sync_complete", JSON.stringify(reconcileResult), syncKey);
   } finally {
     _syncRunningByUser.delete(syncKey);
   }
