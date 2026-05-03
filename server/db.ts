@@ -230,6 +230,17 @@ export async function getUserByOpenId(openId: string) {
   return getUser(openId);
 }
 
+/**
+ * Returns the numeric database ID of the single owner account.
+ * The owner is always seeded with openId "owner:primary" by the auth module.
+ * Returns null when the database is unavailable or the owner row does not yet
+ * exist (e.g. first boot before the first login).
+ */
+export async function getOwnerUserId(): Promise<number | null> {
+  const user = await getUser("owner:primary");
+  return user?.id ?? null;
+}
+
 export async function getUsersEligibleForAutomaticScheduledTrading() {
   const database = await getDb();
   if (!database) return [];

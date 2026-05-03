@@ -7,6 +7,7 @@ import { getUsersEligibleForAutomaticScheduledTrading } from "../db";
 import { runScheduledAutonomousTradingBatch } from "./kalshiAutonomy";
 import { syncPendingOrders, syncLivePositions } from "./kalshiOrderSync";
 import { createAutonomousTradingLock, createOrderSyncLock } from "./distributedLock";
+import { runColdStartReconciliation } from "./coldStart";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -143,7 +144,13 @@ async function runOrderSync() {
 }
 
 startServer()
-  .then(() => {
+  .then(async () => {
+    try {
+      await runColdStartReconciliation();
+    } catch (err) {
+      console.error("[Startup] Cold-start reconciliation failed; aborting scheduler startup", err);
+      process.exit(1);
+    }
     setInterval(runAutonomousScheduler, AUTONOMOUS_TRADING_INTERVAL_MS);
     setInterval(runOrderSync, ORDER_SYNC_INTERVAL_MS);
     setTimeout(runAutonomousScheduler, 2 * 60 * 1000);
