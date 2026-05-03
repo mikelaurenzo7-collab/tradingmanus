@@ -440,3 +440,191 @@ describe("scheduled away-from-chat trading", () => {
     ]);
   });
 });
+
+describe("execution guardrails — safety blocking paths", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+
+    mocks.getTradingPreferences.mockResolvedValue(mocks.DEFAULT_PREFERENCES);
+    mocks.getKalshiCredentials.mockResolvedValue({
+      userId: 7,
+      accountStatus: "connected",
+      apiKey: "kalshi-key",
+      privateKey: "kalshi-private-key",
+    });
+    mocks.fetchKalshiAccountEquity.mockResolvedValue({ equity: 100, error: null });
+    mocks.fetchKalshiMarkets.mockResolvedValue([
+      {
+        id: "KXTEST-1",
+        title: "Will demo market resolve yes?",
+        category: "sports",
+        yesPrice: 0.43,
+        noPrice: 0.57,
+        yesVolume: 1500,
+        noVolume: 1500,
+        impliedProbability: 0.57,
+        resolutionDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      },
+    ]);
+    mocks.getMarketFeed.mockReturnValue(null);
+    mocks.generateSignalsForMarkets.mockResolvedValue([candidateSignal]);
+    mocks.filterSignalsByConfidence.mockImplementation((signals: any[]) => signals);
+    mocks.filterSignalsByMarketConditions.mockImplementation((signals: any[]) => signals);
+    mocks.reviewSignalsWithTrader.mockImplementation(async ({ signals }: { signals: any[] }) => signals);
+    mocks.getTopSignalsForExecution.mockReturnValue([candidateSignal]);
+    mocks.saveSignals.mockResolvedValue(undefined);
+    mocks.getLatestAuditEventByType.mockResolvedValue(null);
+    mocks.getLatestAutonomyRun.mockResolvedValue(null);
+    mocks.getTodayKalshiOrderCount.mockResolvedValue(0);
+    mocks.getKalshiCapital.mockResolvedValue({ currentBalance: 100, startingBalance: 100 });
+    mocks.syncKalshiCapitalWithLiveEquity.mockResolvedValue(undefined);
+    mocks.getOpenKalshiPositions.mockResolvedValue([]);
+    mocks.getTodayRealizedLoss.mockResolvedValue(0);
+    mocks.getPendingKalshiOrders.mockResolvedValue([]);
+    mocks.syncPendingOrders.mockResolvedValue(undefined);
+    mocks.fetchKalshiMarketDetails.mockResolvedValue(null);
+    mocks.logAuditEvent.mockResolvedValue(true);
+    mocks.createAutonomyRun.mockResolvedValue({ runId: "run-123" });
+    mocks.updateAutonomyRun.mockResolvedValue({ runId: "run-123" });
+    mocks.placeKalshiOrder.mockResolvedValue({ success: true, orderId: "order-123" });
+  });
+
+  it("blocks execution when the daily order cap has been reached", async () => {
+    mocks.getTodayKalshiOrderCount.mockResolvedValue(3); // DEFAULT maxDailyOrders = 3
+
+    const result = await runScheduledAutonomousTrading(testUser);
+
+    expect(result.status).toBe("blocked");
+    expect(result.reason).toContain("daily order cap");
+    expect(mocks.placeKalshiOrder).not.toHaveBeenCalled();
+  });
+
+  it("blocks execution when the maximum number of open positions has been reached", async () => {
+    mocks.getOpenKalshiPositions.mockResolvedValue([
+      { marketId: "OTHER-1" },
+      { marketId: "OTHER-2" },
+      { marketId: "OTHER-3" },
+      { marketId: "OTHER-4" },
+      { marketId: "OTHER-5" }, // maxOpenPositions = 5
+    ]);
+
+    const result = await runScheduledAutonomousTrading(testUser);
+
+    expect(result.status).toBe("blocked");
+    expect(result.reason).toContain("open position limit");
+    expect(mocks.placeKalshiOrder).not.toHaveBeenCalled();
+  });
+
+  it("blocks execution when the daily realized loss limit has been reached", async () => {
+    // getDynamicRiskLimits with $100 balance → maxLossPerDay = clamp(100*0.1, 2, 10) = 10
+    mocks.getTodayRealizedLoss.mockResolvedValue(10);
+
+    const result = await runScheduledAutonomousTrading(testUser);
+
+    expect(result.status).toBe("blocked");
+    expect(result.reason).toContain("daily loss limit");
+    expect(mocks.placeKalshiOrder).not.toHaveBeenCalled();
+  });
+
+  it("withholds execution in semi-autonomous mode when the order budget exceeds the approval threshold", async () => {
+    // maxBudget = min(maxOrderNotional=10, maxPositionSize=20, maxLossPerTrade=5, capital=100) = 5
+    // requireApprovalAbove = 3  →  5 > 3 triggers the approval-threshold guard
+    mocks.getTradingPreferences.mockResolvedValue({
+      ...mocks.DEFAULT_PREFERENCES,
+      autonomyMode: "semi_autonomous",
+      requireApprovalAbove: 3,
+    });
+
+    const result = await runScheduledAutonomousTrading(testUser);
+
+    expect(result.status).toBe("generated_only");
+    expect(result.reason).toContain("semi-autonomous");
+    expect(mocks.placeKalshiOrder).not.toHaveBeenCalled();
+  });
+
+  it("skips an execution candidate when an open position already exists for the same market", async () => {
+    // One position is open, but maxOpenPositions = 5 so the global cap passes;
+    // evaluateExecutionCandidate rejects the candidate via market_already_open.
+    mocks.getOpenKalshiPositions.mockResolvedValue([{ marketId: "KXTEST-1" }]);
+
+    const result = await runScheduledAutonomousTrading(testUser);
+
+    expect(result.status).toBe("generated_only");
+    expect(result.orderPlaced).toBe(false);
+    expect(mocks.placeKalshiOrder).not.toHaveBeenCalled();
+  });
+
+  it("skips an execution candidate when a pending order is already in flight for the same market", async () => {
+    mocks.getPendingKalshiOrders.mockResolvedValue([{ marketId: "KXTEST-1" }]);
+
+    const result = await runScheduledAutonomousTrading(testUser);
+
+    expect(result.status).toBe("generated_only");
+    expect(result.orderPlaced).toBe(false);
+    expect(mocks.placeKalshiOrder).not.toHaveBeenCalled();
+  });
+
+  it("blocks execution when the live market price has drifted beyond the tolerance since signal generation", async () => {
+    // Signal price is 0.43 (yes side); live price is 0.46 → drift = 0.03 > 0.02 (MAX_EXECUTION_PRICE_DRIFT)
+    mocks.fetchKalshiMarketDetails.mockResolvedValue({
+      id: "KXTEST-1",
+      yesPrice: 0.46,
+      noPrice: 0.54,
+    });
+
+    const result = await runScheduledAutonomousTrading(testUser);
+
+    expect(result.status).toBe("blocked");
+    expect(result.reason).toMatch(/market price drifted/i);
+    expect(mocks.placeKalshiOrder).not.toHaveBeenCalled();
+    expect(mocks.logAuditEvent).toHaveBeenCalledWith(
+      "scheduled_autonomy_order_blocked_price_drift",
+      expect.stringContaining('"signalPrice":0.43'),
+      "away-open-id"
+    );
+  });
+
+  it("returns blocked status and records an audit event when the exchange rejects the order", async () => {
+    mocks.placeKalshiOrder.mockResolvedValue({
+      success: false,
+      error: "INSUFFICIENT_FUNDS",
+    });
+
+    const result = await runScheduledAutonomousTrading(testUser);
+
+    expect(result.status).toBe("blocked");
+    expect(result.reason).toContain("INSUFFICIENT_FUNDS");
+    expect(result.orderPlaced).toBe(false);
+    expect(mocks.logAuditEvent).toHaveBeenCalledWith(
+      "scheduled_autonomy_order_blocked_or_failed",
+      expect.stringContaining('"reason":"INSUFFICIENT_FUNDS"'),
+      "away-open-id"
+    );
+  });
+
+  it("reports error status and emits an audit event when the AI reviewer encounters anthropic failures", async () => {
+    // Simulate the reviewer mutating the shared telemetry object with failures
+    // (matching real behaviour when Anthropic calls time out or return errors).
+    mocks.reviewSignalsWithTrader.mockImplementation(
+      async (_input: { signals: any[] }, opts?: { userId?: number; telemetry?: any }) => {
+        if (opts?.telemetry) {
+          opts.telemetry.anthropicFailures = 2;
+          opts.telemetry.anthropicCalls = 2;
+        }
+        return [];
+      }
+    );
+    mocks.getTopSignalsForExecution.mockReturnValue([]);
+
+    const result = await runScheduledAutonomousTrading(testUser);
+
+    expect(result.status).toBe("error");
+    expect(result.reason).toMatch(/ai reviewer encountered 2 failure/i);
+    expect(mocks.logAuditEvent).toHaveBeenCalledWith(
+      "scheduled_autonomy_ai_reviewer_failure",
+      expect.stringContaining('"anthropicFailures":2'),
+      "away-open-id"
+    );
+    expect(mocks.placeKalshiOrder).not.toHaveBeenCalled();
+  });
+});
