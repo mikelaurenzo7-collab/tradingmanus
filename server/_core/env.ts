@@ -61,6 +61,9 @@ export const ENV = {
   // Optional: URL to receive webhook POST alerts for critical operational events
   // (consecutive autonomy failures, equity drops, exchange rejections).
   alertWebhookUrl: normalize(process.env.ALERT_WEBHOOK_URL),
+  // Paper trading mode: when true, all orders are simulated at current market prices.
+  // Simulated trades still update desk memory and learning feedback.
+  paperTradeMode: normalizeBoolean(process.env.PAPER_TRADE_MODE, false),
 };
 
 const REQUIRED_SERVER_ENV = [

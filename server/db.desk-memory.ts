@@ -6,7 +6,7 @@
  * loaded into the cached system prompt before each review run so the desk's
  * reasoning is informed by what already worked or burned the founder's account.
  *
- * The whole tape is intentionally tiny (≤ 32 notes, ≤ 4KB serialized) so it
+ * The whole tape is intentionally tiny (≤ 12 notes, ≤ 4KB serialized) so it
  * fits in the cached system prompt without inflating token cost.
  */
 
@@ -14,6 +14,7 @@ import { and, eq } from "drizzle-orm";
 import { deskMemory } from "../drizzle/schema";
 import { getDb } from "./db";
 import { assertPositiveIntegerUserId } from "./_core/userScope";
+import { logger } from "./_core/logger";
 
 export type DeskPlatform = "kalshi" | "polymarket";
 export type DeskOutcome = "win" | "loss" | "scratch";
@@ -34,7 +35,7 @@ export type DeskMemoryRecord = {
   lossCount: number;
 };
 
-const MAX_NOTES = 32;
+const MAX_NOTES = 12;
 const MAX_NOTE_CHARS = 240;
 const MAX_NOTES_PAYLOAD_BYTES = 4096;
 
@@ -139,6 +140,19 @@ export async function appendDeskMemoryNote(
     ...(existing?.notes ?? []),
     { ts: new Date().toISOString(), outcome, note: trimmedNote },
   ];
+
+  if (nextNotes.length > MAX_NOTES) {
+    logger.warn(
+      {
+        desk: deskId,
+        totalNotes: nextNotes.length,
+        maxNotes: MAX_NOTES,
+        droppedCount: nextNotes.length - MAX_NOTES,
+      },
+      "Desk memory capacity exceeded",
+    );
+  }
+
   const serialized = serializeNotes(nextNotes);
 
   const winInc = outcome === "win" ? 1 : 0;
@@ -181,10 +195,21 @@ export async function appendDeskMemoryNote(
 export function formatDeskMemoryForPrompt(record: DeskMemoryRecord | null): string | null {
   if (!record || record.notes.length === 0) return null;
   const winRate = record.tradeCount > 0 ? Math.round((record.winCount / record.tradeCount) * 100) : 0;
-  const recent = record.notes.slice(-12);
+  if (record.notes.length > MAX_NOTES) {
+    logger.warn(
+      {
+        desk: record.deskId,
+        totalNotes: record.notes.length,
+        maxNotes: MAX_NOTES,
+        droppedCount: record.notes.length - MAX_NOTES,
+      },
+      "Desk memory capacity exceeded",
+    );
+  }
+  const recent = record.notes.slice(-MAX_NOTES);
   const lines = recent.map((entry) => `- [${entry.outcome.toUpperCase()}] ${entry.note}`);
   return [
-    `Desk learning tape (${record.tradeCount} prior trades, ${winRate}% win rate, last 12 lessons):`,
+    `Desk learning tape (${record.tradeCount} prior trades, ${winRate}% win rate, last ${MAX_NOTES} lessons):`,
     ...lines,
     "Apply these prior lessons when reviewing today's candidates; weight your own veto more heavily on patterns previously associated with losses.",
   ].join("\n");

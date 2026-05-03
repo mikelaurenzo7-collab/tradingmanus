@@ -97,8 +97,12 @@ function parseDollarValue(value: unknown): number {
  * Convert a Kalshi cent-scale price (0..100) to dollars (0..1).
  * Returns `undefined` if the input is missing or cannot be coerced
  * to a finite number, so it can be skipped in fallback chains.
+ *
+ * Exported so other Kalshi modules (kalshiAuth, kalshiOrderSync, etc.)
+ * can perform the same boundary conversion without duplicating the logic
+ * or resorting to raw `/ 100` expressions.
  */
-function centsToDollars(value: unknown): number | undefined {
+export function centsToDollars(value: unknown): number | undefined {
   if (value === undefined || value === null) {
     return undefined;
   }

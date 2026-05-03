@@ -20,6 +20,7 @@ const PortfolioOptimization = lazy(() => import("./pages/PortfolioOptimization")
 const Backtesting = lazy(() => import("./pages/Backtesting"));
 const Analytics = lazy(() => import("./pages/Analytics"));
 const TradingAutonomy = lazy(() => import("./pages/TradingAutonomy"));
+const TradingReadiness = lazy(() => import("./pages/TradingReadiness"));
 const Funding = lazy(() => import("./pages/Funding"));
 const ClusterMonitor = lazy(() => import("./pages/ClusterMonitor"));
 const Strategies = lazy(() => import("./pages/Strategies"));
@@ -50,6 +51,7 @@ function Router() {
       <Route path={"/dashboard"} component={withLayout(Dashboard)} />
       <Route path={"/connect"} component={withLayout(Connect)} />
       <Route path={"/autonomy"} component={withLayout(TradingAutonomy)} />
+      <Route path={"/trading-readiness"} component={withLayout(TradingReadiness)} />
       <Route path={"/positions"} component={withLayout(Positions)} />
       <Route path={"/trades"} component={withLayout(Trades)} />
       <Route path={"/signals"} component={withLayout(Signals)} />

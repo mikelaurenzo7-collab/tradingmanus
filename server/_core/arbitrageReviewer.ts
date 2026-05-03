@@ -199,7 +199,7 @@ export async function reviewArbitrageOpportunities(
   const messageInput: Record<string, unknown> = {
     // Always use Sonnet (or the configured deep model) — these are by
     // definition high-stakes multi-leg trades; we want depth over speed.
-    model: options.anthropicModel ?? ENV.anthropicDeepModel ?? ENV.anthropicModel ?? "claude-sonnet-4-5",
+    model: options.anthropicModel ?? ENV.anthropicDeepModel ?? ENV.anthropicModel,
     max_tokens: ARB_REVIEWER_MAX_TOKENS,
     temperature: 0,
     system: cachedSystem,

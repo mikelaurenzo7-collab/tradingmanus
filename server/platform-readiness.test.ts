@@ -258,6 +258,7 @@ function createProtectedContext(overrides: Partial<TrpcContext> = {}): TrpcConte
     },
     req: {} as any,
     res: {} as any,
+    paperTradeMode: false,
     ...overrides,
   };
 }

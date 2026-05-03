@@ -10,6 +10,20 @@ import { getKalshiOrderStatus, createPositionFromFill, closePositionFromFill } f
 import * as kalshiCredDb from "../db.kalshi-credentials";
 import { assertPositiveIntegerUserId } from "./userScope";
 import { logger } from "./logger";
+import { centsToDollars } from "./kalshiMarketData";
+import { fetchWithRetry } from "./fetchWithRetry";
+import { CircuitBreaker } from "./circuitBreaker";
+
+/**
+ * Shared circuit breaker for all Kalshi order-sync HTTP calls.
+ * Trips after 5 failures in 30 s, fails fast for 30 s, then half-open probe.
+ */
+const kalshiOrderSyncBreaker = new CircuitBreaker({
+  name: "kalshiOrderSync",
+  failureThreshold: 5,
+  windowMs: 30_000,
+  cooldownMs: 30_000,
+});
 
 // Guards against two concurrent sync intervals processing the same user's pending orders
 const _syncRunningByUser = new Set<string>();
@@ -167,7 +181,11 @@ export async function syncLivePositions(userId: number): Promise<void> {
     for (const base of KALSHI_ENVIRONMENTS) {
       try {
         const url = `${base}/portfolio/positions`;
-        const resp = await fetch(url, { method: "GET", headers: buildHeaders(url) });
+        const resp = await fetchWithRetry(
+          url,
+          { method: "GET", headers: buildHeaders(url) },
+          { label: "kalshiOrderSync.syncLivePositions", breaker: kalshiOrderSyncBreaker },
+        );
         if (!resp.ok) continue;
         const payload = await resp.json() as { market_positions?: any[]; positions?: any[] };
         livePositions = payload.market_positions ?? payload.positions ?? [];
@@ -191,11 +209,10 @@ export async function syncLivePositions(userId: number): Promise<void> {
       const quantity = side === "yes" ? yesQty : noQty;
       if (quantity <= 0) continue;
 
-      // Average price from Kalshi comes as cents; normalize to decimal.
-      const rawPrice = Number(
-        pos.average_price ?? pos.yes_price ?? pos.no_price ?? 0,
-      );
-      const entryPrice = rawPrice > 1 ? rawPrice / 100 : rawPrice;
+      // Average price from Kalshi comes as cent-scale (0..100); convert via
+      // the canonical boundary helper so this file never does a bare /100.
+      const rawPrice = pos.average_price ?? pos.yes_price ?? pos.no_price ?? 0;
+      const entryPrice = centsToDollars(rawPrice) ?? 0;
       const currentPrice = entryPrice;
 
       const existing = await db

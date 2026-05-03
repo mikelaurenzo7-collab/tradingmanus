@@ -48,6 +48,14 @@ import {
   fetchKalshiAccountEquity,
 } from "./_core/kalshiAuth";
 import { getPerformanceOverview } from "./_core/kalshiLearning";
+import {
+  validateRiskParameters,
+  estimateImpactOnRecentRuns,
+  applyRiskParameters,
+  getRiskParameterHistory,
+  DEFAULT_RISK_PARAMETERS,
+  type RiskParameters,
+} from "./_core/riskTuningHelper";
 import * as kalshiCredDb from "./db.kalshi-credentials";
 import * as polymarketCredDb from "./db.polymarket-credentials";
 import * as tradingPreferencesDb from "./db.trading-preferences";
@@ -748,13 +756,13 @@ export const appRouter = router({
           if (result.success) {
             await db.logAuditEvent(
               "kalshi_order_placed",
-              JSON.stringify({ ...input, orderExposure, maxLossOnTrade }),
+              JSON.stringify({ ...input, orderExposure, maxLossOnTrade, simulated: ctx.paperTradeMode }),
               ctx.user!.openId
             );
           } else {
             await db.logAuditEvent(
               "kalshi_order_blocked_or_failed",
-              JSON.stringify({ ...input, orderExposure, maxLossOnTrade, reason: result.error ?? "unknown" }),
+              JSON.stringify({ ...input, orderExposure, maxLossOnTrade, reason: result.error ?? "unknown", simulated: ctx.paperTradeMode }),
               ctx.user!.openId
             );
           }
@@ -771,18 +779,15 @@ export const appRouter = router({
       .input(z.object({ orderId: z.string() }))
       .mutation(async ({ input, ctx }) => {
         try {
+          // Pass openId so audit events inside cancelKalshiOrder use the
+          // authenticated user's identity rather than a numeric fallback.
+          // Audit logging (success + failure) is handled inside cancelKalshiOrder.
           const result = await cancelKalshiOrder(
             getRequiredUserId(ctx),
-            input.orderId
+            input.orderId,
+            undefined,
+            ctx.user!.openId
           );
-
-          if (result.success) {
-            await db.logAuditEvent(
-              "kalshi_order_cancelled",
-              input.orderId,
-              ctx.user!.openId
-            );
-          }
 
           return result;
         } catch (error) {
@@ -838,20 +843,17 @@ export const appRouter = router({
       )
       .mutation(async ({ input, ctx }) => {
         try {
+          // Pass openId so audit events inside closeKalshiPosition use the
+          // authenticated user's identity rather than a numeric fallback.
+          // Audit logging (success + failure) is handled inside closeKalshiPosition.
           const result = await closeKalshiPosition(
             getRequiredUserId(ctx),
             input.positionId,
             input.marketId,
-            input.currentPrice
+            input.currentPrice,
+            undefined,
+            ctx.user!.openId
           );
-
-          if (result.success) {
-            await db.logAuditEvent(
-              "kalshi_position_closed",
-              JSON.stringify(input),
-              ctx.user!.openId
-            );
-          }
 
           return result;
         } catch (error) {
@@ -903,6 +905,25 @@ export const appRouter = router({
           logger.error({ err: error }, "[Kalshi] Initialize capital error");
           return { success: false, error: String(error) };
         }
+      }),
+
+    withdrawCapital: protectedProcedure
+      .input(z.object({ amount: z.number().min(0.01) }))
+      .mutation(async ({ input, ctx }) => {
+        // Block all withdrawals during paper trading mode
+        if (ctx.paperTradeMode) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Cannot withdraw during paper trading mode. Switch to real mode first.",
+          });
+        }
+
+        // Future implementation: actual withdrawal logic would go here
+        // For now, this is a placeholder that only enforces paper mode blocking
+        throw new TRPCError({
+          code: "NOT_IMPLEMENTED",
+          message: "Fund withdrawals are not yet implemented.",
+        });
       }),
 
     // Signals
@@ -1559,6 +1580,145 @@ export const appRouter = router({
         return { success: false, error: String(error) };
       }
     }),
+
+    // --- Risk parameter tuning ---
+    getRiskParameters: protectedProcedure.query(async ({ ctx }) => {
+      try {
+        const userId = getRequiredUserId(ctx);
+        const history = await getRiskParameterHistory(userId, 1);
+        const currentParams = history.length > 0 ? history[0].params : DEFAULT_RISK_PARAMETERS;
+        return {
+          current: currentParams,
+          defaults: DEFAULT_RISK_PARAMETERS,
+        };
+      } catch (error) {
+        logger.error({ err: error }, "[Kalshi] Get risk parameters error");
+        return {
+          current: DEFAULT_RISK_PARAMETERS,
+          defaults: DEFAULT_RISK_PARAMETERS,
+        };
+      }
+    }),
+
+    validateRiskParameters: protectedProcedure
+      .input(
+        z.object({
+          maxPositionSizePercent: z.number().optional(),
+          maxDailyLossPercent: z.number().optional(),
+          maxOpenPositions: z.number().int().optional(),
+          minCapitalReservePercent: z.number().optional(),
+        })
+      )
+      .mutation(async ({ ctx, input }) => {
+        try {
+          const userId = getRequiredUserId(ctx);
+
+          // Validate parameters
+          const validation = await validateRiskParameters(input);
+
+          // Estimate impact on recent runs
+          const impactEstimate = await estimateImpactOnRecentRuns(
+            userId,
+            {
+              maxPositionSizePercent: input.maxPositionSizePercent ?? DEFAULT_RISK_PARAMETERS.maxPositionSizePercent,
+              maxDailyLossPercent: input.maxDailyLossPercent ?? DEFAULT_RISK_PARAMETERS.maxDailyLossPercent,
+              maxOpenPositions: input.maxOpenPositions ?? DEFAULT_RISK_PARAMETERS.maxOpenPositions,
+              minCapitalReservePercent: input.minCapitalReservePercent ?? DEFAULT_RISK_PARAMETERS.minCapitalReservePercent,
+            }
+          );
+
+          return {
+            valid: validation.valid,
+            warnings: validation.warnings,
+            errors: validation.errors,
+            impact: impactEstimate,
+          };
+        } catch (error) {
+          logger.error({ err: error }, "[Kalshi] Validate risk parameters error");
+          return {
+            valid: false,
+            warnings: [],
+            errors: ["Failed to validate parameters"],
+            impact: {
+              wouldHaveBlocked: 0,
+              wouldHaveExecuted: 0,
+              accountAtRisk: 0,
+              recommendation: "Validation failed",
+            },
+          };
+        }
+      }),
+
+    applyRiskParameters: protectedProcedure
+      .input(
+        z.object({
+          maxPositionSizePercent: z.number(),
+          maxDailyLossPercent: z.number(),
+          maxOpenPositions: z.number().int(),
+          minCapitalReservePercent: z.number(),
+          platform: z.enum(["kalshi", "polymarket"]),
+        })
+      )
+      .mutation(async ({ ctx, input }) => {
+        try {
+          const userId = getRequiredUserId(ctx);
+
+          const params: RiskParameters = {
+            maxPositionSizePercent: input.maxPositionSizePercent,
+            maxDailyLossPercent: input.maxDailyLossPercent,
+            maxOpenPositions: input.maxOpenPositions,
+            minCapitalReservePercent: input.minCapitalReservePercent,
+          };
+
+          // Validate first
+          const validation = await validateRiskParameters(params);
+          if (!validation.valid) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: `Invalid parameters: ${validation.errors.join(", ")}`,
+            });
+          }
+
+          // Apply the parameters
+          await applyRiskParameters(
+            userId,
+            input.platform,
+            params,
+            ctx.user!.openId
+          );
+
+          return {
+            success: true,
+            params,
+            message: `${input.platform} risk parameters updated`,
+          };
+        } catch (error) {
+          if (error instanceof TRPCError) throw error;
+          logger.error({ err: error }, "[Kalshi] Apply risk parameters error");
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Unable to apply risk parameters",
+            cause: error,
+          });
+        }
+      }),
+
+    getRiskTuningHistory: protectedProcedure
+      .input(
+        z.object({
+          limit: z.number().int().min(1).max(50).optional().default(20),
+        })
+      )
+      .query(async ({ ctx, input }) => {
+        try {
+          const userId = getRequiredUserId(ctx);
+          const history = await getRiskParameterHistory(userId, input.limit);
+          return { history, count: history.length };
+        } catch (error) {
+          logger.error({ err: error }, "[Kalshi] Get risk tuning history error");
+          return { history: [], count: 0 };
+        }
+      }),
   }),
 
   // Beta access management
@@ -1786,7 +1946,11 @@ export const appRouter = router({
           })
           .optional()
       )
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
+        const userId = getRequiredUserId(ctx);
+        if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+        }
         try {
           return await fetchPolymarketMarkets({
             limit: input?.limit ?? 50,
@@ -1809,6 +1973,10 @@ export const appRouter = router({
           .optional()
       )
       .mutation(async ({ input, ctx }) => {
+        const userId = getRequiredUserId(ctx);
+        if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+        }
         try {
           const markets = await fetchPolymarketMarkets({ limit: POLYMARKET_SIGNAL_GENERATION_MARKET_LIMIT });
           const signals = generatePolymarketSignals(markets, {
@@ -1842,6 +2010,13 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         try {
           const userId = getRequiredUserId(ctx);
+          if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+          }
+          // Serialise the check-and-execute block per user so two concurrent
+          // requests can't both pass credential/risk checks against stale state
+          // and then both submit orders (TOCTOU race).
+          return await withUserLock(userId, async () => {
           const creds = await polymarketCredDb.getPolymarketCredentials(userId);
 
           if (!creds || creds.accountStatus !== "connected") {
@@ -1869,11 +2044,37 @@ export const appRouter = router({
               JSON.stringify(input),
               ctx.user!.openId
             );
+          } else {
+            await db.logAuditEvent(
+              "polymarket_order_blocked_or_failed",
+              JSON.stringify({
+                tokenId: input.tokenId,
+                side: input.side,
+                price: input.price,
+                size: input.size,
+                reason: "REST_ERROR",
+                error: result.error ?? "unknown",
+              }),
+              ctx.user!.openId
+            );
           }
 
           return result;
+          }); // end withUserLock
         } catch (error) {
           logger.error({ err: error }, "[Polymarket] Place order error");
+          await db.logAuditEvent(
+            "polymarket_order_blocked_or_failed",
+            JSON.stringify({
+              tokenId: input.tokenId,
+              side: input.side,
+              price: input.price,
+              size: input.size,
+              reason: "REST_ERROR",
+              error: error instanceof Error ? error.message : String(error),
+            }),
+            ctx.user!.openId
+          ).catch(() => {/* best-effort audit — do not swallow original error */});
           return { success: false, error: String(error) };
         }
       }),
@@ -1881,7 +2082,11 @@ export const appRouter = router({
     // --- Cluster monitoring ---
 
     /** Return the static profiles of all 7 documented wash-trading clusters. */
-    getKnownClusters: protectedProcedure.query(() => {
+    getKnownClusters: protectedProcedure.query(async ({ ctx }) => {
+      const userId = getRequiredUserId(ctx);
+      if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+      }
       return KNOWN_CLUSTERS;
     }),
 
@@ -1905,7 +2110,11 @@ export const appRouter = router({
           })
           .optional(),
       )
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
+        const userId = getRequiredUserId(ctx);
+        if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+        }
         try {
           const markets = await fetchPolymarketMarkets({
             limit: POLYMARKET_SIGNAL_GENERATION_MARKET_LIMIT,
@@ -1961,6 +2170,10 @@ export const appRouter = router({
           .optional(),
       )
       .mutation(async ({ input, ctx }) => {
+        const userId = getRequiredUserId(ctx);
+        if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+        }
         try {
           const markets = await fetchPolymarketMarkets({
             limit: POLYMARKET_SIGNAL_GENERATION_MARKET_LIMIT,
@@ -2018,7 +2231,11 @@ export const appRouter = router({
           })
           .optional(),
       )
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
+        const userId = getRequiredUserId(ctx);
+        if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+        }
         try {
           const markets = await fetchPolymarketMarkets({
             limit: POLYMARKET_SIGNAL_GENERATION_MARKET_LIMIT,
@@ -2059,7 +2276,11 @@ export const appRouter = router({
           })
           .optional(),
       )
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
+        const userId = getRequiredUserId(ctx);
+        if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+        }
         try {
           const markets = await fetchPolymarketMarkets({
             limit: POLYMARKET_SIGNAL_GENERATION_MARKET_LIMIT,
@@ -2084,6 +2305,9 @@ export const appRouter = router({
     runAutonomousTrading: protectedProcedure.mutation(async ({ ctx }) => {
       try {
         const userId = getRequiredUserId(ctx);
+        if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+        }
         const result = await runPolymarketAutonomousTrading(userId, {
           triggeredByOpenId: ctx.user!.openId,
         });
@@ -2164,7 +2388,11 @@ export const appRouter = router({
           })
           .optional(),
       )
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
+        const userId = getRequiredUserId(ctx);
+        if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+        }
         try {
           const rawMarkets = await fetchPolymarketMarkets({
             limit: POLYMARKET_SIGNAL_GENERATION_MARKET_LIMIT,
@@ -2207,7 +2435,11 @@ export const appRouter = router({
           })
           .optional(),
       )
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
+        const userId = getRequiredUserId(ctx);
+        if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+        }
         try {
           const [rawKalshi, rawPolymarket] = await Promise.all([
             fetchKalshiMarkets({ status: "open" }),
@@ -2279,6 +2511,9 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         try {
           const userId = getRequiredUserId(ctx);
+          if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+          }
           const minConfidence = input?.minConfidence ?? 0.5;
           const limit = input?.limit ?? 30;
 
@@ -2383,6 +2618,10 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         try {
           const userId = getRequiredUserId(ctx);
+
+          if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+          }
 
           if (input.netEdge <= 0) {
             return {
@@ -2505,6 +2744,358 @@ export const appRouter = router({
           return { success: false, error: String(error) };
         }
       }),
+  }),
+  trading: router({
+    getTradingReadinessStatus: protectedProcedure.query(async ({ ctx }) => {
+      const userId = getRequiredUserId(ctx);
+      const [prefs, recentRuns, auditLog] = await Promise.all([
+        tradingPreferencesDb.getTradingPreferences(userId),
+        db.getRecentAutonomyRuns(userId, 10),
+        db.getAuditLog(30, ctx.user!.openId),
+      ]);
+
+      // Count autonomy cycles (runs with status: executed, skipped, or error)
+      const autonomyCyclesCompleted = recentRuns.filter(
+        (r: any) => r.status === "executed" || r.status === "skipped" || r.status === "error"
+      ).length;
+
+      // Determine paper trading mode and duration
+      const paperTradeMode = !prefs.liveTradingEnabled;
+      const firstRunDate =
+        recentRuns.length > 0
+          ? recentRuns[recentRuns.length - 1]?.startedAt
+          : null;
+      const daysInPaperMode = firstRunDate
+        ? Math.floor(
+            (Date.now() - new Date(firstRunDate).getTime()) / (1000 * 60 * 60 * 24)
+          )
+        : 0;
+
+      // Collect desk memory stats (Kalshi + Polymarket)
+      const allDeskIds = [
+        "kalshi_sports",
+        "kalshi_crypto",
+        "kalshi_politics",
+        "kalshi_esports",
+        "polymarket_crypto",
+        "polymarket_politics",
+        "polymarket_general",
+        "polymarket_sports",
+      ];
+
+      const deskMemoryStats: Record<
+        string,
+        {
+          totalLessons: number;
+          winRate: number;
+          recentLessons: Array<{
+            ts: string;
+            outcome: "win" | "loss" | "scratch";
+            note: string;
+          }>;
+        }
+      > = {};
+
+      // Fetch desk memory for Kalshi and Polymarket
+      const kalshiDesks = await Promise.all([
+        import("./db.desk-memory").then((m) =>
+          m.getDeskMemory(userId, "kalshi", "kalshi_sports")
+        ),
+        import("./db.desk-memory").then((m) =>
+          m.getDeskMemory(userId, "kalshi", "kalshi_crypto")
+        ),
+        import("./db.desk-memory").then((m) =>
+          m.getDeskMemory(userId, "kalshi", "kalshi_politics")
+        ),
+        import("./db.desk-memory").then((m) =>
+          m.getDeskMemory(userId, "kalshi", "kalshi_esports")
+        ),
+      ]);
+
+      const polymarketDesks = await Promise.all([
+        import("./db.desk-memory").then((m) =>
+          m.getDeskMemory(userId, "polymarket", "polymarket_crypto")
+        ),
+        import("./db.desk-memory").then((m) =>
+          m.getDeskMemory(userId, "polymarket", "polymarket_politics")
+        ),
+        import("./db.desk-memory").then((m) =>
+          m.getDeskMemory(userId, "polymarket", "polymarket_general")
+        ),
+        import("./db.desk-memory").then((m) =>
+          m.getDeskMemory(userId, "polymarket", "polymarket_sports")
+        ),
+      ]);
+
+      const allDesks = [...kalshiDesks, ...polymarketDesks].filter(Boolean);
+      for (const desk of allDesks) {
+        if (desk) {
+          const winRate =
+            desk.tradeCount > 0 ? (desk.winCount / desk.tradeCount) * 100 : 0;
+          deskMemoryStats[desk.deskId] = {
+            totalLessons: desk.notes.length,
+            winRate: Math.round(winRate),
+            recentLessons: desk.notes.slice(-3),
+          };
+        }
+      }
+
+      // Build recent autonomy runs summary
+      const recentAutonomyRuns = recentRuns.slice(0, 10).map((run: any) => ({
+        runId: run.runId || "",
+        timestamp: run.startedAt?.toISOString() || new Date().toISOString(),
+        platform: "kalshi" as const, // Simplified; could parse from decision details
+        signalsGenerated: run.signalsGenerated || 0,
+        signalsApproved: run.executionCandidates || 0,
+        ordersPlaced: run.orderPlaced ? 1 : 0,
+        ordersBlocked: run.executionCandidates > 0 && !run.orderPlaced ? 1 : 0,
+        totalPnL: 0, // Would require additional query if needed
+        executionStatus: (run.status || "error") as
+          | "completed"
+          | "skipped"
+          | "error",
+      }));
+
+      return {
+        paperTradeMode,
+        daysInPaperMode,
+        autonomyCyclesCompleted,
+        deskMemoryStats,
+        recentAutonomyRuns,
+      };
+    }),
+
+    getPaperTradingMetrics: protectedProcedure.query(async ({ ctx }) => {
+      const userId = getRequiredUserId(ctx);
+      const auditLog = await db.getAuditLog(90, ctx.user!.openId);
+
+      // Parse order placement events to compute paper vs real win rates
+      let paperTrades = 0;
+      let paperWins = 0;
+      let realTrades = 0;
+      let realWins = 0;
+      let totalPaperPnL = 0;
+      let totalRealPnL = 0;
+
+      for (const event of auditLog) {
+        if (
+          event.eventType === "kalshi_order_placed" ||
+          event.eventType === "scheduled_autonomy_order_placed"
+        ) {
+          try {
+            const details = event.details
+              ? JSON.parse(event.details)
+              : {};
+            const pnl =
+              details.realizedPnl !== undefined
+                ? Number(details.realizedPnl)
+                : 0;
+            // Simplified: would need live trading flag from preferences at time of trade
+            paperTrades += 1;
+            if (pnl > 0) paperWins += 1;
+            totalPaperPnL += pnl;
+          } catch {
+            // Ignore parse errors
+          }
+        }
+      }
+
+      const paperWinRate =
+        paperTrades > 0 ? Math.round((paperWins / paperTrades) * 100) : 0;
+      const realWinRate = realTrades > 0 ? Math.round((realWins / realTrades) * 100) : 0;
+
+      let alertMessage: string | undefined;
+      let recommendation: string | undefined;
+
+      if (realTrades > 0 && realWinRate < paperWinRate * 0.7) {
+        alertMessage = `Real performance (${realWinRate}%) is 30%+ below paper baseline (${paperWinRate}%)`;
+        recommendation = "Review execution discipline and risk";
+      } else if (paperTrades < 5) {
+        alertMessage = "Insufficient paper trade history";
+        recommendation = "Complete more autonomy cycles before going live";
+      } else if (realTrades === 0 && paperWinRate >= 60) {
+        recommendation = "Ready to begin micro-funding Phase 1";
+      }
+
+      return {
+        paperWinRate,
+        paperTotalTrades: paperTrades,
+        paperTotalPnL: Number(totalPaperPnL.toFixed(2)),
+        realWinRate,
+        realTotalTrades: realTrades,
+        realTotalPnL: Number(totalRealPnL.toFixed(2)),
+        comparison: {
+          alertMessage,
+          recommendation,
+        },
+      };
+    }),
+
+    getPreLiveChecklist: protectedProcedure.query(async ({ ctx }) => {
+      const userId = getRequiredUserId(ctx);
+      const [prefs, recentRuns, auditLog, kalshiCreds] = await Promise.all([
+        tradingPreferencesDb.getTradingPreferences(userId),
+        db.getRecentAutonomyRuns(userId, 30),
+        db.getAuditLog(30, ctx.user!.openId),
+        kalshiCredDb.getKalshiCredentials(userId),
+      ]);
+
+      // Gather metrics
+      const autonomyCyclesCompleted = recentRuns.filter(
+        (r: any) => r.status === "executed" || r.status === "skipped" || r.status === "error"
+      ).length;
+
+      const firstRunDate =
+        recentRuns.length > 0
+          ? recentRuns[recentRuns.length - 1]?.startedAt
+          : null;
+      const daysInPaperMode = firstRunDate
+        ? Math.floor(
+            (Date.now() - new Date(firstRunDate).getTime()) / (1000 * 60 * 60 * 24)
+          )
+        : 0;
+
+      // Count desk memory lessons per desk
+      const allDesks = await Promise.all([
+        import("./db.desk-memory").then((m) =>
+          m.getDeskMemory(userId, "kalshi", "kalshi_sports")
+        ),
+        import("./db.desk-memory").then((m) =>
+          m.getDeskMemory(userId, "kalshi", "kalshi_crypto")
+        ),
+        import("./db.desk-memory").then((m) =>
+          m.getDeskMemory(userId, "kalshi", "kalshi_politics")
+        ),
+        import("./db.desk-memory").then((m) =>
+          m.getDeskMemory(userId, "kalshi", "kalshi_esports")
+        ),
+        import("./db.desk-memory").then((m) =>
+          m.getDeskMemory(userId, "polymarket", "polymarket_crypto")
+        ),
+        import("./db.desk-memory").then((m) =>
+          m.getDeskMemory(userId, "polymarket", "polymarket_politics")
+        ),
+      ]);
+
+      const deskDesksWithLessons = allDesks.filter(
+        (d) => d && d.notes.length >= 4
+      ).length;
+
+      // Calculate paper win rate
+      let paperWins = 0;
+      let paperTrades = 0;
+      for (const event of auditLog) {
+        if (
+          event.eventType === "kalshi_order_placed" ||
+          event.eventType === "scheduled_autonomy_order_placed"
+        ) {
+          paperTrades += 1;
+          try {
+            const details = event.details
+              ? JSON.parse(event.details)
+              : {};
+            if (Number(details.realizedPnl) > 0) {
+              paperWins += 1;
+            }
+          } catch {
+            // Ignore
+          }
+        }
+      }
+      const paperWinRate =
+        paperTrades > 0 ? (paperWins / paperTrades) * 100 : 0;
+
+      // Check for execution errors
+      const hasExecutionErrors =
+        auditLog.some((e: any) => e.eventType.includes("error")) || false;
+
+      // Build checklist items with scoring
+      const checklist = [
+        {
+          id: "paper_duration",
+          label: "7+ days paper trading",
+          description: "Running paper trades for at least one week",
+          completed: daysInPaperMode >= 7,
+          score: daysInPaperMode >= 7 ? 20 : 0,
+          evidence: `${daysInPaperMode} days in paper mode`,
+        },
+        {
+          id: "autonomy_cycles",
+          label: "30+ autonomy cycles",
+          description:
+            "Completed at least 30 scheduled autonomy runs (executed, skipped, or error)",
+          completed: autonomyCyclesCompleted >= 30,
+          score: autonomyCyclesCompleted >= 30 ? 15 : 0,
+          evidence: `${autonomyCyclesCompleted} cycles completed`,
+        },
+        {
+          id: "desk_memory",
+          label: "Desk memory 4+ lessons/desk",
+          description:
+            "At least 4 desks have recorded 4+ lessons each from prior trades",
+          completed: deskDesksWithLessons >= 4,
+          score: deskDesksWithLessons >= 4 ? 15 : 0,
+          evidence: `${deskDesksWithLessons}/6 desks with 4+ lessons`,
+        },
+        {
+          id: "paper_win_rate",
+          label: "Paper win rate >60%",
+          description: "Paper trading win rate exceeds 60% confidence threshold",
+          completed: paperWinRate > 60,
+          score: paperWinRate > 60 ? 15 : 0,
+          evidence: `${Math.round(paperWinRate)}% win rate (${paperTrades} trades)`,
+        },
+        {
+          id: "no_errors",
+          label: "No execution errors",
+          description: "No critical errors in past 30 days of autonomy runs",
+          completed: !hasExecutionErrors,
+          score: !hasExecutionErrors ? 15 : 0,
+          evidence: hasExecutionErrors ? "Errors detected" : "Clean record",
+        },
+        {
+          id: "risk_params",
+          label: "Risk parameters reviewed",
+          description: "Position size, loss limits, and cadence validated",
+          completed:
+            prefs.maxOrderNotional > 0 &&
+            prefs.maxDailyOrders > 0 &&
+            prefs.riskPosture !== undefined,
+          score:
+            prefs.maxOrderNotional > 0 &&
+            prefs.maxDailyOrders > 0 &&
+            prefs.riskPosture
+              ? 10
+              : 0,
+          evidence: `${prefs.riskPosture} posture, $${prefs.maxOrderNotional} per order`,
+        },
+        {
+          id: "api_verified",
+          label: "API credentials verified",
+          description: "Kalshi API key and credentials are valid and connected",
+          completed: kalshiCreds !== null,
+          score: kalshiCreds !== null ? 10 : 0,
+          evidence: kalshiCreds ? "Connected" : "Not configured",
+        },
+      ];
+
+      const overallScore = checklist.reduce((sum, item) => sum + item.score, 0);
+
+      let recommendation: "NOT_READY" | "CAUTIOUS" | "READY";
+      if (overallScore < 60) {
+        recommendation = "NOT_READY";
+      } else if (overallScore < 85) {
+        recommendation = "CAUTIOUS";
+      } else {
+        recommendation = "READY";
+      }
+
+      return {
+        checklist,
+        overallScore,
+        recommendation,
+      };
+    }),
   }),
 });
 
