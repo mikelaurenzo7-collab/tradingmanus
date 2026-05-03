@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { trpc } from "@/lib/trpc";
 import { buildLiquidityRow, type FeedSnapshot, summarizeLiquidityRows } from "@/lib/liquidityAnalytics";
+import { PageHeader } from "@/components/PageHeader";
 
 type MarketView = "all" | "liquid" | "imbalanced";
 
@@ -40,7 +41,7 @@ export default function Analytics() {
 
   if (feedsQuery.isLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-950">
+      <div className="flex items-center justify-center min-h-[60vh]">
         <Loader2 className="h-8 w-8 animate-spin text-cyan-400" />
       </div>
     );
@@ -48,34 +49,26 @@ export default function Analytics() {
 
   if (feedsQuery.error) {
     return (
-      <div className="min-h-screen bg-slate-950 p-6">
-        <Card className="mx-auto max-w-3xl border border-rose-900/50 bg-rose-950/30">
-          <CardHeader>
-            <CardTitle className="text-rose-300">Market Analytics Unavailable</CardTitle>
-            <CardDescription className="text-rose-100/80">
-              The live market-feed pipeline could not be loaded for the analytics dashboard.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="text-sm text-rose-100/90">{feedsQuery.error.message}</CardContent>
-        </Card>
-      </div>
+      <Card className="mx-auto max-w-3xl border-rose-400/30 bg-rose-500/5">
+        <CardHeader>
+          <CardTitle className="text-rose-300">Market Analytics Unavailable</CardTitle>
+          <CardDescription className="text-rose-100/80">
+            The live market-feed pipeline could not be loaded for the analytics dashboard.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="text-sm text-rose-100/90">{feedsQuery.error.message}</CardContent>
+      </Card>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 p-6">
-      <div className="mx-auto max-w-7xl space-y-8">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <h1 className="mb-2 bg-gradient-to-r from-violet-400 via-pink-400 to-cyan-400 bg-clip-text text-4xl font-bold text-transparent">
-              Market Microstructure Analytics
-            </h1>
-            <p className="max-w-3xl text-slate-400">
-              Monitor real-time order-book proxies, liquidity depth, spread quality, and volume imbalance so execution quality
-              and signal selection stay grounded in tradable conditions.
-            </p>
-          </div>
-
+    <div className="space-y-8 max-w-7xl mx-auto">
+      <PageHeader
+        icon={BarChart3}
+        title="Market Microstructure Analytics"
+        description="Monitor real-time order-book proxies, liquidity depth, spread quality, and volume imbalance so execution quality and signal selection stay grounded in tradable conditions."
+        iconGradient="from-cyan-500 to-blue-500"
+        actions={
           <div className="flex flex-wrap gap-2">
             {([
               ["all", "All Feeds"],
@@ -85,19 +78,22 @@ export default function Analytics() {
               <Button
                 key={value}
                 type="button"
+                size="sm"
                 variant={activeView === value ? "default" : "outline"}
                 onClick={() => setActiveView(value)}
                 className={
                   activeView === value
-                    ? "bg-gradient-to-r from-cyan-500 to-violet-500 text-white"
-                    : "border-slate-700 bg-slate-900 text-slate-200 hover:bg-slate-800"
+                    ? "bg-gradient-to-br from-violet-500 to-indigo-500 hover:from-violet-600 hover:to-indigo-600 text-white border-0"
+                    : ""
                 }
               >
                 {label}
               </Button>
             ))}
           </div>
-        </div>
+        }
+      />
+
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
@@ -339,7 +335,6 @@ export default function Analytics() {
             </Card>
           </div>
         </div>
-      </div>
     </div>
   );
 }

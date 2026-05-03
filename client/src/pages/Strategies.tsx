@@ -18,8 +18,10 @@ import {
   Activity,
   Layers,
   GitMerge,
+  Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
+import { PageHeader } from "@/components/PageHeader";
 
 // ----------- Strategy metadata -----------
 
@@ -702,15 +704,12 @@ export default function Strategies() {
 
   return (
     <div className="space-y-8">
-      {/* Header */}
-      <div>
-        <h1 className="text-4xl font-bold gradient-text mb-2">BOT STRATEGIES</h1>
-        <p className="text-muted-foreground">
-          Organised playbooks for the Kalshi and Polymarket autonomous trading bots.
-          Each strategy is ranked by risk-adjusted return and designed for systematic,
-          algorithmic execution.
-        </p>
-      </div>
+      <PageHeader
+        icon={Sparkles}
+        title="Bot Strategies"
+        description="Organised playbooks for the Kalshi and Polymarket autonomous trading bots. Each strategy is ranked by risk-adjusted return and designed for systematic, algorithmic execution."
+        iconGradient="from-fuchsia-500 to-violet-500"
+      />
 
       {/* Tab selector */}
       <div className="flex gap-2 flex-wrap">

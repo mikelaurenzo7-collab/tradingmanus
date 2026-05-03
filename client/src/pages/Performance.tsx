@@ -12,7 +12,8 @@ import {
   formatPercent,
   summarizeLearningMetrics,
 } from "@/lib/riskPerformanceDiagnostics";
-import { BrainCircuit, CandlestickChart, CircleOff, DollarSign, Sparkles, TrendingUp } from "lucide-react";
+import { BrainCircuit, CandlestickChart, CircleOff, DollarSign, Sparkles, TrendingUp, BarChart3, Loader2 } from "lucide-react";
+import { PageHeader } from "@/components/PageHeader";
 
 export default function Performance() {
   const performanceOverviewQuery = trpc.kalshi.getPerformanceOverview.useQuery();
@@ -92,17 +93,17 @@ export default function Performance() {
 
   if (performanceOverviewQuery.isLoading) {
     return (
-      <div className="flex items-center justify-center py-12 text-slate-400">
-        Loading performance metrics...
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <Loader2 className="animate-spin w-8 h-8 text-violet-400" />
       </div>
     );
   }
 
   if (performanceOverviewQuery.isError) {
     return (
-      <Card className="border border-red-500/50 bg-red-950/20">
+      <Card className="border-rose-500/30 bg-rose-500/5">
         <CardContent className="pt-6">
-          <p className="text-red-400">Failed to load performance metrics. Please try again.</p>
+          <p className="text-rose-300">Failed to load performance metrics. Please try again.</p>
           <Button onClick={() => performanceOverviewQuery.refetch()} className="mt-4">
             Retry
           </Button>
@@ -112,16 +113,13 @@ export default function Performance() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 p-6">
-      <div className="mx-auto max-w-7xl space-y-8">
-        <div>
-          <h1 className="mb-2 bg-gradient-to-r from-violet-400 via-pink-400 to-cyan-400 bg-clip-text text-4xl font-bold text-transparent">
-            Performance Metrics
-          </h1>
-          <p className="text-slate-400">
-            Track trading quality, capital attribution, and signal-learning posture from real Kalshi activity.
-          </p>
-        </div>
+    <div className="space-y-8 max-w-7xl mx-auto">
+      <PageHeader
+        icon={BarChart3}
+        title="Performance Metrics"
+        description="Track trading quality, capital attribution, and signal-learning posture from real Kalshi activity."
+        iconGradient="from-emerald-500 to-cyan-500"
+      />
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           {metricCards.map((metric) => (
@@ -361,7 +359,6 @@ export default function Performance() {
             </CardContent>
           </Card>
         )}
-      </div>
     </div>
   );
 }

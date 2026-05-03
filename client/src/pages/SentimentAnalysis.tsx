@@ -99,11 +99,10 @@ export default function SentimentAnalysis() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 p-6">
-      <div className="max-w-7xl mx-auto space-y-8">
+    <div className="space-y-8 max-w-7xl mx-auto">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <h1 className="text-4xl font-bold bg-gradient-to-r from-violet-400 via-pink-400 to-cyan-400 bg-clip-text text-transparent mb-2">
+            <h1 className="mb-2 bg-gradient-to-r from-violet-400 via-pink-400 to-cyan-400 bg-clip-text text-4xl font-bold text-transparent">
               Sentiment Analysis
             </h1>
             <p className="text-slate-400 max-w-3xl">
@@ -382,7 +381,6 @@ export default function SentimentAnalysis() {
             </CardContent>
           </Card>
         )}
-      </div>
     </div>
   );
 }

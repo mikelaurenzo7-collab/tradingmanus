@@ -170,8 +170,7 @@ export default function PortfolioOptimization() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 p-6">
-      <div className="mx-auto max-w-7xl space-y-8">
+    <div className="space-y-8 max-w-7xl mx-auto">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <h1 className="mb-2 bg-gradient-to-r from-violet-400 via-pink-400 to-cyan-400 bg-clip-text text-4xl font-bold text-transparent">
@@ -471,7 +470,6 @@ export default function PortfolioOptimization() {
             </CardContent>
           </Card>
         )}
-      </div>
     </div>
   );
 }
