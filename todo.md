@@ -294,8 +294,8 @@
 
 ### Phase 5: Frontend User Flows (PENDING)
 
-- [ ] **ISSUE: No loading states during order placement** - User doesn't know if order is processing
-- [ ] **ISSUE: No confirmation dialog before trading** - User could accidentally place large orders
+- [x] **ISSUE: No loading states during order placement** - Close-position flow now has confirm dialog, sonner toasts, and a visible spinner
+- [x] **ISSUE: No confirmation dialog before trading** - Close-position flow gates on a `window.confirm` showing side, quantity, market, and exit price
 - [ ] **ISSUE: Performance dashboard not wired** - UI created but no backend data flowing
 - [ ] **ISSUE: Training instructions not enforced** - Agent doesn't actually filter signals by training rules
 
