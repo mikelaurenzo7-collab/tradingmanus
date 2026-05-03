@@ -103,6 +103,51 @@ vi.mock("./db.training", () => ({
   applyInstructionsToSignals: vi.fn().mockImplementation((signals: any[]) => signals),
 }));
 
+vi.mock("./_core/distributedLock", () => ({
+  acquireTypedLock: vi.fn().mockResolvedValue({
+    holderId: "test-lock-holder",
+    release: vi.fn().mockResolvedValue(undefined),
+    heartbeat: vi.fn().mockResolvedValue(undefined),
+  }),
+  createOrderSyncLock: vi.fn().mockReturnValue({
+    acquire: vi.fn().mockResolvedValue(true),
+    release: vi.fn().mockResolvedValue(undefined),
+  }),
+}));
+
+vi.mock("./_core/alerting", () => ({
+  alertIfConsecutiveFailures: vi.fn(),
+  alertEquityDrop: vi.fn(),
+  alertExchangeRejection: vi.fn(),
+  alertAiReviewerFailure: vi.fn(),
+  alertDrawdown: vi.fn(),
+}));
+
+vi.mock("./_core/aiToolbelt", () => ({
+  getCacheHitRatio: vi.fn().mockReturnValue(0),
+  newReviewerTelemetry: vi.fn().mockReturnValue({
+    calls: 0,
+    failures: 0,
+    signalsApproved: 0,
+    desks: [],
+    cacheReadInputTokens: 0,
+    cacheCreationInputTokens: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    webSearchInvocations: 0,
+    extendedThinkingInvocations: 0,
+    triageRan: false,
+    triageInputCount: 0,
+    triageKeptCount: 0,
+    anthropicCalls: 0,
+    anthropicFailures: 0,
+  }),
+}));
+
+vi.mock("./_core/drawdownEngine", () => ({
+  evaluateDrawdown: vi.fn().mockResolvedValue({ tier: "ok", lossPct: 0, shouldPause: false }),
+}));
+
 import {
   runScheduledAutonomousTrading,
   runScheduledAutonomousTradingBatch,

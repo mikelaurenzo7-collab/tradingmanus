@@ -22,7 +22,7 @@ import { calculateKalshiBuyOrderRisk, estimateContractsForRiskBudget } from "./k
 import { assertPositiveIntegerUserId } from "./userScope";
 import { reviewSignalsWithTrader } from "./tradingReviewer";
 import { getCacheHitRatio, newReviewerTelemetry } from "./aiToolbelt";
-import { createOrderSyncLock } from "./distributedLock";
+import { createOrderSyncLock, acquireTypedLock } from "./distributedLock";
 import {
   alertIfConsecutiveFailures,
   alertEquityDrop,
@@ -98,6 +98,7 @@ export type AwayTradingRunResult = {
     | "executed"
     | "generated_only"
     | "skipped"
+    | "skipped_locked"
     | "blocked"
     | "error";
   reason: string;
@@ -744,6 +745,29 @@ export async function runScheduledAutonomousTrading(
   options: ScheduledRunOptions = {}
 ): Promise<AwayTradingRunResult> {
   const userId = assertPositiveIntegerUserId(user.id, "scheduled autonomy userId");
+
+  const lock = await acquireTypedLock({ userId, lockType: "autonomy_run", ttlSeconds: 600 });
+  if (!lock) {
+    return {
+      success: false,
+      status: "skipped_locked" as const,
+      reason: "another autonomy run is already in flight",
+      signalsGenerated: 0,
+      executionCandidates: 0,
+      orderPlaced: false,
+      reconciliationStatus: "not_required",
+      reconciliationReason: null,
+      decision: null,
+      candidateSet: [],
+      rejectedCandidates: [],
+    };
+  }
+
+  const heartbeatInterval = setInterval(() => {
+    lock.heartbeat().catch(() => {/* swallow — lock will expire naturally */});
+  }, 15_000);
+
+  try {
   const triggeredByOpenId = options.triggeredByOpenId ?? user.openId;
   const triggerSource = buildTriggerSource(triggeredByOpenId);
   const runId = nanoid(16);
@@ -1391,6 +1415,10 @@ export async function runScheduledAutonomousTrading(
     exchangeRequest: safeJsonStringify(result.exchangeRequest ?? null),
     exchangeResponse: safeJsonStringify(result.exchangeResponse ?? null),
   });
+  } finally {
+    clearInterval(heartbeatInterval);
+    await lock.release().catch(() => {/* swallow */});
+  }
 }
 
 export async function runScheduledAutonomousTradingBatch(
