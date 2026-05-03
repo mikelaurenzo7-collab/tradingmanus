@@ -82,7 +82,7 @@ export async function placeMarketOrder(
       entryPrice: maxPrice,
     });
     
-    console.log(`[Trading] Order filled: ${orderId}`);
+    logger.info({ orderId }, "[Trading] Order filled");
   }, 100);
 
   return order;
@@ -99,7 +99,7 @@ export async function closePosition(
   const scopedUserId = assertPositiveIntegerUserId(userId, "closePosition userId");
   await db.closeKalshiPosition(positionId, exitPrice, scopedUserId);
   
-  console.log(`[Trading] Position closed: ${positionId} @ $${exitPrice}`);
+  logger.info({ positionId, exitPrice }, "[Trading] Position closed");
   
   return {
     pnl: 0, // Would calculate from position data
@@ -137,7 +137,7 @@ export async function updatePositionPrices(userId: number, marketPrices: Map<str
     const marketPrice = marketPrices.get(position.marketId);
     if (marketPrice) {
       await db.updateKalshiPositionPrice(position.id, marketPrice, scopedUserId);
-      console.log(`[Trading] Updated ${position.marketId}: $${marketPrice}`);
+      logger.info({ marketId: position.marketId, marketPrice }, "[Trading] Position price updated");
     }
   }
 }
@@ -156,17 +156,23 @@ export async function executeSignal(
     const scopedUserId = assertPositiveIntegerUserId(userId, "executeSignal userId");
     // Validate signal
     if (!signal.marketId || !signal.side || signal.confidence < 0.5) {
-      console.warn("[Trading] Signal rejected: insufficient confidence or missing data");
+      logger.warn(
+        { marketId: signal.marketId, side: signal.side, confidence: signal.confidence },
+        "[Trading] Signal rejected: insufficient confidence or missing data",
+      );
       return null;
     }
 
     // Place order
     const order = await placeMarketOrder(scopedUserId, signal.marketId, signal.side, quantity, maxPrice);
     
-    console.log(`[Trading] Signal executed: ${signal.signalType} ${signal.side} on ${signal.marketId}`);
+    logger.info(
+      { signalType: signal.signalType, side: signal.side, marketId: signal.marketId },
+      "[Trading] Signal executed",
+    );
     return order;
   } catch (error) {
-    console.error("[Trading] Signal execution failed:", error);
+    logger.error({ err: error }, "[Trading] Signal execution failed");
     return null;
   }
 }
@@ -249,7 +255,10 @@ export async function checkStopLosses(userId: number, maxLossPercent: number = 5
     if (lossPercent < -maxLossPercent) {
       await db.closeKalshiPosition(position.id, position.currentPrice, scopedUserId);
       closedCount++;
-      console.log(`[Trading] Stop loss triggered: Position ${position.id} closed at $${position.currentPrice}`);
+      logger.info(
+        { positionId: position.id, currentPrice: position.currentPrice },
+        "[Trading] Stop loss triggered",
+      );
     }
   }
   
@@ -270,7 +279,10 @@ export async function checkTakeProfits(userId: number, maxProfitPercent: number 
     if (profitPercent > maxProfitPercent) {
       await db.closeKalshiPosition(position.id, position.currentPrice, scopedUserId);
       closedCount++;
-      console.log(`[Trading] Take profit triggered: Position ${position.id} closed at $${position.currentPrice}`);
+      logger.info(
+        { positionId: position.id, currentPrice: position.currentPrice },
+        "[Trading] Take profit triggered",
+      );
     }
   }
   

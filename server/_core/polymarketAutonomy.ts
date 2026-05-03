@@ -35,6 +35,7 @@ import {
 } from "./polymarketRisk";
 import { assertPositiveIntegerUserId } from "./userScope";
 import { recordPolymarketTradeEntry } from "./polymarketLearning";
+import { logger } from "./logger";
 
 const MAX_SCHEDULED_MARKETS = 80;
 const BASE_RISK_LIMITS = {
@@ -498,7 +499,7 @@ export async function runPolymarketAutonomousTrading(
       executedSizeUsdc: scaledSize,
     };
   } catch (error) {
-    console.error("[PolymarketAutonomy] Order placement error:", error);
+    logger.error({ err: error, marketId: best.marketId }, "[PolymarketAutonomy] Order placement error");
     await db.logAuditEvent(
       "polymarket_autonomy_run_error",
       JSON.stringify({

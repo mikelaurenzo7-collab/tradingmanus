@@ -5,6 +5,7 @@
 
 import * as db from "../db";
 import { assertPositiveIntegerUserId } from "./userScope";
+import { logger } from "./logger";
 
 export interface TradeRecord {
   id: string;
@@ -417,8 +418,9 @@ export async function recordTradeEntry(
     entryPrice,
   });
 
-  console.log(
-    `[Learning] Trade recorded: ${tradeId} - ${signalType} ${side} @ $${entryPrice}`
+  logger.info(
+    { tradeId, signalType, side, entryPrice },
+    "[Learning] Trade recorded",
   );
   return trade;
 }
@@ -435,8 +437,9 @@ export async function recordTradeExit(
   // Use existing position close function
   await db.closeKalshiPosition(positionId, exitPrice, scopedUserId);
 
-  console.log(
-    `[Learning] Trade closed: Position ${positionId} @ $${exitPrice}`
+  logger.info(
+    { positionId, exitPrice },
+    "[Learning] Trade closed",
   );
   return null; // Return null since we don't have direct access to the trade record
 }

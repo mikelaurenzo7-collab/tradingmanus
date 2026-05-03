@@ -2,6 +2,7 @@ import crypto from "crypto";
 import { URL } from "url";
 import { getCredentialEncryptionSecret } from "./env";
 import { assertPositiveIntegerUserId } from "./userScope";
+import { logger } from "./logger";
 
 const LEGACY_ALGORITHM = "aes-256-cbc";
 const CREDENTIAL_CIPHER_VERSION = "v2";
@@ -177,7 +178,7 @@ export function encryptCredential(plaintext: string, userId: number): string {
       encrypted.toString("hex"),
     ].join(":");
   } catch (error) {
-    console.error("[Kalshi Auth] Encryption failed:", error);
+    logger.error({ err: error }, "[Kalshi Auth] Encryption failed");
     throw new Error("Failed to encrypt credential");
   }
 }
@@ -245,7 +246,7 @@ export function decryptCredential(encrypted: string, userId: number): string {
     // Node's crypto module throws "Unsupported state or unable to authenticate
     // data" when the auth tag check fails (wrong key / corrupted ciphertext).
     // Wrap these as a CredentialDecryptionError so callers can prompt re-auth.
-    console.error("[Kalshi Auth] Decryption failed:", error);
+    logger.error({ err: error }, "[Kalshi Auth] Decryption failed");
     throw new CredentialDecryptionError(
       "Stored credential cannot be decrypted with the current encryption secret — please re-authenticate with Kalshi"
     );
@@ -275,7 +276,7 @@ export async function validateKalshiCredentials(
       mode: result.mode,
     };
   } catch (error) {
-    console.error("[Kalshi Auth] Validation failed:", error);
+    logger.error({ err: error }, "[Kalshi Auth] Validation failed");
     return {
       valid: false,
       error: error instanceof Error ? error.message : "Failed to validate credentials",
@@ -301,7 +302,7 @@ export async function fetchKalshiAccountEquity(
       mode: result.mode,
     };
   } catch (error) {
-    console.error("[Kalshi Auth] Equity fetch failed:", error);
+    logger.error({ err: error }, "[Kalshi Auth] Equity fetch failed");
     return {
       equity: 0,
       error: error instanceof Error ? error.message : "Failed to fetch account equity",
