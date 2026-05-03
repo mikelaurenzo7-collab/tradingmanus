@@ -251,23 +251,70 @@ export function calculateImpliedProbability(yesPrice: number, noPrice: number): 
 }
 
 /**
- * Calculate expected value for a trade
- * EV = (Probability of Win * Profit) - (Probability of Loss * Loss)
+ * Kalshi fee rate.  Kalshi's published fee schedule charges
+ * `ceil(0.07 * C * P * (1 - P) * 100)` cents per trade where
+ * P is the price in dollars and C is the contract count.  We
+ * approximate (without ceiling) for EV math; this is also the
+ * fee a closing trade would pay at settlement-implied price.
+ *
+ * Reference: https://kalshi.com/docs/fees
+ */
+export const KALSHI_FEE_COEFFICIENT = 0.07;
+
+/**
+ * Estimate the Kalshi trading fee in dollars for a single leg
+ * (entry or exit) of a trade.  Kalshi charges a quadratic fee
+ * that maxes out at $0.0175/contract when P = $0.50.  Returns
+ * 0 for invalid inputs so callers can subtract safely.
+ */
+export function calculateKalshiFee(price: number, quantity: number): number {
+  const p = Number(price);
+  const q = Number(quantity);
+  if (!Number.isFinite(p) || !Number.isFinite(q) || p <= 0 || p >= 1 || q <= 0) {
+    return 0;
+  }
+  return KALSHI_FEE_COEFFICIENT * p * (1 - p) * q;
+}
+
+/**
+ * Estimate the round-trip Kalshi fee in dollars (entry + exit at the
+ * complement price under the simplifying assumption the exit is at
+ * the binary settlement of $0 or $1, which incurs no additional
+ * exchange fee).  In practice exits before settlement also incur a
+ * fee; we approximate by doubling the entry fee to be conservative.
+ */
+export function calculateKalshiRoundTripFee(price: number, quantity: number): number {
+  // Conservative: assume both legs cross the order book.
+  return calculateKalshiFee(price, quantity) * 2;
+}
+
+/**
+ * Calculate expected value for a trade, net of Kalshi fees.
+ *
+ * `winProbability` is the trader's forecast probability that the
+ * chosen side resolves favourably.  This MUST be a forecast distinct
+ * from the market's implied probability — passing market.impliedProbability
+ * (which equals the entry price for a fairly-priced market) collapses EV
+ * to zero by construction, which is the bug that previously made every
+ * edge metric report ~0 and rendered signal ranking meaningless.
  */
 export function calculateExpectedValue(
   side: "yes" | "no",
   entryPrice: number,
-  currentPrice: number,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _currentPrice: number,
   quantity: number,
-  impliedProbability: number
+  winProbability: number
 ): number {
-  const probWin = side === "yes" ? impliedProbability : 1 - impliedProbability;
+  const probWin = side === "yes" ? winProbability : 1 - winProbability;
   const probLoss = 1 - probWin;
 
   const profit = (1 - entryPrice) * quantity;
   const loss = entryPrice * quantity;
 
-  return probWin * profit - probLoss * loss;
+  const grossEV = probWin * profit - probLoss * loss;
+  const fee = calculateKalshiRoundTripFee(entryPrice, quantity);
+  return grossEV - fee;
 }
 
 /**

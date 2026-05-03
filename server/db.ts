@@ -407,13 +407,39 @@ export async function getKalshiOrdersByMarket(marketId: string, userId: number) 
     );
 }
 
+/**
+ * Returns the user's open (pending) Kalshi orders.  Used by the autonomy
+ * scheduler to avoid double-fill races against the 30-second order-sync —
+ * if an order is still pending in the local ledger we already have an
+ * exposure on that market and should not stack another buy on top of it.
+ */
+export async function getPendingKalshiOrders(userId: number) {
+  const scopedUserId = assertPositiveIntegerUserId(userId, "getPendingKalshiOrders userId");
+  const database = await getDb();
+  if (!database) return [];
+
+  return await database
+    .select()
+    .from(kalshiOrders)
+    .where(
+      and(eq(kalshiOrders.userId, scopedUserId), eq(kalshiOrders.status, "pending"))
+    );
+}
+
 export async function getTodayKalshiOrderCount(userId: number) {
   const scopedUserId = assertPositiveIntegerUserId(userId, "getTodayKalshiOrderCount userId");
   const database = await getDb();
   if (!database) return 0;
 
-  const startOfDay = new Date();
-  startOfDay.setHours(0, 0, 0, 0);
+  // Use UTC midnight so the daily cap is anchored to a real calendar day
+  // and is deterministic across server restarts and timezone changes.
+  const now = new Date();
+  const startOfDay = new Date(Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+    0, 0, 0, 0,
+  ));
 
   const orders = await database
     .select()
@@ -553,8 +579,17 @@ export async function getTodayRealizedLoss(userId: number) {
   const database = await getDb();
   if (!database) return 0;
 
-  const startOfDay = new Date();
-  startOfDay.setHours(0, 0, 0, 0);
+  // Use UTC midnight so the daily-loss limit is anchored to a real
+  // calendar day; otherwise the cap is sensitive to local server
+  // timezone and can effectively reset at non-midnight wallclock
+  // times across restarts.
+  const now = new Date();
+  const startOfDay = new Date(Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+    0, 0, 0, 0,
+  ));
 
   const closedToday = await database
     .select()
