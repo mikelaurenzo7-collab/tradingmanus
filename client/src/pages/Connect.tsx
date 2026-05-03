@@ -74,20 +74,23 @@ function KalshiConnectPanel() {
   };
 
   return (
-    <Card className="laurenzo-card">
-      <CardHeader>
+    <Card className="laurenzo-card shadow-lg hover:shadow-xl transition-all duration-300">
+      <CardHeader className="pb-4">
         <div className="flex items-center justify-between">
-          <CardTitle className="flex items-center gap-2 text-lg">
-            <span className="text-2xl">📈</span>
-            Kalshi
+          <CardTitle className="flex items-center gap-3 text-xl">
+            <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-500 shadow-md">
+              <span className="text-2xl">📈</span>
+            </div>
+            <span className="gradient-text">Kalshi</span>
           </CardTitle>
           {isAlreadyConnected && (
-            <Badge variant="outline" className="border-emerald-400/40 bg-emerald-500/10 text-emerald-300">
+            <Badge variant="outline" className="border-emerald-400/40 bg-emerald-500/10 text-emerald-300 gap-1.5 px-2.5 py-1">
+              <CheckCircle2 className="w-3 h-3" />
               Connected
             </Badge>
           )}
         </div>
-        <CardDescription>
+        <CardDescription className="text-sm leading-relaxed mt-2">
           Connect using an RSA key pair generated inside your Kalshi account. Your credentials are
           validated live, then encrypted before storage.
         </CardDescription>
@@ -261,20 +264,23 @@ function PolymarketConnectPanel() {
   };
 
   return (
-    <Card className="laurenzo-card">
-      <CardHeader>
+    <Card className="laurenzo-card shadow-lg hover:shadow-xl transition-all duration-300">
+      <CardHeader className="pb-4">
         <div className="flex items-center justify-between">
-          <CardTitle className="flex items-center gap-2 text-lg">
-            <span className="text-2xl">🟣</span>
-            Polymarket
+          <CardTitle className="flex items-center gap-3 text-xl">
+            <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-500 shadow-md">
+              <span className="text-2xl">🟣</span>
+            </div>
+            <span className="gradient-text">Polymarket</span>
           </CardTitle>
           {isAlreadyConnected && (
-            <Badge variant="outline" className="border-emerald-400/40 bg-emerald-500/10 text-emerald-300">
+            <Badge variant="outline" className="border-emerald-400/40 bg-emerald-500/10 text-emerald-300 gap-1.5 px-2.5 py-1">
+              <CheckCircle2 className="w-3 h-3" />
               Connected
             </Badge>
           )}
         </div>
-        <CardDescription>
+        <CardDescription className="text-sm leading-relaxed mt-2">
           Connect using L2 CLOB API credentials generated inside Polymarket. You need all three
           values: API Key, Secret, and Passphrase.
         </CardDescription>
@@ -473,14 +479,26 @@ function PlatformSubscriptionCard() {
 // ---------- Main page ----------
 export default function Connect() {
   return (
-    <div className="flex-1 p-6">
+    <div className="flex-1">
       <div className="max-w-5xl mx-auto">
         <div className="mb-8">
-          <h1 className="text-3xl font-bold gradient-text mb-2">Connect Platforms</h1>
-          <p className="text-muted-foreground">
-            Connect your Kalshi and/or Polymarket accounts. The bot uses encrypted credentials to
-            trade on your behalf - you stay in control of how autonomous it is via Trading Autonomy.
-          </p>
+          <div className="flex items-center gap-3 mb-3">
+            <div className="flex items-center justify-center w-12 h-12 rounded-2xl bg-gradient-to-br from-violet-500 to-indigo-500 shadow-lg shadow-violet-500/30">
+              <Link2 className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <h1 className="text-3xl font-bold gradient-text">Connect Platforms</h1>
+              <p className="text-muted-foreground text-sm">
+                Encrypted API credentials for autonomous trading
+              </p>
+            </div>
+          </div>
+          <Alert className="border-violet-400/30 bg-violet-500/10">
+            <ShieldCheck className="h-4 w-4 text-violet-400" />
+            <AlertDescription className="text-violet-200 text-sm">
+              Your credentials are validated live, then encrypted (AES-256-GCM) before storage. The bot trades on your behalf based on your autonomy settings.
+            </AlertDescription>
+          </Alert>
         </div>
 
         <div className="grid gap-6">
