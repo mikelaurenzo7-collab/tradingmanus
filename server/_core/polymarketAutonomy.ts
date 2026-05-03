@@ -310,8 +310,6 @@ export async function runPolymarketAutonomousTrading(
       triageKeptCount: telemetry.triageKeptCount,
       anthropicCalls: telemetry.anthropicCalls,
       anthropicFailures: telemetry.anthropicFailures,
-      openaiCalls: telemetry.openaiCalls,
-      openaiFailures: telemetry.openaiFailures,
     }),
     triggeredByOpenId,
   );

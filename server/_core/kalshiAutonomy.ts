@@ -516,8 +516,7 @@ async function generateScheduledSignals(userId: number, minConfidence: number, a
     ? applyInstructionsToSignals(conditionFilteredSignals, activeInstructions)
     : conditionFilteredSignals;
 
-  // Claude is the primary reviewer (with optional OpenAI fallback /
-  // high-stakes second opinion).  Passing userId enables per-desk memory
+  // Claude is the sole reviewer. Passing userId enables per-desk memory
   // injection — each desk loads its prior win/loss tape from the deskMemory
   // table before this call.  Telemetry captures cache hit rate, web_search
   // invocations, and triage stats for the audit log.
@@ -547,8 +546,6 @@ async function generateScheduledSignals(userId: number, minConfidence: number, a
       triageKeptCount: telemetry.triageKeptCount,
       anthropicCalls: telemetry.anthropicCalls,
       anthropicFailures: telemetry.anthropicFailures,
-      openaiCalls: telemetry.openaiCalls,
-      openaiFailures: telemetry.openaiFailures,
     }),
     `user:${userId}`,
   );

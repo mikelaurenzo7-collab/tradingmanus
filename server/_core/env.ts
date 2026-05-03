@@ -16,9 +16,6 @@ export const ENV = {
   ownerEmail: normalize(process.env.OWNER_EMAIL),
   ownerPassword: normalize(process.env.OWNER_PASSWORD),
   cronSecret: normalize(process.env.CRON_SECRET),
-  openaiApiKey: normalize(process.env.OPENAI_API_KEY),
-  openaiModel: normalize(process.env.OPENAI_MODEL) || "gpt-4.1-mini",
-  openaiTimeoutMs: normalizePositiveInt(process.env.OPENAI_TIMEOUT_MS, 12000),
   anthropicApiKey: normalize(process.env.ANTHROPIC_API_KEY),
   anthropicModel: normalize(process.env.ANTHROPIC_MODEL) || "claude-sonnet-4-5",
   anthropicTimeoutMs: normalizePositiveInt(process.env.ANTHROPIC_TIMEOUT_MS, 12000),
@@ -92,15 +89,9 @@ export function validateServerEnv() {
     );
   }
 
-  if (ENV.isProduction && ENV.openaiApiKey.length === 0) {
-    console.warn(
-      "[ENV] OPENAI_API_KEY is not set. The duo AI trading reviewer requires this to be configured."
-    );
-  }
-
   if (ENV.isProduction && ENV.anthropicApiKey.length === 0) {
     console.warn(
-      "[ENV] ANTHROPIC_API_KEY is not set. The duo AI trading reviewer requires this to be configured."
+      "[ENV] ANTHROPIC_API_KEY is not set. The AI trading reviewer requires this to be configured."
     );
   }
 }

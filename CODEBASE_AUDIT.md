@@ -73,7 +73,7 @@
 - `server/_core/polymarketMarketMaking.ts` — Market making
 
 ### AI
-- `server/_core/llm.ts` — LLM integration (OpenAI + Anthropic)
+- `server/_core/llm.ts` — LLM integration (Anthropic)
 - `server/_core/aiToolbelt.ts` — AI toolbelt (web search, extended thinking, prompt cache)
 - `server/_core/tradingReviewer.ts` — Kalshi AI trading reviewer
 - `server/_core/arbitrageReviewer.ts` — Arbitrage AI reviewer
