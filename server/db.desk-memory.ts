@@ -142,12 +142,15 @@ export async function appendDeskMemoryNote(
   ];
 
   if (nextNotes.length > MAX_NOTES) {
-    logger.warn("Desk memory capacity exceeded", {
-      desk: deskId,
-      totalNotes: nextNotes.length,
-      maxNotes: MAX_NOTES,
-      droppedCount: nextNotes.length - MAX_NOTES,
-    });
+    logger.warn(
+      {
+        desk: deskId,
+        totalNotes: nextNotes.length,
+        maxNotes: MAX_NOTES,
+        droppedCount: nextNotes.length - MAX_NOTES,
+      },
+      "Desk memory capacity exceeded",
+    );
   }
 
   const serialized = serializeNotes(nextNotes);
@@ -193,12 +196,15 @@ export function formatDeskMemoryForPrompt(record: DeskMemoryRecord | null): stri
   if (!record || record.notes.length === 0) return null;
   const winRate = record.tradeCount > 0 ? Math.round((record.winCount / record.tradeCount) * 100) : 0;
   if (record.notes.length > MAX_NOTES) {
-    logger.warn("Desk memory capacity exceeded", {
-      desk: record.deskId,
-      totalNotes: record.notes.length,
-      maxNotes: MAX_NOTES,
-      droppedCount: record.notes.length - MAX_NOTES,
-    });
+    logger.warn(
+      {
+        desk: record.deskId,
+        totalNotes: record.notes.length,
+        maxNotes: MAX_NOTES,
+        droppedCount: record.notes.length - MAX_NOTES,
+      },
+      "Desk memory capacity exceeded",
+    );
   }
   const recent = record.notes.slice(-MAX_NOTES);
   const lines = recent.map((entry) => `- [${entry.outcome.toUpperCase()}] ${entry.note}`);
