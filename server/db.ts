@@ -963,16 +963,38 @@ export async function pingDb(timeoutMs = 2000): Promise<boolean> {
   const database = await getDb();
   if (!database) return false;
 
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const probe = database.execute(sql`SELECT 1`);
-    const timeout = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("pingDb timeout")), timeoutMs)
-    );
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("pingDb timeout")), timeoutMs);
+    });
     await Promise.race([probe, timeout]);
     return true;
   } catch {
     return false;
+  } finally {
+    clearTimeout(timer);
   }
+}
+
+export interface DbHealthResult {
+  status: "ok" | "error";
+  latencyMs: number | null;
+}
+
+/**
+ * Measures DB reachability and latency in a single call.
+ * Returned by the /api/health and /api/health/ready routes so the logic
+ * lives in one place rather than being copy-pasted between handlers.
+ */
+export async function checkDbHealth(): Promise<DbHealthResult> {
+  const t0 = Date.now();
+  const alive = await pingDb();
+  return {
+    status: alive ? "ok" : "error",
+    latencyMs: Date.now() - t0,
+  };
 }
 
 // Kalshi fill queries
