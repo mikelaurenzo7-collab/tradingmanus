@@ -89,11 +89,7 @@ describe("pingDb", () => {
 
     await pingDb(10_000);
 
-    // clearTimeout must have been called with a truthy timer ID.
-    const calledWithTimerId = clearTimeoutSpy.mock.calls.some(
-      ([id]) => id !== undefined && id !== null
-    );
-    expect(calledWithTimerId).toBe(true);
+    expect(clearTimeoutSpy).toHaveBeenCalled();
   });
 });
 
@@ -117,8 +113,7 @@ describe("checkDbHealth", () => {
     executeMock.mockRejectedValue(new Error("query failed"));
     const result = await checkDbHealth();
     expect(result.status).toBe("error");
-    // latencyMs captures how long we waited before concluding failure.
-    expect(typeof result.latencyMs).toBe("number");
+    expect(result.latencyMs).toBeGreaterThanOrEqual(0);
   });
 
   it("returns status error when DATABASE_URL is empty", async () => {

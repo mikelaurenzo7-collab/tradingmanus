@@ -980,7 +980,7 @@ export async function pingDb(timeoutMs = 2000): Promise<boolean> {
 
 export interface DbHealthResult {
   status: "ok" | "error";
-  latencyMs: number | null;
+  latencyMs: number;
 }
 
 /**
