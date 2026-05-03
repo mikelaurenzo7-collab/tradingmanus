@@ -153,3 +153,29 @@ export async function alertExchangeRejection(
     timestamp: new Date().toISOString(),
   });
 }
+
+/**
+ * Alert when the AI reviewer (Claude) fails during a scheduled autonomy
+ * run.  Without this alert, Claude timeouts/errors are swallowed and the
+ * run silently reports `generated_only` with 0 candidates, leaving the
+ * operator with no signal that the AI pipeline is broken.
+ */
+export async function alertAiReviewerFailure(
+  userId: number,
+  runId: string | undefined,
+  details: {
+    anthropicCalls: number;
+    anthropicFailures: number;
+    signalsApproved: number;
+    signalsCandidate: number;
+  }
+): Promise<void> {
+  await sendAlert({
+    severity: "warning",
+    event: "ai_reviewer_failure",
+    userId,
+    runId,
+    details,
+    timestamp: new Date().toISOString(),
+  });
+}

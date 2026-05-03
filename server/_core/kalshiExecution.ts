@@ -218,6 +218,45 @@ export async function placeKalshiOrder(
       time_in_force: "good_till_cancelled",
     };
 
+    // Write the local ledger row BEFORE submitting to the exchange so we
+    // can never end up in a state where the exchange has the order but
+    // our DB does not.  We use the client_order_id as the unique key
+    // until the exchange returns its own orderId.  If this insert fails
+    // we abort entirely and never call the exchange.
+    try {
+      await db.insert(kalshiOrders).values({
+        userId: scopedUserId,
+        orderId: clientOrderId,
+        marketId,
+        action: "buy",
+        side,
+        quantity: risk.quantity,
+        limitPrice: risk.limitPrice,
+        status: "pending",
+        filledQuantity: 0,
+        averagePrice: 0,
+      });
+    } catch (preWriteError) {
+      console.error(
+        "[Kalshi] Local ledger pre-write failed; refusing to submit order to exchange:",
+        preWriteError,
+      );
+      return {
+        success: false,
+        error:
+          "Local ledger write failed before order submission; exchange was not contacted. " +
+          (preWriteError instanceof Error ? preWriteError.message : String(preWriteError)),
+        exchangeRequest: {
+          marketId,
+          action: "buy",
+          side,
+          quantity: risk.quantity,
+          limitPrice: risk.limitPrice,
+          clientOrderId,
+        },
+      };
+    }
+
     const result = await signedKalshiRequest<{ order?: { order_id?: string; id?: string } }>(
       scopedUserId,
       "POST",
@@ -230,6 +269,25 @@ export async function placeKalshiOrder(
 
     if (!result.ok) {
       console.error("[Kalshi] Order placement failed:", result.error);
+      // Mark the pre-written row as rejected so the local ledger reflects
+      // the failed exchange call.  Best-effort: any failure here is logged
+      // but does not change the surfaced error.
+      try {
+        await db
+          .update(kalshiOrders)
+          .set({ status: "rejected", cancelledAt: new Date() })
+          .where(
+            and(
+              eq(kalshiOrders.orderId, clientOrderId),
+              eq(kalshiOrders.userId, scopedUserId),
+            ),
+          );
+      } catch (cleanupError) {
+        console.error(
+          `[Kalshi] Failed to mark pre-written order ${clientOrderId} as rejected:`,
+          cleanupError,
+        );
+      }
       return {
         success: false,
         error: result.error,
@@ -249,9 +307,14 @@ export async function placeKalshiOrder(
 
     const orderId = result.data.order?.order_id || result.data.order?.id;
     if (!orderId) {
+      // Exchange responded ok but without an orderId — leave the row as
+      // pending and surface a reconciliation error.
       return {
         success: false,
         error: "Kalshi order created without an order ID",
+        needsReconciliation: true,
+        reconciliationReason:
+          "exchange returned no order ID; local ledger row remains pending under the client_order_id",
         exchangeRequest: {
           marketId,
           action: "buy",
@@ -266,30 +329,33 @@ export async function placeKalshiOrder(
       };
     }
 
+    // Update the pre-written row with the exchange-issued orderId.  If
+    // this update fails we still have the order on the exchange and a
+    // pending local row keyed by clientOrderId — flag for reconciliation.
     try {
-      await db.insert(kalshiOrders).values({
-        userId: scopedUserId,
-        orderId,
-        marketId,
-        action: "buy",
-        side,
-        quantity: risk.quantity,
-        limitPrice: risk.limitPrice,
-        status: "pending",
-        filledQuantity: 0,
-        averagePrice: 0,
-      });
+      await db
+        .update(kalshiOrders)
+        .set({ orderId })
+        .where(
+          and(
+            eq(kalshiOrders.orderId, clientOrderId),
+            eq(kalshiOrders.userId, scopedUserId),
+          ),
+        );
     } catch (storageError) {
       console.error(
-        `[Kalshi] Order ${orderId} accepted by Kalshi but local ledger write failed. Manual reconciliation required:`,
+        `[Kalshi] Order ${orderId} accepted by Kalshi but local ledger update from clientOrderId=${clientOrderId} failed. Manual reconciliation required:`,
         storageError,
       );
       return {
         success: true,
         orderId,
-        error: "Kalshi accepted the order, but the local ledger write failed. Verify the order on Kalshi before retrying.",
+        error:
+          "Kalshi accepted the order, but updating the local ledger with the exchange order ID failed. " +
+          "Verify the order on Kalshi before retrying.",
         needsReconciliation: true,
-        reconciliationReason: "exchange accepted the order but the local order ledger write failed",
+        reconciliationReason:
+          "exchange accepted the order but the local order ledger update with the exchange order ID failed",
         exchangeRequest: {
           marketId,
           action: "buy",

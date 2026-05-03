@@ -30,10 +30,13 @@ const mocks = vi.hoisted(() => ({
   syncKalshiCapitalWithLiveEquity: vi.fn(),
   getOpenKalshiPositions: vi.fn(),
   getTodayRealizedLoss: vi.fn(),
+  getPendingKalshiOrders: vi.fn(),
   logAuditEvent: vi.fn(),
   createAutonomyRun: vi.fn(),
   updateAutonomyRun: vi.fn(),
   placeKalshiOrder: vi.fn(),
+  syncPendingOrders: vi.fn(),
+  fetchKalshiMarketDetails: vi.fn(),
 }));
 
 vi.mock("./db.trading-preferences", () => ({
@@ -54,6 +57,7 @@ vi.mock("./db", () => ({
   syncKalshiCapitalWithLiveEquity: mocks.syncKalshiCapitalWithLiveEquity,
   getOpenKalshiPositions: mocks.getOpenKalshiPositions,
   getTodayRealizedLoss: mocks.getTodayRealizedLoss,
+  getPendingKalshiOrders: mocks.getPendingKalshiOrders,
   logAuditEvent: mocks.logAuditEvent,
   createAutonomyRun: mocks.createAutonomyRun,
   updateAutonomyRun: mocks.updateAutonomyRun,
@@ -65,6 +69,7 @@ vi.mock("./_core/kalshiAuth", () => ({
 
 vi.mock("./_core/kalshiMarketData", () => ({
   fetchKalshiMarkets: mocks.fetchKalshiMarkets,
+  fetchKalshiMarketDetails: mocks.fetchKalshiMarketDetails,
 }));
 
 vi.mock("./_core/kalshiMarketFeed", () => ({
@@ -85,6 +90,11 @@ vi.mock("./_core/tradingReviewer", () => ({
 
 vi.mock("./_core/kalshiExecution", () => ({
   placeKalshiOrder: mocks.placeKalshiOrder,
+}));
+
+vi.mock("./_core/kalshiOrderSync", () => ({
+  syncPendingOrders: mocks.syncPendingOrders,
+  syncLivePositions: vi.fn(),
 }));
 
 vi.mock("./db.training", () => ({
@@ -163,6 +173,9 @@ describe("scheduled away-from-chat trading", () => {
     mocks.syncKalshiCapitalWithLiveEquity.mockResolvedValue(undefined);
     mocks.getOpenKalshiPositions.mockResolvedValue([]);
     mocks.getTodayRealizedLoss.mockResolvedValue(0);
+    mocks.getPendingKalshiOrders.mockResolvedValue([]);
+    mocks.syncPendingOrders.mockResolvedValue(undefined);
+    mocks.fetchKalshiMarketDetails.mockResolvedValue(null);
     mocks.logAuditEvent.mockResolvedValue(true);
     mocks.createAutonomyRun.mockResolvedValue({ runId: "run-123" });
     mocks.updateAutonomyRun.mockResolvedValue({ runId: "run-123" });

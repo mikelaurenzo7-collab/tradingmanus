@@ -263,8 +263,18 @@ export async function generateSignalsForMarket(
       const volumeConfidence = volumeMomentum > 0 ? 0.15 : -0.05; // Volume confirmation (boost if positive, slight penalty if negative)
       const confidence = Math.max(0.1, Math.min(0.95, momentumConfidence + volumeConfidence)); // Allow weaker signals (0.1 min)
 
-      // Validate momentum signal before adding
-      const expectedVal = calculateExpectedValue(side, side === "yes" ? market.yesPrice : market.noPrice, 1, 1, market.impliedProbability);
+      // Build a forecast probability distinct from the market implied
+      // probability.  Passing impliedProbability into the EV function
+      // collapses EV to zero algebraically (since entryPrice == implied
+      // probability for a fairly-priced market), which is what previously
+      // made every edge metric ~0.  We project the move forward by a
+      // fraction of the observed momentum, scaled by volume confirmation.
+      // Note: calculateExpectedValue takes a YES-perspective probability
+      // and internally derives `1 - p` for the NO side, so we always pass
+      // the YES-forecast regardless of the chosen side.
+      const forecastBias = momentum * (volumeMomentum > 0 ? 0.5 : 0.25);
+      const yesForecast = clampProbability(market.impliedProbability + forecastBias);
+      const expectedVal = calculateExpectedValue(side, side === "yes" ? market.yesPrice : market.noPrice, 1, 1, yesForecast);
       if (isFinite(confidence) && isFinite(expectedVal)) {
         signals.push({
           marketId: market.id,
@@ -331,6 +341,13 @@ export async function generateSignalsForMarket(
   // Contrarian: detect extreme positions ripe for reversal
   const contrarianOpportunity = detectContrarianOpportunity(market, 0.1);
   if (contrarianOpportunity) {
+    // Contrarian thesis: extreme markets mean-revert.  Project a partial
+    // reversion target so EV is computed against an actual forecast rather
+    // than the market's own implied probability (which would collapse EV
+    // to ~0).  We mean-revert ~25% of the distance back toward 0.5.
+    const reversionTarget = clampProbability(
+      market.impliedProbability + (0.5 - market.impliedProbability) * 0.25
+    );
     signals.push({
       marketId: market.id,
       signalType: "contrarian",
@@ -339,7 +356,7 @@ export async function generateSignalsForMarket(
       reasoning: `Extreme market condition: ${(market.impliedProbability * 100).toFixed(1)}% probability suggests ${contrarianOpportunity.side.toUpperCase()} reversal opportunity`,
       impliedProbability: market.impliedProbability,
       marketPrice: contrarianOpportunity.side === "yes" ? market.yesPrice : market.noPrice,
-      expectedValue: calculateExpectedValue(contrarianOpportunity.side, contrarianOpportunity.side === "yes" ? market.yesPrice : market.noPrice, 1, 1, market.impliedProbability),
+      expectedValue: calculateExpectedValue(contrarianOpportunity.side, contrarianOpportunity.side === "yes" ? market.yesPrice : market.noPrice, 1, 1, reversionTarget),
     });
   }
   // Arbitrage: detect mispricing opportunities

@@ -5,7 +5,7 @@ import * as kalshiCredDb from "../db.kalshi-credentials";
 import * as tradingPreferencesDb from "../db.trading-preferences";
 import type { RiskPosture } from "../db.trading-preferences";
 import { getUserTrainingInstructions, isInstructionActiveNow, applyInstructionsToSignals } from "../db.training";
-import { fetchKalshiMarkets } from "./kalshiMarketData";
+import { fetchKalshiMarkets, fetchKalshiMarketDetails } from "./kalshiMarketData";
 import { fetchKalshiAccountEquity } from "./kalshiAuth";
 import { getMarketFeed, isMarketDataStale } from "./kalshiMarketFeed";
 import {
@@ -17,14 +17,17 @@ import {
   type KalshiSignal,
 } from "./kalshiSignals";
 import { placeKalshiOrder } from "./kalshiExecution";
+import { syncPendingOrders } from "./kalshiOrderSync";
 import { calculateKalshiBuyOrderRisk, estimateContractsForRiskBudget } from "./kalshiRisk";
 import { assertPositiveIntegerUserId } from "./userScope";
 import { reviewSignalsWithTrader } from "./tradingReviewer";
 import { getCacheHitRatio, newReviewerTelemetry } from "./aiToolbelt";
+import { createOrderSyncLock } from "./distributedLock";
 import {
   alertIfConsecutiveFailures,
   alertEquityDrop,
   alertExchangeRejection,
+  alertAiReviewerFailure,
 } from "./alerting";
 
 const BASE_RISK_LIMITS = {
@@ -39,6 +42,11 @@ const HOURLY_SCAN_MIN_INTERVAL_MS = 55 * 60 * 1000;
 const RECENT_MANUAL_ORDER_COOLDOWN_MS = 5 * 60 * 1000;
 const AUTONOMY_RUN_DEDUPLICATION_WINDOW_MS = 15 * 60 * 1000;
 const MARKET_DATA_STALE_AFTER_MS = 30 * 1000;
+// Maximum allowed price drift between signal generation and order
+// submission.  Markets quoted on Kalshi are in cents, so 2¢ is a
+// reasonable tolerance — anything beyond that means the signal's
+// pricing thesis no longer holds.
+const MAX_EXECUTION_PRICE_DRIFT = 0.02;
 // Total market pool scanned per scheduled run — larger pool improves diversity
 // and gives the AI reviewer more high-quality candidates to choose from.
 const MAX_SCHEDULED_MARKETS = 48;
@@ -479,6 +487,7 @@ async function generateScheduledSignals(userId: number, minConfidence: number, a
       actionableMarkets,
       savedSignals: [] as KalshiSignal[],
       executionCandidates: [] as Array<KalshiSignal & { executionScore: number }>,
+      reviewerTelemetry: null as ReturnType<typeof newReviewerTelemetry> | null,
     };
   }
 
@@ -560,6 +569,7 @@ async function generateScheduledSignals(userId: number, minConfidence: number, a
       5,
       Math.max(0.6, minConfidence)
     ),
+    reviewerTelemetry: telemetry,
   };
 }
 
@@ -567,6 +577,7 @@ function evaluateExecutionCandidate(
   signal: KalshiSignal & { executionScore?: number },
   input: {
     openPositions: any[];
+    pendingOrderMarketIds: Set<string>;
     preferences: Awaited<ReturnType<typeof tradingPreferencesDb.getTradingPreferences>>;
     effectiveMinConfidence: number;
     maxBudget: number;
@@ -580,6 +591,18 @@ function evaluateExecutionCandidate(
       eligible: false as const,
       blockedBy: "market_already_open",
       reason: "an open position already exists for this market",
+    };
+  }
+
+  // Reject if a pending order is already in flight for this market.
+  // Without this check the autonomy scheduler can stack a second order
+  // on top of an unfilled one between order-sync polls — the prior
+  // double-fill race the operator flagged.
+  if (input.pendingOrderMarketIds.has(signal.marketId)) {
+    return {
+      eligible: false as const,
+      blockedBy: "pending_order_in_flight",
+      reason: "an unfilled pending order already exists for this market",
     };
   }
 
@@ -800,7 +823,7 @@ export async function runScheduledAutonomousTrading(
   const allInstructions = await getUserTrainingInstructions(userId);
   const activeInstructions = allInstructions.filter(isInstructionActiveNow);
 
-  const { savedSignals, executionCandidates } = await generateScheduledSignals(
+  const { savedSignals, executionCandidates, reviewerTelemetry } = await generateScheduledSignals(
     userId,
     preferences.minSignalConfidence,
     activeInstructions
@@ -808,6 +831,34 @@ export async function runScheduledAutonomousTrading(
   const candidateSet = executionCandidates.map(summarizeCandidate);
 
   const topCandidate = executionCandidates[0] ?? null;
+
+  // If the AI reviewer reported failures (timeouts, rate limits, parse
+  // errors), surface that explicitly via audit log + alert so the operator
+  // does not see a silent "0 orders" success.  Previously these failures
+  // were swallowed inside reviewSignalsWithTrader which returned [] and
+  // the run reported `generated_only` with no indication that Claude was
+  // broken.
+  const aiReviewerFailures = reviewerTelemetry?.anthropicFailures ?? 0;
+  if (aiReviewerFailures > 0) {
+    await db.logAuditEvent(
+      "scheduled_autonomy_ai_reviewer_failure",
+      JSON.stringify({
+        runId,
+        triggerSource,
+        anthropicCalls: reviewerTelemetry?.anthropicCalls ?? 0,
+        anthropicFailures: aiReviewerFailures,
+        signalsApproved: savedSignals.length,
+        signalsCandidate: executionCandidates.length,
+      }),
+      triggeredByOpenId
+    );
+    void alertAiReviewerFailure(userId, runId, {
+      anthropicCalls: reviewerTelemetry?.anthropicCalls ?? 0,
+      anthropicFailures: aiReviewerFailures,
+      signalsApproved: savedSignals.length,
+      signalsCandidate: executionCandidates.length,
+    });
+  }
 
   await db.logAuditEvent(
     SCHEDULED_SCAN_EVENT,
@@ -820,6 +871,7 @@ export async function runScheduledAutonomousTrading(
       executionCadence: preferences.executionCadence,
       riskPosture: preferences.riskPosture,
       activeInstructions: activeInstructions.length,
+      aiReviewerFailures,
       candidateSet,
       decision: buildDecisionDetails(topCandidate),
     }),
@@ -827,9 +879,12 @@ export async function runScheduledAutonomousTrading(
   );
 
   if (executionCandidates.length === 0) {
+    const reason = aiReviewerFailures > 0
+      ? `AI reviewer encountered ${aiReviewerFailures} failure(s); no candidates approved`
+      : "no non-heuristic execution-ready signals were found";
     return finalize({
-      status: "generated_only",
-      reason: "no non-heuristic execution-ready signals were found",
+      status: aiReviewerFailures > 0 ? "error" : "generated_only",
+      reason,
       signalsGenerated: savedSignals.length,
       executionCandidates: 0,
       orderPlaced: false,
@@ -856,14 +911,35 @@ export async function runScheduledAutonomousTrading(
     });
   }
 
-  const [capital, openPositions, todayRealizedLoss, riskLimits, todayOrderCount] =
+  // Race protection: before we read open positions and pending orders,
+  // run a best-effort sync of any in-flight fills the 30-second order-sync
+  // may not yet have processed.  Without this an order placed on cycle N
+  // may not appear in `openPositions` on cycle N+1 if the order-sync
+  // hasn't run between the two — letting the autonomy scheduler stack a
+  // second order on the same market.  syncPendingOrders is idempotent and
+  // self-locking so concurrent invocation is safe.
+  try {
+    await syncPendingOrders(userId);
+  } catch (syncErr) {
+    console.warn(
+      `[Autonomy] pre-execution order sync failed for user ${userId}; proceeding with potentially stale ledger:`,
+      syncErr,
+    );
+  }
+
+  const [capital, openPositions, todayRealizedLoss, riskLimits, todayOrderCount, pendingOrders] =
     await Promise.all([
       db.getKalshiCapital(userId),
       db.getOpenKalshiPositions(userId),
       db.getTodayRealizedLoss(userId),
       getDynamicRiskLimits(preferences.riskPosture, userId),
       db.getTodayKalshiOrderCount(userId),
+      db.getPendingKalshiOrders(userId),
     ]);
+
+  const pendingOrderMarketIds = new Set<string>(
+    (pendingOrders ?? []).map((order: any) => String(order.marketId)),
+  );
 
   if (todayOrderCount >= preferences.maxDailyOrders) {
     return finalize({
@@ -921,6 +997,7 @@ export async function runScheduledAutonomousTrading(
     );
     const evaluation = evaluateExecutionCandidate(signal, {
       openPositions,
+      pendingOrderMarketIds,
       preferences,
       effectiveMinConfidence,
       maxBudget,
@@ -1072,6 +1149,68 @@ export async function runScheduledAutonomousTrading(
     }, {
       appliedGuardrails: safeJsonStringify(buildAppliedGuardrails(preferences, riskLimits)),
     });
+  }
+
+  // Stale-data re-check: market data feeding `eligibleSignal` can be up
+  // to 30 seconds old when signals are generated, plus reviewer latency.
+  // Refetch the live market right before submitting and abort if the
+  // price has drifted beyond the tolerance — submitting against stale
+  // pricing leads to fills at materially worse levels than the signal's
+  // thesis.
+  try {
+    const liveMarket = await fetchKalshiMarketDetails(eligibleSignal.marketId);
+    if (liveMarket) {
+      const livePrice = Number(
+        eligibleSignal.side === "yes" ? liveMarket.yesPrice : liveMarket.noPrice,
+      );
+      if (
+        Number.isFinite(livePrice) &&
+        Math.abs(livePrice - orderRisk.limitPrice) > MAX_EXECUTION_PRICE_DRIFT
+      ) {
+        await db.logAuditEvent(
+          "scheduled_autonomy_order_blocked_price_drift",
+          JSON.stringify({
+            runId,
+            marketId: eligibleSignal.marketId,
+            side: eligibleSignal.side,
+            signalPrice: orderRisk.limitPrice,
+            livePrice,
+            drift: Number(Math.abs(livePrice - orderRisk.limitPrice).toFixed(4)),
+            tolerance: MAX_EXECUTION_PRICE_DRIFT,
+          }),
+          triggeredByOpenId,
+        );
+        return finalize({
+          status: "blocked",
+          reason: `market price drifted from ${orderRisk.limitPrice.toFixed(2)} to ${livePrice.toFixed(2)} (>${MAX_EXECUTION_PRICE_DRIFT.toFixed(2)}) between signal and execution`,
+          signalsGenerated: savedSignals.length,
+          executionCandidates: executionCandidates.length,
+          orderPlaced: false,
+          candidateMarketId: eligibleSignal.marketId,
+          autonomyMode: preferences.autonomyMode,
+          executionCadence: preferences.executionCadence,
+          candidateSet,
+          rejectedCandidates,
+          decision: buildDecisionDetails(eligibleSignal, {
+            quantity,
+            availableCapital,
+            maxBudget,
+            orderExposure,
+            maxLossOnTrade,
+            blockedBy: "stale_market_price_drift",
+          }),
+        }, {
+          appliedGuardrails: safeJsonStringify(buildAppliedGuardrails(preferences, riskLimits)),
+        });
+      }
+    }
+  } catch (refreshErr) {
+    // Best-effort refresh; if it fails, fall through to placement.
+    // The lower-level execution path still has its own validation.
+    console.warn(
+      `[Autonomy] live price refresh failed for ${eligibleSignal.marketId}; proceeding with signal price:`,
+      refreshErr,
+    );
   }
 
   const result = await placeKalshiOrder(
