@@ -197,10 +197,10 @@ export async function alertDrawdownApproaching(
     details: {
       startingBalance,
       currentBalance,
-      lossAmount: Number(lossAmount.toFixed(2)),
+      lossAmount: Math.round(lossAmount * 100) / 100,
       dailyLossLimit,
       warningThresholdPct,
-      pctOfLimit: Number(((lossAmount / dailyLossLimit) * 100).toFixed(1)),
+      pctOfLimit: Math.round((lossAmount / dailyLossLimit) * 1000) / 10,
     },
     timestamp: new Date().toISOString(),
   });
