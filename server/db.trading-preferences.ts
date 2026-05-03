@@ -48,6 +48,7 @@ export type TradingPreferencesSettings = {
   drawdownWarnPct: number;
   drawdownPausePct: number;
   drawdownPanicPct: number;
+  pendingReconcileThresholdSeconds: number;
 };
 
 export const DEFAULT_TRADING_PREFERENCES: TradingPreferencesSettings = {
@@ -70,6 +71,7 @@ export const DEFAULT_TRADING_PREFERENCES: TradingPreferencesSettings = {
   drawdownWarnPct: 5.0,
   drawdownPausePct: 10.0,
   drawdownPanicPct: 20.0,
+  pendingReconcileThresholdSeconds: 120,
 };
 
 function clamp(value: number, minimum: number, maximum: number) {
@@ -155,6 +157,7 @@ function normalizeTradingPreferences(
     drawdownWarnPct: clamp(Number(input?.drawdownWarnPct ?? 5.0), 1.0, 50.0),
     drawdownPausePct: clamp(Number(input?.drawdownPausePct ?? 10.0), 1.0, 50.0),
     drawdownPanicPct: clamp(Number(input?.drawdownPanicPct ?? 20.0), 1.0, 100.0),
+    pendingReconcileThresholdSeconds: Math.round(clamp(Number(input?.pendingReconcileThresholdSeconds ?? 120), 30, 3600)),
   };
 
   if (normalized.autonomyMode === "manual") {
@@ -185,6 +188,7 @@ function toDatabaseValues(input: TradingPreferencesSettings) {
     drawdownWarnPct: input.drawdownWarnPct,
     drawdownPausePct: input.drawdownPausePct,
     drawdownPanicPct: input.drawdownPanicPct,
+    pendingReconcileThresholdSeconds: input.pendingReconcileThresholdSeconds,
   };
 }
 
@@ -226,6 +230,7 @@ export async function getTradingPreferences(userId: number) {
       drawdownWarnPct: Number(record.drawdownWarnPct ?? 5.0),
       drawdownPausePct: Number(record.drawdownPausePct ?? 10.0),
       drawdownPanicPct: Number(record.drawdownPanicPct ?? 20.0),
+      pendingReconcileThresholdSeconds: record.pendingReconcileThresholdSeconds ?? 120,
     });
   } catch (error) {
     console.error("[Database] Get trading preferences failed:", error);
