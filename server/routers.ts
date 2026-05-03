@@ -1842,6 +1842,10 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         try {
           const userId = getRequiredUserId(ctx);
+          // Serialise the check-and-execute block per user so two concurrent
+          // requests can't both pass credential/risk checks against stale state
+          // and then both submit orders (TOCTOU race).
+          return await withUserLock(userId, async () => {
           const creds = await polymarketCredDb.getPolymarketCredentials(userId);
 
           if (!creds || creds.accountStatus !== "connected") {
@@ -1872,6 +1876,7 @@ export const appRouter = router({
           }
 
           return result;
+          }); // end withUserLock
         } catch (error) {
           logger.error({ err: error }, "[Polymarket] Place order error");
           return { success: false, error: String(error) };
