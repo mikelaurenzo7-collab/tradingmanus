@@ -7,6 +7,7 @@ import {
   serial,
   text,
   timestamp,
+  uniqueIndex,
   varchar,
 } from "drizzle-orm/pg-core";
 
@@ -167,6 +168,9 @@ export const kalshiOrders = pgTable("kalshiOrders", {
   filledAt: timestamp("filledAt", { withTimezone: true }),
   cancelledAt: timestamp("cancelledAt", { withTimezone: true }),
   executionMode: tradingModeEnum("executionMode").default("live").notNull(),
+  exchangeOrderId: text("exchangeOrderId"),
+  capitalAdjusted: integer("capitalAdjusted").default(0).notNull(),
+  lastReconciledAt: timestamp("lastReconciledAt", { withTimezone: true }),
 }, (table) => ({
   userModeIdx: index("kalshi_orders_user_mode_idx").on(table.userId, table.executionMode),
 }));
@@ -267,6 +271,7 @@ export const tradingPreferences = pgTable("tradingPreferences", {
   drawdownWarnPct: doublePrecision("drawdownWarnPct").default(5.0).notNull(),
   drawdownPausePct: doublePrecision("drawdownPausePct").default(10.0).notNull(),
   drawdownPanicPct: doublePrecision("drawdownPanicPct").default(20.0).notNull(),
+  pendingReconcileThresholdSeconds: integer("pendingReconcileThresholdSeconds").default(120).notNull(),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -405,7 +410,12 @@ export const distributedLocks = pgTable("distributedLocks", {
   acquiredAt: timestamp("acquiredAt", { withTimezone: true }).defaultNow().notNull(),
   expiresAt: timestamp("expiresAt", { withTimezone: true }).notNull(),
   acquiredBy: varchar("acquiredBy", { length: 128 }).notNull(),
-});
+  userId: integer("userId"),
+  lockType: text("lockType").default("legacy").notNull(),
+  heartbeatAt: timestamp("heartbeatAt", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  userTypeIdx: uniqueIndex("distributed_locks_user_type_idx").on(table.userId, table.lockType),
+}));
 
 export type User = typeof users.$inferSelect;
 export type BotConfig = typeof botConfigs.$inferSelect;
