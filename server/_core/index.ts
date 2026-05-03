@@ -49,7 +49,10 @@ async function startServer() {
   });
 }
 
-const AUTONOMOUS_TRADING_INTERVAL_MS = 15 * 60 * 1000;
+// Run autonomy every minute so the bot can react to intra-hour markets
+// (e.g. 30-min crypto contracts).  The lock TTL below is set just under
+// this interval so a stuck run can never block the next cycle.
+const AUTONOMOUS_TRADING_INTERVAL_MS = 60 * 1000;
 const ORDER_SYNC_INTERVAL_MS = 30 * 1000;
 
 async function runAutonomousScheduler() {
@@ -65,7 +68,9 @@ async function runAutonomousScheduler() {
     if (!ownerUser) return;
 
     const lock = createAutonomousTradingLock(ownerUser.id);
-    const acquired = await lock.acquire({ ttlMs: 5 * 60 * 1000 });
+    // TTL just under the 1-min interval so a hung run releases its lock
+    // before the next tick fires.
+    const acquired = await lock.acquire({ ttlMs: 50 * 1000 });
     if (!acquired) {
       console.log("[Scheduler] Autonomous trading already in progress, skipping");
       return;
@@ -92,7 +97,8 @@ async function runOrderSync() {
 
     for (const user of scopedUsers as Array<{ id: number; openId: string }>) {
       const lock = createOrderSyncLock(user.id);
-      const acquired = await lock.acquire({ ttlMs: 60 * 1000 });
+      // Order sync runs every 30s; keep TTL under that with margin.
+      const acquired = await lock.acquire({ ttlMs: 25 * 1000 });
       if (!acquired) {
         console.log(`[OrderSync] Sync already in progress for user ${user.id}, skipping`);
         continue;
@@ -115,7 +121,7 @@ async function runOrderSync() {
 startServer().then(() => {
   setInterval(runAutonomousScheduler, AUTONOMOUS_TRADING_INTERVAL_MS);
   setInterval(runOrderSync, ORDER_SYNC_INTERVAL_MS);
-  setTimeout(runAutonomousScheduler, 2 * 60 * 1000);
-  console.log("[Scheduler] Autonomous trading scheduler started (15-min interval)");
+  setTimeout(runAutonomousScheduler, 30 * 1000);
+  console.log("[Scheduler] Autonomous trading scheduler started (1-min interval)");
   console.log("[OrderSync] Order sync started (30-sec interval)");
 }).catch(console.error);
