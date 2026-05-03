@@ -1,6 +1,7 @@
 import { db } from "../db";
 import { kalshiMarkets, kalshiMarketSnapshots } from "../../drizzle/schema";
 import { desc, eq } from "drizzle-orm";
+import { logger } from "./logger";
 
 /**
  * Phase 2: Market Snapshot Persistence
@@ -38,7 +39,7 @@ export async function saveMarketSnapshot(snapshot: MarketSnapshot): Promise<void
       snapshotTime: snapshot.timestamp,
     });
   } catch (error) {
-    console.error("[Kalshi] Insert market snapshot failed:", error);
+    logger.error({ err: error, marketId: snapshot.marketId }, "[Kalshi] Insert market snapshot failed");
     throw error;
   }
 
@@ -58,7 +59,7 @@ export async function saveMarketSnapshot(snapshot: MarketSnapshot): Promise<void
       })
       .where(eq(kalshiMarkets.marketId, snapshot.marketId));
   } catch (error) {
-    console.error("[Kalshi] Update market latest snapshot failed:", error);
+    logger.error({ err: error, marketId: snapshot.marketId }, "[Kalshi] Update market latest snapshot failed");
   }
 }
 
@@ -89,7 +90,7 @@ export async function getMarketHistory(marketId: string, limit: number = 60): Pr
       }))
       .reverse();
   } catch (error) {
-    console.error("[Kalshi] Get market history failed:", error);
+    logger.error({ err: error, marketId }, "[Kalshi] Get market history failed");
     return [];
   }
 }
@@ -152,7 +153,7 @@ export async function batchSaveMarketSnapshots(snapshots: MarketSnapshot[]): Pro
   try {
     await Promise.all(snapshots.map((snapshot) => saveMarketSnapshot(snapshot)));
   } catch (error) {
-    console.error("[Kalshi] Batch save market snapshots failed:", error);
+    logger.error({ err: error, count: snapshots.length }, "[Kalshi] Batch save market snapshots failed");
     throw error;
   }
 }

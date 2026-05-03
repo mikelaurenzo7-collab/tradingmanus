@@ -11,6 +11,7 @@ import { kalshiOrders, kalshiFills, kalshiPositions } from "../../drizzle/schema
 import { and, eq, inArray } from "drizzle-orm";
 import { calculateKalshiBuyOrderRisk, normalizeLimitPrice, normalizeOrderQuantity } from "./kalshiRisk";
 import { assertPositiveIntegerUserId } from "./userScope";
+import { logger } from "./logger";
 
 export interface KalshiOrder {
   orderId: string;
@@ -243,9 +244,9 @@ export async function placeKalshiOrder(
         averagePrice: 0,
       });
     } catch (preWriteError) {
-      console.error(
-        "[Kalshi] Local ledger pre-write failed; refusing to submit order to exchange:",
-        preWriteError,
+      logger.error(
+        { err: preWriteError },
+        "[Kalshi] Local ledger pre-write failed; refusing to submit order to exchange",
       );
       return {
         success: false,
@@ -274,7 +275,10 @@ export async function placeKalshiOrder(
     );
 
     if (!result.ok) {
-      console.error("[Kalshi] Order placement failed:", result.error);
+      logger.error(
+        { error: result.error, clientOrderId, marketId },
+        "[Kalshi] Order placement failed",
+      );
       // Mark the pre-written row as rejected so the local ledger reflects
       // the failed exchange call.  Best-effort: any failure here is logged
       // but does not change the surfaced error.
@@ -289,9 +293,9 @@ export async function placeKalshiOrder(
             ),
           );
       } catch (cleanupError) {
-        console.error(
-          `[Kalshi] Failed to mark pre-written order ${clientOrderId} as rejected:`,
-          cleanupError,
+        logger.error(
+          { err: cleanupError, clientOrderId },
+          "[Kalshi] Failed to mark pre-written order as rejected",
         );
       }
       return {
@@ -349,9 +353,9 @@ export async function placeKalshiOrder(
           ),
         );
     } catch (storageError) {
-      console.error(
-        `[Kalshi] Order ${orderId} accepted by Kalshi but local ledger update from clientOrderId=${clientOrderId} failed. Manual reconciliation required:`,
-        storageError,
+      logger.error(
+        { err: storageError, orderId, clientOrderId },
+        "[Kalshi] Order accepted by Kalshi but local ledger update failed. Manual reconciliation required",
       );
       return {
         success: true,
@@ -396,7 +400,7 @@ export async function placeKalshiOrder(
       },
     };
   } catch (error) {
-    console.error("[Kalshi] Order placement error:", error);
+    logger.error({ err: error }, "[Kalshi] Order placement error");
     return {
       success: false,
       error: String(error),
@@ -425,7 +429,7 @@ export async function cancelKalshiOrder(
     );
 
     if (!result.ok) {
-      console.error("[Kalshi] Cancel failed:", result.error);
+      logger.error({ error: result.error, orderId }, "[Kalshi] Cancel failed");
       return { success: false, error: result.error };
     }
 
@@ -441,7 +445,7 @@ export async function cancelKalshiOrder(
 
     return { success: true };
   } catch (error) {
-    console.error("[Kalshi] Cancel error:", error);
+    logger.error({ err: error }, "[Kalshi] Cancel error");
     return { success: false, error: String(error) };
   }
 }
@@ -464,7 +468,10 @@ export async function getKalshiOrderStatus(
     );
 
     if (!result.ok || !result.data.order) {
-      console.error("[Kalshi] Order status fetch failed:", result.ok ? "missing order" : result.error);
+      logger.error(
+        { error: result.ok ? "missing order" : result.error, orderId },
+        "[Kalshi] Order status fetch failed",
+      );
       return null;
     }
 
@@ -514,7 +521,7 @@ export async function getKalshiOrderStatus(
       averagePrice,
     };
   } catch (error) {
-    console.error("[Kalshi] Order status error:", error);
+    logger.error({ err: error }, "[Kalshi] Order status error");
     return null;
   }
 }
@@ -537,7 +544,7 @@ export async function getKalshiOrderFills(
     );
 
     if (!result.ok) {
-      console.error("[Kalshi] Fills fetch failed:", result.error);
+      logger.error({ error: result.error, orderId }, "[Kalshi] Fills fetch failed");
       return [];
     }
 
@@ -565,7 +572,7 @@ export async function getKalshiOrderFills(
       fillTime: new Date(f.created_time || f.timestamp || Date.now()),
     }));
   } catch (error) {
-    console.error("[Kalshi] Fills fetch error:", error);
+    logger.error({ err: error }, "[Kalshi] Fills fetch error");
     return [];
   }
 }
@@ -587,7 +594,7 @@ export async function getKalshiPositions(userId: number): Promise<any[]> {
       );
     return positions;
   } catch (error) {
-    console.error("[Kalshi] Positions fetch error:", error);
+    logger.error({ err: error }, "[Kalshi] Positions fetch error");
     return [];
   }
 }
@@ -656,7 +663,10 @@ export async function closeKalshiPosition(
     );
 
     if (!closeResult.ok) {
-      console.error("[Kalshi] Close position order failed:", closeResult.error);
+      logger.error(
+        { error: closeResult.error, positionId, marketId },
+        "[Kalshi] Close position order failed",
+      );
       return { success: false, error: closeResult.error };
     }
 
@@ -679,9 +689,9 @@ export async function closeKalshiPosition(
         averagePrice: 0,
       });
     } catch (storageError) {
-      console.error(
-        `[Kalshi] Close order ${closeOrderId} accepted by Kalshi but local ledger write failed. Manual reconciliation required:`,
-        storageError,
+      logger.error(
+        { err: storageError, closeOrderId, positionId, marketId },
+        "[Kalshi] Close order accepted by Kalshi but local ledger write failed. Manual reconciliation required",
       );
     }
 
@@ -701,7 +711,7 @@ export async function closeKalshiPosition(
     orderId = closeOrderId;
     return { success: true, mode: "exchange", orderId };
   } catch (error) {
-    console.error("[Kalshi] Close position error:", error);
+    logger.error({ err: error, positionId, marketId }, "[Kalshi] Close position error");
     return { success: false, error: String(error) };
   }
 }
@@ -732,7 +742,7 @@ export async function createPositionFromFill(
       openedAt: new Date(),
     });
   } catch (error) {
-    console.error("[Kalshi] Create position error:", error);
+    logger.error({ err: error, marketId, orderId }, "[Kalshi] Create position error");
   }
 }
 
@@ -804,7 +814,7 @@ export async function closePositionFromFill(
 
     return true;
   } catch (error) {
-    console.error("[Kalshi] Close position from fill error:", error);
+    logger.error({ err: error, marketId, side }, "[Kalshi] Close position from fill error");
     return false;
   }
 }
@@ -882,6 +892,6 @@ export async function updatePositionMarkPrice(
       })
       .where(eq(kalshiPositions.id, positionId));
   } catch (error) {
-    console.error("[Kalshi] Update position error:", error);
+    logger.error({ err: error, positionId }, "[Kalshi] Update position error");
   }
 }

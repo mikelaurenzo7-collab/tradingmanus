@@ -22,6 +22,7 @@ import {
   alertEquityDrop,
   alertExchangeRejection,
   alertIfConsecutiveFailures,
+  alertKillSwitchPartialFailure,
   sendAlert,
 } from "./_core/alerting";
 
@@ -193,6 +194,24 @@ describe("alerting", () => {
       expect(body.event).toBe("ai_reviewer_failure");
       expect(body.severity).toBe("warning");
       expect(body.details.anthropicFailures).toBe(3);
+    });
+  });
+
+  describe("alertKillSwitchPartialFailure", () => {
+    it("fires a critical alert with failed market IDs when positions fail to close", async () => {
+      await alertKillSwitchPartialFailure(7, {
+        totalPositions: 3,
+        closedPositions: 2,
+        failedPositions: 1,
+        failedMarketIds: ["MKT-FAIL-1"],
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+      expect(body.event).toBe("kill_switch_partial_failure");
+      expect(body.severity).toBe("critical");
+      expect(body.userId).toBe(7);
+      expect(body.details.failedPositions).toBe(1);
+      expect(body.details.failedMarketIds).toEqual(["MKT-FAIL-1"]);
     });
   });
 

@@ -231,3 +231,26 @@ export async function alertAiReviewerFailure(
     timestamp: new Date().toISOString(),
   });
 }
+
+/**
+ * Alert when the kill switch fails to close one or more positions on the
+ * exchange.  The operator must manually verify and resolve these positions;
+ * without an alert they may remain open and continue accumulating risk.
+ */
+export async function alertKillSwitchPartialFailure(
+  userId: number,
+  details: {
+    totalPositions: number;
+    closedPositions: number;
+    failedPositions: number;
+    failedMarketIds: string[];
+  }
+): Promise<void> {
+  await sendAlert({
+    severity: "critical",
+    event: "kill_switch_partial_failure",
+    userId,
+    details,
+    timestamp: new Date().toISOString(),
+  });
+}

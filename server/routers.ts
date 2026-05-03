@@ -82,6 +82,7 @@ import {
   mergePlatformSignals,
   executeCrossArbLegs,
 } from "./_core/crossBotStrategies";
+import { alertKillSwitchPartialFailure } from "./_core/alerting";
 
 import { COOKIE_NAME, REFRESH_COOKIE_NAME, ONE_DAY_MS, SEVEN_DAYS_MS } from "../shared/const";
 
@@ -1012,6 +1013,17 @@ export const appRouter = router({
           }),
           ctx.user!.openId
         );
+        if (result.failedPositions > 0) {
+          const failedMarketIds = result.results
+            .filter((r) => !r.success)
+            .map((r) => r.marketId);
+          void alertKillSwitchPartialFailure(userId, {
+            totalPositions: result.totalPositions,
+            closedPositions: result.closedPositions,
+            failedPositions: result.failedPositions,
+            failedMarketIds,
+          });
+        }
         return result;
       } catch (error) {
         logger.error({ err: error }, "[Kalshi] Kill switch error");
