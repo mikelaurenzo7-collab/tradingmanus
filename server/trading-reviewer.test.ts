@@ -67,7 +67,7 @@ function rejectedReviewJson(marketId: string, reasoning = "Vetoed.") {
   });
 }
 
-describe("AI trader reviewer (Claude-only)", () => {
+describe("AI trading reviewer (Claude-only)", () => {
   it("treats Claude as the required sole provider", () => {
     expect(isTradingReviewerConfigured({ anthropicApiKey: "anthropic-key" })).toBe(true);
     expect(isTradingReviewerConfigured({ anthropicApiKey: "" })).toBe(false);
