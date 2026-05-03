@@ -20,6 +20,7 @@ import { placeKalshiOrder } from "./kalshiExecution";
 import { syncPendingOrders } from "./kalshiOrderSync";
 import { calculateKalshiBuyOrderRisk, estimateContractsForRiskBudget } from "./kalshiRisk";
 import { assertPositiveIntegerUserId } from "./userScope";
+import { withUserLock } from "./userMutex";
 import { reviewSignalsWithTrader } from "./tradingReviewer";
 import { getCacheHitRatio, newReviewerTelemetry } from "./aiToolbelt";
 import { createOrderSyncLock } from "./distributedLock";
@@ -970,6 +971,11 @@ export async function runScheduledAutonomousTrading(
     });
   }
 
+  // Serialise the risk-check-and-execute block per user to prevent TOCTOU
+  // races where two concurrent autonomy runs both pass risk checks against
+  // stale capital/position state then both submit orders (silent overrun).
+  return await withUserLock(userId, async () => {
+
   // Race protection: before we read open positions and pending orders,
   // run a best-effort sync of any in-flight fills the 30-second order-sync
   // may not yet have processed.  Without this an order placed on cycle N
@@ -1392,6 +1398,8 @@ export async function runScheduledAutonomousTrading(
     exchangeRequest: safeJsonStringify(result.exchangeRequest ?? null),
     exchangeResponse: safeJsonStringify(result.exchangeResponse ?? null),
   });
+
+  }); // end withUserLock
 }
 
 export async function runScheduledAutonomousTradingBatch(
