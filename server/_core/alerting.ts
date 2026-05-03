@@ -179,3 +179,55 @@ export async function alertAiReviewerFailure(
     timestamp: new Date().toISOString(),
   });
 }
+
+/**
+ * Alert when a drawdown threshold is crossed at warn, pause, or panic level.
+ */
+export async function alertDrawdown(
+  userId: number,
+  platform: string,
+  details: { level: "warn" | "pause" | "panic"; lossPct: number; threshold: number }
+): Promise<void> {
+  const severityMap = { warn: "warning", pause: "warning", panic: "critical" } as const;
+  await sendAlert({
+    severity: severityMap[details.level],
+    event: `drawdown_${details.level}`,
+    userId,
+    details: { platform, ...details },
+    timestamp: new Date().toISOString(),
+  });
+}
+
+/**
+ * Alert when a kill-switch is activated (manual, automatic, or environment-driven).
+ */
+export async function alertKillSwitch(
+  userId: number,
+  platform: string,
+  details: { reason: string; source: "manual" | "auto" | "env" }
+): Promise<void> {
+  await sendAlert({
+    severity: "warning",
+    event: "kill_switch_activated",
+    userId,
+    details: { platform, ...details },
+    timestamp: new Date().toISOString(),
+  });
+}
+
+/**
+ * Alert when trading mode changes (e.g. shadow → live).
+ */
+export async function alertModeChange(
+  userId: number,
+  platform: string,
+  details: { oldMode: string; newMode: string; actor: string }
+): Promise<void> {
+  await sendAlert({
+    severity: "info",
+    event: "trading_mode_changed",
+    userId,
+    details: { platform, ...details },
+    timestamp: new Date().toISOString(),
+  });
+}
