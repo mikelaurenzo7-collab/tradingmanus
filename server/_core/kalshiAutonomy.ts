@@ -29,6 +29,7 @@ import {
   alertExchangeRejection,
   alertAiReviewerFailure,
 } from "./alerting";
+import { evaluateDrawdown } from "./drawdownEngine";
 
 const BASE_RISK_LIMITS = {
   maxLossPerTrade: 5,
@@ -862,6 +863,22 @@ export async function runScheduledAutonomousTrading(
     kalshiCredDb.updateKalshiAccountEquity(userId, equityResult.equity),
     db.syncKalshiCapitalWithLiveEquity(equityResult.equity, userId),
   ]);
+
+  // Pre-flight drawdown check — auto-pause if intra-day loss exceeds threshold
+  const drawdownResult = await evaluateDrawdown(userId, "kalshi", triggeredByOpenId);
+  if (drawdownResult.shouldPause) {
+    // Drawdown engine has already set the paused flag and emitted the alert.
+    // Just abort this run using the same blocked-exit pattern.
+    return finalize({
+      status: "blocked",
+      reason: `drawdown auto-pause triggered (tier: ${drawdownResult.tier}, loss: ${drawdownResult.lossPct.toFixed(2)}%)`,
+      signalsGenerated: 0,
+      executionCandidates: 0,
+      orderPlaced: false,
+      autonomyMode: preferences.autonomyMode,
+      executionCadence: preferences.executionCadence,
+    });
+  }
 
   const allInstructions = await getUserTrainingInstructions(userId);
   const activeInstructions = allInstructions.filter(isInstructionActiveNow);
