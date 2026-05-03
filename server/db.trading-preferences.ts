@@ -25,6 +25,7 @@ export const RISK_POSTURES = [
 export type TradingAutonomyMode = (typeof AUTONOMY_MODES)[number];
 export type ExecutionCadence = (typeof EXECUTION_CADENCES)[number];
 export type RiskPosture = (typeof RISK_POSTURES)[number];
+export type TradingMode = "shadow" | "paper" | "live";
 
 export type TradingPreferencesSettings = {
   autonomyMode: TradingAutonomyMode;
@@ -35,6 +36,18 @@ export type TradingPreferencesSettings = {
   maxOrderNotional: number;
   maxDailyOrders: number;
   requireApprovalAbove: number;
+  // SP-1 pre-flight safety net
+  kalshiMode: TradingMode;
+  polymarketMode: TradingMode;
+  kalshiPaused: number;        // 0 | 1 (integer column matching DB)
+  polymarketPaused: number;
+  kalshiLiveStartedAt: Date | null;
+  polymarketLiveStartedAt: Date | null;
+  rampWindowHours: number;
+  rampSizeMultiplier: number;
+  drawdownWarnPct: number;
+  drawdownPausePct: number;
+  drawdownPanicPct: number;
 };
 
 export const DEFAULT_TRADING_PREFERENCES: TradingPreferencesSettings = {
@@ -46,6 +59,17 @@ export const DEFAULT_TRADING_PREFERENCES: TradingPreferencesSettings = {
   maxOrderNotional: 10,
   maxDailyOrders: 3,
   requireApprovalAbove: 8,
+  kalshiMode: "shadow" as TradingMode,
+  polymarketMode: "shadow" as TradingMode,
+  kalshiPaused: 0,
+  polymarketPaused: 0,
+  kalshiLiveStartedAt: null,
+  polymarketLiveStartedAt: null,
+  rampWindowHours: 72,
+  rampSizeMultiplier: 0.25,
+  drawdownWarnPct: 5.0,
+  drawdownPausePct: 10.0,
+  drawdownPanicPct: 20.0,
 };
 
 function clamp(value: number, minimum: number, maximum: number) {
@@ -116,6 +140,21 @@ function normalizeTradingPreferences(
       )
     ),
     requireApprovalAbove,
+    kalshiMode: (["shadow", "paper", "live"] as const).includes(input?.kalshiMode as TradingMode)
+      ? (input?.kalshiMode as TradingMode)
+      : "shadow",
+    polymarketMode: (["shadow", "paper", "live"] as const).includes(input?.polymarketMode as TradingMode)
+      ? (input?.polymarketMode as TradingMode)
+      : "shadow",
+    kalshiPaused: typeof input?.kalshiPaused === "number" ? (input.kalshiPaused === 0 ? 0 : 1) : 0,
+    polymarketPaused: typeof input?.polymarketPaused === "number" ? (input.polymarketPaused === 0 ? 0 : 1) : 0,
+    kalshiLiveStartedAt: input?.kalshiLiveStartedAt instanceof Date ? input.kalshiLiveStartedAt : null,
+    polymarketLiveStartedAt: input?.polymarketLiveStartedAt instanceof Date ? input.polymarketLiveStartedAt : null,
+    rampWindowHours: Math.round(clamp(Number(input?.rampWindowHours ?? 72), 1, 720)),
+    rampSizeMultiplier: clamp(Number(input?.rampSizeMultiplier ?? 0.25), 0.05, 1.0),
+    drawdownWarnPct: clamp(Number(input?.drawdownWarnPct ?? 5.0), 1.0, 50.0),
+    drawdownPausePct: clamp(Number(input?.drawdownPausePct ?? 10.0), 1.0, 50.0),
+    drawdownPanicPct: clamp(Number(input?.drawdownPanicPct ?? 20.0), 1.0, 100.0),
   };
 
   if (normalized.autonomyMode === "manual") {
@@ -135,6 +174,17 @@ function toDatabaseValues(input: TradingPreferencesSettings) {
     maxOrderNotional: input.maxOrderNotional,
     maxDailyOrders: input.maxDailyOrders,
     requireApprovalAbove: input.requireApprovalAbove,
+    kalshiMode: input.kalshiMode,
+    polymarketMode: input.polymarketMode,
+    kalshiPaused: input.kalshiPaused,
+    polymarketPaused: input.polymarketPaused,
+    kalshiLiveStartedAt: input.kalshiLiveStartedAt,
+    polymarketLiveStartedAt: input.polymarketLiveStartedAt,
+    rampWindowHours: input.rampWindowHours,
+    rampSizeMultiplier: input.rampSizeMultiplier,
+    drawdownWarnPct: input.drawdownWarnPct,
+    drawdownPausePct: input.drawdownPausePct,
+    drawdownPanicPct: input.drawdownPanicPct,
   };
 }
 
@@ -165,6 +215,17 @@ export async function getTradingPreferences(userId: number) {
       maxOrderNotional: record.maxOrderNotional,
       maxDailyOrders: record.maxDailyOrders,
       requireApprovalAbove: record.requireApprovalAbove,
+      kalshiMode: record.kalshiMode as TradingMode,
+      polymarketMode: record.polymarketMode as TradingMode,
+      kalshiPaused: record.kalshiPaused ?? 0,
+      polymarketPaused: record.polymarketPaused ?? 0,
+      kalshiLiveStartedAt: record.kalshiLiveStartedAt ?? null,
+      polymarketLiveStartedAt: record.polymarketLiveStartedAt ?? null,
+      rampWindowHours: record.rampWindowHours ?? 72,
+      rampSizeMultiplier: Number(record.rampSizeMultiplier ?? 0.25),
+      drawdownWarnPct: Number(record.drawdownWarnPct ?? 5.0),
+      drawdownPausePct: Number(record.drawdownPausePct ?? 10.0),
+      drawdownPanicPct: Number(record.drawdownPanicPct ?? 20.0),
     });
   } catch (error) {
     console.error("[Database] Get trading preferences failed:", error);
