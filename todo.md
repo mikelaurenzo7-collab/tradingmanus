@@ -289,7 +289,7 @@
 
 - [ ] **BUG: Silent failures on API errors** - Many procedures return empty arrays instead of errors
 - [x] **ISSUE: No retry logic** - Added `fetchWithRetry` with exponential backoff + jitter; wired into Kalshi market data fetchers (5xx/408/425/429 + network errors)
-- [ ] **ISSUE: No circuit breaker** - Cascading failures possible if Kalshi API is down
+- [x] **ISSUE: No circuit breaker** - Added shared `CircuitBreaker` for Kalshi market-data; trips after 5 failures in 30s, fails fast for 30s, half-open probes recovery
 - [ ] **ISSUE: Error messages not user-friendly** - Technical errors exposed to frontend
 
 ### Phase 5: Frontend User Flows (PENDING)

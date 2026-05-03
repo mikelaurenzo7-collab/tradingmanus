@@ -1,0 +1,19 @@
+{
+  "enabledPlugins": {
+    "superpowers@superpowers-dev": true
+  },
+  "extraKnownMarketplaces": {
+    "superpowers-dev": {
+      "source": {
+        "source": "github",
+        "repo": "obra/superpowers"
+      }
+    },
+    "everything-claude-code": {
+      "source": {
+        "source": "github",
+        "repo": "aaione/everything-claude-code-zh"
+      }
+    }
+  }
+}
