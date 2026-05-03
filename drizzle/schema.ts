@@ -277,6 +277,62 @@ export const autonomyRuns = pgTable("autonomyRuns", {
   updatedAt: updatedAt(),
 });
 
+// ── Polymarket Orders / Fills / Positions ─────────────────────────────────────
+// These replace the DEBT workaround in polymarketLearning.ts that was using
+// Kalshi tables as a proxy. Polymarket uses USDC CLOB semantics; sizes are in
+// USDC rather than contracts.
+
+export const polymarketOrderStatusEnum = pgEnum("polymarket_order_status", ["pending", "filled", "cancelled", "rejected"]);
+export const polymarketSideEnum = pgEnum("polymarket_side", ["yes", "no"]);
+export const polymarketPositionStatusEnum = pgEnum("polymarket_position_status", ["open", "closing", "closed"]);
+
+export const polymarketOrders = pgTable("polymarketOrders", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull(),
+  orderId: varchar("orderId", { length: 128 }).notNull().unique(),
+  marketId: varchar("marketId", { length: 256 }).notNull(),
+  tokenId: varchar("tokenId", { length: 256 }).notNull(),
+  side: polymarketSideEnum("side").notNull(),
+  /** Size in USDC */
+  sizeUsdc: doublePrecision("sizeUsdc").notNull(),
+  limitPrice: doublePrecision("limitPrice").notNull(),
+  status: polymarketOrderStatusEnum("status").default("pending").notNull(),
+  filledSizeUsdc: doublePrecision("filledSizeUsdc").default(0).notNull(),
+  averagePrice: doublePrecision("averagePrice").default(0).notNull(),
+  createdAt: createdAt(),
+  filledAt: timestamp("filledAt", { withTimezone: true }),
+  cancelledAt: timestamp("cancelledAt", { withTimezone: true }),
+});
+
+export const polymarketFills = pgTable("polymarketFills", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull(),
+  orderId: varchar("orderId", { length: 128 }).notNull(),
+  marketId: varchar("marketId", { length: 256 }).notNull(),
+  tokenId: varchar("tokenId", { length: 256 }).notNull(),
+  fillPrice: doublePrecision("fillPrice").notNull(),
+  /** Fill size in USDC */
+  fillSizeUsdc: doublePrecision("fillSizeUsdc").notNull(),
+  fillTime: createdAt(),
+});
+
+export const polymarketPositions = pgTable("polymarketPositions", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull(),
+  marketId: varchar("marketId", { length: 256 }).notNull(),
+  tokenId: varchar("tokenId", { length: 256 }).notNull(),
+  side: polymarketSideEnum("side").notNull(),
+  /** Position size in USDC */
+  sizeUsdc: doublePrecision("sizeUsdc").notNull(),
+  entryPrice: doublePrecision("entryPrice").notNull(),
+  currentPrice: doublePrecision("currentPrice").notNull(),
+  unrealizedPnl: doublePrecision("unrealizedPnl").default(0).notNull(),
+  realizedPnl: doublePrecision("realizedPnl").default(0).notNull(),
+  positionStatus: polymarketPositionStatusEnum("positionStatus").default("open").notNull(),
+  openedAt: createdAt(),
+  closedAt: timestamp("closedAt", { withTimezone: true }),
+});
+
 export const polymarketAccountStatusEnum = pgEnum("polymarket_account_status", ["connected", "disconnected", "error"]);
 export const platformSubscriptionEnum = pgEnum("platform_subscription", ["kalshi", "polymarket", "both"]);
 
@@ -386,3 +442,6 @@ export const distributedLocks = pgTable("distributedLocks", {
 export type User = typeof users.$inferSelect;
 export type BotConfig = typeof botConfigs.$inferSelect;
 export type ChatMessage = typeof chatMessages.$inferSelect;
+export type PolymarketOrder = typeof polymarketOrders.$inferSelect;
+export type PolymarketFill = typeof polymarketFills.$inferSelect;
+export type PolymarketPosition = typeof polymarketPositions.$inferSelect;

@@ -14,6 +14,8 @@
  *               breaker, failure re-opens it for another cooldown.
  */
 
+import { logger } from "./logger";
+
 export type CircuitState = "CLOSED" | "OPEN" | "HALF_OPEN";
 
 export interface CircuitBreakerOptions {
@@ -86,7 +88,7 @@ export class CircuitBreaker {
 
   private onSuccess(): void {
     if (this.state === "HALF_OPEN") {
-      console.log(`[circuit:${this.name}] probe succeeded; closing.`);
+      logger.info({ circuit: this.name }, "[circuit:%s] probe succeeded; closing.", this.name);
     }
     this.failures = [];
     this.state = "CLOSED";
@@ -94,7 +96,7 @@ export class CircuitBreaker {
 
   private onFailure(): void {
     if (this.state === "HALF_OPEN") {
-      console.warn(`[circuit:${this.name}] probe failed; re-opening.`);
+      logger.warn({ circuit: this.name }, "[circuit:%s] probe failed; re-opening.", this.name);
       this.state = "OPEN";
       this.openedAt = this.now();
       return;
@@ -105,7 +107,8 @@ export class CircuitBreaker {
     this.failures.push(this.now());
 
     if (this.failures.length >= this.failureThreshold) {
-      console.warn(
+      logger.warn(
+        { circuit: this.name, failures: this.failures.length, windowMs: this.windowMs },
         `[circuit:${this.name}] tripped after ${this.failures.length} failures in ${this.windowMs}ms; opening.`,
       );
       this.state = "OPEN";

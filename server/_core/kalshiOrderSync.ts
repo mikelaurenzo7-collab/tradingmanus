@@ -9,6 +9,7 @@ import { eq, and, inArray } from "drizzle-orm";
 import { getKalshiOrderStatus, createPositionFromFill, closePositionFromFill } from "./kalshiExecution";
 import * as kalshiCredDb from "../db.kalshi-credentials";
 import { assertPositiveIntegerUserId } from "./userScope";
+import { logger } from "./logger";
 
 // Guards against two concurrent sync intervals processing the same user's pending orders
 const _syncRunningByUser = new Set<string>();
@@ -32,7 +33,7 @@ export async function syncPendingOrders(userId: number): Promise<void> {
     const creds = await kalshiCredDb.getKalshiCredentials(scopedUserId);
     if (!creds) return;
     if ("needsReauth" in creds && creds.needsReauth) {
-      console.warn(`[OrderSync] Skipping user ${scopedUserId}: credentials require re-authentication`);
+      logger.warn({ userId: scopedUserId }, "[OrderSync] Skipping user %d: credentials require re-authentication", scopedUserId);
       return;
     }
     if (!creds.apiKey || !creds.privateKey) return;
@@ -58,7 +59,7 @@ export async function syncPendingOrders(userId: number): Promise<void> {
             );
 
             if (!closed) {
-              console.warn(`[OrderSync] Filled close order ${order.orderId} had no matching open position`);
+              logger.warn({ orderId: order.orderId }, "[OrderSync] Filled close order %s had no matching open position", order.orderId);
             }
             continue;
           }
@@ -77,7 +78,7 @@ export async function syncPendingOrders(userId: number): Promise<void> {
             .then((rows: any[]) => rows[0]);
 
           if (existingOpen) {
-            console.log(`[OrderSync] Position for ${order.marketId} already exists, skipping`);
+            logger.info({ marketId: order.marketId }, "[OrderSync] Position for %s already exists, skipping", order.marketId);
             continue;
           }
 
@@ -94,7 +95,7 @@ export async function syncPendingOrders(userId: number): Promise<void> {
           );
         }
       } catch (err) {
-        console.error(`[OrderSync] Failed to sync order ${order.orderId}:`, err);
+        logger.error({ err, orderId: order.orderId }, "[OrderSync] Failed to sync order %s", order.orderId);
       }
     }
   } finally {
@@ -111,7 +112,7 @@ export async function syncLivePositions(userId: number): Promise<void> {
   const creds = await kalshiCredDb.getKalshiCredentials(scopedUserId);
   if (!creds) return;
   if ("needsReauth" in creds && creds.needsReauth) {
-    console.warn(`[OrderSync] Skipping syncLivePositions for user ${scopedUserId}: credentials require re-authentication`);
+    logger.warn({ userId: scopedUserId }, "[OrderSync] Skipping syncLivePositions for user %d: credentials require re-authentication", scopedUserId);
     return;
   }
   if (!creds.apiKey || !creds.privateKey) return;
@@ -236,6 +237,6 @@ export async function syncLivePositions(userId: number): Promise<void> {
       }
     }
   } catch (err) {
-    console.error("[OrderSync] syncLivePositions failed:", err);
+    logger.error({ err }, "[OrderSync] syncLivePositions failed");
   }
 }

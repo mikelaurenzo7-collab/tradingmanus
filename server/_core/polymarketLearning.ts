@@ -10,7 +10,9 @@
  */
 
 import * as db from "../db";
+import * as polyDb from "../db.polymarket";
 import { assertPositiveIntegerUserId } from "./userScope";
+import { logger } from "./logger";
 
 export interface PolymarketTradeRecord {
   id: string;
@@ -370,30 +372,44 @@ export async function getPolymarketPerformanceOverview(
     "getPolymarketPerformanceOverview userId"
   );
 
-  // Use Kalshi capital as proxy for Polymarket balance (shared budget)
-  // In production this would be replaced with dedicated Polymarket balance
-  const [capital, trades, signals, openPositions] = await Promise.all([
-    db.getKalshiCapital(scopedUserId),
-    db.getKalshiTradeHistory(1000, scopedUserId), // DEBT: replace with Polymarket-specific trade history once polymarketOrders/polymarketFills tables exist
+  // Use Polymarket-specific positions for accurate performance tracking.
+  // Positions carry realized/unrealized P&L and lifecycle status, which is what
+  // calculatePerformanceMetricsFromTrades expects.
+  const [allPositions, signals] = await Promise.all([
+    polyDb.getPolymarketPositions(scopedUserId),
     db.getRecentSignals(1000, scopedUserId),
-    db.getOpenKalshiPositions(scopedUserId), // DEBT: replace with Polymarket-specific positions once polymarketPositions table exists
   ]);
-
-  const startingBalance = Number(
-    capital?.startingBalance ?? capital?.currentBalance ?? 0
+  const openPositions = allPositions.filter(
+    (p) => p.positionStatus === "open" || p.positionStatus === "closing"
   );
-  const metrics = calculatePerformanceMetricsFromTrades(trades, {
+
+  // Starting balance is the total capital deployed into all positions (sum of
+  // sizeUsdc).  This is the most accurate proxy for Polymarket initial capital
+  // until a dedicated polymarketCapital table is added.
+  const startingBalance = allPositions.reduce(
+    (sum, p) => sum + Number(p.sizeUsdc ?? 0),
+    0,
+  );
+
+  const metrics = calculatePerformanceMetricsFromTrades(allPositions, {
     startingBalance,
     openPositions,
   });
 
+  // Current balance = deployed capital + total realized P&L.
+  // Unrealized P&L is tracked separately inside the metrics object and should
+  // not be folded into the account balance (which reflects closed results only).
+  const totalRealizedPnl = allPositions.reduce(
+    (sum, p) => sum + Number(p.realizedPnl ?? 0),
+    0,
+  );
+  const currentBalance = startingBalance + totalRealizedPnl;
+
   return {
     startingBalance,
-    currentBalance: Number(
-      capital?.currentBalance ?? startingBalance + metrics.totalPnL
-    ),
+    currentBalance,
     metrics,
-    signalPerformance: analyzeSignalPerformanceFromData(signals, trades),
+    signalPerformance: analyzeSignalPerformanceFromData(signals, allPositions),
   };
 }
 
@@ -447,8 +463,10 @@ export async function recordPolymarketTradeEntry(
     `user:${scopedUserId}`
   );
 
-  console.log(
-    `[PolymarketLearning] Trade recorded: ${tradeId} - ${signalType} ${side} @ $${entryPrice} (${entrySizeUsdc} USDC)`
+  logger.info(
+    { tradeId, signalType, side, entryPrice, entrySizeUsdc },
+    "[PolymarketLearning] Trade recorded: %s - %s %s @ $%d (%d USDC)",
+    tradeId, signalType, side, entryPrice, entrySizeUsdc
   );
   return trade;
 }
@@ -507,8 +525,10 @@ export async function recordPolymarketTradeExit(
     });
   }
 
-  console.log(
-    `[PolymarketLearning] Trade closed: ${tradeId} @ $${exitPrice} (${exitSizeUsdc} USDC)`
+  logger.info(
+    { tradeId, exitPrice, exitSizeUsdc },
+    "[PolymarketLearning] Trade closed: %s @ $%d (%d USDC)",
+    tradeId, exitPrice, exitSizeUsdc
   );
 }
 

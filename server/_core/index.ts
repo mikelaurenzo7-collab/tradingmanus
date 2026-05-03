@@ -7,6 +7,7 @@ import { getUsersEligibleForAutomaticScheduledTrading } from "../db";
 import { runScheduledAutonomousTradingBatch } from "./kalshiAutonomy";
 import { syncPendingOrders, syncLivePositions } from "./kalshiOrderSync";
 import { createAutonomousTradingLock, createOrderSyncLock } from "./distributedLock";
+import { logger } from "./logger";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -73,7 +74,7 @@ async function startServer() {
     server.once("error", reject);
     server.listen(port, host, () => {
       server.off("error", reject);
-      console.log(`Server running on http://${host}:${port}/`);
+      logger.info({ host, port }, "Server running on http://%s:%d/", host, port);
       resolve();
     });
   });
@@ -97,18 +98,18 @@ async function runAutonomousScheduler() {
     const lock = createAutonomousTradingLock(ownerUser.id);
     const acquired = await lock.acquire({ ttlMs: 5 * 60 * 1000 });
     if (!acquired) {
-      console.log("[Scheduler] Autonomous trading already in progress, skipping");
+      logger.info("[Scheduler] Autonomous trading already in progress, skipping");
       return;
     }
 
     try {
-      console.log(`[Scheduler] Running autonomous trading for ${scopedUsers.length} eligible user(s)`);
+      logger.info({ userCount: scopedUsers.length }, "[Scheduler] Running autonomous trading for %d eligible user(s)", scopedUsers.length);
       await runScheduledAutonomousTradingBatch(scopedUsers as any, "local_scheduler");
     } finally {
       await lock.release();
     }
   } catch (error) {
-    console.error("[Scheduler] Autonomous trading run failed:", error);
+    logger.error({ err: error }, "[Scheduler] Autonomous trading run failed");
   }
 }
 
@@ -124,7 +125,7 @@ async function runOrderSync() {
       const lock = createOrderSyncLock(user.id);
       const acquired = await lock.acquire({ ttlMs: 60 * 1000 });
       if (!acquired) {
-        console.log(`[OrderSync] Sync already in progress for user ${user.id}, skipping`);
+        logger.info({ userId: user.id }, "[OrderSync] Sync already in progress for user %d, skipping", user.id);
         continue;
       }
 
@@ -132,13 +133,13 @@ async function runOrderSync() {
         await syncPendingOrders(user.id);
         await syncLivePositions(user.id);
       } catch (err) {
-        console.error(`[OrderSync] Sync failed for user ${user.id}:`, err);
+        logger.error({ err, userId: user.id }, "[OrderSync] Sync failed for user %d", user.id);
       } finally {
         await lock.release();
       }
     }
   } catch (error) {
-    console.error("[OrderSync] Order sync run failed:", error);
+    logger.error({ err: error }, "[OrderSync] Order sync run failed");
   }
 }
 
@@ -147,14 +148,14 @@ startServer()
     setInterval(runAutonomousScheduler, AUTONOMOUS_TRADING_INTERVAL_MS);
     setInterval(runOrderSync, ORDER_SYNC_INTERVAL_MS);
     setTimeout(runAutonomousScheduler, 2 * 60 * 1000);
-    console.log("[Scheduler] Autonomous trading scheduler started (15-min interval)");
-    console.log("[OrderSync] Order sync started (30-sec interval)");
+    logger.info("[Scheduler] Autonomous trading scheduler started (15-min interval)");
+    logger.info("[OrderSync] Order sync started (30-sec interval)");
   })
   .catch((error) => {
     // Crash hard so the platform's restart policy kicks in. Logging only and
     // staying alive leaves a zombie process that fails every health-check —
     // the exact "Application failed to respond" symptom we keep seeing.
-    console.error("[Startup] Fatal error during server start:", error);
+    logger.fatal({ err: error }, "[Startup] Fatal error during server start");
     process.exit(1);
   });
 
@@ -162,8 +163,8 @@ startServer()
 // process so they appear in the Railway log stream instead of being silently
 // dropped (which can mask scheduler or DB issues until the next restart).
 process.on("unhandledRejection", (reason) => {
-  console.error("[Process] unhandledRejection:", reason);
+  logger.error({ reason }, "[Process] unhandledRejection");
 });
 process.on("uncaughtException", (error) => {
-  console.error("[Process] uncaughtException:", error);
+  logger.error({ err: error }, "[Process] uncaughtException");
 });

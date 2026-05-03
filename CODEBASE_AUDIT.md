@@ -1,7 +1,7 @@
 # LAURENZO Codebase Audit
 
-> **Last updated**: 2026-05-02
-> This document reflects the codebase after the Kalshi-focused refactor is complete and running in production alpha.
+> **Last updated**: 2026-05-03
+> This document reflects the codebase after the full Kalshi + Polymarket refactor including Phase 1-3 improvements (logger migration, code splitting, Polymarket tables).
 
 ## Current Architecture
 
@@ -17,7 +17,8 @@
 - `kalshiCapital` — Capital tracking per user
 - `tradingPreferences` — Autonomy mode, cadence, risk posture per user
 - `trainingInstructions` / `instructionRules` / `instructionSchedules` / `instructionHistory` — User-defined trading rules
-- `polymarketCredentials` — Encrypted Polymarket API credentials (Polymarket integration exists but uses Kalshi tables as proxies for performance data — see open items below)
+- `polymarketCredentials` — Encrypted Polymarket API credentials
+- `polymarketOrders` / `polymarketFills` / `polymarketPositions` — Dedicated Polymarket order lifecycle (USDC CLOB semantics)
 - `userPlatformSubscriptions` — Which platforms each user is subscribed to
 - `deskMemory` / `botConfigs` / `chatMessages` — AI desk memory and chatbot
 
@@ -109,11 +110,8 @@
 
 ## Open Items / Known Gaps
 
-### Polymarket Performance Data (DEBT)
-`server/_core/polymarketLearning.ts` uses Kalshi trade history and positions as a proxy for Polymarket performance metrics (`getKalshiTradeHistory`, `getOpenKalshiPositions`). These should be replaced with dedicated Polymarket-specific tables (`polymarketOrders`, `polymarketFills`, `polymarketPositions`) once the Polymarket trading loop is production-ready.
-
 ### Distributed Lock Schema
-Run `corepack pnpm db:push` to create the `distributedLocks` table before deploying.
+Run `corepack pnpm db:push` to push the updated schema (including new `polymarketOrders`, `polymarketFills`, `polymarketPositions` tables) before deploying.
 
 ### CRON_SECRET Required in Production
 Without `CRON_SECRET` (≥ 32 chars), the Vercel cron trigger falls back to JWT auth and silently fails — autonomous trading will not run. See `server/_core/env.ts`.
