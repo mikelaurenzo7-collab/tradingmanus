@@ -6,7 +6,7 @@
  * loaded into the cached system prompt before each review run so the desk's
  * reasoning is informed by what already worked or burned the founder's account.
  *
- * The whole tape is intentionally tiny (≤ 32 notes, ≤ 4KB serialized) so it
+ * The whole tape is intentionally tiny (≤ 12 notes, ≤ 4KB serialized) so it
  * fits in the cached system prompt without inflating token cost.
  */
 
@@ -34,7 +34,7 @@ export type DeskMemoryRecord = {
   lossCount: number;
 };
 
-const MAX_NOTES = 32;
+const MAX_NOTES = 12;
 const MAX_NOTE_CHARS = 240;
 const MAX_NOTES_PAYLOAD_BYTES = 4096;
 
