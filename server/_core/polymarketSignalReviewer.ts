@@ -75,6 +75,21 @@ export const MAX_MARKET_SUMMARY_TITLE_CHARS = 160;
 export const MAX_MARKET_SUMMARY_CATEGORY_CHARS = 80;
 export const MAX_SIGNAL_SUMMARY_REASONING_CHARS = 320;
 
+/**
+ * Intra-Claude escalation thresholds.  When the bulk Sonnet pass approves a
+ * non-high-stakes trade but tugs confidence down materially or moves
+ * expected value materially, escalate that single market to Opus.
+ */
+const INTRA_ESCALATION_CONFIDENCE_DROP = -0.10;
+const INTRA_ESCALATION_EV_MOVE = 0.05;
+
+function reviewIsContested(review: TradingSignalReview): boolean {
+  if (!review.approved) return false;
+  if ((review.confidenceAdjustment ?? 0) <= INTRA_ESCALATION_CONFIDENCE_DROP) return true;
+  if (Math.abs(review.expectedValueAdjustment ?? 0) >= INTRA_ESCALATION_EV_MOVE) return true;
+  return false;
+}
+
 const reviewSchema = z.object({
   marketId: z.string().min(1),
   approved: z.boolean(),
@@ -209,12 +224,31 @@ function summarizeSignal(signal: PolymarketSignal) {
 function stakesForSignals(signals: PolymarketSignal[]): StakesContext {
   let topConfidence = 0;
   let topNotional = 0;
+  let extremeImplied: number | undefined;
   for (const signal of signals) {
     if (signal.confidence > topConfidence) topConfidence = signal.confidence;
     const notional = Number(signal.limitPrice ?? 0) * 100;
     if (notional > topNotional) topNotional = notional;
+    const implied = Number(signal.impliedProbabilityYes);
+    if (Number.isFinite(implied)) {
+      // For YES side bets the implied tail is `implied`; for NO it's
+      // `1 - implied`.  Either way the most extreme tail across the batch
+      // promotes the whole batch to deep review.
+      const candidate = signal.side === "no" ? 1 - implied : implied;
+      if (extremeImplied === undefined) {
+        extremeImplied = candidate;
+      } else {
+        const currentDistance = Math.min(extremeImplied, 1 - extremeImplied);
+        const candidateDistance = Math.min(candidate, 1 - candidate);
+        if (candidateDistance < currentDistance) extremeImplied = candidate;
+      }
+    }
   }
-  return { confidence: topConfidence, orderNotional: topNotional };
+  return {
+    confidence: topConfidence,
+    orderNotional: topNotional,
+    impliedProbability: extremeImplied,
+  };
 }
 
 function categoryOfPolymarketSignal(
@@ -266,19 +300,27 @@ async function requestAnthropicReviews(
   persona?: CategoryPersona,
   stakes: StakesContext = {},
   memorySnippet: string | null = null,
+  forceDeep = false,
 ) {
-  const timeoutMs = options.anthropicTimeoutMs ?? ENV.anthropicTimeoutMs;
   const client =
     options.anthropicClient ??
     new Anthropic({ apiKey: (options.anthropicApiKey ?? ENV.anthropicApiKey).trim() });
 
-  const useDeepModel = isHighStakes(stakes);
+  const useDeepModel = forceDeep || isHighStakes(stakes);
+  // Wider wall-clock budget for deep-tier (Opus + extended thinking +
+  // multiple web_search uses).  Bulk Sonnet keeps the tighter default.
+  const timeoutMs = useDeepModel
+    ? Math.max(options.anthropicTimeoutMs ?? 0, ENV.anthropicDeepTimeoutMs)
+    : options.anthropicTimeoutMs ?? ENV.anthropicTimeoutMs;
   const tier = useDeepModel ? "deep" : "review";
   const model = selectAnthropicModel(tier, options.anthropicModel);
-  const thinking = buildExtendedThinking(stakes);
+  const stakesForCall = forceDeep ? { ...stakes, highStakes: true } : stakes;
+  const thinking = buildExtendedThinking(stakesForCall);
+  // Bumped from 4 → 6 on deep tier to allow Claude multiple targeted
+  // searches when triangulating sports lineups, weather, news primaries.
   const tools = buildToolList([], {
     allowWebSearch: true,
-    maxWebSearchUses: useDeepModel ? 4 : 2,
+    maxWebSearchUses: useDeepModel ? 6 : 2,
   });
 
   const personaBlocks = ENV.enableAiPromptCache
@@ -376,9 +418,17 @@ async function callClaude(
   stakes: StakesContext,
   logger: Pick<Console, "warn" | "error">,
   memorySnippet: string | null = null,
+  forceDeep = false,
 ): Promise<ReviewBatchResult> {
   try {
-    const response = await requestAnthropicReviews(reviewPayload, options, persona, stakes, memorySnippet);
+    const response = await requestAnthropicReviews(
+      reviewPayload,
+      options,
+      persona,
+      stakes,
+      memorySnippet,
+      forceDeep,
+    );
     return {
       reviewsByMarket: new Map(response.reviews.map((review) => [review.marketId, review])),
       failed: false,
@@ -424,6 +474,65 @@ async function runCategoryReview(
 
   const batchResult = await callClaude(reviewPayload, options, persona, stakes, logger, memorySnippet);
 
+  // Intra-Claude second opinion on contested mid-stakes approvals.  See
+  // tradingReviewer.ts for the full rationale; the polymarket pipeline uses
+  // identical thresholds and fail-closed semantics.
+  const escalationCitationsByMarket = new Map<string, CitationSummary[]>();
+  if (
+    ENV.enableAiIntraEscalation &&
+    !isHighStakes(stakes) &&
+    !batchResult.failed
+  ) {
+    const contestedSignals = signals.filter((signal) => {
+      const review = batchResult.reviewsByMarket.get(signal.marketId);
+      return review ? reviewIsContested(review) : false;
+    });
+    if (contestedSignals.length > 0) {
+      await Promise.all(
+        contestedSignals.map(async (signal) => {
+          const market = marketsById.get(signal.marketId);
+          if (!market) return;
+          const singlePayload = getReviewPayload({
+            markets: [market],
+            signals: [signal],
+            maxSignals: 1,
+            persona,
+          });
+          const singleStakes: StakesContext = {
+            ...stakesForSignals([signal]),
+            highStakes: true,
+          };
+          const deepResult = await callClaude(
+            singlePayload,
+            options,
+            persona,
+            singleStakes,
+            logger,
+            memorySnippet,
+            true,
+          );
+          const deepReview = deepResult.reviewsByMarket.get(signal.marketId);
+          if (deepResult.failed || !deepReview) {
+            batchResult.reviewsByMarket.set(signal.marketId, {
+              marketId: signal.marketId,
+              approved: false,
+              reasoning: "Intra-Claude second opinion unavailable; capital preservation veto.",
+            });
+            return;
+          }
+          if (!deepReview.approved) {
+            batchResult.reviewsByMarket.set(signal.marketId, deepReview);
+            return;
+          }
+          batchResult.reviewsByMarket.set(signal.marketId, deepReview);
+          if (deepResult.citations.length > 0) {
+            escalationCitationsByMarket.set(signal.marketId, deepResult.citations);
+          }
+        }),
+      );
+    }
+  }
+
   return signals
     .map((signal) => {
       const review = batchResult.reviewsByMarket.get(signal.marketId);
@@ -433,7 +542,9 @@ async function runCategoryReview(
         );
         return null;
       }
-      return combineApprovedSignal(signal, review, logger, persona?.label, batchResult.citations);
+      const citations =
+        escalationCitationsByMarket.get(signal.marketId) ?? batchResult.citations;
+      return combineApprovedSignal(signal, review, logger, persona?.label, citations);
     })
     .filter((signal): signal is PolymarketSignal => Boolean(signal));
 }
@@ -478,6 +589,16 @@ async function applyTriageFilter(
     options.telemetry.triageKeptCount = keep ? Math.max(0, keep.size) : signals.length;
   }
   if (!keep) return signals;
+  // Force-keep any candidate that is itself high-stakes — capital
+  // preservation beats triage savings.  These always proceed to deep review.
+  for (const signal of signals) {
+    if (isHighStakes(stakesForSignals([signal]))) {
+      keep.add(signal.marketId);
+    }
+  }
+  if (options.telemetry) {
+    options.telemetry.triageKeptCount = keep.size;
+  }
   const filtered = signals.filter((signal) => keep.has(signal.marketId));
   return filtered.length > 0 ? filtered : signals;
 }

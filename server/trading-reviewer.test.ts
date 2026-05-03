@@ -23,9 +23,11 @@ const baseSignal = {
   marketId: "KXTEST-1",
   signalType: "momentum" as const,
   side: "yes" as const,
-  // confidence below the high-stakes threshold so we test normal-stakes default path
+  // confidence below the 0.8 high-stakes threshold so we test the normal-stakes
+  // default path
   confidence: 0.7,
-  marketPrice: 0.1,
+  // marketPrice * 100 = $5 notional — below the $10 high-stakes threshold
+  marketPrice: 0.05,
   impliedProbability: 0.57,
   expectedValue: 0.18,
   reasoning: "Explicit probability edge",
@@ -34,7 +36,7 @@ const baseSignal = {
 const highStakesSignal = {
   ...baseSignal,
   marketId: "KXTEST-2",
-  // 0.95 * 100 = $95 notional — well above the $25 high-stakes threshold
+  // 0.95 * 100 = $95 notional — well above the $10 high-stakes threshold
   marketPrice: 0.95,
   confidence: 0.95,
 };
@@ -325,5 +327,185 @@ describe("AI trading reviewer (Claude-only)", () => {
 
     expect(systemText).toMatch(/Kalshi Sports Desk/);
     expect(systemText).toMatch(/sportsbook|injury|lineup/i);
+  });
+
+  it("force-keeps high-stakes candidates at triage even when Haiku drops them", async () => {
+    const anthropicCreate = vi
+      .fn()
+      // 1st call: Haiku triage drops everything (returns empty keep set).
+      .mockResolvedValueOnce(anthropicResponse(JSON.stringify({ keep: [] })))
+      // 2nd call: full review of survivors — should still include the high-stakes signal.
+      .mockResolvedValueOnce(
+        anthropicResponse(
+          JSON.stringify({
+            reviews: [
+              { marketId: "KXTEST-2", approved: true, confidenceAdjustment: 0, expectedValueAdjustment: 0, reasoning: "OK." },
+            ],
+          }),
+        ),
+      );
+
+    const signals = [
+      { ...baseSignal, marketId: "KXTEST-1" }, // normal stakes ($5 notional, conf 0.7)
+      { ...highStakesSignal }, // KXTEST-2, high stakes ($95 notional, conf 0.95)
+      { ...baseSignal, marketId: "KXTEST-3" }, // normal stakes
+    ];
+    const markets = signals.map((s) => ({ ...baseMarket, id: s.marketId }));
+
+    const result = await reviewSignalsWithTrader(
+      { markets: markets as any, signals: signals as any, maxSignals: 5 },
+      {
+        skipInTest: false,
+        anthropicApiKey: "anthropic-key",
+        anthropicClient: { messages: { create: anthropicCreate } },
+        triageThresholdOverride: 2,
+      },
+    );
+
+    // High-stakes signal must survive triage even though Haiku dropped it.
+    expect(result).toHaveLength(1);
+    expect(result[0]?.marketId).toBe("KXTEST-2");
+    // Confirm the review batch was scoped to just the force-kept survivor(s).
+    const reviewCall = anthropicCreate.mock.calls[1]?.[0];
+    const payload = JSON.parse(reviewCall.messages[0].content);
+    const reviewedIds = payload.signals.map((s: any) => s.marketId);
+    expect(reviewedIds).toContain("KXTEST-2");
+    expect(reviewedIds).not.toContain("KXTEST-1");
+    expect(reviewedIds).not.toContain("KXTEST-3");
+  });
+
+  it("escalates contested mid-stakes Sonnet approvals to a deep Opus second pass", async () => {
+    const anthropicCreate = vi
+      .fn()
+      // 1st call: Sonnet approves but tugs confidence down by 0.15 (contested).
+      .mockResolvedValueOnce(
+        anthropicResponse(
+          JSON.stringify({
+            reviews: [
+              {
+                marketId: "KXTEST-1",
+                approved: true,
+                confidenceAdjustment: -0.15,
+                expectedValueAdjustment: 0,
+                reasoning: "Edge ok but liquidity thin.",
+              },
+            ],
+          }),
+        ),
+      )
+      // 2nd call: Opus second opinion also approves — both must agree.
+      .mockResolvedValueOnce(
+        anthropicResponse(
+          JSON.stringify({
+            reviews: [
+              {
+                marketId: "KXTEST-1",
+                approved: true,
+                confidenceAdjustment: -0.05,
+                expectedValueAdjustment: 0,
+                reasoning: "Confirmed after deeper review.",
+              },
+            ],
+          }),
+        ),
+      );
+
+    const result = await reviewSignalsWithTrader(
+      {
+        markets: [baseMarket as any],
+        signals: [baseSignal as any],
+        maxSignals: 1,
+      },
+      {
+        skipInTest: false,
+        anthropicApiKey: "anthropic-key",
+        anthropicClient: { messages: { create: anthropicCreate } },
+      },
+    );
+
+    expect(anthropicCreate).toHaveBeenCalledTimes(2);
+    expect(result).toHaveLength(1);
+    // Second call must use the deep-tier (Opus) model.
+    const secondCall = anthropicCreate.mock.calls[1]?.[0];
+    expect(String(secondCall.model)).toMatch(/opus/i);
+    // Deep call should include extended thinking config.
+    expect(secondCall.thinking).toBeDefined();
+  });
+
+  it("drops the trade when the Opus second opinion disagrees with Sonnet", async () => {
+    const anthropicCreate = vi
+      .fn()
+      // 1st call: Sonnet approves with material EV move (contested).
+      .mockResolvedValueOnce(
+        anthropicResponse(
+          JSON.stringify({
+            reviews: [
+              {
+                marketId: "KXTEST-1",
+                approved: true,
+                confidenceAdjustment: -0.05,
+                expectedValueAdjustment: 0.08,
+                reasoning: "Approved.",
+              },
+            ],
+          }),
+        ),
+      )
+      // 2nd call: Opus vetoes — disagreement → drop.
+      .mockResolvedValueOnce(
+        anthropicResponse(rejectedReviewJson("KXTEST-1", "Caught a wash-trading pattern.")),
+      );
+
+    const result = await reviewSignalsWithTrader(
+      {
+        markets: [baseMarket as any],
+        signals: [baseSignal as any],
+        maxSignals: 1,
+      },
+      {
+        skipInTest: false,
+        anthropicApiKey: "anthropic-key",
+        anthropicClient: { messages: { create: anthropicCreate } },
+      },
+    );
+
+    expect(anthropicCreate).toHaveBeenCalledTimes(2);
+    expect(result).toEqual([]);
+  });
+
+  it("skips intra-Claude escalation for high-stakes batches (already deep-tier)", async () => {
+    const anthropicCreate = vi.fn().mockResolvedValueOnce(
+      anthropicResponse(
+        JSON.stringify({
+          reviews: [
+            {
+              marketId: "KXTEST-2",
+              approved: true,
+              confidenceAdjustment: -0.15, // would be contested at normal stakes
+              expectedValueAdjustment: 0,
+              reasoning: "OK after deep review.",
+            },
+          ],
+        }),
+      ),
+    );
+
+    const result = await reviewSignalsWithTrader(
+      {
+        markets: [{ ...baseMarket, id: "KXTEST-2" } as any],
+        signals: [highStakesSignal as any],
+        maxSignals: 1,
+      },
+      {
+        skipInTest: false,
+        anthropicApiKey: "anthropic-key",
+        anthropicClient: { messages: { create: anthropicCreate } },
+      },
+    );
+
+    // Only one call: the initial deep-tier review.  No second pass because
+    // the batch was already deep-tier from the start.
+    expect(anthropicCreate).toHaveBeenCalledTimes(1);
+    expect(result).toHaveLength(1);
   });
 });

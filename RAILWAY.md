@@ -91,8 +91,21 @@ In **Project → Variables** (or `railway variables --set KEY=value`), set
 ### Optional
 
 `KALSHI_API_KEY`, `GNEWS_API_KEY`, `ANTHROPIC_MODEL`, `ANTHROPIC_TRIAGE_MODEL`,
-`ANTHROPIC_DEEP_MODEL`, `ANTHROPIC_TIMEOUT_MS`, all `ENABLE_AI_*` flags,
+`ANTHROPIC_DEEP_MODEL`, `ANTHROPIC_TIMEOUT_MS`, `ANTHROPIC_DEEP_TIMEOUT_MS`,
+all `ENABLE_AI_*` flags (including `ENABLE_AI_INTRA_ESCALATION`),
 `AI_TRIAGE_THRESHOLD`, `VITE_ANALYTICS_ENDPOINT`, `VITE_ANALYTICS_WEBSITE_ID`.
+
+The recommended cost/quality levers for the AI reviewer:
+
+- `ANTHROPIC_MODEL` (default `claude-sonnet-4-5`) — bulk review tier.
+- `ANTHROPIC_TRIAGE_MODEL` (default `claude-haiku-4-5`) — cheap pre-filter on
+  large candidate batches.  See `AI_TRIAGE_THRESHOLD` (default `6`).
+- `ANTHROPIC_DEEP_MODEL` (default `claude-opus-4-5`) — deep tier for
+  high-stakes trades and intra-Claude second opinions on contested
+  approvals.  Pairs with `ANTHROPIC_DEEP_TIMEOUT_MS` (default `25000`).
+- `ENABLE_AI_INTRA_ESCALATION` (default `true`) — when Sonnet approves a
+  non-high-stakes trade but tugs confidence down or moves EV materially,
+  escalate that one market to an Opus second pass.  Both must agree.
 
 ### Not needed on Railway
 

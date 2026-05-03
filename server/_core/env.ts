@@ -17,13 +17,22 @@ export const ENV = {
   ownerPassword: normalize(process.env.OWNER_PASSWORD),
   cronSecret: normalize(process.env.CRON_SECRET),
   anthropicApiKey: normalize(process.env.ANTHROPIC_API_KEY),
+  // Default Sonnet 4.5 for normal-stakes review.  Pinned to the current
+  // generation so the resolved model is logged/inspectable.
   anthropicModel: normalize(process.env.ANTHROPIC_MODEL) || "claude-sonnet-4-5",
   anthropicTimeoutMs: normalizePositiveInt(process.env.ANTHROPIC_TIMEOUT_MS, 12000),
+  /**
+   * Deep-tier timeout in milliseconds.  Opus + extended thinking + multiple
+   * web_search invocations need more wall-clock budget than the bulk Sonnet
+   * reviewer; bulk reviewer keeps the tighter ANTHROPIC_TIMEOUT_MS so missed
+   * cron ticks remain rare.  Defaults to 25s.
+   */
+  anthropicDeepTimeoutMs: normalizePositiveInt(process.env.ANTHROPIC_DEEP_TIMEOUT_MS, 25000),
   // Tiered Claude models for the per-category trading reviewers.
   // Triage: cheap/fast Haiku for large candidate sets and low-stakes filtering.
   // Deep: Opus for high-stakes trades that warrant extended thinking.
-  anthropicTriageModel: normalize(process.env.ANTHROPIC_TRIAGE_MODEL),
-  anthropicDeepModel: normalize(process.env.ANTHROPIC_DEEP_MODEL),
+  anthropicTriageModel: normalize(process.env.ANTHROPIC_TRIAGE_MODEL) || "claude-haiku-4-5",
+  anthropicDeepModel: normalize(process.env.ANTHROPIC_DEEP_MODEL) || "claude-opus-4-5",
   // Feature toggles for the AI toolbelt.
   enableAiPromptCache: normalizeBoolean(process.env.ENABLE_AI_PROMPT_CACHE, true),
   enableAiCategoryRouting: normalizeBoolean(process.env.ENABLE_AI_CATEGORY_ROUTING, true),
@@ -35,9 +44,17 @@ export const ENV = {
   enableAiDeskMemory: normalizeBoolean(process.env.ENABLE_AI_DESK_MEMORY, true),
   // Cheap Haiku pre-filter when the candidate batch is large.
   enableAiTriage: normalizeBoolean(process.env.ENABLE_AI_TRIAGE, true),
-  aiTriageThreshold: normalizePositiveInt(process.env.AI_TRIAGE_THRESHOLD, 12),
+  aiTriageThreshold: normalizePositiveInt(process.env.AI_TRIAGE_THRESHOLD, 6),
   // Surface web_search citations in the audit-log reasoning blurb.
   enableAiCitations: normalizeBoolean(process.env.ENABLE_AI_CITATIONS, true),
+  /**
+   * Intra-Claude second opinion: when Sonnet approves a non-high-stakes
+   * trade but tugs confidence down or moves expected value materially,
+   * escalate just that single market to an Opus second pass.  Both must
+   * agree to keep the trade; disagreement drops it.  Cheap, in-family
+   * replacement for the OpenAI second-opinion we previously ran.
+   */
+  enableAiIntraEscalation: normalizeBoolean(process.env.ENABLE_AI_INTRA_ESCALATION, true),
   kalshiApiKey: normalize(process.env.KALSHI_API_KEY),
   isProduction: process.env.NODE_ENV === "production",
   gnewsApiKey: normalize(process.env.GNEWS_API_KEY),

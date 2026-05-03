@@ -37,13 +37,29 @@ export type StakesContext = {
   hoursToResolution?: number;
   /** Caller-supplied confidence (0-1) in the trade thesis. */
   confidence?: number;
+  /**
+   * Implied market probability (0-1) for the side being traded.  Extreme-tail
+   * markets are precisely the "free-money or toxic" trades where Opus
+   * reasoning pays for itself, so we promote them to the deep tier.
+   */
+  impliedProbability?: number;
   /** True when the signal has been flagged as exceptionally high stakes. */
   highStakes?: boolean;
 };
 
-const HIGH_STAKES_NOTIONAL_USD = 25;
-const HIGH_STAKES_HOURS_TO_RESOLUTION = 24;
-const HIGH_STAKES_CONFIDENCE = 0.9;
+// Lowered notional threshold: with small live capital, $10+ trades are
+// already material and deserve Opus-tier review.
+const HIGH_STAKES_NOTIONAL_USD = 10;
+// Raised resolution-window threshold: near-resolution is where mispricing
+// collapses fastest, so we want Opus reasoning for the full last ~2 days.
+const HIGH_STAKES_HOURS_TO_RESOLUTION = 48;
+// Lowered confidence threshold: high-conviction signals deserve the deeper
+// pass *before* committing capital.
+const HIGH_STAKES_CONFIDENCE = 0.8;
+// Tail-probability triggers: implied probability outside [0.1, 0.9] is
+// either obvious mispricing or toxic — Opus reasoning is the right venue.
+const HIGH_STAKES_TAIL_LOW = 0.1;
+const HIGH_STAKES_TAIL_HIGH = 0.9;
 
 export function isHighStakes(context: StakesContext): boolean {
   if (context.highStakes) return true;
@@ -56,6 +72,14 @@ export function isHighStakes(context: StakesContext): boolean {
     return true;
   }
   if ((context.confidence ?? 0) >= HIGH_STAKES_CONFIDENCE) return true;
+  if (
+    typeof context.impliedProbability === "number" &&
+    Number.isFinite(context.impliedProbability) &&
+    (context.impliedProbability <= HIGH_STAKES_TAIL_LOW ||
+      context.impliedProbability >= HIGH_STAKES_TAIL_HIGH)
+  ) {
+    return true;
+  }
   return false;
 }
 
@@ -138,14 +162,17 @@ export type ExtendedThinkingConfig =
   | undefined;
 
 /**
- * Conservative extended-thinking budget: enough to let Claude reason about a
- * single contested trade (a few hundred tokens of plan + draft) without
- * blowing latency budgets the autonomy loop tolerates.
+ * Extended-thinking budget on the deep tier.  Opus benefits sharply from
+ * larger thinking budgets on quantitative reasoning; the prior 2048 cap
+ * effectively limited it to a paragraph of plan + draft.  6000 tokens lets
+ * Opus actually reason about base rates, line movement, and resolution
+ * mechanics on a single contested trade.  Sonnet/Haiku do not benefit
+ * proportionally on this task, so this budget only fires on the deep tier.
  */
 export function buildExtendedThinking(stakes: StakesContext): ExtendedThinkingConfig {
   if (!isExtendedThinkingEnabled()) return undefined;
   if (!isHighStakes(stakes)) return undefined;
-  return { type: "enabled", budget_tokens: 2048 };
+  return { type: "enabled", budget_tokens: 6000 };
 }
 
 /**
@@ -360,7 +387,14 @@ export function formatCitationsForReasoning(citations: CitationSummary[]): strin
  * of marketIds to KEEP for full review.  On failure, returns null so callers
  * fall through to reviewing everything (capital preservation > cost).
  */
-export const TRIAGE_THRESHOLD_DEFAULT = 12;
+/**
+ * Lowered triage threshold (was 12).  Firing Haiku on 6+ candidate batches
+ * is essentially free and improves Sonnet's hit rate by dropping obvious
+ * junk before paying review-tier prices.  Callers should still force-keep
+ * any candidate that is `isHighStakes` so that capital preservation beats
+ * triage savings on the trades that matter most.
+ */
+export const TRIAGE_THRESHOLD_DEFAULT = 6;
 
 export function isTriageEnabled(): boolean {
   return ENV.enableAiTriage === true;
