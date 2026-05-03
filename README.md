@@ -62,6 +62,14 @@ corepack pnpm test
 corepack pnpm build
 ```
 
+## Deploying to Railway
+
+See [`RAILWAY.md`](./RAILWAY.md) for full step-by-step instructions. In short:
+import the repo in Railway, set every variable from `.env.example` (Railway
+sets `PORT` itself; `CRON_SECRET` is unused because the long-running Express
+server runs the autonomous-trading and order-sync schedulers in-process), and
+let the platform run the build + start commands defined in `railway.json`.
+
 ## Deploying to Vercel
 
 1. Import the repo in Vercel. Framework preset: **Vite**. Build command and output directory are pre-configured in `vercel.json`.
