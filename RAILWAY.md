@@ -9,9 +9,15 @@ Railway.
 
 ## What is in the repo
 
-- `railway.json` — tells Railway to build with NIXPACKS, run
-  `corepack enable && corepack pnpm install --frozen-lockfile && corepack pnpm build && corepack pnpm build:server`,
-  start with `corepack pnpm start`, and health-check `/api/health`.
+- `railway.json` — tells Railway to build with NIXPACKS and health-check
+  `/api/health`.
+- `nixpacks.toml` — pins Node 20 and installs `pnpm@10.4.1` directly via
+  `npm install -g` (we deliberately bypass `corepack` because Railway's
+  BuildKit image periodically fails the `packageManager` hash/signature
+  verification, surfacing as a non-descriptive
+  `ELIFECYCLE Command failed with exit code 1.`). The build steps then
+  run `pnpm install --frozen-lockfile`, `pnpm build`, `pnpm build:server`,
+  and start with `pnpm start`.
 - `.nvmrc` — pins Node 20 (matches local + CI).
 
 You do not need to commit any other Railway-specific files. The
@@ -107,11 +113,12 @@ In **Project → Variables** (or `railway variables --set KEY=value`), set
 
 Either push to the connected branch or run `railway up`. Railway will:
 
-1. Install dependencies with `corepack pnpm install --frozen-lockfile`.
-2. Build the client (`vite build` → `dist/public/`).
-3. Bundle the server (`esbuild ... → dist/index.js`).
-4. Start it with `node dist/index.js`.
-5. Probe `GET /api/health` until it returns 200.
+1. Install pnpm via `npm install -g pnpm@10.4.1`.
+2. Install dependencies with `pnpm install --frozen-lockfile`.
+3. Build the client (`vite build` → `dist/public/`).
+4. Bundle the server (`esbuild ... → dist/index.js`).
+5. Start it with `node dist/index.js` (via `pnpm start`).
+6. Probe `GET /api/health` until it returns 200.
 
 Watch the build with `railway logs` or in the dashboard.
 
@@ -182,7 +189,7 @@ log lines if no users are eligible for autonomous trading yet).
 
 | Symptom | Likely cause / fix |
 |---|---|
-| Build fails on `corepack pnpm install` | Make sure your branch is up to date with `pnpm-lock.yaml`. Railway uses `--frozen-lockfile`. |
+| Build fails on `pnpm install` | Make sure your branch is up to date with `pnpm-lock.yaml`. Railway uses `--frozen-lockfile`. |
 | Health check times out | Check logs for env-validation errors (missing `JWT_SECRET`, `DATABASE_URL`, etc.). The server exits before binding if a required var is missing. |
 | `pathRegexp is not a function` at runtime | `pnpm.overrides.path-to-regexp` must be exactly `0.1.13`. Reinstall and redeploy. |
 | Scheduler never runs | No user has been promoted into `betaAccessLevel` ≥ `internal` and/or no Kalshi credentials are stored yet. |

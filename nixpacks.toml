@@ -1,0 +1,30 @@
+# Nixpacks build config for Railway.
+#
+# Why this file exists:
+#   Railway's default Node provider drives pnpm through `corepack`, which on
+#   recent BuildKit images verifies the `packageManager` hash against npm's
+#   registry signatures. That step intermittently fails the build with a
+#   non-descriptive `ELIFECYCLE Command failed with exit code 1.`
+#
+#   We avoid corepack entirely: pin Node 20 (matches `.nvmrc`) and install
+#   pnpm globally via npm. All build/start steps then call `pnpm` directly.
+
+providers = ["node"]
+
+[phases.setup]
+nixPkgs = ["nodejs_20"]
+
+[phases.install]
+cmds = [
+  "npm install -g pnpm@10.4.1",
+  "pnpm install --frozen-lockfile",
+]
+
+[phases.build]
+cmds = [
+  "pnpm build",
+  "pnpm build:server",
+]
+
+[start]
+cmd = "pnpm start"
