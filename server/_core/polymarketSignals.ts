@@ -29,7 +29,8 @@ export type PolymarketSignalType =
   | "sentiment"
   | "cluster_fade"
   | "cluster_copy"
-  | "wash_volume_warning";
+  | "wash_volume_warning"
+  | "confluence";
 
 export interface PolymarketSignal {
   marketId: string;
@@ -50,6 +51,12 @@ export interface PolymarketSignal {
   limitPrice: number;
   /** Expected value in dollars for a $1 position */
   expectedValue: number;
+  /** Number of independent signal types that agree on direction (confluence signals only). */
+  confluenceCount?: number;
+  /** The individual signal types that contributed to this confluence signal. */
+  confluenceSignalTypes?: PolymarketSignalType[];
+  /** Spread-adjusted expected value (net of bid-ask spread cost). */
+  spreadAdjustedEV?: number;
 }
 
 function clamp(value: number, min: number, max: number) {

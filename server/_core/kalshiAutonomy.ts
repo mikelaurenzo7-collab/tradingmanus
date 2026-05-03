@@ -14,6 +14,7 @@ import {
   generateSignalsForMarkets,
   getTopSignalsForExecution,
   saveSignals,
+  computeKellyFraction,
   type KalshiSignal,
 } from "./kalshiSignals";
 import { placeKalshiOrder } from "./kalshiExecution";
@@ -51,6 +52,10 @@ const MARKET_DATA_STALE_AFTER_MS = 30 * 1000;
 // reasonable tolerance — anything beyond that means the signal's
 // pricing thesis no longer holds.
 const MAX_EXECUTION_PRICE_DRIFT = 0.02;
+// Maximum open positions allowed in the same market category at once.
+// Prevents the portfolio from stacking correlated directional bets
+// (e.g., five consecutive crypto positions) which amplify category risk.
+const MAX_OPEN_POSITIONS_PER_CATEGORY = 2;
 // Total market pool scanned per scheduled run — larger pool improves diversity
 // and gives the AI reviewer more high-quality candidates to choose from.
 const MAX_SCHEDULED_MARKETS = 48;
@@ -605,6 +610,8 @@ function evaluateExecutionCandidate(
     preferences: Awaited<ReturnType<typeof tradingPreferencesDb.getTradingPreferences>>;
     effectiveMinConfidence: number;
     maxBudget: number;
+    /** Map of open position marketId → category string for concentration checks */
+    openPositionCategories?: Map<string, string>;
   }
 ) {
   const marketAlreadyOpen = input.openPositions.some(
@@ -628,6 +635,23 @@ function evaluateExecutionCandidate(
       blockedBy: "pending_order_in_flight",
       reason: "an unfilled pending order already exists for this market",
     };
+  }
+
+  // Category concentration guard: prevent stacking too many correlated
+  // positions from the same market category (e.g., multiple crypto markets).
+  const signalCategory = (signal.metadata?.marketCategory ?? "").toLowerCase();
+  if (signalCategory && signalCategory !== "unknown" && input.openPositionCategories) {
+    let sameCategory = 0;
+    for (const cat of Array.from(input.openPositionCategories.values())) {
+      if (cat.toLowerCase() === signalCategory) sameCategory++;
+    }
+    if (sameCategory >= MAX_OPEN_POSITIONS_PER_CATEGORY) {
+      return {
+        eligible: false as const,
+        blockedBy: "category_concentration_limit",
+        reason: `already have ${sameCategory} open positions in category "${signalCategory}" (limit ${MAX_OPEN_POSITIONS_PER_CATEGORY})`,
+      };
+    }
   }
 
   const feed = getMarketFeed(signal.marketId);
@@ -1055,19 +1079,43 @@ export async function runScheduledAutonomousTrading(
   let eligibleSignal: (KalshiSignal & { executionScore?: number }) | null = null;
   let eligibleMaxBudget: number | null = null;
 
+  // Build a category → count map from currently open positions so the
+  // concentration guard can see how many same-category slots are taken.
+  const openPositionCategories = new Map<string, string>();
+  for (const pos of openPositions as any[]) {
+    const mid = String(pos.marketId ?? "");
+    const cat = String(pos.category ?? pos.marketCategory ?? "unknown").toLowerCase();
+    if (mid) openPositionCategories.set(mid, cat);
+  }
+
   for (const signal of executionCandidates) {
-    const maxBudget = Math.min(
+    // Kelly-adjusted budget: scale the raw max budget by the signal's
+    // Kelly fraction so high-edge signals get proportionally more capital
+    // and marginal signals are automatically sized smaller.
+    const rawBudget = Math.min(
       preferences.maxOrderNotional,
       riskLimits.maxPositionSize,
       riskLimits.maxLossPerTrade,
       Number(capital?.currentBalance ?? 0)
     );
+    const kellyFraction = signal.metadata?.kellyFraction
+      ?? computeKellyFraction(signal.confidence, signal.marketPrice);
+    const availableNow = Number(capital?.currentBalance ?? 0);
+    // Kelly-sized budget: Kelly fraction × available capital, bounded by the raw cap.
+    // A Kelly fraction of 0 means no edge; use at least 1¢ so budget checks
+    // still fire the risk_budget_below_one_contract guard rather than silently
+    // blocking with a misleading error.
+    const kellyBudget = kellyFraction > 0
+      ? Math.min(rawBudget, Math.max(0.01, availableNow * kellyFraction))
+      : rawBudget;
+    const maxBudget = kellyBudget;
     const evaluation = evaluateExecutionCandidate(signal, {
       openPositions,
       pendingOrderMarketIds,
       preferences,
       effectiveMinConfidence,
       maxBudget,
+      openPositionCategories,
     });
 
     if (evaluation.eligible && !eligibleSignal) {
