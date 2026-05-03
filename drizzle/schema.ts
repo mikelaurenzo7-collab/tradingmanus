@@ -27,6 +27,7 @@ export const executionCadenceEnum = pgEnum("execution_cadence", ["manual_only", 
 export const riskPostureEnum = pgEnum("risk_posture", ["conservative", "balanced", "aggressive"]);
 export const autonomyRunStatusEnum = pgEnum("autonomy_run_status", ["in_progress", "executed", "generated_only", "skipped", "blocked", "error"]);
 export const reconciliationStatusEnum = pgEnum("reconciliation_status", ["not_required", "pending", "reconciled"]);
+export const tradingModeEnum = pgEnum("trading_mode", ["shadow", "paper", "live"]);
 
 const now = () => new Date();
 const createdAt = () => timestamp("createdAt", { withTimezone: true }).defaultNow().notNull();
@@ -164,6 +165,7 @@ export const kalshiOrders = pgTable("kalshiOrders", {
   createdAt: createdAt(),
   filledAt: timestamp("filledAt", { withTimezone: true }),
   cancelledAt: timestamp("cancelledAt", { withTimezone: true }),
+  executionMode: tradingModeEnum("executionMode").default("live").notNull(),
 });
 
 export const kalshiFills = pgTable("kalshiFills", {
@@ -189,6 +191,7 @@ export const kalshiPositions = pgTable("kalshiPositions", {
   positionStatus: kalshiPositionStatusEnum("positionStatus").default("open").notNull(),
   openedAt: createdAt(),
   closedAt: timestamp("closedAt", { withTimezone: true }),
+  executionMode: tradingModeEnum("executionMode").default("live").notNull(),
 });
 
 export const kalshiSignals = pgTable("kalshiSignals", {
@@ -230,6 +233,11 @@ export const kalshiCapital = pgTable("kalshiCapital", {
   totalTrades: integer("totalTrades").default(0).notNull(),
   winningTrades: integer("winningTrades").default(0).notNull(),
   updatedAt: updatedAt(),
+  paperBalance: doublePrecision("paperBalance").default(0).notNull(),
+  paperStartingBalance: doublePrecision("paperStartingBalance").default(0).notNull(),
+  paperTotalPnl: doublePrecision("paperTotalPnl").default(0).notNull(),
+  paperTrades: integer("paperTrades").default(0).notNull(),
+  paperWins: integer("paperWins").default(0).notNull(),
 });
 
 export const tradingPreferences = pgTable("tradingPreferences", {
@@ -243,6 +251,17 @@ export const tradingPreferences = pgTable("tradingPreferences", {
   maxOrderNotional: doublePrecision("maxOrderNotional").default(10).notNull(),
   maxDailyOrders: integer("maxDailyOrders").default(3).notNull(),
   requireApprovalAbove: doublePrecision("requireApprovalAbove").default(8).notNull(),
+  kalshiMode: tradingModeEnum("kalshiMode").default("shadow").notNull(),
+  polymarketMode: tradingModeEnum("polymarketMode").default("shadow").notNull(),
+  kalshiPaused: integer("kalshiPaused").default(0).notNull(),
+  polymarketPaused: integer("polymarketPaused").default(0).notNull(),
+  kalshiLiveStartedAt: timestamp("kalshiLiveStartedAt", { withTimezone: true }),
+  polymarketLiveStartedAt: timestamp("polymarketLiveStartedAt", { withTimezone: true }),
+  rampWindowHours: integer("rampWindowHours").default(72).notNull(),
+  rampSizeMultiplier: doublePrecision("rampSizeMultiplier").default(0.25).notNull(),
+  drawdownWarnPct: doublePrecision("drawdownWarnPct").default(5.0).notNull(),
+  drawdownPausePct: doublePrecision("drawdownPausePct").default(10.0).notNull(),
+  drawdownPanicPct: doublePrecision("drawdownPanicPct").default(20.0).notNull(),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
