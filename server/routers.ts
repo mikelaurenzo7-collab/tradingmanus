@@ -858,7 +858,9 @@ export const appRouter = router({
       try {
         const userId = getRequiredUserId(ctx);
         const creds = await kalshiCredDb.getKalshiCredentials(userId);
-        if (!creds || creds.accountStatus !== "connected") {
+        if (!creds) return null;
+        if ("needsReauth" in creds && creds.needsReauth) return null;
+        if (creds.accountStatus !== "connected") {
           return null;
         }
 
@@ -1315,6 +1317,20 @@ export const appRouter = router({
           };
         }
 
+        // Credentials exist but cannot be decrypted — encryption secret mismatch.
+        // Prompt the user to re-authenticate rather than showing a generic error.
+        if ("needsReauth" in creds && creds.needsReauth) {
+          return {
+            connected: false,
+            equity: 0,
+            status: "disconnected",
+            needsReauth: true,
+            reauthMessage:
+              "Your Kalshi credentials could not be decrypted. This happens when the server's encryption secret changes. Please reconnect your Kalshi account.",
+            tradingPreferences: preferences,
+          };
+        }
+
         if (creds.accountStatus !== "connected") {
           return {
             connected: false,
@@ -1448,10 +1464,15 @@ export const appRouter = router({
             return { success: true, preferences: saved };
           }
 
-          if (!creds || creds.accountStatus !== "connected") {
+          if (!creds || ("needsReauth" in creds && creds.needsReauth) || creds.accountStatus !== "connected") {
             throw new TRPCError({
               code: "BAD_REQUEST",
-              message: "Connect a live Kalshi account before arming live trading.",
+              message:
+                !creds
+                  ? "Connect a live Kalshi account before arming live trading."
+                  : "needsReauth" in creds && creds.needsReauth
+                    ? "Your Kalshi credentials need to be re-entered before arming live trading. Please reconnect your Kalshi account."
+                    : "Connect a live Kalshi account before arming live trading.",
             });
           }
 
@@ -2358,8 +2379,14 @@ export const appRouter = router({
             polymarketCredDb.getPolymarketCredentials(userId),
           ]);
 
-          if (!kalshiCreds || kalshiCreds.accountStatus !== "connected") {
-            return { success: false, error: "Connect a Kalshi account before executing cross-arb." };
+          if (!kalshiCreds || ("needsReauth" in kalshiCreds && kalshiCreds.needsReauth) || kalshiCreds.accountStatus !== "connected") {
+            return {
+              success: false,
+              error:
+                kalshiCreds && "needsReauth" in kalshiCreds && kalshiCreds.needsReauth
+                  ? "Your Kalshi credentials need to be re-entered. Please reconnect your Kalshi account."
+                  : "Connect a Kalshi account before executing cross-arb.",
+            };
           }
           if (!polymarketCreds || polymarketCreds.accountStatus !== "connected") {
             return { success: false, error: "Connect a Polymarket account before executing cross-arb." };
