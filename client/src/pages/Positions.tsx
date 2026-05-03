@@ -2,6 +2,7 @@ import { trpc } from "@/lib/trpc";
 import { Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
+import { toast } from "sonner";
 
 type KalshiPositionRow = {
   id: number;
@@ -45,18 +46,31 @@ export default function Positions() {
   const handleClosePosition = async (
     positionId: number,
     marketId: string,
-    currentPrice: number
+    currentPrice: number,
+    side: "yes" | "no",
+    quantity: number,
   ) => {
+    const confirmed = window.confirm(
+      `Close ${quantity} ${side.toUpperCase()} on ${marketId} at ~$${currentPrice.toFixed(2)}? This will submit a closing order.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
     setClosingId(positionId);
+    const pendingToast = toast.loading(`Submitting close order for ${marketId}…`);
     try {
       await closePositionMutation.mutateAsync({
         positionId,
         marketId,
         currentPrice,
       });
+      toast.success(`Close order submitted for ${marketId}`, { id: pendingToast });
       await positionsQuery.refetch();
     } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error closing position";
       console.error("Failed to close position:", error);
+      toast.error(`Close order failed: ${message}`, { id: pendingToast });
     } finally {
       setClosingId(null);
     }
@@ -144,14 +158,24 @@ export default function Positions() {
                         size="sm"
                         variant="destructive"
                         onClick={() =>
-                          handleClosePosition(position.id, position.marketId, currentPrice)
+                          handleClosePosition(
+                            position.id,
+                            position.marketId,
+                            currentPrice,
+                            position.side,
+                            quantity,
+                          )
                         }
                         disabled={
                           closingId === position.id || position.positionStatus === "closing"
                         }
                       >
-                        <X className="w-3 h-3 mr-1" />
-                        {closingId === position.id ? "Closing..." : "Close"}
+                        {closingId === position.id ? (
+                          <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                        ) : (
+                          <X className="w-3 h-3 mr-1" />
+                        )}
+                        {closingId === position.id ? "Closing…" : "Close"}
                       </Button>
                     </td>
                   </tr>
