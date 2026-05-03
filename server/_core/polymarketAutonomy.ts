@@ -385,12 +385,28 @@ export async function runPolymarketAutonomousTrading(
   );
   const scaledSize = clamp(rawSize * sizeScale, 0.01, maxBudget);
 
+  if (bankroll <= 0) {
+    await db.logAuditEvent(
+      "polymarket_autonomy_run_blocked",
+      JSON.stringify({ reason: "bankroll is zero — cannot size Polymarket order", marketId: best.marketId }),
+      triggeredByOpenId,
+    );
+    return {
+      success: true,
+      status: "blocked",
+      reason: "bankroll is zero — cannot size Polymarket order",
+      signalsGenerated: allSignals.length,
+      executionCandidates: candidates.length,
+      orderPlaced: false,
+    };
+  }
+
   const riskCheck = validatePolymarketOrderRisk(
     { price: best.limitPrice, size: scaledSize },
     {
       maxOrderUsdc: preferences.maxOrderNotional,
       maxExposurePercent: 0.05,
-      bankroll: bankroll > 0 ? bankroll : 1000,
+      bankroll,
     },
   );
 
