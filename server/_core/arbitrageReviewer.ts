@@ -15,10 +15,8 @@
  *   - Veto when liquidity / fees / settlement risk would eat the edge.
  *
  * Topology:
- *   - Claude is the only reviewer (these are inherently complex multi-leg
- *     trades that benefit from extended thinking; running OpenAI here adds
- *     cost without adding meaningful redundancy beyond what the deterministic
- *     scanner already provides).
+ *   - Claude is the sole reviewer (these are inherently complex multi-leg
+ *     trades that benefit from extended thinking and deep reasoning).
  *   - Prompt caching, web_search, and extended thinking are always on for
  *     this desk because every approval is high-stakes by definition.
  */

@@ -25,12 +25,22 @@ describe("aiToolbelt", () => {
 
     it("treats large notional as high stakes", () => {
       expect(isHighStakes({ orderNotional: 100 })).toBe(true);
+      // Threshold is now $10; sub-$10 trades stay normal stakes.
       expect(isHighStakes({ orderNotional: 5 })).toBe(false);
+      expect(isHighStakes({ orderNotional: 10 })).toBe(true);
     });
 
     it("treats imminent resolution as high stakes", () => {
       expect(isHighStakes({ hoursToResolution: 6 })).toBe(true);
+      // Threshold is now 48h; well-future markets stay normal stakes.
       expect(isHighStakes({ hoursToResolution: 720 })).toBe(false);
+      expect(isHighStakes({ hoursToResolution: 48 })).toBe(true);
+    });
+
+    it("treats extreme tail probabilities as high stakes", () => {
+      expect(isHighStakes({ impliedProbability: 0.05 })).toBe(true);
+      expect(isHighStakes({ impliedProbability: 0.95 })).toBe(true);
+      expect(isHighStakes({ impliedProbability: 0.5 })).toBe(false);
     });
 
     it("respects an explicit highStakes flag", () => {

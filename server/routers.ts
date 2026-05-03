@@ -1157,7 +1157,7 @@ export const appRouter = router({
             0.35
           );
 
-          // OpenAI + Claude make the final go/no-go on each candidate before persistence.
+          // Claude makes the final go/no-go on each candidate before persistence.
           const reviewedSignals = await reviewSignalsWithTrader({
             markets: validMarkets,
             signals: filteredSignals,

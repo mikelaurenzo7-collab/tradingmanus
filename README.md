@@ -1,6 +1,6 @@
 # Laurenzo Kalshi Trading Dashboard
 
-Single-owner Kalshi + Polymarket trading console with a **Claude-primary, category-specialized AI reviewer** (and OpenAI as an optional fallback / high-stakes second opinion). Designed to run on **Vercel** with a **Neon Postgres** database.
+Single-owner Kalshi + Polymarket trading console with a **Claude-only, category-specialized AI reviewer**. Designed to run on **Vercel** with a **Neon Postgres** database.
 
 ## 🔒 Security Features
 
@@ -25,7 +25,7 @@ This application includes comprehensive security features:
 - **Database**: Neon Postgres via `@neondatabase/serverless` HTTP driver + `drizzle-orm/neon-http`
 - **Auth**: Owner-only password login with optional 2FA/MFA. JWT access tokens (24h) + refresh tokens (7d) in httpOnly cookies.
 - **Security**: Rate limiting, CSRF protection, PBKDF2 encryption, distributed locking, structured logging
-- **AI**: Claude is the primary reviewer for every candidate signal on both Kalshi and Polymarket. Each candidate is routed by category (sports / crypto / politics / economics / tech / culture / weather) to a domain-expert desk persona. Claude calls use prompt caching, the `web_search_20250305` tool for fresh news context, and extended thinking on high-stakes trades. OpenAI is an optional **fallback** (used when Claude fails to return a review for a market) and an optional **second-opinion escalation** (consulted on high-stakes trades, where both providers must approve). Bounded confidence adjustments `[-0.25, +0.15]` and EV adjustments `[-0.1, +0.1]` are blended. Existing risk guardrails still hard-block.
+- **AI**: Claude is the sole reviewer for every candidate signal on both Kalshi and Polymarket. Each candidate is routed by category (sports / crypto / politics / economics / tech / culture / weather) to a domain-expert desk persona. Claude calls use prompt caching, the `web_search_20250305` tool for fresh news context, and extended thinking on high-stakes trades. Bounded confidence adjustments `[-0.25, +0.15]` and EV adjustments `[-0.1, +0.1]` are applied. Existing risk guardrails still hard-block.
 - **Scheduling**: Vercel Cron triggers `/api/scheduled/autonomous-trading` (every 15 min) and `/api/scheduled/order-sync` (every 5 min). Local dev uses interval timers.
 
 ## One-time setup
@@ -35,7 +35,7 @@ This application includes comprehensive security features:
    ```bash
    openssl rand -base64 32  # Run this 3 times for each secret
    ```
-3. **Get an Anthropic API key** (required — Claude is the primary reviewer). An **OpenAI API key** is optional but recommended for fallback + high-stakes second opinion.
+3. **Get an Anthropic API key** (required — Claude is the sole reviewer).
 4. Copy `.env.example` → `.env` and fill in values.
 5. Install deps:
    ```bash
@@ -86,13 +86,9 @@ let the platform run the build + start commands defined in `railway.json`.
 2. Heuristic signals are filtered by confidence, market conditions, and any active training instructions.
 3. **Per-category dispatch.** Each candidate signal is classified into `sports | crypto | politics | economics | tech | culture | weather | other` (`server/_core/marketCategoryRouter.ts`) and routed to a domain-expert desk persona (`server/_core/categoryPersonas.ts`). There are 16 personas total — one per `(platform, category)` — so a Kalshi crypto signal and a Polymarket politics signal are reviewed under different specialist mandates.
 4. **Claude reviews everything.** The Anthropic call uses prompt caching on the static system mandate (cuts input cost ~90% at high cadence), enables the hosted `web_search_20250305` tool so the reviewer can pull fresh news for fast-moving markets, and turns on extended thinking for high-stakes trades. Model tier is automatic: Sonnet for normal review, Opus when the trade is high-stakes.
-5. **OpenAI is optional fallback + second opinion.**
-   - Normal-stakes trade, Claude approves → trade proceeds on Claude's verdict alone.
-   - Normal-stakes trade, Claude omits a market → OpenAI's review acts as the fallback gate (if configured).
-   - High-stakes trade (notional ≥ $25, near-resolution, or `confidence ≥ 0.9`) → both Claude and OpenAI must approve.
-6. Each reviewer returns JSON shaped like `{ reviews: [{ marketId, approved, confidenceAdjustment, expectedValueAdjustment, reasoning }] }`. Vetoes drop the signal. Approvals get bounded adjustments blended together.
-7. The execution layer ranks remaining signals, computes risk-budgeted contract sizes, and only places an order if every guardrail passes (`kalshiRisk.ts`, `polymarketRisk.ts`).
-8. In `NODE_ENV=test`, AI review is bypassed for deterministic tests unless a test explicitly forces provider calls (`skipInTest: false`).
+5. Each reviewer returns JSON shaped like `{ reviews: [{ marketId, approved, confidenceAdjustment, expectedValueAdjustment, reasoning }] }`. Vetoes drop the signal. Approvals get bounded adjustments applied.
+6. The execution layer ranks remaining signals, computes risk-budgeted contract sizes, and only places an order if every guardrail passes (`kalshiRisk.ts`, `polymarketRisk.ts`).
+7. In `NODE_ENV=test`, AI review is bypassed for deterministic tests unless a test explicitly forces provider calls (`skipInTest: false`).
 
 ### Per-desk memory tape
 
@@ -139,7 +135,7 @@ Each autonomy run captures per-run telemetry — Anthropic prompt-cache read/cre
 api/index.ts                    # Vercel serverless entrypoint
 server/_core/app.ts             # Express factory; mounts /api/trpc + /api/scheduled/*
 server/_core/auth.ts            # Owner credential check + JWT session
-server/_core/tradingReviewer.ts # OpenAI + Claude reviewer (final go/no-go on signals)
+server/_core/tradingReviewer.ts # Claude reviewer (final go/no-go on signals)
 server/_core/kalshiAutonomy.ts  # Scheduled autonomous trading run
 server/routers.ts               # tRPC routers (auth, kalshi, training, advanced)
 drizzle/schema.ts               # Postgres schema (16 tables)
