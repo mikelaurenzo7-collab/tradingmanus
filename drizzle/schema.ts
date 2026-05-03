@@ -1,5 +1,6 @@
 import {
   doublePrecision,
+  index,
   integer,
   pgEnum,
   pgTable,
@@ -166,7 +167,9 @@ export const kalshiOrders = pgTable("kalshiOrders", {
   filledAt: timestamp("filledAt", { withTimezone: true }),
   cancelledAt: timestamp("cancelledAt", { withTimezone: true }),
   executionMode: tradingModeEnum("executionMode").default("live").notNull(),
-});
+}, (table) => ({
+  userModeIdx: index("kalshi_orders_user_mode_idx").on(table.userId, table.executionMode),
+}));
 
 export const kalshiFills = pgTable("kalshiFills", {
   id: serial("id").primaryKey(),
@@ -192,7 +195,9 @@ export const kalshiPositions = pgTable("kalshiPositions", {
   openedAt: createdAt(),
   closedAt: timestamp("closedAt", { withTimezone: true }),
   executionMode: tradingModeEnum("executionMode").default("live").notNull(),
-});
+}, (table) => ({
+  userModeIdx: index("kalshi_positions_user_mode_idx").on(table.userId, table.executionMode),
+}));
 
 export const kalshiSignals = pgTable("kalshiSignals", {
   id: serial("id").primaryKey(),
