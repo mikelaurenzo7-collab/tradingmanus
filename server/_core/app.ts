@@ -326,7 +326,7 @@ export async function createApp(options: { runStartupMigrations?: boolean } = {}
       status: overall,
       runtime: process.env.VERCEL ? "vercel" : "node",
       scheduler: process.env.VERCEL ? "vercel-cron" : "node-interval",
-      interval_minutes: 15,
+      interval_minutes: 1,
       checks: {
         database: {
           status: dbStatus,
