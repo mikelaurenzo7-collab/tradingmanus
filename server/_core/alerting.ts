@@ -155,6 +155,58 @@ export async function alertExchangeRejection(
 }
 
 /**
+ * Alert when cumulative capital drawdown from the starting balance
+ * approaches or exceeds the configured daily-loss limit.  This fires
+ * proactively — before the hard daily-loss block in kalshiRisk.ts — so
+ * the operator sees the warning while there is still time to intervene.
+ *
+ * @param startingBalance - Balance at the start of the session / initial deposit.
+ * @param currentBalance  - Current live account balance.
+ * @param dailyLossLimit  - Hard daily-loss cap in dollars (e.g. $10 for a $100 account).
+ * @param warningThresholdPct - Alert when drawdown exceeds this fraction of the
+ *   daily-loss limit (default 0.8 = 80 %).
+ */
+export async function alertDrawdownApproaching(
+  userId: number,
+  startingBalance: number,
+  currentBalance: number,
+  dailyLossLimit: number,
+  warningThresholdPct = 0.8
+): Promise<void> {
+  if (startingBalance <= 0 || dailyLossLimit <= 0) {
+    return;
+  }
+
+  const lossAmount = startingBalance - currentBalance;
+  if (lossAmount <= 0) {
+    return;
+  }
+
+  const warningAmount = dailyLossLimit * warningThresholdPct;
+  if (lossAmount < warningAmount) {
+    return;
+  }
+
+  const severity: AlertSeverity =
+    lossAmount >= dailyLossLimit ? "critical" : "warning";
+
+  await sendAlert({
+    severity,
+    event: "drawdown_approaching_limit",
+    userId,
+    details: {
+      startingBalance,
+      currentBalance,
+      lossAmount: Math.round(lossAmount * 100) / 100,
+      dailyLossLimit,
+      warningThresholdPct,
+      pctOfLimit: Math.round((lossAmount / dailyLossLimit) * 1000) / 10,
+    },
+    timestamp: new Date().toISOString(),
+  });
+}
+
+/**
  * Alert when the AI reviewer (Claude) fails during a scheduled autonomy
  * run.  Without this alert, Claude timeouts/errors are swallowed and the
  * run silently reports `generated_only` with 0 candidates, leaving the

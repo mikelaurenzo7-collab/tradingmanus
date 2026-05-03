@@ -18,6 +18,7 @@ vi.mock("./_core/logger", () => ({
 import { ENV } from "./_core/env";
 import {
   alertAiReviewerFailure,
+  alertDrawdownApproaching,
   alertEquityDrop,
   alertExchangeRejection,
   alertIfConsecutiveFailures,
@@ -192,6 +193,46 @@ describe("alerting", () => {
       expect(body.event).toBe("ai_reviewer_failure");
       expect(body.severity).toBe("warning");
       expect(body.details.anthropicFailures).toBe(3);
+    });
+  });
+
+  describe("alertDrawdownApproaching", () => {
+    it("does not alert when there is no loss", async () => {
+      await alertDrawdownApproaching(7, 100, 100, 10);
+      await alertDrawdownApproaching(7, 100, 110, 10); // gain — no alert
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("does not alert when loss is below the warning threshold", async () => {
+      // 70% of the $10 daily limit = $7 loss; warning threshold is 80% ($8)
+      await alertDrawdownApproaching(7, 100, 93, 10, 0.8); // $7 loss < $8 warning
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("sends a warning alert when loss meets the warning threshold", async () => {
+      // $8 loss = exactly 80% of the $10 daily limit
+      await alertDrawdownApproaching(7, 100, 92, 10, 0.8);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+      expect(body.event).toBe("drawdown_approaching_limit");
+      expect(body.severity).toBe("warning");
+      expect(body.userId).toBe(7);
+      expect(body.details.lossAmount).toBe(8);
+      expect(body.details.dailyLossLimit).toBe(10);
+    });
+
+    it("sends a critical alert when loss meets or exceeds the daily limit", async () => {
+      // $10 loss = 100% of the $10 daily limit
+      await alertDrawdownApproaching(7, 100, 90, 10, 0.8);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+      expect(body.severity).toBe("critical");
+    });
+
+    it("no-ops when startingBalance or dailyLossLimit are non-positive", async () => {
+      await alertDrawdownApproaching(7, 0, 90, 10);
+      await alertDrawdownApproaching(7, 100, 90, 0);
+      expect(fetchMock).not.toHaveBeenCalled();
     });
   });
 });
