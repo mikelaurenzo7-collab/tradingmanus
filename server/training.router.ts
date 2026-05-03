@@ -2,6 +2,7 @@ import { protectedProcedure, router } from "./_core/trpc";
 import { z } from "zod";
 import * as trainingDb from "./db.training";
 import { assertPositiveIntegerUserId } from "./_core/userScope";
+import { logger } from "./_core/logger";
 
 export const trainingRouter = router({
   // Create new instruction
@@ -26,7 +27,7 @@ export const trainingRouter = router({
         });
         return { success: true, instructionId: result.instructionId };
       } catch (error) {
-        console.error("[Training] Create instruction error:", error);
+        logger.error({ err: error }, "[Training] Create instruction error");
         return { success: false, error: String(error) };
       }
     }),
@@ -37,7 +38,7 @@ export const trainingRouter = router({
       const userId = assertPositiveIntegerUserId(ctx.user!.id, "training list userId");
       return await trainingDb.getUserTrainingInstructions(userId);
     } catch (error) {
-      console.error("[Training] Get instructions error:", error);
+      logger.error({ err: error }, "[Training] Get instructions error");
       return [];
     }
   }),
@@ -62,7 +63,7 @@ export const trainingRouter = router({
         });
         return result;
       } catch (error) {
-        console.error("[Training] Add rule error:", error);
+        logger.error({ err: error }, "[Training] Add rule error");
         return { success: false, error: String(error) };
       }
     }),
@@ -91,7 +92,7 @@ export const trainingRouter = router({
         });
         return result;
       } catch (error) {
-        console.error("[Training] Add schedule error:", error);
+        logger.error({ err: error }, "[Training] Add schedule error");
         return { success: false, error: String(error) };
       }
     }),
@@ -109,7 +110,7 @@ export const trainingRouter = router({
         const result = await trainingDb.updateInstructionStatus(input.instructionId, input.isActive);
         return result;
       } catch (error) {
-        console.error("[Training] Update status error:", error);
+        logger.error({ err: error }, "[Training] Update status error");
         return { success: false, error: String(error) };
       }
     }),
@@ -122,7 +123,7 @@ export const trainingRouter = router({
         const result = await trainingDb.deleteTrainingInstruction(input.instructionId, ctx.user!.openId);
         return result;
       } catch (error) {
-        console.error("[Training] Delete instruction error:", error);
+        logger.error({ err: error }, "[Training] Delete instruction error");
         return { success: false, error: String(error) };
       }
     }),
