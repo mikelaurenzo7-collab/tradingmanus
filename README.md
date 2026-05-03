@@ -1,6 +1,6 @@
-# Laurenzo Kalshi Trading Dashboard
+# Laurenzo Trading Dashboard
 
-Single-owner Kalshi + Polymarket trading console with a **Claude-only, category-specialized AI reviewer**. Designed to run on **Vercel** with a **Neon Postgres** database.
+Single-owner **Kalshi + Polymarket** prediction-market trading console backed by a **category-specialized Claude AI reviewer**. Runs on **Railway** (long-lived Express server) with a **Neon Postgres** database. Vercel serverless deployment is also supported.
 
 ## 🔒 Security Features
 
@@ -20,13 +20,13 @@ This application includes comprehensive security features:
 
 ## Architecture
 
-- **Frontend**: React 19 + Vite + Wouter + tRPC + TanStack Query + Tailwind v4 + shadcn UI
-- **Backend**: Express + tRPC, deployed as a single Vercel function at `api/index.ts`
-- **Database**: Neon Postgres via `@neondatabase/serverless` HTTP driver + `drizzle-orm/neon-http`
-- **Auth**: Owner-only password login with optional 2FA/MFA. JWT access tokens (24h) + refresh tokens (7d) in httpOnly cookies.
-- **Security**: Rate limiting, CSRF protection, PBKDF2 encryption, distributed locking, structured logging
-- **AI**: Claude is the sole reviewer for every candidate signal on both Kalshi and Polymarket. Each candidate is routed by category (sports / crypto / politics / economics / tech / culture / weather) to a domain-expert desk persona. Claude calls use prompt caching, the `web_search_20250305` tool for fresh news context, and extended thinking on high-stakes trades. Bounded confidence adjustments `[-0.25, +0.15]` and EV adjustments `[-0.1, +0.1]` are applied. Existing risk guardrails still hard-block.
-- **Scheduling**: Vercel Cron triggers `/api/scheduled/autonomous-trading` (every 15 min) and `/api/scheduled/order-sync` (every 5 min). Local dev uses interval timers.
+- **Frontend**: React 19 + Vite 8 + Wouter + tRPC + TanStack Query + Tailwind v4 + shadcn/ui
+- **Backend**: Express 4 + tRPC, served from `server/_core/index.ts` as a long-lived process on Railway (or `api/index.ts` as a Vercel serverless function)
+- **Database**: Neon Postgres via `@neondatabase/serverless` HTTP driver + Drizzle ORM
+- **Auth**: Single-owner password login with optional 2FA/TOTP + backup codes. JWT access tokens (24 h) + refresh tokens (7 d) in `httpOnly` cookies.
+- **Resilience**: `fetchWithRetry` (exponential backoff + jitter), `CircuitBreaker` (CLOSED/OPEN/HALF_OPEN with rolling failure window), per-user async mutex on order placement to prevent TOCTOU races
+- **AI**: Claude is the sole reviewer for every candidate signal. Each signal is routed by category (sports / crypto / politics / economics / tech / culture / weather) to a domain-expert desk persona. Calls use prompt caching, the `web_search_20250305` tool, and extended thinking on high-stakes trades. Confidence `[-0.25, +0.15]` and EV `[-0.1, +0.1]` adjustments applied; risk guardrails hard-block regardless.
+- **Scheduling**: On Railway the Express server runs in-process schedulers (autonomous trading every 15 min, order sync every 5 min). On Vercel, `cron` entries in `vercel.json` trigger `/api/scheduled/*`.
 
 ## One-time setup
 
@@ -70,15 +70,12 @@ sets `PORT` itself; `CRON_SECRET` is unused because the long-running Express
 server runs the autonomous-trading and order-sync schedulers in-process), and
 let the platform run the build + start commands defined in `railway.json`.
 
-## Deploying to Vercel
+## Deploying to Vercel (alternative)
 
 1. Import the repo in Vercel. Framework preset: **Vite**. Build command and output directory are pre-configured in `vercel.json`.
-2. Set every variable from `.env.example` in **Project Settings → Environment Variables** (Production + Preview).
-3. After the first deploy, run `corepack pnpm db:push` locally with the production `DATABASE_URL` exported to provision the schema. `runMigrations()` is a no-op at runtime — DDL is never run inside the serverless cold path.
-4. Vercel Cron is configured in `vercel.json`:
-   - `*/15 * * * *` → autonomous trading scan
-   - `*/5 * * * *` → order/position sync
-   Cron jobs authenticate via `Authorization: Bearer ${CRON_SECRET}`.
+2. Set every variable from `.env.example` in **Project Settings → Environment Variables** (Production + Preview); also set `CRON_SECRET`.
+3. After the first deploy, run `corepack pnpm db:push` locally with the production `DATABASE_URL` to provision the schema.
+4. Vercel Cron (in `vercel.json`) triggers autonomous trading every 15 min and order sync every 5 min. Jobs authenticate via `Authorization: Bearer ${CRON_SECRET}`.
 
 ## How the AI bots trade
 
@@ -132,15 +129,26 @@ Each autonomy run captures per-run telemetry — Anthropic prompt-cache read/cre
 ## Repo layout
 
 ```
-api/index.ts                    # Vercel serverless entrypoint
-server/_core/app.ts             # Express factory; mounts /api/trpc + /api/scheduled/*
-server/_core/auth.ts            # Owner credential check + JWT session
-server/_core/tradingReviewer.ts # Claude reviewer (final go/no-go on signals)
-server/_core/kalshiAutonomy.ts  # Scheduled autonomous trading run
-server/routers.ts               # tRPC routers (auth, kalshi, training, advanced)
-drizzle/schema.ts               # Postgres schema (16 tables)
-client/src                      # React SPA
-vercel.json                     # Vercel build + cron config
+api/index.ts                      # Vercel serverless entrypoint
+server/_core/index.ts             # Railway / local long-running server entrypoint
+server/_core/app.ts               # Express factory — mounts tRPC + /api/scheduled/*
+server/_core/auth.ts              # Owner credential check + JWT session
+server/_core/tradingReviewer.ts   # Claude reviewer (final go/no-go on signals)
+server/_core/kalshiAutonomy.ts    # Scheduled autonomous Kalshi trading run
+server/_core/polymarketAutonomy.ts# Scheduled autonomous Polymarket trading run
+server/_core/kalshiSignals.ts     # Heuristic signal generators (value/momentum/contra)
+server/_core/kalshiRisk.ts        # Position sizing and risk guard-rails
+server/_core/kalshiMarketData.ts  # Kalshi market fetching + response validation
+server/_core/fetchWithRetry.ts    # Retry helper with exponential back-off + jitter
+server/_core/circuitBreaker.ts    # Circuit breaker (CLOSED/OPEN/HALF_OPEN)
+server/_core/userMutex.ts         # Per-user async mutex for order placement
+server/_core/distributedLock.ts   # Postgres-backed distributed lock (autonomy runs)
+server/routers.ts                 # tRPC routers (auth, kalshi, polymarket, training)
+drizzle/schema.ts                 # Postgres schema (30+ tables + enums)
+client/src/                       # React SPA (pages, components, hooks, contexts)
+railway.json                      # Railway builder config (Dockerfile)
+Dockerfile                        # Deterministic Docker build for Railway
+vercel.json                       # Vercel build + cron config
 ```
 
 ## Future platform expansion (post-Kalshi)
