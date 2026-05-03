@@ -12,6 +12,8 @@ import { and, eq, inArray } from "drizzle-orm";
 import { calculateKalshiBuyOrderRisk, normalizeLimitPrice, normalizeOrderQuantity } from "./kalshiRisk";
 import { assertPositiveIntegerUserId } from "./userScope";
 import { logger } from "./logger";
+import { withUserLock } from "./userMutex";
+import { normalizePrivateKey } from "./keyUtils";
 
 export interface KalshiOrder {
   orderId: string;
@@ -419,35 +421,40 @@ export async function cancelKalshiOrder(
   orderId: string,
   privateKey?: string,
 ): Promise<{ success: boolean; error?: string }> {
-  try {
-    const scopedUserId = getScopedUserId(userId);
-    const result = await signedKalshiRequest<unknown>(
-      scopedUserId,
-      "DELETE",
-      `/portfolio/orders/${orderId}`,
-      { privateKey },
-    );
-
-    if (!result.ok) {
-      logger.error({ error: result.error, orderId }, "[Kalshi] Cancel failed");
-      return { success: false, error: result.error };
-    }
-
-    await db
-      .update(kalshiOrders)
-      .set({ status: "cancelled", cancelledAt: new Date() })
-      .where(
-        and(
-          eq(kalshiOrders.orderId, orderId),
-          eq(kalshiOrders.userId, scopedUserId),
-        )
+  // Serialise per user: prevents TOCTOU races where two concurrent
+  // cancellation requests both read stale order state and attempt to
+  // cancel the same (or interleaved) orders simultaneously.
+  return await withUserLock(userId, async () => {
+    try {
+      const scopedUserId = getScopedUserId(userId);
+      const result = await signedKalshiRequest<unknown>(
+        scopedUserId,
+        "DELETE",
+        `/portfolio/orders/${orderId}`,
+        { privateKey },
       );
 
-    return { success: true };
-  } catch (error) {
-    logger.error({ err: error }, "[Kalshi] Cancel error");
-    return { success: false, error: String(error) };
-  }
+      if (!result.ok) {
+        logger.error({ error: result.error, orderId }, "[Kalshi] Cancel failed");
+        return { success: false, error: result.error };
+      }
+
+      await db
+        .update(kalshiOrders)
+        .set({ status: "cancelled", cancelledAt: new Date() })
+        .where(
+          and(
+            eq(kalshiOrders.orderId, orderId),
+            eq(kalshiOrders.userId, scopedUserId),
+          )
+        );
+
+      return { success: true };
+    } catch (error) {
+      logger.error({ err: error }, "[Kalshi] Cancel error");
+      return { success: false, error: String(error) };
+    }
+  });
 }
 
 /**
@@ -609,111 +616,116 @@ export async function closeKalshiPosition(
   currentPrice: number,
   privateKey?: string,
 ): Promise<{ success: boolean; error?: string; mode?: "exchange" | "local"; orderId?: string }> {
-  try {
-    normalizeLimitPrice(currentPrice, "currentPrice");
-    const scopedUserId = getScopedUserId(userId);
-    const position = await db
-      .select()
-      .from(kalshiPositions)
-      .where(
-        and(
-          eq(kalshiPositions.id, positionId),
-          eq(kalshiPositions.userId, scopedUserId),
-        )
-      )
-      .then((rows: any[]) => rows[0]);
-
-    if (!position) {
-      return { success: false, error: "Position not found" };
-    }
-
-    const entryPrice = Number(position.entryPrice ?? 0);
-    const markPrice = Number(currentPrice ?? position.currentPrice ?? entryPrice);
-    const quantity = normalizeOrderQuantity(Number(position.quantity ?? 0), Number.MAX_SAFE_INTEGER);
-    const side = position.side as "yes" | "no";
-
-    let orderId: string | undefined;
-
-    const credentials = await resolveCredentials(scopedUserId, privateKey);
-    if (!credentials) {
-      return {
-        success: false,
-        error: "Cannot close a live Kalshi position without connected credentials.",
-      };
-    }
-
-    const priceCents = toCents(markPrice);
-    const closeBody = {
-      ticker: marketId,
-      type: "limit",
-      client_order_id: `nexus-close-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
-      action: "sell",
-      side,
-      count: quantity,
-      yes_price: side === "yes" ? priceCents : undefined,
-      no_price: side === "no" ? priceCents : undefined,
-      time_in_force: "good_till_cancelled",
-    };
-
-    const closeResult = await signedKalshiRequest<{ order?: { order_id?: string; id?: string } }>(
-      scopedUserId,
-      "POST",
-      "/portfolio/orders",
-      { privateKey, body: closeBody },
-    );
-
-    if (!closeResult.ok) {
-      logger.error(
-        { error: closeResult.error, positionId, marketId },
-        "[Kalshi] Close position order failed",
-      );
-      return { success: false, error: closeResult.error };
-    }
-
-    const closeOrderId = closeResult.data.order?.order_id || closeResult.data.order?.id;
-    if (!closeOrderId) {
-      return { success: false, error: "Kalshi close order created without an order ID" };
-    }
-
+  // Serialise per user: prevents the TOCTOU race where a concurrent
+  // placeOrder call reads stale position state while a close is in-flight,
+  // potentially resulting in an over-sell or double-close.
+  return await withUserLock(userId, async () => {
     try {
-      await db.insert(kalshiOrders).values({
-        userId: scopedUserId,
-        orderId: closeOrderId,
-        marketId,
+      normalizeLimitPrice(currentPrice, "currentPrice");
+      const scopedUserId = getScopedUserId(userId);
+      const position = await db
+        .select()
+        .from(kalshiPositions)
+        .where(
+          and(
+            eq(kalshiPositions.id, positionId),
+            eq(kalshiPositions.userId, scopedUserId),
+          )
+        )
+        .then((rows: any[]) => rows[0]);
+
+      if (!position) {
+        return { success: false, error: "Position not found" };
+      }
+
+      const entryPrice = Number(position.entryPrice ?? 0);
+      const markPrice = Number(currentPrice ?? position.currentPrice ?? entryPrice);
+      const quantity = normalizeOrderQuantity(Number(position.quantity ?? 0), Number.MAX_SAFE_INTEGER);
+      const side = position.side as "yes" | "no";
+
+      let orderId: string | undefined;
+
+      const credentials = await resolveCredentials(scopedUserId, privateKey);
+      if (!credentials) {
+        return {
+          success: false,
+          error: "Cannot close a live Kalshi position without connected credentials.",
+        };
+      }
+
+      const priceCents = toCents(markPrice);
+      const closeBody = {
+        ticker: marketId,
+        type: "limit",
+        client_order_id: `nexus-close-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
         action: "sell",
         side,
-        quantity,
-        limitPrice: markPrice,
-        status: "pending",
-        filledQuantity: 0,
-        averagePrice: 0,
-      });
-    } catch (storageError) {
-      logger.error(
-        { err: storageError, closeOrderId, positionId, marketId },
-        "[Kalshi] Close order accepted by Kalshi but local ledger write failed. Manual reconciliation required",
+        count: quantity,
+        yes_price: side === "yes" ? priceCents : undefined,
+        no_price: side === "no" ? priceCents : undefined,
+        time_in_force: "good_till_cancelled",
+      };
+
+      const closeResult = await signedKalshiRequest<{ order?: { order_id?: string; id?: string } }>(
+        scopedUserId,
+        "POST",
+        "/portfolio/orders",
+        { privateKey, body: closeBody },
       );
+
+      if (!closeResult.ok) {
+        logger.error(
+          { error: closeResult.error, positionId, marketId },
+          "[Kalshi] Close position order failed",
+        );
+        return { success: false, error: closeResult.error };
+      }
+
+      const closeOrderId = closeResult.data.order?.order_id || closeResult.data.order?.id;
+      if (!closeOrderId) {
+        return { success: false, error: "Kalshi close order created without an order ID" };
+      }
+
+      try {
+        await db.insert(kalshiOrders).values({
+          userId: scopedUserId,
+          orderId: closeOrderId,
+          marketId,
+          action: "sell",
+          side,
+          quantity,
+          limitPrice: markPrice,
+          status: "pending",
+          filledQuantity: 0,
+          averagePrice: 0,
+        });
+      } catch (storageError) {
+        logger.error(
+          { err: storageError, closeOrderId, positionId, marketId },
+          "[Kalshi] Close order accepted by Kalshi but local ledger write failed. Manual reconciliation required",
+        );
+      }
+
+      await db
+        .update(kalshiPositions)
+        .set({
+          currentPrice: markPrice,
+          positionStatus: "closing",
+        })
+        .where(
+          and(
+            eq(kalshiPositions.id, positionId),
+            eq(kalshiPositions.userId, scopedUserId),
+          )
+        );
+
+      orderId = closeOrderId;
+      return { success: true, mode: "exchange", orderId };
+    } catch (error) {
+      logger.error({ err: error, positionId, marketId }, "[Kalshi] Close position error");
+      return { success: false, error: String(error) };
     }
-
-    await db
-      .update(kalshiPositions)
-      .set({
-        currentPrice: markPrice,
-        positionStatus: "closing",
-      })
-      .where(
-        and(
-          eq(kalshiPositions.id, positionId),
-          eq(kalshiPositions.userId, scopedUserId),
-        )
-      );
-
-    orderId = closeOrderId;
-    return { success: true, mode: "exchange", orderId };
-  } catch (error) {
-    logger.error({ err: error, positionId, marketId }, "[Kalshi] Close position error");
-    return { success: false, error: String(error) };
-  }
+  });
 }
 
 /**
