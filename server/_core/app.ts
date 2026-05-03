@@ -312,7 +312,21 @@ export async function createApp(options: { runStartupMigrations?: boolean } = {}
     })
   );
 
-  app.get("/api/health", async (_req: unknown, res: unknown) => {
+  // Liveness probe — used by Railway/Kubernetes healthchecks.  Returns 200
+  // as long as the Node process is responding.  Crucially this does NOT
+  // touch the database, so a degraded Neon endpoint cannot trigger an
+  // infinite restart loop (which manifests to clients as a 502).
+  app.get("/api/health/live", (_req: unknown, res: unknown) => {
+    (res as AppResponse).status(200).json({
+      status: "ok",
+      uptimeMs: process.uptime() * 1000,
+    });
+  });
+
+  // Readiness probe — checks that the database is actually reachable.  Use
+  // this from monitoring dashboards / external uptime checks, not from the
+  // platform restart policy.
+  app.get("/api/health/ready", async (_req: unknown, res: unknown) => {
     const startMs = Date.now();
     let dbStatus: "ok" | "error" = "ok";
     let dbLatencyMs: number | null = null;
@@ -327,10 +341,33 @@ export async function createApp(options: { runStartupMigrations?: boolean } = {}
     }
 
     const overall = dbStatus === "ok" ? "ok" : "degraded";
-    const statusCode = overall === "ok" ? 200 : 503;
-
-    (res as AppResponse).status(statusCode).json({
+    (res as AppResponse).status(overall === "ok" ? 200 : 503).json({
       status: overall,
+      checks: { database: { status: dbStatus, latencyMs: dbLatencyMs } },
+      responseMs: Date.now() - startMs,
+    });
+  });
+
+  // Backwards-compatible combined health endpoint.  Always returns 200 so
+  // long as the process is up; DB health is reported in the body so
+  // observers can still see when the database is degraded without taking
+  // the entire deployment down.
+  app.get("/api/health", async (_req: unknown, res: unknown) => {
+    const startMs = Date.now();
+    let dbStatus: "ok" | "error" = "ok";
+    let dbLatencyMs: number | null = null;
+
+    try {
+      const t0 = Date.now();
+      const alive = await pingDb();
+      dbLatencyMs = Date.now() - t0;
+      if (!alive) dbStatus = "error";
+    } catch {
+      dbStatus = "error";
+    }
+
+    (res as AppResponse).status(200).json({
+      status: dbStatus === "ok" ? "ok" : "degraded",
       runtime: process.env.VERCEL ? "vercel" : "node",
       scheduler: process.env.VERCEL ? "vercel-cron" : "node-interval",
       interval_minutes: 15,
