@@ -280,7 +280,7 @@
 
 ### Phase 3: Data Integrity (PENDING)
 
-- [ ] **BUG: Market price persistence missing** - Market snapshots not timestamped properly for history
+- [x] **BUG: Market price persistence missing** - Market snapshots now timestamped via dedicated `kalshiMarketSnapshots` table with feed-loop wiring + regression test
 - [ ] **ISSUE: No transaction isolation** - Concurrent trades could cause race conditions
 - [ ] **ISSUE: Audit log not comprehensive** - Missing logs for signal generation, filtering, ranking
 - [ ] **ISSUE: No data validation on Kalshi API responses** - Could accept malformed market data
