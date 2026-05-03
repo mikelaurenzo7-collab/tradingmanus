@@ -1,6 +1,7 @@
 import "dotenv/config";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createApp } from "../server/_core/app";
+import { logger } from "../server/_core/logger";
 
 type ExpressLikeApp = {
   handle(req: IncomingMessage, res: ServerResponse): unknown;
@@ -23,16 +24,16 @@ let appPromise: Promise<ExpressLikeApp> | null = null;
 // `process.exit` — keeping the worker alive lets in-flight requests finish and
 // subsequent requests reuse the cached app.
 type GlobalWithGuards = typeof globalThis & {
-  __tradingmanusProcessGuardsInstalled?: boolean;
+  __processGuardsInstalled?: boolean;
 };
 const globalWithGuards = globalThis as GlobalWithGuards;
-if (!globalWithGuards.__tradingmanusProcessGuardsInstalled) {
-  globalWithGuards.__tradingmanusProcessGuardsInstalled = true;
+if (!globalWithGuards.__processGuardsInstalled) {
+  globalWithGuards.__processGuardsInstalled = true;
   process.on("unhandledRejection", (reason) => {
-    console.error("[api/index] unhandledRejection:", reason);
+    logger.error({ reason }, "[api/index] unhandledRejection");
   });
   process.on("uncaughtException", (error) => {
-    console.error("[api/index] uncaughtException:", error);
+    logger.error({ err: error }, "[api/index] uncaughtException");
   });
 }
 
@@ -89,7 +90,7 @@ function sendJsonError(
     res.writeHead(statusCode, { "Content-Type": "application/json" });
     res.end(JSON.stringify(payload));
   } catch (writeError) {
-    console.error("[api/index] Failed to send error response:", writeError);
+    logger.error({ err: writeError }, "[api/index] Failed to send error response");
   }
 }
 
@@ -109,9 +110,7 @@ function dispatchToApp(
 
     const timer = setTimeout(() => {
       if (settled) return;
-      console.error(
-        "[api/index] Request exceeded safety timeout; returning JSON 504 instead of letting the function crash."
-      );
+      logger.warn("[api/index] Request exceeded safety timeout; returning JSON 504 instead of letting the function crash.");
       sendJsonError(res, 504, {
         success: false,
         error: "Request timed out",
@@ -122,7 +121,7 @@ function dispatchToApp(
     res.on("finish", finish);
     res.on("close", finish);
     res.on("error", (err) => {
-      console.error("[api/index] Response stream error:", err);
+      logger.error({ err }, "[api/index] Response stream error");
       finish();
     });
 
@@ -132,8 +131,7 @@ function dispatchToApp(
       // Express 4 *can* throw synchronously from inside a middleware that
       // doesn't `next(err)`. Translate it into a JSON 500 so the platform
       // never sees an unhandled exception.
-      const message = error instanceof Error ? error.message : String(error);
-      console.error("[api/index] Synchronous dispatch error:", message);
+      logger.error({ err: error }, "[api/index] Synchronous dispatch error");
       sendJsonError(res, 500, {
         success: false,
         error: "Internal server error",
@@ -149,7 +147,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     await dispatchToApp(app, req, res);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error("[api/index] createApp failed:", message);
+    logger.error({ err: error }, "[api/index] createApp failed");
     sendJsonError(res, 500, {
       success: false,
       error: "Server initialization failed",

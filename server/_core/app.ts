@@ -277,9 +277,15 @@ export async function createApp(options: { runStartupMigrations?: boolean } = {}
   }));
 
   // CORS configuration
+  const productionOrigins: (string | RegExp)[] = [
+    /^https:\/\/[a-zA-Z0-9-]+\.vercel\.app$/,
+  ];
+  if (ENV.allowedOrigin) {
+    productionOrigins.push(ENV.allowedOrigin);
+  }
   app.use(cors({
     origin: ENV.isProduction
-      ? [/^https:\/\/[a-zA-Z0-9-]+\.vercel\.app$/, /^https:\/\/(?:[a-zA-Z0-9-]+\.)?tradingmanus\.com$/]
+      ? productionOrigins
       : ["http://localhost:5008", "http://127.0.0.1:5008"],
     credentials: true,
   }));
