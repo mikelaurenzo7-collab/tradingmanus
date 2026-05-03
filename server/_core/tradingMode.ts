@@ -1,8 +1,9 @@
 import { ENV } from "./env";
 import { getTradingPreferences } from "../db.trading-preferences";
+import type { TradingMode } from "../db.trading-preferences";
 
 export type TradingPlatform = "kalshi" | "polymarket";
-export type TradingMode = "shadow" | "paper" | "live";
+export type { TradingMode };
 
 export interface EffectiveModeResult {
   mode: TradingMode;
@@ -24,12 +25,9 @@ export async function getEffectiveMode(
 
     const prefs = await getTradingPreferences(userId);
     const isPaused = platform === "kalshi"
-      ? Boolean((prefs as unknown as Record<string, unknown>).kalshiPaused)
-      : Boolean((prefs as unknown as Record<string, unknown>).polymarketPaused);
-    const rawMode = platform === "kalshi"
-      ? (prefs as unknown as Record<string, unknown>).kalshiMode
-      : (prefs as unknown as Record<string, unknown>).polymarketMode;
-    const userMode: TradingMode = (rawMode as TradingMode) ?? "shadow";
+      ? Boolean(prefs.kalshiPaused)
+      : Boolean(prefs.polymarketPaused);
+    const userMode: TradingMode = (platform === "kalshi" ? prefs.kalshiMode : prefs.polymarketMode) ?? "shadow";
 
     if (isPaused) {
       return { mode: userMode, paused: true, reason: `${platform} manually paused`, source: "manual_pause" };

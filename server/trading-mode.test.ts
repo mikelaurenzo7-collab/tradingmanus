@@ -94,4 +94,22 @@ describe("getEffectiveMode", () => {
     expect(result.paused).toBe(true);
     expect(result.source).toBe("error_reading_prefs");
   });
+
+  it("manual pause survives ENV shadow override (paused platform stays paused)", async () => {
+    // Design decision: ENV=shadow forces MODE to shadow for running platforms,
+    // but does NOT un-pause a manually-paused platform. Safety takes priority.
+    vi.mocked(getTradingPreferences).mockResolvedValue(mockPrefs({ kalshiMode: "live", kalshiPaused: 1 }) as never);
+    (ENV as { tradingModeOverride: string }).tradingModeOverride = "shadow";
+    const result = await getEffectiveMode(1, "kalshi");
+    expect(result.paused).toBe(true);
+    expect(result.source).toBe("manual_pause");
+  });
+
+  it("ENV none override falls through to user setting", async () => {
+    vi.mocked(getTradingPreferences).mockResolvedValue(mockPrefs({ kalshiMode: "paper" }) as never);
+    (ENV as { tradingModeOverride: string }).tradingModeOverride = "none";
+    const result = await getEffectiveMode(1, "kalshi");
+    expect(result.mode).toBe("paper");
+    expect(result.source).toBe("user_setting");
+  });
 });
