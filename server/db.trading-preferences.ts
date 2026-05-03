@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { tradingPreferences } from "../drizzle/schema";
 import { getDb } from "./db";
+import { logger } from "./_core/logger";
 
 export const AUTONOMY_MODES = [
   "manual",
@@ -167,7 +168,7 @@ export async function getTradingPreferences(userId: number) {
       requireApprovalAbove: record.requireApprovalAbove,
     });
   } catch (error) {
-    console.error("[Database] Get trading preferences failed:", error);
+    logger.error({ err: error }, "[Database] Get trading preferences failed");
     return DEFAULT_TRADING_PREFERENCES;
   }
 }
@@ -201,7 +202,7 @@ export async function saveTradingPreferences(
 
     return merged;
   } catch (error) {
-    console.error("[Database] Save trading preferences failed:", error);
+    logger.error({ err: error }, "[Database] Save trading preferences failed");
     throw error;
   }
 }

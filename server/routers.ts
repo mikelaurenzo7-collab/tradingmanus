@@ -636,7 +636,7 @@ export const appRouter = router({
           );
           return markets;
         } catch (error) {
-          console.error("[Kalshi] Get markets error:", error);
+          logger.error({ err: error }, "[Kalshi] Get markets error");
           return [];
         }
       }),
@@ -651,7 +651,7 @@ export const appRouter = router({
           }
           return market;
         } catch (error) {
-          console.error("[Kalshi] Get market details error:", error);
+          logger.error({ err: error }, "[Kalshi] Get market details error");
           return null;
         }
       }),
@@ -761,7 +761,7 @@ export const appRouter = router({
           return result;
           }); // end withUserLock
         } catch (error) {
-          console.error("[Kalshi] Place order error:", error);
+          logger.error({ err: error }, "[Kalshi] Place order error");
           return { success: false, error: String(error) };
         }
       }),
@@ -785,7 +785,7 @@ export const appRouter = router({
 
           return result;
         } catch (error) {
-          console.error("[Kalshi] Cancel order error:", error);
+          logger.error({ err: error }, "[Kalshi] Cancel order error");
           return { success: false, error: String(error) };
         }
       }),
@@ -799,7 +799,7 @@ export const appRouter = router({
             input.orderId
           );
         } catch (error) {
-          console.error("[Kalshi] Get order status error:", error);
+          logger.error({ err: error }, "[Kalshi] Get order status error");
           return null;
         }
       }),
@@ -809,7 +809,7 @@ export const appRouter = router({
       try {
         return await db.getOpenKalshiPositions(getRequiredUserId(ctx));
       } catch (error) {
-        console.error("[Kalshi] Get positions error:", error);
+        logger.error({ err: error }, "[Kalshi] Get positions error");
         return [];
       }
     }),
@@ -822,7 +822,7 @@ export const appRouter = router({
         try {
           return await db.getKalshiTradeHistory(input?.limit ?? 50, getRequiredUserId(ctx));
         } catch (error) {
-          console.error("[Kalshi] Get trade history error:", error);
+          logger.error({ err: error }, "[Kalshi] Get trade history error");
           return [];
         }
       }),
@@ -854,7 +854,7 @@ export const appRouter = router({
 
           return result;
         } catch (error) {
-          console.error("[Kalshi] Close position error:", error);
+          logger.error({ err: error }, "[Kalshi] Close position error");
           return { success: false, error: String(error) };
         }
       }),
@@ -882,7 +882,7 @@ export const appRouter = router({
 
         return capital;
       } catch (error) {
-        console.error("[Kalshi] Get capital error:", error);
+        logger.error({ err: error }, "[Kalshi] Get capital error");
         return null;
       }
     }),
@@ -899,7 +899,7 @@ export const appRouter = router({
           );
           return { success: true };
         } catch (error) {
-          console.error("[Kalshi] Initialize capital error:", error);
+          logger.error({ err: error }, "[Kalshi] Initialize capital error");
           return { success: false, error: String(error) };
         }
       }),
@@ -909,7 +909,7 @@ export const appRouter = router({
       try {
         return await db.getRecentSignals(20, getRequiredUserId(ctx));
       } catch (error) {
-        console.error("[Kalshi] Get signals error:", error);
+        logger.error({ err: error }, "[Kalshi] Get signals error");
         return [];
       }
     }),
@@ -919,7 +919,7 @@ export const appRouter = router({
       try {
         return await db.getAuditLog(7, ctx.user!.openId);
       } catch (error) {
-        console.error("[Kalshi] Get audit log error:", error);
+        logger.error({ err: error }, "[Kalshi] Get audit log error");
         return [];
       }
     }),
@@ -929,7 +929,7 @@ export const appRouter = router({
         const runs = await db.getRecentAutonomyRuns(getRequiredUserId(ctx), 8);
         return buildAutonomyActivitySummary(runs);
       } catch (error) {
-        console.error("[Kalshi] Get autonomy activity error:", error);
+        logger.error({ err: error }, "[Kalshi] Get autonomy activity error");
         return {
           lastRun: null,
           lastOrder: null,
@@ -946,7 +946,7 @@ export const appRouter = router({
         try {
           return await db.getRecentAutonomyRuns(getRequiredUserId(ctx), input?.limit ?? 20);
         } catch (error) {
-          console.error("[Kalshi] Get recent autonomy runs error:", error);
+          logger.error({ err: error }, "[Kalshi] Get recent autonomy runs error");
           return [];
         }
       }),
@@ -988,7 +988,7 @@ export const appRouter = router({
             rejectedCandidates: Array.isArray(rejectedCandidatesPayload) ? rejectedCandidatesPayload : [],
           };
         } catch (error) {
-          console.error("[Kalshi] Get autonomy run detail error:", error);
+          logger.error({ err: error }, "[Kalshi] Get autonomy run detail error");
           return null;
         }
       }),
@@ -1014,7 +1014,7 @@ export const appRouter = router({
         );
         return result;
       } catch (error) {
-        console.error("[Kalshi] Kill switch error:", error);
+        logger.error({ err: error }, "[Kalshi] Kill switch error");
         return {
           success: false,
           totalPositions: 0,
@@ -1047,7 +1047,7 @@ export const appRouter = router({
             error: "Failed to subscribe to market feed",
           };
         } catch (error) {
-          console.error("[Kalshi] Subscribe market feed error:", error);
+          logger.error({ err: error }, "[Kalshi] Subscribe market feed error");
           return { success: false, error: String(error) };
         }
       }),
@@ -1064,7 +1064,7 @@ export const appRouter = router({
           );
           return { success: true };
         } catch (error) {
-          console.error("[Kalshi] Unsubscribe market feed error:", error);
+          logger.error({ err: error }, "[Kalshi] Unsubscribe market feed error");
           return { success: false, error: String(error) };
         }
       }),
@@ -1075,7 +1075,7 @@ export const appRouter = router({
         try {
           return getMarketFeed(input.marketId);
         } catch (error) {
-          console.error("[Kalshi] Get market feed error:", error);
+          logger.error({ err: error }, "[Kalshi] Get market feed error");
           return null;
         }
       }),
@@ -1084,7 +1084,7 @@ export const appRouter = router({
       try {
         return getAllMarketFeeds();
       } catch (error) {
-        console.error("[Kalshi] Get all market feeds error:", error);
+        logger.error({ err: error }, "[Kalshi] Get all market feeds error");
         return [];
       }
     }),
@@ -1185,7 +1185,7 @@ export const appRouter = router({
 
           return { success: true, signals: reviewedSignals };
         } catch (error) {
-          console.error("[Kalshi] Generate signals error:", error);
+          logger.error({ err: error }, "[Kalshi] Generate signals error");
           return { success: false, signals: [], error: String(error) };
         }
       }),
@@ -1206,7 +1206,7 @@ export const appRouter = router({
             input.minExecutionScore
           );
         } catch (error) {
-          console.error("[Kalshi] Get top signals error:", error);
+          logger.error({ err: error }, "[Kalshi] Get top signals error");
           return [];
         }
       }),
@@ -1219,7 +1219,7 @@ export const appRouter = router({
         try {
           return await db.getRecentSignals(input.limit, getRequiredUserId(ctx));
         } catch (error) {
-          console.error("[Kalshi] Get signal history error:", error);
+          logger.error({ err: error }, "[Kalshi] Get signal history error");
           return [];
         }
       }),
@@ -1228,7 +1228,7 @@ export const appRouter = router({
       try {
         return await getPerformanceOverview(getRequiredUserId(ctx));
       } catch (error) {
-        console.error("[Kalshi] Get performance overview error:", error);
+        logger.error({ err: error }, "[Kalshi] Get performance overview error");
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
           message: "Unable to load performance overview",
@@ -1282,7 +1282,7 @@ export const appRouter = router({
               ctx.user!.openId
             );
           } catch (storageError) {
-            console.error("[Kalshi] Failed to persist validated credentials:", storageError);
+            logger.error({ err: storageError }, "[Kalshi] Failed to persist validated credentials");
             return {
               success: false,
               error:
@@ -1296,7 +1296,7 @@ export const appRouter = router({
             mode: equityResult.mode ?? validation.mode,
           };
         } catch (error) {
-          console.error("[Kalshi] Connect account error:", error);
+          logger.error({ err: error }, "[Kalshi] Connect account error");
           return {
             success: false,
             error:
@@ -1372,7 +1372,7 @@ export const appRouter = router({
           tradingPreferences: preferences,
         };
       } catch (error) {
-        console.error("[Kalshi] Get account status error:", error);
+        logger.error({ err: error }, "[Kalshi] Get account status error");
         return {
           connected: false,
           equity: 0,
@@ -1388,7 +1388,7 @@ export const appRouter = router({
         const userId = getRequiredUserId(ctx);
         return await tradingPreferencesDb.getTradingPreferences(userId);
       } catch (error) {
-        console.error("[Kalshi] Get trading preferences error:", error);
+        logger.error({ err: error }, "[Kalshi] Get trading preferences error");
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
           message: "Unable to load trading preferences",
@@ -1438,7 +1438,7 @@ export const appRouter = router({
           if (error instanceof TRPCError) {
             throw error;
           }
-          console.error("[Kalshi] Update trading preferences error:", error);
+          logger.error({ err: error }, "[Kalshi] Update trading preferences error");
           throw new TRPCError({
             code: "INTERNAL_SERVER_ERROR",
             message: "Unable to save trading preferences",
@@ -1523,7 +1523,7 @@ export const appRouter = router({
           if (error instanceof TRPCError) {
             throw error;
           }
-          console.error("[Kalshi] Set trading activation error:", error);
+          logger.error({ err: error }, "[Kalshi] Set trading activation error");
           throw new TRPCError({
             code: "INTERNAL_SERVER_ERROR",
             message: "Unable to update live trading activation",
@@ -1543,7 +1543,7 @@ export const appRouter = router({
         );
         return { success: true };
       } catch (error) {
-        console.error("[Kalshi] Disconnect account error:", error);
+        logger.error({ err: error }, "[Kalshi] Disconnect account error");
         return { success: false, error: String(error) };
       }
     }),
@@ -1561,7 +1561,7 @@ export const appRouter = router({
           hasLiveAccess: betaAccessLevel !== "none",
         };
       } catch (error) {
-        console.error("[Beta] Get beta status error:", error);
+        logger.error({ err: error }, "[Beta] Get beta status error");
         return { betaAccessLevel: "none" as const, hasLiveAccess: false };
       }
     }),
@@ -1594,7 +1594,7 @@ export const appRouter = router({
           return { success: true, user: updated };
         } catch (error) {
           if (error instanceof TRPCError) throw error;
-          console.error("[Beta] Set beta access error:", error);
+          logger.error({ err: error }, "[Beta] Set beta access error");
           throw new TRPCError({
             code: "INTERNAL_SERVER_ERROR",
             message: "Unable to update beta access level",
@@ -1646,7 +1646,7 @@ export const appRouter = router({
               ctx.user!.openId
             );
           } catch (storageError) {
-            console.error("[Polymarket] Failed to persist validated credentials:", storageError);
+            logger.error({ err: storageError }, "[Polymarket] Failed to persist validated credentials");
             return {
               success: false,
               error:
@@ -1656,7 +1656,7 @@ export const appRouter = router({
 
           return { success: true };
         } catch (error) {
-          console.error("[Polymarket] Connect account error:", error);
+          logger.error({ err: error }, "[Polymarket] Connect account error");
           return {
             success: false,
             error:
@@ -1707,7 +1707,7 @@ export const appRouter = router({
           lastSyncedAt: new Date(),
         };
       } catch (error) {
-        console.error("[Polymarket] Get account status error:", error);
+        logger.error({ err: error }, "[Polymarket] Get account status error");
         return { connected: false, status: "error" as const, error: String(error) };
       }
     }),
@@ -1723,7 +1723,7 @@ export const appRouter = router({
         );
         return { success: true };
       } catch (error) {
-        console.error("[Polymarket] Disconnect account error:", error);
+        logger.error({ err: error }, "[Polymarket] Disconnect account error");
         return { success: false, error: String(error) };
       }
     }),
@@ -1734,7 +1734,7 @@ export const appRouter = router({
         const userId = getRequiredUserId(ctx);
         return await polymarketCredDb.getPlatformSubscriptions(userId);
       } catch (error) {
-        console.error("[Polymarket] Get platform subscriptions error:", error);
+        logger.error({ err: error }, "[Polymarket] Get platform subscriptions error");
         return { subscribedPlatforms: "kalshi" as const };
       }
     }),
@@ -1759,7 +1759,7 @@ export const appRouter = router({
           );
           return result;
         } catch (error) {
-          console.error("[Polymarket] Save platform subscriptions error:", error);
+          logger.error({ err: error }, "[Polymarket] Save platform subscriptions error");
           return { success: false, subscribedPlatforms: "kalshi" as const };
         }
       }),
@@ -1781,7 +1781,7 @@ export const appRouter = router({
             offset: input?.offset ?? 0,
           });
         } catch (error) {
-          console.error("[Polymarket] Get markets error:", error);
+          logger.error({ err: error }, "[Polymarket] Get markets error");
           return [];
         }
       }),
@@ -1812,7 +1812,7 @@ export const appRouter = router({
 
           return { success: true, signals };
         } catch (error) {
-          console.error("[Polymarket] Generate signals error:", error);
+          logger.error({ err: error }, "[Polymarket] Generate signals error");
           return { success: false, signals: [], error: String(error) };
         }
       }),
@@ -1861,7 +1861,7 @@ export const appRouter = router({
 
           return result;
         } catch (error) {
-          console.error("[Polymarket] Place order error:", error);
+          logger.error({ err: error }, "[Polymarket] Place order error");
           return { success: false, error: String(error) };
         }
       }),
@@ -1926,7 +1926,7 @@ export const appRouter = router({
             marketsScanned: snapshots.length,
           };
         } catch (error) {
-          console.error("[Polymarket] Cluster detection error:", error);
+          logger.error({ err: error }, "[Polymarket] Cluster detection error");
           return { clusterSignals: [], recommendations: [], marketsScanned: 0 };
         }
       }),
@@ -1984,7 +1984,7 @@ export const appRouter = router({
 
           return { success: true, signals };
         } catch (error) {
-          console.error("[Polymarket] Cluster signal generation error:", error);
+          logger.error({ err: error }, "[Polymarket] Cluster signal generation error");
           return { success: false, signals: [], error: String(error) };
         }
       }),
@@ -2030,7 +2030,7 @@ export const appRouter = router({
 
           return { quotes, marketsScanned: markets.length };
         } catch (error) {
-          console.error("[Polymarket] MM quote generation error:", error);
+          logger.error({ err: error }, "[Polymarket] MM quote generation error");
           return { quotes: [], marketsScanned: 0 };
         }
       }),
@@ -2058,7 +2058,7 @@ export const appRouter = router({
           );
           return { mispricings, marketsScanned: markets.length };
         } catch (error) {
-          console.error("[Polymarket] YES/NO mispricing detection error:", error);
+          logger.error({ err: error }, "[Polymarket] YES/NO mispricing detection error");
           return { mispricings: [], marketsScanned: 0 };
         }
       }),
@@ -2077,7 +2077,7 @@ export const appRouter = router({
         });
         return result;
       } catch (error) {
-        console.error("[Polymarket] Autonomous trading error:", error);
+        logger.error({ err: error }, "[Polymarket] Autonomous trading error");
         return {
           success: false,
           status: "error" as const,
@@ -2134,7 +2134,7 @@ export const appRouter = router({
 
           return { opportunities, marketsAnalyzed: markets.length };
         } catch (error) {
-          console.error("[Combinatorial] Kalshi arbitrage detection error:", error);
+          logger.error({ err: error }, "[Combinatorial] Kalshi arbitrage detection error");
           return { opportunities: [], marketsAnalyzed: 0 };
         }
       }),
@@ -2176,7 +2176,7 @@ export const appRouter = router({
 
           return { opportunities, marketsAnalyzed: markets.length };
         } catch (error) {
-          console.error("[Combinatorial] Polymarket arbitrage detection error:", error);
+          logger.error({ err: error }, "[Combinatorial] Polymarket arbitrage detection error");
           return { opportunities: [], marketsAnalyzed: 0 };
         }
       }),
@@ -2238,7 +2238,7 @@ export const appRouter = router({
             polymarketMarketsScanned: polymarketMarkets.length,
           };
         } catch (error) {
-          console.error("[Combinatorial] Cross-platform arbitrage detection error:", error);
+          logger.error({ err: error }, "[Combinatorial] Cross-platform arbitrage detection error");
           return { opportunities: [], kalshiMarketsScanned: 0, polymarketMarketsScanned: 0 };
         }
       }),
@@ -2333,7 +2333,7 @@ export const appRouter = router({
             topConviction: merged.topConviction,
           };
         } catch (error) {
-          console.error("[CrossBot] Get combined signals error:", error);
+          logger.error({ err: error }, "[CrossBot] Get combined signals error");
           return {
             success: false,
             signals: [],
@@ -2489,7 +2489,7 @@ export const appRouter = router({
 
           return result;
         } catch (error) {
-          console.error("[CrossBot] Execute cross-arb error:", error);
+          logger.error({ err: error }, "[CrossBot] Execute cross-arb error");
           return { success: false, error: String(error) };
         }
       }),
