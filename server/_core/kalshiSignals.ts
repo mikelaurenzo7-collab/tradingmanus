@@ -269,10 +269,12 @@ export async function generateSignalsForMarket(
       // probability for a fairly-priced market), which is what previously
       // made every edge metric ~0.  We project the move forward by a
       // fraction of the observed momentum, scaled by volume confirmation.
+      // Note: calculateExpectedValue takes a YES-perspective probability
+      // and internally derives `1 - p` for the NO side, so we always pass
+      // the YES-forecast regardless of the chosen side.
       const forecastBias = momentum * (volumeMomentum > 0 ? 0.5 : 0.25);
       const yesForecast = clampProbability(market.impliedProbability + forecastBias);
-      const winProbability = side === "yes" ? yesForecast : yesForecast; // calculateExpectedValue derives 1-p for "no"
-      const expectedVal = calculateExpectedValue(side, side === "yes" ? market.yesPrice : market.noPrice, 1, 1, winProbability);
+      const expectedVal = calculateExpectedValue(side, side === "yes" ? market.yesPrice : market.noPrice, 1, 1, yesForecast);
       if (isFinite(confidence) && isFinite(expectedVal)) {
         signals.push({
           marketId: market.id,
