@@ -706,7 +706,7 @@ describe("execution guardrails — safety blocking paths", () => {
   it("skips a candidate when its market feed data is stale at evaluation time", async () => {
     // getMarketFeed returns a non-null feed object so the stale-check branch runs,
     // and isMarketDataStale is forced to true so the candidate is rejected.
-    mocks.getMarketFeed.mockReturnValue({ marketId: "KXTEST-1", lastUpdateTime: Date.now() - 60000 });
+    mocks.getMarketFeed.mockReturnValue({ marketId: "KXTEST-1", lastUpdateTime: 1640000000000 });
     mocks.isMarketDataStale.mockReturnValue(true);
 
     const result = await runScheduledAutonomousTrading(testUser);

@@ -163,7 +163,7 @@ describe("syncPendingOrders — in-process concurrency guard", () => {
 
   it("no-ops on a second concurrent invocation for the same user", async () => {
     // Block the first sync at the credentials await so the guard key stays set.
-    let unblockFirst!: () => void;
+    let unblockFirst: () => void = () => {};
     mocks.getKalshiCredentials.mockReturnValueOnce(
       new Promise<typeof CONNECTED_CREDS>((resolve) => {
         unblockFirst = () => resolve(CONNECTED_CREDS);
