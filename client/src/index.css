@@ -390,13 +390,13 @@
     font-weight: 600;
   }
 
-  /* Animated gradient border */
-  .gradient-border {
+  /* OLD: Animated gradient border with pseudo-element (deprecated - use .gradient-border-pseudo if needed) */
+  /* .gradient-border {
     position: relative;
     background: linear-gradient(135deg, rgba(18, 30, 50, 0.6), rgba(25, 20, 50, 0.5));
     border-radius: 1rem;
     padding: 1px;
-  }
+  } */
 
   .gradient-border::before {
     content: '';
@@ -531,8 +531,8 @@
     will-change: transform; /* GPU acceleration hint */
   }
 
-  /* Gradient border using border-image */
-  .gradient-border-image {
+  /* Gradient border using border-image (spec-compliant) */
+  .gradient-border {
     border-width: 2px;
     border-style: solid;
     border-image: linear-gradient(135deg, #a855f7, #ec4899) 1;
