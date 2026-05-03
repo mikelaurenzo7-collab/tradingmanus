@@ -5,6 +5,7 @@
 
 import { CircuitBreaker, CircuitOpenError } from "./circuitBreaker";
 import { fetchWithRetry } from "./fetchWithRetry";
+import { logger } from "./logger";
 
 /**
  * Single shared breaker for all Kalshi market-data calls. When Kalshi has
@@ -274,7 +275,7 @@ export async function fetchKalshiMarkets(filters?: {
     );
 
     if (!response.ok) {
-      console.error(`[Kalshi] API error: ${response.status}`);
+      logger.error({ status: response.status }, "[Kalshi] API error: %d", response.status);
       return [];
     }
 
@@ -286,9 +287,9 @@ export async function fetchKalshiMarkets(filters?: {
       .sort((a: KalshiMarket, b: KalshiMarket) => getMarketActionabilityScore(b) - getMarketActionabilityScore(a));
   } catch (error) {
     if (error instanceof CircuitOpenError) {
-      console.warn("[Kalshi] Market fetch short-circuited; upstream is unhealthy.");
+      logger.warn("[Kalshi] Market fetch short-circuited; upstream is unhealthy.");
     } else {
-      console.error("[Kalshi] Market fetch failed:", error);
+      logger.error({ err: error }, "[Kalshi] Market fetch failed");
     }
     return [];
   }
@@ -311,7 +312,7 @@ export async function fetchKalshiMarketDetails(marketId: string): Promise<Kalshi
     );
 
     if (!response.ok) {
-      console.error(`[Kalshi] Market details error: ${response.status}`);
+      logger.error({ status: response.status }, "[Kalshi] Market details error: %d", response.status);
       return null;
     }
 
@@ -321,9 +322,9 @@ export async function fetchKalshiMarketDetails(marketId: string): Promise<Kalshi
     return normalized && isDisplaySafeActionableMarket(normalized) ? normalized : null;
   } catch (error) {
     if (error instanceof CircuitOpenError) {
-      console.warn(`[Kalshi] Market details for ${marketId} short-circuited; upstream is unhealthy.`);
+      logger.warn({ marketId }, "[Kalshi] Market details for %s short-circuited; upstream is unhealthy.", marketId);
     } else {
-      console.error(`[Kalshi] Market details fetch failed for ${marketId}:`, error);
+      logger.error({ err: error, marketId }, "[Kalshi] Market details fetch failed for %s", marketId);
     }
     return null;
   }

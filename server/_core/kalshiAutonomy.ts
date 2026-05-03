@@ -29,6 +29,7 @@ import {
   alertExchangeRejection,
   alertAiReviewerFailure,
 } from "./alerting";
+import { logger } from "./logger";
 
 const BASE_RISK_LIMITS = {
   maxLossPerTrade: 5,
@@ -816,7 +817,7 @@ export async function runScheduledAutonomousTrading(
     });
   }
   if ("needsReauth" in creds && creds.needsReauth) {
-    console.warn(`[Autonomy] Skipping user ${userId}: Kalshi credentials require re-authentication`);
+    logger.warn({ userId }, "[Autonomy] Skipping user %d: Kalshi credentials require re-authentication", userId);
     return finalize({
       status: "blocked",
       reason: "Kalshi credentials are invalid — re-authentication required. Please reconnect your Kalshi account.",
@@ -964,9 +965,10 @@ export async function runScheduledAutonomousTrading(
   try {
     await syncPendingOrders(userId);
   } catch (syncErr) {
-    console.warn(
-      `[Autonomy] pre-execution order sync failed for user ${userId}; proceeding with potentially stale ledger:`,
-      syncErr,
+    logger.warn(
+      { err: syncErr, userId },
+      "[Autonomy] pre-execution order sync failed for user %d; proceeding with potentially stale ledger",
+      userId,
     );
   }
 
@@ -1250,9 +1252,10 @@ export async function runScheduledAutonomousTrading(
   } catch (refreshErr) {
     // Best-effort refresh; if it fails, fall through to placement.
     // The lower-level execution path still has its own validation.
-    console.warn(
-      `[Autonomy] live price refresh failed for ${eligibleSignal.marketId}; proceeding with signal price:`,
-      refreshErr,
+    logger.warn(
+      { err: refreshErr, marketId: eligibleSignal.marketId },
+      "[Autonomy] live price refresh failed for %s; proceeding with signal price",
+      eligibleSignal.marketId,
     );
   }
 

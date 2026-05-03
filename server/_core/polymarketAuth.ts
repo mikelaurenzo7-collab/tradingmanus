@@ -9,6 +9,7 @@
  */
 
 import crypto from "crypto";
+import { logger } from "./logger";
 
 const POLYMARKET_CLOB_BASE_URL = "https://clob.polymarket.com";
 
@@ -96,7 +97,7 @@ export async function validatePolymarketCredentials(
 
     return { valid: false, error: message };
   } catch (error) {
-    console.error("[Polymarket Auth] Validation failed:", error);
+    logger.error({ err: error }, "[Polymarket Auth] Validation failed");
     return {
       valid: false,
       error:
@@ -182,7 +183,7 @@ export async function fetchPolymarketMarkets(options: {
       } satisfies PolymarketMarket;
     });
   } catch (error) {
-    console.error("[Polymarket] Fetch markets failed:", error);
+    logger.error({ err: error }, "[Polymarket] Fetch markets failed");
     return [];
   }
 }
@@ -239,7 +240,7 @@ export async function placePolymarketOrder(
       orderId: typeof payload.order_id === "string" ? payload.order_id : undefined,
     };
   } catch (error) {
-    console.error("[Polymarket] Place order failed:", error);
+    logger.error({ err: error }, "[Polymarket] Place order failed");
     return {
       success: false,
       error: error instanceof Error ? error.message : "Failed to place order",

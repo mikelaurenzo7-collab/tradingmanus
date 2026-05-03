@@ -1,50 +1,70 @@
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
 import { Route, Switch } from "wouter";
+import { lazy, Suspense } from "react";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import DashboardLayout from "./components/DashboardLayout";
-import Dashboard from "./pages/Dashboard";
-import Positions from "./pages/Positions";
-import Trades from "./pages/Trades";
-import Signals from "./pages/Signals";
-import RiskControls from "./pages/RiskControls";
-import AuditLog from "./pages/AuditLog";
-import Connect from "./pages/Connect";
-import Training from "./pages/Training";
-import Performance from "./pages/Performance";
-import SentimentAnalysis from "./pages/SentimentAnalysis";
-import PortfolioOptimization from "./pages/PortfolioOptimization";
-import Backtesting from "./pages/Backtesting";
-import Analytics from "./pages/Analytics";
-import TradingAutonomy from "./pages/TradingAutonomy";
-import Funding from "./pages/Funding";
-import ClusterMonitor from "./pages/ClusterMonitor";
-import Strategies from "./pages/Strategies";
-import Chat from "./pages/Chat";
+
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const Positions = lazy(() => import("./pages/Positions"));
+const Trades = lazy(() => import("./pages/Trades"));
+const Signals = lazy(() => import("./pages/Signals"));
+const RiskControls = lazy(() => import("./pages/RiskControls"));
+const AuditLog = lazy(() => import("./pages/AuditLog"));
+const Connect = lazy(() => import("./pages/Connect"));
+const Training = lazy(() => import("./pages/Training"));
+const Performance = lazy(() => import("./pages/Performance"));
+const SentimentAnalysis = lazy(() => import("./pages/SentimentAnalysis"));
+const PortfolioOptimization = lazy(() => import("./pages/PortfolioOptimization"));
+const Backtesting = lazy(() => import("./pages/Backtesting"));
+const Analytics = lazy(() => import("./pages/Analytics"));
+const TradingAutonomy = lazy(() => import("./pages/TradingAutonomy"));
+const Funding = lazy(() => import("./pages/Funding"));
+const ClusterMonitor = lazy(() => import("./pages/ClusterMonitor"));
+const Strategies = lazy(() => import("./pages/Strategies"));
+const Chat = lazy(() => import("./pages/Chat"));
+
+function PageFallback() {
+  return (
+    <div className="flex items-center justify-center h-64 text-muted-foreground">
+      Loading\u2026
+    </div>
+  );
+}
+
+function withLayout(Page: React.ComponentType) {
+  return () => (
+    <Suspense fallback={<PageFallback />}>
+      <DashboardLayout>
+        <Page />
+      </DashboardLayout>
+    </Suspense>
+  );
+}
 
 function Router() {
   return (
     <Switch>
-      <Route path={"/"} component={() => <DashboardLayout><Dashboard /></DashboardLayout>} />
-      <Route path={"/dashboard"} component={() => <DashboardLayout><Dashboard /></DashboardLayout>} />
-      <Route path={"/connect"} component={() => <DashboardLayout><Connect /></DashboardLayout>} />
-      <Route path={"/autonomy"} component={() => <DashboardLayout><TradingAutonomy /></DashboardLayout>} />
-      <Route path={"/positions"} component={() => <DashboardLayout><Positions /></DashboardLayout>} />
-      <Route path={"/trades"} component={() => <DashboardLayout><Trades /></DashboardLayout>} />
-      <Route path={"/signals"} component={() => <DashboardLayout><Signals /></DashboardLayout>} />
-      <Route path={"/cluster-monitor"} component={() => <DashboardLayout><ClusterMonitor /></DashboardLayout>} />
-      <Route path={"/strategies"} component={() => <DashboardLayout><Strategies /></DashboardLayout>} />
-      <Route path={"/risk-controls"} component={() => <DashboardLayout><RiskControls /></DashboardLayout>} />
-      <Route path={"/audit"} component={() => <DashboardLayout><AuditLog /></DashboardLayout>} />
-      <Route path={"/training"} component={() => <DashboardLayout><Training /></DashboardLayout>} />
-      <Route path={"/performance"} component={() => <DashboardLayout><Performance /></DashboardLayout>} />
-      <Route path={"/sentiment"} component={() => <DashboardLayout><SentimentAnalysis /></DashboardLayout>} />
-      <Route path={"/portfolio"} component={() => <DashboardLayout><PortfolioOptimization /></DashboardLayout>} />
-      <Route path={"/backtest"} component={() => <DashboardLayout><Backtesting /></DashboardLayout>} />
-      <Route path={"/analytics"} component={() => <DashboardLayout><Analytics /></DashboardLayout>} />
-      <Route path={"/funding"} component={() => <DashboardLayout><Funding /></DashboardLayout>} />
-      <Route path={"/chat"} component={() => <DashboardLayout><Chat /></DashboardLayout>} />
+      <Route path={"/"} component={withLayout(Dashboard)} />
+      <Route path={"/dashboard"} component={withLayout(Dashboard)} />
+      <Route path={"/connect"} component={withLayout(Connect)} />
+      <Route path={"/autonomy"} component={withLayout(TradingAutonomy)} />
+      <Route path={"/positions"} component={withLayout(Positions)} />
+      <Route path={"/trades"} component={withLayout(Trades)} />
+      <Route path={"/signals"} component={withLayout(Signals)} />
+      <Route path={"/cluster-monitor"} component={withLayout(ClusterMonitor)} />
+      <Route path={"/strategies"} component={withLayout(Strategies)} />
+      <Route path={"/risk-controls"} component={withLayout(RiskControls)} />
+      <Route path={"/audit"} component={withLayout(AuditLog)} />
+      <Route path={"/training"} component={withLayout(Training)} />
+      <Route path={"/performance"} component={withLayout(Performance)} />
+      <Route path={"/sentiment"} component={withLayout(SentimentAnalysis)} />
+      <Route path={"/portfolio"} component={withLayout(PortfolioOptimization)} />
+      <Route path={"/backtest"} component={withLayout(Backtesting)} />
+      <Route path={"/analytics"} component={withLayout(Analytics)} />
+      <Route path={"/funding"} component={withLayout(Funding)} />
+      <Route path={"/chat"} component={withLayout(Chat)} />
       <Route path={"/404"} component={NotFound} />
       <Route component={NotFound} />
     </Switch>

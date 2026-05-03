@@ -3,6 +3,8 @@
  * Integrates news, market action, and external topic attention.
  */
 
+import { logger } from "./logger";
+
 export interface SentimentData {
   marketId: string;
   sentiment: number;
@@ -366,7 +368,7 @@ export async function fetchGdeltTopicSignal(topic: string): Promise<ExternalTopi
       queriedAt: new Date(),
     };
   } catch (error) {
-    console.error("[Sentiment] Wikimedia topic fetch failed:", error);
+    logger.error({ err: error }, "[Sentiment] Wikimedia topic fetch failed");
     return null;
   }
 }
@@ -433,7 +435,7 @@ export async function fetchLiveNewsSummary(topic: string): Promise<LiveNewsSumma
       fetchedAt: new Date(),
     };
   } catch (error) {
-    console.error("[Sentiment] GNews fetch failed:", error);
+    logger.error({ err: error }, "[Sentiment] GNews fetch failed");
     return null;
   }
 }
