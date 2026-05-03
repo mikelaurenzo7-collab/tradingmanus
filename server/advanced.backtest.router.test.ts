@@ -24,6 +24,7 @@ function createProtectedContext(): TrpcContext {
     res: {
       clearCookie: vi.fn(),
     } as unknown as TrpcContext["res"],
+    paperTradeMode: false,
   };
 }
 

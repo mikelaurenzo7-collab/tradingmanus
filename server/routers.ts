@@ -48,6 +48,14 @@ import {
   fetchKalshiAccountEquity,
 } from "./_core/kalshiAuth";
 import { getPerformanceOverview } from "./_core/kalshiLearning";
+import {
+  validateRiskParameters,
+  estimateImpactOnRecentRuns,
+  applyRiskParameters,
+  getRiskParameterHistory,
+  DEFAULT_RISK_PARAMETERS,
+  type RiskParameters,
+} from "./_core/riskTuningHelper";
 import * as kalshiCredDb from "./db.kalshi-credentials";
 import * as polymarketCredDb from "./db.polymarket-credentials";
 import * as tradingPreferencesDb from "./db.trading-preferences";
@@ -748,13 +756,13 @@ export const appRouter = router({
           if (result.success) {
             await db.logAuditEvent(
               "kalshi_order_placed",
-              JSON.stringify({ ...input, orderExposure, maxLossOnTrade }),
+              JSON.stringify({ ...input, orderExposure, maxLossOnTrade, simulated: ctx.paperTradeMode }),
               ctx.user!.openId
             );
           } else {
             await db.logAuditEvent(
               "kalshi_order_blocked_or_failed",
-              JSON.stringify({ ...input, orderExposure, maxLossOnTrade, reason: result.error ?? "unknown" }),
+              JSON.stringify({ ...input, orderExposure, maxLossOnTrade, reason: result.error ?? "unknown", simulated: ctx.paperTradeMode }),
               ctx.user!.openId
             );
           }
@@ -897,6 +905,25 @@ export const appRouter = router({
           logger.error({ err: error }, "[Kalshi] Initialize capital error");
           return { success: false, error: String(error) };
         }
+      }),
+
+    withdrawCapital: protectedProcedure
+      .input(z.object({ amount: z.number().min(0.01) }))
+      .mutation(async ({ input, ctx }) => {
+        // Block all withdrawals during paper trading mode
+        if (ctx.paperTradeMode) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Cannot withdraw during paper trading mode. Switch to real mode first.",
+          });
+        }
+
+        // Future implementation: actual withdrawal logic would go here
+        // For now, this is a placeholder that only enforces paper mode blocking
+        throw new TRPCError({
+          code: "NOT_IMPLEMENTED",
+          message: "Fund withdrawals are not yet implemented.",
+        });
       }),
 
     // Signals
@@ -1553,6 +1580,145 @@ export const appRouter = router({
         return { success: false, error: String(error) };
       }
     }),
+
+    // --- Risk parameter tuning ---
+    getRiskParameters: protectedProcedure.query(async ({ ctx }) => {
+      try {
+        const userId = getRequiredUserId(ctx);
+        const history = await getRiskParameterHistory(userId, 1);
+        const currentParams = history.length > 0 ? history[0].params : DEFAULT_RISK_PARAMETERS;
+        return {
+          current: currentParams,
+          defaults: DEFAULT_RISK_PARAMETERS,
+        };
+      } catch (error) {
+        logger.error({ err: error }, "[Kalshi] Get risk parameters error");
+        return {
+          current: DEFAULT_RISK_PARAMETERS,
+          defaults: DEFAULT_RISK_PARAMETERS,
+        };
+      }
+    }),
+
+    validateRiskParameters: protectedProcedure
+      .input(
+        z.object({
+          maxPositionSizePercent: z.number().optional(),
+          maxDailyLossPercent: z.number().optional(),
+          maxOpenPositions: z.number().int().optional(),
+          minCapitalReservePercent: z.number().optional(),
+        })
+      )
+      .mutation(async ({ ctx, input }) => {
+        try {
+          const userId = getRequiredUserId(ctx);
+
+          // Validate parameters
+          const validation = await validateRiskParameters(input);
+
+          // Estimate impact on recent runs
+          const impactEstimate = await estimateImpactOnRecentRuns(
+            userId,
+            {
+              maxPositionSizePercent: input.maxPositionSizePercent ?? DEFAULT_RISK_PARAMETERS.maxPositionSizePercent,
+              maxDailyLossPercent: input.maxDailyLossPercent ?? DEFAULT_RISK_PARAMETERS.maxDailyLossPercent,
+              maxOpenPositions: input.maxOpenPositions ?? DEFAULT_RISK_PARAMETERS.maxOpenPositions,
+              minCapitalReservePercent: input.minCapitalReservePercent ?? DEFAULT_RISK_PARAMETERS.minCapitalReservePercent,
+            }
+          );
+
+          return {
+            valid: validation.valid,
+            warnings: validation.warnings,
+            errors: validation.errors,
+            impact: impactEstimate,
+          };
+        } catch (error) {
+          logger.error({ err: error }, "[Kalshi] Validate risk parameters error");
+          return {
+            valid: false,
+            warnings: [],
+            errors: ["Failed to validate parameters"],
+            impact: {
+              wouldHaveBlocked: 0,
+              wouldHaveExecuted: 0,
+              accountAtRisk: 0,
+              recommendation: "Validation failed",
+            },
+          };
+        }
+      }),
+
+    applyRiskParameters: protectedProcedure
+      .input(
+        z.object({
+          maxPositionSizePercent: z.number(),
+          maxDailyLossPercent: z.number(),
+          maxOpenPositions: z.number().int(),
+          minCapitalReservePercent: z.number(),
+          platform: z.enum(["kalshi", "polymarket"]),
+        })
+      )
+      .mutation(async ({ ctx, input }) => {
+        try {
+          const userId = getRequiredUserId(ctx);
+
+          const params: RiskParameters = {
+            maxPositionSizePercent: input.maxPositionSizePercent,
+            maxDailyLossPercent: input.maxDailyLossPercent,
+            maxOpenPositions: input.maxOpenPositions,
+            minCapitalReservePercent: input.minCapitalReservePercent,
+          };
+
+          // Validate first
+          const validation = await validateRiskParameters(params);
+          if (!validation.valid) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: `Invalid parameters: ${validation.errors.join(", ")}`,
+            });
+          }
+
+          // Apply the parameters
+          await applyRiskParameters(
+            userId,
+            input.platform,
+            params,
+            ctx.user!.openId
+          );
+
+          return {
+            success: true,
+            params,
+            message: `${input.platform} risk parameters updated`,
+          };
+        } catch (error) {
+          if (error instanceof TRPCError) throw error;
+          logger.error({ err: error }, "[Kalshi] Apply risk parameters error");
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Unable to apply risk parameters",
+            cause: error,
+          });
+        }
+      }),
+
+    getRiskTuningHistory: protectedProcedure
+      .input(
+        z.object({
+          limit: z.number().int().min(1).max(50).optional().default(20),
+        })
+      )
+      .query(async ({ ctx, input }) => {
+        try {
+          const userId = getRequiredUserId(ctx);
+          const history = await getRiskParameterHistory(userId, input.limit);
+          return { history, count: history.length };
+        } catch (error) {
+          logger.error({ err: error }, "[Kalshi] Get risk tuning history error");
+          return { history: [], count: 0 };
+        }
+      }),
   }),
 
   // Beta access management

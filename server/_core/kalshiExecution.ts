@@ -14,6 +14,8 @@ import { assertPositiveIntegerUserId } from "./userScope";
 import { logger } from "./logger";
 import { withUserLock } from "./userMutex";
 import { normalizePrivateKey } from "./keyUtils";
+import { ENV } from "./env";
+import { simulateKalshiOrderFill, simulateKalshiOrderCancellation, simulateKalshiPositionClose } from "./paperTrading";
 
 export interface KalshiOrder {
   orderId: string;
@@ -178,6 +180,7 @@ function toCents(price: number): number {
 /**
  * Place an order on Kalshi
  * limitPrice must be in decimal dollar form (0.01–0.99); it is converted to cents internally.
+ * If PAPER_TRADE_MODE is enabled, simulates an immediate fill at current market price.
  */
 export async function placeKalshiOrder(
   userId: number,
@@ -195,6 +198,11 @@ export async function placeKalshiOrder(
   exchangeRequest?: Record<string, unknown>;
   exchangeResponse?: Record<string, unknown>;
 }> {
+  // Route to paper trading simulator if enabled
+  if (ENV.paperTradeMode) {
+    return simulateKalshiOrderFill(userId, marketId, side, quantity, limitPrice);
+  }
+
   try {
     const risk = calculateKalshiBuyOrderRisk({ quantity, limitPrice });
     const priceCents = toCents(risk.limitPrice);
@@ -405,6 +413,8 @@ export async function placeKalshiOrder(
  * on any failure so that every cancellation outcome is captured in the audit
  * trail regardless of the call site.
  *
+ * In paper mode, cancels from the local ledger only (no exchange call).
+ *
  * @param triggeredByOpenId  The openId of the acting user.  Falls back to
  *   String(userId) when omitted so the audit assertion is always satisfied.
  */
@@ -423,6 +433,35 @@ export async function cancelKalshiOrder(
     // logAuditEvent's non-empty string assertion is always satisfied.
     const auditOpenId = triggeredByOpenId ?? String(scopedUserId);
     try {
+      // In paper mode, cancel from local ledger only
+      if (ENV.paperTradeMode) {
+        const result = await simulateKalshiOrderCancellation(userId, orderId);
+        if (!result.success) {
+          void logAuditEvent(
+            "kalshi_order_cancel_failed",
+            JSON.stringify({
+              orderId,
+              error: result.error,
+              simulated: true,
+            }),
+            auditOpenId,
+          ).catch((auditErr) =>
+            logger.error({ err: auditErr, orderId }, "[Kalshi] Failed to write simulated order_cancel_failed audit event"),
+          );
+          return { success: false, error: result.error };
+        }
+
+        void logAuditEvent(
+          "kalshi_order_cancelled",
+          JSON.stringify({ orderId, simulated: true }),
+          auditOpenId,
+        ).catch((auditErr) =>
+          logger.error({ err: auditErr, orderId }, "[Kalshi] Failed to write simulated order_cancelled audit event"),
+        );
+
+        return { success: true };
+      }
+
       const result = await signedKalshiRequest<unknown>(
         scopedUserId,
         "DELETE",
@@ -639,6 +678,8 @@ export async function getKalshiPositions(userId: number): Promise<any[]> {
  * on any failure so that every close attempt is captured in the audit trail
  * regardless of the call site.
  *
+ * In paper mode, simulates an immediate fill at current market price.
+ *
  * @param triggeredByOpenId  The openId of the acting user.  Falls back to
  *   String(userId) when omitted so the audit assertion is always satisfied.
  */
@@ -692,6 +733,63 @@ export async function closeKalshiPosition(
       const side = position.side as "yes" | "no";
 
       let orderId: string | undefined;
+
+      // In paper mode, simulate the close without credentials
+      if (ENV.paperTradeMode) {
+        const closeResult = await simulateKalshiPositionClose(userId, marketId, side, quantity, markPrice);
+        if (!closeResult.success) {
+          void logAuditEvent(
+            "kalshi_position_close_failed",
+            JSON.stringify({
+              positionId,
+              marketId,
+              side,
+              quantity,
+              markPrice,
+              error: closeResult.error,
+              simulated: true,
+            }),
+            auditOpenId,
+          ).catch((auditErr) =>
+            logger.error({ err: auditErr, positionId }, "[Kalshi] Failed to write simulated position_close_failed audit event"),
+          );
+          return { success: false, error: closeResult.error };
+        }
+
+        // Update position status to closing in DB
+        await db
+          .update(kalshiPositions)
+          .set({
+            currentPrice: markPrice,
+            positionStatus: "closing",
+          })
+          .where(
+            and(
+              eq(kalshiPositions.id, positionId),
+              eq(kalshiPositions.userId, scopedUserId),
+            )
+          );
+
+        orderId = closeResult.orderId;
+
+        void logAuditEvent(
+          "kalshi_position_closed",
+          JSON.stringify({
+            positionId,
+            marketId,
+            side,
+            quantity,
+            markPrice,
+            orderId,
+            simulated: true,
+          }),
+          auditOpenId,
+        ).catch((auditErr) =>
+          logger.error({ err: auditErr, positionId }, "[Kalshi] Failed to write simulated position_closed audit event"),
+        );
+
+        return { success: true, mode: "local", orderId };
+      }
 
       const credentials = await resolveCredentials(scopedUserId, privateKey);
       if (!credentials) {
