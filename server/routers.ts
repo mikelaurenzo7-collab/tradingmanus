@@ -71,6 +71,10 @@ import {
 import { trainingRouter } from "./training.router";
 import { advancedRouter } from "./advanced.router";
 import { chatRouter } from "./chat.router";
+import { getEffectiveMode } from "./_core/tradingMode";
+import { alertKillSwitch, alertModeChange } from "./_core/alerting";
+import { kalshiPositions } from "../drizzle/schema";
+import { eq, and } from "drizzle-orm";
 import { calculateKalshiBuyOrderRisk, MAX_KALSHI_ORDER_CONTRACTS } from "./_core/kalshiRisk";
 import { withUserLock } from "./_core/userMutex";
 import {
@@ -1548,6 +1552,87 @@ export const appRouter = router({
         return { success: false, error: String(error) };
       }
     }),
+
+    // SP-1 Pre-Flight Safety Net procedures
+    getTradingStatus: protectedProcedure.query(async ({ ctx }) => {
+      const userId = getRequiredUserId(ctx);
+      const [kalshi, polymarket] = await Promise.all([
+        getEffectiveMode(userId, "kalshi"),
+        getEffectiveMode(userId, "polymarket"),
+      ]);
+      const prefs = await tradingPreferencesDb.getTradingPreferences(userId);
+      return {
+        kalshi: { ...kalshi, liveStartedAt: prefs.kalshiLiveStartedAt },
+        polymarket: { ...polymarket, liveStartedAt: prefs.polymarketLiveStartedAt },
+        rampWindowHours: prefs.rampWindowHours,
+        rampSizeMultiplier: prefs.rampSizeMultiplier,
+      };
+    }),
+
+    setTradingMode: protectedProcedure
+      .input(z.object({
+        platform: z.enum(["kalshi", "polymarket"]),
+        mode: z.enum(["shadow", "paper", "live"]),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const userId = getRequiredUserId(ctx);
+        const prefs = await tradingPreferencesDb.getTradingPreferences(userId);
+        const oldMode = input.platform === "kalshi" ? prefs.kalshiMode : prefs.polymarketMode;
+        const update = input.platform === "kalshi"
+          ? { kalshiMode: input.mode as "shadow" | "paper" | "live", kalshiLiveStartedAt: input.mode === "live" ? new Date() : null }
+          : { polymarketMode: input.mode as "shadow" | "paper" | "live", polymarketLiveStartedAt: input.mode === "live" ? new Date() : null };
+        await tradingPreferencesDb.saveTradingPreferences(userId, update);
+        void alertModeChange(userId, input.platform, { oldMode: oldMode as string, newMode: input.mode, actor: ctx.user!.openId });
+        void db.logAuditEvent("mode_changed", JSON.stringify({ platform: input.platform, oldMode, newMode: input.mode }), ctx.user!.openId);
+        return { ok: true };
+      }),
+
+    pauseTrading: protectedProcedure
+      .input(z.object({ platform: z.enum(["kalshi", "polymarket"]) }))
+      .mutation(async ({ ctx, input }) => {
+        const userId = getRequiredUserId(ctx);
+        const update = input.platform === "kalshi" ? { kalshiPaused: 1 as const } : { polymarketPaused: 1 as const };
+        await tradingPreferencesDb.saveTradingPreferences(userId, update);
+        void alertKillSwitch(userId, input.platform, { reason: "manual pause via UI", source: "manual" });
+        void db.logAuditEvent("kill_switch_activated", JSON.stringify({ platform: input.platform, source: "manual" }), ctx.user!.openId);
+        return { ok: true };
+      }),
+
+    resumeTrading: protectedProcedure
+      .input(z.object({ platform: z.enum(["kalshi", "polymarket"]), reason: z.string().min(1) }))
+      .mutation(async ({ ctx, input }) => {
+        const userId = getRequiredUserId(ctx);
+        const update = input.platform === "kalshi" ? { kalshiPaused: 0 as const } : { polymarketPaused: 0 as const };
+        await tradingPreferencesDb.saveTradingPreferences(userId, update);
+        void db.logAuditEvent("kill_switch_deactivated", JSON.stringify({ platform: input.platform, reason: input.reason }), ctx.user!.openId);
+        return { ok: true };
+      }),
+
+    pauseAll: protectedProcedure.mutation(async ({ ctx }) => {
+      const userId = getRequiredUserId(ctx);
+      await tradingPreferencesDb.saveTradingPreferences(userId, { kalshiPaused: 1, polymarketPaused: 1 });
+      void alertKillSwitch(userId, "all", { reason: "PAUSE ALL via UI", source: "manual" });
+      void db.logAuditEvent("kill_switch_activated", JSON.stringify({ platform: "all", source: "manual" }), ctx.user!.openId);
+      return { ok: true };
+    }),
+
+    settlePaperPosition: protectedProcedure
+      .input(z.object({ positionId: z.number().int().positive(), settlePrice: z.number().min(0).max(1) }))
+      .mutation(async ({ ctx, input }) => {
+        const userId = getRequiredUserId(ctx);
+        const positions = await db.getOpenKalshiPositions(userId);
+        const position = positions.find((p: { id: number }) => p.id === input.positionId);
+        if (!position) throw new TRPCError({ code: "NOT_FOUND", message: "Paper position not found" });
+        const realizedPnl = (input.settlePrice - Number(position.entryPrice)) * Number(position.quantity) * (position.side === "yes" ? 1 : -1);
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database not available" });
+        await database
+          .update(kalshiPositions)
+          .set({ positionStatus: "closed", closedAt: new Date(), realizedPnl })
+          .where(and(eq(kalshiPositions.id, input.positionId), eq(kalshiPositions.userId, userId)));
+        void db.logAuditEvent("paper_position_settled", JSON.stringify({ positionId: input.positionId, settlePrice: input.settlePrice, realizedPnl }), ctx.user!.openId);
+        return { ok: true, realizedPnl };
+      }),
   }),
 
   // Beta access management
