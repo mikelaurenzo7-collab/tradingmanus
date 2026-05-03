@@ -312,7 +312,7 @@ placeKalshiOrder()                  ← Kalshi REST (wrapped in withUserLock)
 - `Dockerfile` pins Node 20 + pnpm 10.4.1, runs `pnpm install --frozen-lockfile && pnpm build && pnpm build:server`, starts `pnpm start`
 - `pnpm.onlyBuiltDependencies` in `package.json` allows `@tailwindcss/oxide` and `esbuild` postinstall scripts (Tailwind v4 native binary — **required** for the Vite build)
 - Health check: `GET /api/health`
-- Schedulers run **in-process**: autonomy every 15 min, order sync every 5 min
+- Schedulers run **in-process**: autonomy every 15 min, order sync every 30 sec
 - `CRON_SECRET` is not needed on Railway
 
 ### Vercel (secondary)

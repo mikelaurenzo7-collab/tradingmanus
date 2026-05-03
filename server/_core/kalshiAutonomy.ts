@@ -28,6 +28,7 @@ import {
   alertEquityDrop,
   alertExchangeRejection,
   alertAiReviewerFailure,
+  alertDrawdownApproaching,
 } from "./alerting";
 import { logger } from "./logger";
 
@@ -863,6 +864,20 @@ export async function runScheduledAutonomousTrading(
     kalshiCredDb.updateKalshiAccountEquity(userId, equityResult.equity),
     db.syncKalshiCapitalWithLiveEquity(equityResult.equity, userId),
   ]);
+
+  // Alert when cumulative drawdown from the starting capital approaches or
+  // exceeds the daily-loss limit.  We read the persisted capital record
+  // immediately after syncing so we have the latest startingBalance.
+  const capitalRecord = await db.getKalshiCapital(userId);
+  if (capitalRecord) {
+    const startingBalance = Number(capitalRecord.startingBalance ?? 0);
+    void alertDrawdownApproaching(
+      userId,
+      startingBalance,
+      equityResult.equity,
+      BASE_RISK_LIMITS.maxLossPerDay
+    );
+  }
 
   const allInstructions = await getUserTrainingInstructions(userId);
   const activeInstructions = allInstructions.filter(isInstructionActiveNow);
