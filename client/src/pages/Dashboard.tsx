@@ -218,7 +218,7 @@ export default function Dashboard() {
   // Show connection required if not connected
   if (!isConnected) {
     return (
-      <div className="space-y-8 p-6">
+      <div className="space-y-8">
         <div>
           <h1 className="text-5xl font-bold gradient-text mb-2">
             Connect Your Kalshi Account
@@ -323,7 +323,7 @@ export default function Dashboard() {
   // Show funding page if connected but not funded
   if (!isFunded) {
     return (
-      <div className="space-y-8 p-6">
+      <div className="space-y-8">
         <div>
           <h1 className="text-5xl font-bold gradient-text mb-2">
             Account Funding Required
@@ -373,7 +373,7 @@ export default function Dashboard() {
 
   // Funded account - show full dashboard
   return (
-    <div className="space-y-6 p-6">
+    <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>

@@ -63,7 +63,7 @@ export default function RiskControls() {
 
   if (isLoading) {
     return (
-      <div className="p-6">
+      <div>
         <h1 className="text-2xl font-bold mb-1">Risk Controls</h1>
         <p className="text-muted-foreground text-sm">Loading…</p>
       </div>
@@ -72,7 +72,7 @@ export default function RiskControls() {
 
   if (isError || !riskLimits.data || !capital.data) {
     return (
-      <div className="p-6">
+      <div>
         <h1 className="text-2xl font-bold mb-1">Risk Controls</h1>
         <p className="text-sm text-rose-400 flex items-center gap-2">
           <AlertCircle className="w-4 h-4" />
@@ -104,7 +104,7 @@ export default function RiskControls() {
   const PostureIcon = pc.icon;
 
   return (
-    <div className="p-6 space-y-6 max-w-4xl">
+    <div className="space-y-6 max-w-5xl mx-auto">
       {/* Header */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>

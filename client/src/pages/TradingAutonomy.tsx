@@ -149,7 +149,7 @@ export default function TradingAutonomy() {
   }
 
   return (
-    <div className="p-6 space-y-8 max-w-4xl">
+    <div className="space-y-8 max-w-4xl mx-auto">
       {/* Page title + status pill */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>

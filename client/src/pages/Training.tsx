@@ -85,7 +85,7 @@ export default function Training() {
   }
 
   return (
-    <div className="space-y-8 p-6">
+    <div className="space-y-8 max-w-5xl mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
