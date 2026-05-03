@@ -231,16 +231,16 @@ function stakesForSignals(signals: PolymarketSignal[]): StakesContext {
     if (notional > topNotional) topNotional = notional;
     const implied = Number(signal.impliedProbabilityYes);
     if (Number.isFinite(implied)) {
-      // For YES side bets the implied tail is `implied`; for NO it's
-      // `1 - implied`.  Either way the most extreme tail across the batch
-      // promotes the whole batch to deep review.
-      const candidate = signal.side === "no" ? 1 - implied : implied;
+      // Tail-probability detection is symmetric — implied=0.05 (YES long-shot)
+      // and implied=0.95 (NO long-shot) are both tails of the same market.
+      // We track whichever value is closer to 0 or 1, regardless of which
+      // side this batch is betting; isHighStakes treats both extremes the same.
       if (extremeImplied === undefined) {
-        extremeImplied = candidate;
+        extremeImplied = implied;
       } else {
         const currentDistance = Math.min(extremeImplied, 1 - extremeImplied);
-        const candidateDistance = Math.min(candidate, 1 - candidate);
-        if (candidateDistance < currentDistance) extremeImplied = candidate;
+        const candidateDistance = Math.min(implied, 1 - implied);
+        if (candidateDistance < currentDistance) extremeImplied = implied;
       }
     }
   }
