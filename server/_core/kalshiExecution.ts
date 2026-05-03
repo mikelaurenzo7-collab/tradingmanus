@@ -5,13 +5,15 @@
 
 import crypto from "crypto";
 import { URL } from "url";
-import { db } from "../db";
+import { db, logAuditEvent } from "../db";
 import * as kalshiCredDb from "../db.kalshi-credentials";
 import { kalshiOrders, kalshiFills, kalshiPositions } from "../../drizzle/schema";
 import { and, eq, inArray } from "drizzle-orm";
 import { calculateKalshiBuyOrderRisk, normalizeLimitPrice, normalizeOrderQuantity } from "./kalshiRisk";
 import { assertPositiveIntegerUserId } from "./userScope";
 import { getEffectiveMode } from "./tradingMode";
+import { applyRampWindowCap } from "./rampWindow";
+import { getTradingPreferences } from "../db.trading-preferences";
 
 export interface KalshiOrder {
   orderId: string;
@@ -209,6 +211,7 @@ export async function placeKalshiOrder(
   exchangeResponse?: Record<string, unknown>;
   shadowed?: boolean;
   blocked?: boolean;
+  paperFilled?: boolean;
 }> {
   try {
     const effective = await getEffectiveMode(userId, "kalshi");
@@ -218,13 +221,73 @@ export async function placeKalshiOrder(
     }
 
     if (effective.mode === "shadow") {
-      return { success: false, shadowed: true, error: `shadow mode: order not placed (${effective.reason})` };
+      const scopedUserIdShadow = getScopedUserId(userId);
+      const clientOrderId = `shadow-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      await db.insert(kalshiOrders).values({
+        userId: scopedUserIdShadow,
+        orderId: clientOrderId,
+        marketId,
+        action: "buy",
+        side,
+        quantity,
+        limitPrice,
+        status: "pending",
+        filledQuantity: 0,
+        averagePrice: 0,
+        executionMode: "shadow",
+      });
+      void logAuditEvent(
+        "shadow_order_logged",
+        JSON.stringify({ marketId, side, quantity, limitPrice, clientOrderId, reason: effective.reason }),
+        `user:${userId}`,
+      );
+      return { success: false, shadowed: true, orderId: clientOrderId, error: `shadow mode: order logged but not placed (${effective.reason})` };
     }
 
-    // For now, paper mode falls through to live behavior — paper-tagged DB writes
-    // can be added in a follow-up. The reviewer + risk pipeline still runs.
+    if (effective.mode === "paper") {
+      const scopedUserIdPaper = getScopedUserId(userId);
+      const clientOrderId = `paper-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      await db.insert(kalshiOrders).values({
+        userId: scopedUserIdPaper,
+        orderId: clientOrderId,
+        marketId,
+        action: "buy",
+        side,
+        quantity,
+        limitPrice,
+        status: "filled",
+        filledQuantity: quantity,
+        averagePrice: limitPrice,
+        executionMode: "paper",
+      });
+      void logAuditEvent(
+        "paper_order_filled",
+        JSON.stringify({ marketId, side, quantity, fillPrice: limitPrice, clientOrderId }),
+        `user:${userId}`,
+      );
+      return { success: true, paperFilled: true, orderId: clientOrderId };
+    }
 
     const risk = calculateKalshiBuyOrderRisk({ quantity, limitPrice });
+
+    // Apply ramp-window size cap for the first N hours after going live.
+    const prefs = await getTradingPreferences(userId);
+    const ramp = applyRampWindowCap({
+      intendedSize: risk.quantity,
+      intendedMaxDayLoss: 999,
+      liveStartedAt: prefs.kalshiLiveStartedAt ?? null,
+      rampWindowHours: prefs.rampWindowHours,
+      rampSizeMultiplier: prefs.rampSizeMultiplier,
+    });
+    const effectiveQuantity = ramp.rampActive && ramp.cappedSize < risk.quantity ? ramp.cappedSize : risk.quantity;
+    if (effectiveQuantity !== risk.quantity) {
+      void logAuditEvent(
+        "ramp_window_clamp",
+        JSON.stringify({ originalSize: risk.quantity, cappedSize: effectiveQuantity, hoursRemaining: ramp.hoursRemaining, marketId }),
+        `user:${userId}`,
+      );
+    }
+
     const priceCents = toCents(risk.limitPrice);
     const scopedUserId = getScopedUserId(userId);
     const clientOrderId = `nexus-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -234,7 +297,7 @@ export async function placeKalshiOrder(
       client_order_id: clientOrderId,
       action: "buy",
       side,
-      count: risk.quantity,
+      count: effectiveQuantity,
       yes_price: side === "yes" ? priceCents : undefined,
       no_price: side === "no" ? priceCents : undefined,
       time_in_force: "good_till_cancelled",
