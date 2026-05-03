@@ -1,8 +1,168 @@
 import { logger } from "./logger";
-import { getDb } from "../db";
+import { getDb, logAuditEvent } from "../db";
 import { distributedLocks } from "../../drizzle/schema";
 import { and, eq, lt } from "drizzle-orm";
 import { nanoid } from "nanoid";
+import { randomUUID } from "node:crypto";
+
+// ---------------------------------------------------------------------------
+// acquireTypedLock — heartbeat-based liveness lock keyed by (userId, lockType)
+// ---------------------------------------------------------------------------
+
+export interface AcquireTypedLockOptions {
+  userId: number;
+  lockType: string;
+  ttlSeconds: number;
+}
+
+export interface TypedLockHandle {
+  holderId: string;
+  release: () => Promise<void>;
+  heartbeat: () => Promise<void>;
+}
+
+const STALE_HEARTBEAT_MS = 60_000; // 60 seconds
+
+/**
+ * Acquire a distributed lock identified by (userId, lockType).
+ *
+ * Returns a TypedLockHandle on success, or null if the lock is already held
+ * by an active (non-stale) holder.
+ *
+ * Stale-lock detection:
+ *  - If the heartbeat of the existing row is older than STALE_HEARTBEAT_MS, the
+ *    row is considered abandoned and is force-deleted before re-attempting the
+ *    insert.
+ *  - If the row's expiresAt has passed, it is also force-released regardless of
+ *    the heartbeat freshness.
+ */
+export async function acquireTypedLock(
+  opts: AcquireTypedLockOptions,
+): Promise<TypedLockHandle | null> {
+  const { userId, lockType, ttlSeconds } = opts;
+  const holderId = randomUUID();
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + ttlSeconds * 1_000);
+  const lockKey = `${lockType}:user:${userId}`;
+
+  const database = await getDb();
+  if (!database) {
+    logger.error({ userId, lockType }, "Database not available for acquireTypedLock");
+    return null;
+  }
+
+  // --- First attempt: try a direct INSERT ------------------------------------
+  try {
+    await database.insert(distributedLocks).values({
+      lockKey,
+      userId,
+      lockType,
+      acquiredBy: holderId,
+      acquiredAt: now,
+      heartbeatAt: now,
+      expiresAt,
+    });
+    return makeTypedHandle(userId, lockType, holderId);
+  } catch {
+    // Conflict — row already exists; fall through to stale-lock check.
+  }
+
+  // --- Check whether the existing lock is stale or expired ------------------
+  const existing = await database
+    .select()
+    .from(distributedLocks)
+    .where(
+      and(
+        eq(distributedLocks.userId, userId),
+        eq(distributedLocks.lockType, lockType),
+      ),
+    );
+
+  if (!existing || existing.length === 0) {
+    // Row disappeared between the failed insert and the select — another
+    // caller may have just released it.  Return null conservatively.
+    return null;
+  }
+
+  const row = existing[0];
+  const heartbeatAge = now.getTime() - new Date(row.heartbeatAt).getTime();
+  const isExpired = new Date(row.expiresAt) < now;
+
+  if (heartbeatAge <= STALE_HEARTBEAT_MS && !isExpired) {
+    // Lock is actively held — do not steal it.
+    return null;
+  }
+
+  // --- Force-release the stale / expired row --------------------------------
+  await database.delete(distributedLocks).where(
+    and(
+      eq(distributedLocks.userId, userId),
+      eq(distributedLocks.lockType, lockType),
+    ),
+  );
+
+  await logAuditEvent(
+    "lock_expired_force_released",
+    JSON.stringify({
+      userId,
+      lockType,
+      ageSeconds: Math.round(heartbeatAge / 1_000),
+      wasExpired: isExpired,
+    }),
+    "system:lock",
+  );
+
+  // --- Second attempt: re-insert after stale cleanup ------------------------
+  try {
+    await database.insert(distributedLocks).values({
+      lockKey,
+      userId,
+      lockType,
+      acquiredBy: holderId,
+      acquiredAt: now,
+      heartbeatAt: now,
+      expiresAt,
+    });
+    return makeTypedHandle(userId, lockType, holderId);
+  } catch {
+    return null;
+  }
+}
+
+function makeTypedHandle(
+  userId: number,
+  lockType: string,
+  holderId: string,
+): TypedLockHandle {
+  return {
+    holderId,
+    release: async () => {
+      const database = await getDb();
+      if (!database) return;
+      await database.delete(distributedLocks).where(
+        and(
+          eq(distributedLocks.userId, userId),
+          eq(distributedLocks.lockType, lockType),
+          eq(distributedLocks.acquiredBy, holderId),
+        ),
+      );
+    },
+    heartbeat: async () => {
+      const database = await getDb();
+      if (!database) return;
+      await database
+        .update(distributedLocks)
+        .set({ heartbeatAt: new Date() })
+        .where(
+          and(
+            eq(distributedLocks.userId, userId),
+            eq(distributedLocks.lockType, lockType),
+            eq(distributedLocks.acquiredBy, holderId),
+          ),
+        );
+    },
+  };
+}
 
 export interface LockOptions {
   ttlMs?: number; // Time to live in milliseconds
