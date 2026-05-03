@@ -158,6 +158,8 @@
   [type="submit"]:not(:disabled),
   [type="reset"]:not(:disabled),
   a[href],
+  a,
+  [data-sidebar="menu-button"],
   select:not(:disabled),
   input[type="checkbox"]:not(:disabled),
   input[type="radio"]:not(:disabled) {
@@ -469,6 +471,10 @@
     animation: fadeIn 0.5s ease-out;
   }
 
+  .animate-fade-in {
+    animation: fadeIn 0.3s ease-out;
+  }
+
   /* Smooth scale animation for cards */
   @keyframes scaleIn {
     from { opacity: 0; transform: scale(0.95); }
@@ -509,5 +515,50 @@
 
   ::-webkit-scrollbar-thumb:hover {
     background: rgba(136, 100, 255, 0.5);
+  }
+
+  /* Sidebar specific styling improvements */
+  [data-sidebar="menu-button"] {
+    position: relative;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  [data-sidebar="menu-button"]:hover {
+    transform: translateX(2px);
+  }
+
+  [data-sidebar="menu-button"][data-active="true"] {
+    background: linear-gradient(135deg, rgba(136, 100, 255, 0.15), rgba(100, 200, 255, 0.1));
+    border-left: 3px solid oklch(0.88 0.35 280);
+    padding-left: calc(0.5rem - 3px);
+    font-weight: 600;
+  }
+
+  [data-sidebar="menu-button"][data-active="true"]::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: linear-gradient(180deg, oklch(0.88 0.35 280), oklch(0.82 0.36 200));
+    box-shadow: 0 0 8px oklch(0.88 0.35 280);
+  }
+
+  /* Better link styling */
+  a {
+    text-decoration: none;
+    transition: all 0.2s ease;
+  }
+
+  /* Ensure sidebar items are clickable */
+  [data-slot="sidebar-menu-button"] > a,
+  [data-slot="sidebar-menu-button"] a {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    height: 100%;
+    pointer-events: all;
+    user-select: none;
   }
 }

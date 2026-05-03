@@ -198,9 +198,12 @@ export default function DashboardLayout({
       }
     >
       <Sidebar>
-        <SidebarHeader className="border-b border-sidebar-border">
+        <SidebarHeader className="border-b border-sidebar-border bg-gradient-to-br from-violet-900/10 to-transparent">
           <div className="flex items-center gap-2 px-2 py-4">
-            <div className="text-2xl font-bold gradient-text">LAURENZO</div>
+            <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-500 shadow-md shadow-violet-500/30">
+              <Zap className="w-5 h-5 text-white" />
+            </div>
+            <div className="text-2xl font-bold gradient-text tracking-tight">LAURENZO</div>
           </div>
         </SidebarHeader>
         <SidebarContent>
@@ -214,7 +217,7 @@ export default function DashboardLayout({
                     return (
                       <SidebarMenuItem key={item.path}>
                         <SidebarMenuButton asChild isActive={isActive}>
-                          <Link href={item.path} className="flex items-center gap-2">
+                          <Link href={item.path} className="flex items-center gap-2 cursor-pointer">
                             <item.icon className="w-4 h-4" />
                             <span>{item.label}</span>
                           </Link>
@@ -227,25 +230,25 @@ export default function DashboardLayout({
             </SidebarGroup>
           ))}
         </SidebarContent>
-        <SidebarFooter className="border-t border-sidebar-border">
+        <SidebarFooter className="border-t border-sidebar-border bg-gradient-to-br from-transparent to-violet-900/10">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button className="flex items-center gap-2 w-full p-2 rounded-lg hover:bg-sidebar-accent/20 transition-colors">
-                <Avatar className="w-8 h-8">
-                  <AvatarFallback className="text-xs font-bold">
+              <button className="flex items-center gap-2 w-full p-3 rounded-lg hover:bg-sidebar-accent/30 transition-all duration-200 group">
+                <Avatar className="w-9 h-9 ring-2 ring-violet-400/30 group-hover:ring-violet-400/50 transition-all">
+                  <AvatarFallback className="text-xs font-bold bg-gradient-to-br from-violet-500 to-indigo-500 text-white">
                     {user?.name?.charAt(0).toUpperCase() || "U"}
                   </AvatarFallback>
                 </Avatar>
                 <div className="flex-1 text-left">
-                  <div className="text-sm font-semibold">{user?.name || "User"}</div>
-                  <div className="text-xs text-muted-foreground">{user?.email || "user@example.com"}</div>
+                  <div className="text-sm font-semibold text-foreground">{user?.name || "User"}</div>
+                  <div className="text-xs text-muted-foreground truncate max-w-[160px]">{user?.email || "user@example.com"}</div>
                 </div>
               </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
+            <DropdownMenuContent align="end" className="w-56">
               <DropdownMenuItem
                 onClick={() => logout()}
-                className="flex items-center gap-2 cursor-pointer"
+                className="flex items-center gap-2 cursor-pointer text-red-400 focus:text-red-300 focus:bg-red-500/10"
               >
                 <LogOut className="w-4 h-4" />
                 Sign out
@@ -255,12 +258,13 @@ export default function DashboardLayout({
         </SidebarFooter>
       </Sidebar>
       <SidebarInset>
-        <header className="flex items-center justify-between h-16 px-6 border-b border-border bg-background/50 backdrop-blur-sm">
+        <header className="flex items-center justify-between h-16 px-6 border-b border-border bg-background/80 backdrop-blur-md sticky top-0 z-10 shadow-sm">
           <div className="flex items-center gap-2">
             <SidebarTrigger />
           </div>
           <div className="flex items-center gap-3">
-            <div className={`hidden rounded-full border px-3 py-1 text-xs font-semibold sm:block ${liveTradingArmed ? "border-red-400/50 bg-red-500/10 text-red-200" : "border-emerald-400/30 bg-emerald-500/10 text-emerald-200"}`}>
+            <div className={`hidden rounded-full border px-3 py-1.5 text-xs font-semibold sm:flex items-center gap-1.5 transition-all ${liveTradingArmed ? "border-red-400/50 bg-red-500/10 text-red-200 shadow-sm shadow-red-500/20" : "border-emerald-400/30 bg-emerald-500/10 text-emerald-200"}`}>
+              <div className={`w-2 h-2 rounded-full ${liveTradingArmed ? "bg-red-400 animate-pulse" : "bg-emerald-400"}`} />
               {liveTradingArmed ? "Live trading armed" : "Live trading disarmed"}
             </div>
             {liveTradingArmed ? (
@@ -277,21 +281,23 @@ export default function DashboardLayout({
                   }
                 }}
                 title="Cancel live autonomy and submit close orders for open Kalshi positions."
+                className="gap-2 shadow-sm hover:shadow-md transition-all"
               >
                 {killSwitchMutation.isPending ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <AlertTriangle className="h-4 w-4" />
                 )}
-                Kill switch
+                <span className="hidden sm:inline">Kill switch</span>
               </Button>
             ) : null}
-            <div className="hidden text-sm text-muted-foreground md:block">
-              Laurenzo Trading — Kalshi &amp; Polymarket
+            <div className="hidden text-sm text-muted-foreground md:flex items-center gap-2">
+              <Activity className="w-4 h-4 text-violet-400" />
+              <span>Laurenzo Trading — Kalshi &amp; Polymarket</span>
             </div>
           </div>
         </header>
-        <main className="flex-1 overflow-auto">
+        <main className="flex-1 overflow-auto p-6 bg-gradient-to-br from-transparent via-transparent to-violet-900/5">
           {children}
         </main>
       </SidebarInset>
