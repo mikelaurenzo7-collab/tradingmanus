@@ -148,4 +148,40 @@ describe("selectDiverseMarkets — volume-sorted bucket selection", () => {
     const ids = selected.map((m) => m.id).sort();
     expect(ids).toEqual(["c1", "p1", "s1"]);
   });
+
+  it("fills remaining slots with overflow markets when a single category exceeds the per-category cap", () => {
+    // sports has 3 markets but perCategory=2, so s3 overflows.
+    // politics has exactly 2, no overflow.
+    // maxTotal=5 means the one overflow slot must be filled from sports.
+    const markets = [
+      makeMarket({ id: "s1", category: "sports",   yesVolume: 5000, noVolume: 5000 }),
+      makeMarket({ id: "s2", category: "sports",   yesVolume: 3000, noVolume: 3000 }),
+      makeMarket({ id: "s3", category: "sports",   yesVolume: 1000, noVolume: 1000 }),
+      makeMarket({ id: "p1", category: "politics", yesVolume: 4000, noVolume: 4000 }),
+      makeMarket({ id: "p2", category: "politics", yesVolume: 2000, noVolume: 2000 }),
+    ];
+
+    const selected = selectDiverseMarkets(markets, 5, 2);
+    const ids = selected.map((m) => m.id).sort();
+
+    expect(ids).toEqual(["p1", "p2", "s1", "s2", "s3"]);
+  });
+
+  it("interleaves overflow markets round-robin across multiple overflow queues", () => {
+    // perCategory=1, so both sports (s2) and politics (p2) overflow.
+    // maxTotal=4 → first pass picks [s1, p1]; second pass round-robins [s2, p2].
+    const markets = [
+      makeMarket({ id: "s1", category: "sports",   yesVolume: 5000, noVolume: 5000 }),
+      makeMarket({ id: "s2", category: "sports",   yesVolume: 2000, noVolume: 2000 }),
+      makeMarket({ id: "p1", category: "politics", yesVolume: 4000, noVolume: 4000 }),
+      makeMarket({ id: "p2", category: "politics", yesVolume: 1000, noVolume: 1000 }),
+    ];
+
+    const selected = selectDiverseMarkets(markets, 4, 1);
+    const ids = selected.map((m) => m.id).sort();
+
+    // All four markets should be included; round-robin prevents either category
+    // from monopolising the overflow slots.
+    expect(ids).toEqual(["p1", "p2", "s1", "s2"]);
+  });
 });
