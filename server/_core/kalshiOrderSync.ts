@@ -209,11 +209,10 @@ export async function syncLivePositions(userId: number): Promise<void> {
       const quantity = side === "yes" ? yesQty : noQty;
       if (quantity <= 0) continue;
 
-      // Average price from Kalshi comes as cents; normalize to decimal.
-      const rawPrice = Number(
-        pos.average_price ?? pos.yes_price ?? pos.no_price ?? 0,
-      );
-      const entryPrice = rawPrice > 1 ? rawPrice / 100 : rawPrice;
+      // Average price from Kalshi comes as cent-scale (0..100); convert via
+      // the canonical boundary helper so this file never does a bare /100.
+      const rawPrice = pos.average_price ?? pos.yes_price ?? pos.no_price ?? 0;
+      const entryPrice = centsToDollars(rawPrice) ?? 0;
       const currentPrice = entryPrice;
 
       const existing = await db

@@ -3,6 +3,7 @@ import { URL } from "url";
 import { getCredentialEncryptionSecret } from "./env";
 import { assertPositiveIntegerUserId } from "./userScope";
 import { logger } from "./logger";
+import { normalizePrivateKey } from "./keyUtils";
 
 const LEGACY_ALGORITHM = "aes-256-cbc";
 const CREDENTIAL_CIPHER_VERSION = "v2";
@@ -16,6 +17,15 @@ const KALSHI_ENVIRONMENTS = [
     baseUrl: "https://demo-api.kalshi.co/trade-api/v2",
   },
 ];
+
+/**
+ * Convert a Kalshi cent-scale value (e.g. balance 4200 = $42.00) to dollars.
+ * Mirrors the centsToDollars helper in kalshiMarketData.ts so this file
+ * never uses a bare /100 expression on raw API fields.
+ */
+function kalshiCentsToDollars(cents: number): number {
+  return cents / 100;
+}
 
 function getLegacyEncryptionKey() {
   return crypto
@@ -39,22 +49,6 @@ function getCredentialEncryptionKey(salt: Buffer, userId: number) {
 function getCredentialAad(userId: number) {
   const scopedUserId = assertPositiveIntegerUserId(userId, "credential AAD userId");
   return Buffer.from(`kalshi-credential:${scopedUserId}`, "utf8");
-}
-
-function normalizePrivateKey(privateKey: string) {
-  const trimmed = privateKey.trim();
-
-  if (trimmed.includes("BEGIN") && trimmed.includes("PRIVATE KEY")) {
-    return trimmed;
-  }
-
-  const normalizedBody = trimmed
-    .replace(/-----BEGIN PRIVATE KEY-----/g, "")
-    .replace(/-----END PRIVATE KEY-----/g, "")
-    .replace(/\s+/g, "");
-
-  const wrapped = normalizedBody.match(/.{1,64}/g)?.join("\n") ?? normalizedBody;
-  return `-----BEGIN PRIVATE KEY-----\n${wrapped}\n-----END PRIVATE KEY-----`;
 }
 
 function buildKalshiHeaders(
@@ -123,8 +117,10 @@ async function fetchKalshiBalance(
     throw new Error("Balance field missing from Kalshi response");
   }
 
+  // Raw Kalshi balance is cent-scale (e.g. 4200 = $42.00); convert via the
+  // named helper instead of a bare /100 to make the conversion intent explicit.
   return {
-    balance: balanceCents / 100,
+    balance: kalshiCentsToDollars(balanceCents),
     raw: payload,
   };
 }
