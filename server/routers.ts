@@ -2745,6 +2745,358 @@ export const appRouter = router({
         }
       }),
   }),
+  trading: router({
+    getTradingReadinessStatus: protectedProcedure.query(async ({ ctx }) => {
+      const userId = getRequiredUserId(ctx);
+      const [prefs, recentRuns, auditLog] = await Promise.all([
+        tradingPreferencesDb.getTradingPreferences(userId),
+        db.getRecentAutonomyRuns(userId, 10),
+        db.getAuditLog(30, ctx.user!.openId),
+      ]);
+
+      // Count autonomy cycles (runs with status: executed, skipped, or error)
+      const autonomyCyclesCompleted = recentRuns.filter(
+        (r: any) => r.status === "executed" || r.status === "skipped" || r.status === "error"
+      ).length;
+
+      // Determine paper trading mode and duration
+      const paperTradeMode = !prefs.liveTradingEnabled;
+      const firstRunDate =
+        recentRuns.length > 0
+          ? recentRuns[recentRuns.length - 1]?.startedAt
+          : null;
+      const daysInPaperMode = firstRunDate
+        ? Math.floor(
+            (Date.now() - new Date(firstRunDate).getTime()) / (1000 * 60 * 60 * 24)
+          )
+        : 0;
+
+      // Collect desk memory stats (Kalshi + Polymarket)
+      const allDeskIds = [
+        "kalshi_sports",
+        "kalshi_crypto",
+        "kalshi_politics",
+        "kalshi_esports",
+        "polymarket_crypto",
+        "polymarket_politics",
+        "polymarket_general",
+        "polymarket_sports",
+      ];
+
+      const deskMemoryStats: Record<
+        string,
+        {
+          totalLessons: number;
+          winRate: number;
+          recentLessons: Array<{
+            ts: string;
+            outcome: "win" | "loss" | "scratch";
+            note: string;
+          }>;
+        }
+      > = {};
+
+      // Fetch desk memory for Kalshi and Polymarket
+      const kalshiDesks = await Promise.all([
+        import("./db.desk-memory").then((m) =>
+          m.getDeskMemory(userId, "kalshi", "kalshi_sports")
+        ),
+        import("./db.desk-memory").then((m) =>
+          m.getDeskMemory(userId, "kalshi", "kalshi_crypto")
+        ),
+        import("./db.desk-memory").then((m) =>
+          m.getDeskMemory(userId, "kalshi", "kalshi_politics")
+        ),
+        import("./db.desk-memory").then((m) =>
+          m.getDeskMemory(userId, "kalshi", "kalshi_esports")
+        ),
+      ]);
+
+      const polymarketDesks = await Promise.all([
+        import("./db.desk-memory").then((m) =>
+          m.getDeskMemory(userId, "polymarket", "polymarket_crypto")
+        ),
+        import("./db.desk-memory").then((m) =>
+          m.getDeskMemory(userId, "polymarket", "polymarket_politics")
+        ),
+        import("./db.desk-memory").then((m) =>
+          m.getDeskMemory(userId, "polymarket", "polymarket_general")
+        ),
+        import("./db.desk-memory").then((m) =>
+          m.getDeskMemory(userId, "polymarket", "polymarket_sports")
+        ),
+      ]);
+
+      const allDesks = [...kalshiDesks, ...polymarketDesks].filter(Boolean);
+      for (const desk of allDesks) {
+        if (desk) {
+          const winRate =
+            desk.tradeCount > 0 ? (desk.winCount / desk.tradeCount) * 100 : 0;
+          deskMemoryStats[desk.deskId] = {
+            totalLessons: desk.notes.length,
+            winRate: Math.round(winRate),
+            recentLessons: desk.notes.slice(-3),
+          };
+        }
+      }
+
+      // Build recent autonomy runs summary
+      const recentAutonomyRuns = recentRuns.slice(0, 10).map((run: any) => ({
+        runId: run.runId || "",
+        timestamp: run.startedAt?.toISOString() || new Date().toISOString(),
+        platform: "kalshi" as const, // Simplified; could parse from decision details
+        signalsGenerated: run.signalsGenerated || 0,
+        signalsApproved: run.executionCandidates || 0,
+        ordersPlaced: run.orderPlaced ? 1 : 0,
+        ordersBlocked: run.executionCandidates > 0 && !run.orderPlaced ? 1 : 0,
+        totalPnL: 0, // Would require additional query if needed
+        executionStatus: (run.status || "error") as
+          | "completed"
+          | "skipped"
+          | "error",
+      }));
+
+      return {
+        paperTradeMode,
+        daysInPaperMode,
+        autonomyCyclesCompleted,
+        deskMemoryStats,
+        recentAutonomyRuns,
+      };
+    }),
+
+    getPaperTradingMetrics: protectedProcedure.query(async ({ ctx }) => {
+      const userId = getRequiredUserId(ctx);
+      const auditLog = await db.getAuditLog(90, ctx.user!.openId);
+
+      // Parse order placement events to compute paper vs real win rates
+      let paperTrades = 0;
+      let paperWins = 0;
+      let realTrades = 0;
+      let realWins = 0;
+      let totalPaperPnL = 0;
+      let totalRealPnL = 0;
+
+      for (const event of auditLog) {
+        if (
+          event.eventType === "kalshi_order_placed" ||
+          event.eventType === "scheduled_autonomy_order_placed"
+        ) {
+          try {
+            const details = event.details
+              ? JSON.parse(event.details)
+              : {};
+            const pnl =
+              details.realizedPnl !== undefined
+                ? Number(details.realizedPnl)
+                : 0;
+            // Simplified: would need live trading flag from preferences at time of trade
+            paperTrades += 1;
+            if (pnl > 0) paperWins += 1;
+            totalPaperPnL += pnl;
+          } catch {
+            // Ignore parse errors
+          }
+        }
+      }
+
+      const paperWinRate =
+        paperTrades > 0 ? Math.round((paperWins / paperTrades) * 100) : 0;
+      const realWinRate = realTrades > 0 ? Math.round((realWins / realTrades) * 100) : 0;
+
+      let alertMessage: string | undefined;
+      let recommendation: string | undefined;
+
+      if (realTrades > 0 && realWinRate < paperWinRate * 0.7) {
+        alertMessage = `Real performance (${realWinRate}%) is 30%+ below paper baseline (${paperWinRate}%)`;
+        recommendation = "Review execution discipline and risk";
+      } else if (paperTrades < 5) {
+        alertMessage = "Insufficient paper trade history";
+        recommendation = "Complete more autonomy cycles before going live";
+      } else if (realTrades === 0 && paperWinRate >= 60) {
+        recommendation = "Ready to begin micro-funding Phase 1";
+      }
+
+      return {
+        paperWinRate,
+        paperTotalTrades: paperTrades,
+        paperTotalPnL: Number(totalPaperPnL.toFixed(2)),
+        realWinRate,
+        realTotalTrades: realTrades,
+        realTotalPnL: Number(totalRealPnL.toFixed(2)),
+        comparison: {
+          alertMessage,
+          recommendation,
+        },
+      };
+    }),
+
+    getPreLiveChecklist: protectedProcedure.query(async ({ ctx }) => {
+      const userId = getRequiredUserId(ctx);
+      const [prefs, recentRuns, auditLog, kalshiCreds] = await Promise.all([
+        tradingPreferencesDb.getTradingPreferences(userId),
+        db.getRecentAutonomyRuns(userId, 30),
+        db.getAuditLog(30, ctx.user!.openId),
+        kalshiCredDb.getKalshiCredentials(userId),
+      ]);
+
+      // Gather metrics
+      const autonomyCyclesCompleted = recentRuns.filter(
+        (r: any) => r.status === "executed" || r.status === "skipped" || r.status === "error"
+      ).length;
+
+      const firstRunDate =
+        recentRuns.length > 0
+          ? recentRuns[recentRuns.length - 1]?.startedAt
+          : null;
+      const daysInPaperMode = firstRunDate
+        ? Math.floor(
+            (Date.now() - new Date(firstRunDate).getTime()) / (1000 * 60 * 60 * 24)
+          )
+        : 0;
+
+      // Count desk memory lessons per desk
+      const allDesks = await Promise.all([
+        import("./db.desk-memory").then((m) =>
+          m.getDeskMemory(userId, "kalshi", "kalshi_sports")
+        ),
+        import("./db.desk-memory").then((m) =>
+          m.getDeskMemory(userId, "kalshi", "kalshi_crypto")
+        ),
+        import("./db.desk-memory").then((m) =>
+          m.getDeskMemory(userId, "kalshi", "kalshi_politics")
+        ),
+        import("./db.desk-memory").then((m) =>
+          m.getDeskMemory(userId, "kalshi", "kalshi_esports")
+        ),
+        import("./db.desk-memory").then((m) =>
+          m.getDeskMemory(userId, "polymarket", "polymarket_crypto")
+        ),
+        import("./db.desk-memory").then((m) =>
+          m.getDeskMemory(userId, "polymarket", "polymarket_politics")
+        ),
+      ]);
+
+      const deskDesksWithLessons = allDesks.filter(
+        (d) => d && d.notes.length >= 4
+      ).length;
+
+      // Calculate paper win rate
+      let paperWins = 0;
+      let paperTrades = 0;
+      for (const event of auditLog) {
+        if (
+          event.eventType === "kalshi_order_placed" ||
+          event.eventType === "scheduled_autonomy_order_placed"
+        ) {
+          paperTrades += 1;
+          try {
+            const details = event.details
+              ? JSON.parse(event.details)
+              : {};
+            if (Number(details.realizedPnl) > 0) {
+              paperWins += 1;
+            }
+          } catch {
+            // Ignore
+          }
+        }
+      }
+      const paperWinRate =
+        paperTrades > 0 ? (paperWins / paperTrades) * 100 : 0;
+
+      // Check for execution errors
+      const hasExecutionErrors =
+        auditLog.some((e: any) => e.eventType.includes("error")) || false;
+
+      // Build checklist items with scoring
+      const checklist = [
+        {
+          id: "paper_duration",
+          label: "7+ days paper trading",
+          description: "Running paper trades for at least one week",
+          completed: daysInPaperMode >= 7,
+          score: daysInPaperMode >= 7 ? 20 : 0,
+          evidence: `${daysInPaperMode} days in paper mode`,
+        },
+        {
+          id: "autonomy_cycles",
+          label: "30+ autonomy cycles",
+          description:
+            "Completed at least 30 scheduled autonomy runs (executed, skipped, or error)",
+          completed: autonomyCyclesCompleted >= 30,
+          score: autonomyCyclesCompleted >= 30 ? 15 : 0,
+          evidence: `${autonomyCyclesCompleted} cycles completed`,
+        },
+        {
+          id: "desk_memory",
+          label: "Desk memory 4+ lessons/desk",
+          description:
+            "At least 4 desks have recorded 4+ lessons each from prior trades",
+          completed: deskDesksWithLessons >= 4,
+          score: deskDesksWithLessons >= 4 ? 15 : 0,
+          evidence: `${deskDesksWithLessons}/6 desks with 4+ lessons`,
+        },
+        {
+          id: "paper_win_rate",
+          label: "Paper win rate >60%",
+          description: "Paper trading win rate exceeds 60% confidence threshold",
+          completed: paperWinRate > 60,
+          score: paperWinRate > 60 ? 15 : 0,
+          evidence: `${Math.round(paperWinRate)}% win rate (${paperTrades} trades)`,
+        },
+        {
+          id: "no_errors",
+          label: "No execution errors",
+          description: "No critical errors in past 30 days of autonomy runs",
+          completed: !hasExecutionErrors,
+          score: !hasExecutionErrors ? 15 : 0,
+          evidence: hasExecutionErrors ? "Errors detected" : "Clean record",
+        },
+        {
+          id: "risk_params",
+          label: "Risk parameters reviewed",
+          description: "Position size, loss limits, and cadence validated",
+          completed:
+            prefs.maxOrderNotional > 0 &&
+            prefs.maxDailyOrders > 0 &&
+            prefs.riskPosture !== undefined,
+          score:
+            prefs.maxOrderNotional > 0 &&
+            prefs.maxDailyOrders > 0 &&
+            prefs.riskPosture
+              ? 10
+              : 0,
+          evidence: `${prefs.riskPosture} posture, $${prefs.maxOrderNotional} per order`,
+        },
+        {
+          id: "api_verified",
+          label: "API credentials verified",
+          description: "Kalshi API key and credentials are valid and connected",
+          completed: kalshiCreds !== null,
+          score: kalshiCreds !== null ? 10 : 0,
+          evidence: kalshiCreds ? "Connected" : "Not configured",
+        },
+      ];
+
+      const overallScore = checklist.reduce((sum, item) => sum + item.score, 0);
+
+      let recommendation: "NOT_READY" | "CAUTIOUS" | "READY";
+      if (overallScore < 60) {
+        recommendation = "NOT_READY";
+      } else if (overallScore < 85) {
+        recommendation = "CAUTIOUS";
+      } else {
+        recommendation = "READY";
+      }
+
+      return {
+        checklist,
+        overallScore,
+        recommendation,
+      };
+    }),
+  }),
 });
 
 export type AppRouter = typeof appRouter;

@@ -21,7 +21,7 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { useAuth } from "@/_core/hooks/useAuth";
-import { LayoutDashboard, LogOut, TrendingUp, Shield, FileText, Plug, BookOpen, BarChart3, Brain, Briefcase, LineChart, SlidersHorizontal, AlertTriangle, Loader2, ListChecks, Wallet, Activity, Network, Bot, MessageSquare } from "lucide-react";
+import { LayoutDashboard, LogOut, TrendingUp, Shield, FileText, Plug, BookOpen, BarChart3, Brain, Briefcase, LineChart, SlidersHorizontal, AlertTriangle, Loader2, ListChecks, Wallet, Activity, Network, Bot, MessageSquare, CheckCircle2 } from "lucide-react";
 import { CSSProperties, FormEvent, useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
@@ -48,6 +48,7 @@ const navSections: { label: string; items: NavItem[] }[] = [
     label: "Strategy",
     items: [
       { icon: SlidersHorizontal, label: "Trading Autonomy", path: "/autonomy" },
+      { icon: CheckCircle2, label: "Trading Readiness", path: "/trading-readiness" },
       { icon: Shield, label: "Risk Controls", path: "/risk-controls" },
       { icon: BookOpen, label: "Training", path: "/training" },
     ],

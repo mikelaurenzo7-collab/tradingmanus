@@ -280,13 +280,13 @@ describe("Polymarket autonomy E2E — full cycle", () => {
       expect(payload).toHaveProperty("anthropicFailures");
     }
 
-    // Check for execution event
-    const executedEvent = auditCalls.find((call: any[]) =>
-      call[0] === "polymarket_autonomy_run_executed"
+    // Check for order placement event
+    const orderEvent = auditCalls.find((call: any[]) =>
+      call[0] === "polymarket_autonomy_order_placed"
     );
-    expect(executedEvent).toBeDefined();
-    if (executedEvent) {
-      const payload = JSON.parse(executedEvent[1]);
+    expect(orderEvent).toBeDefined();
+    if (orderEvent) {
+      const payload = JSON.parse(orderEvent[1]);
       expect(payload).toHaveProperty("marketId");
       expect(payload).toHaveProperty("side");
       expect(payload).toHaveProperty("sizeUsdc");
