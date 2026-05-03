@@ -14,6 +14,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { StartTradingDialog } from "@/components/StartTradingDialog";
+import { PageHeader } from "@/components/PageHeader";
 import { useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { useLocation } from "wouter";
@@ -219,15 +220,12 @@ export default function Dashboard() {
   if (!isConnected) {
     return (
       <div className="space-y-8">
-        <div>
-          <h1 className="text-5xl font-bold gradient-text mb-2">
-            Connect Your Kalshi Account
-          </h1>
-          <p className="text-muted-foreground text-lg">
-            Connect your Kalshi account to start trading and see your real
-            account balance
-          </p>
-        </div>
+        <PageHeader
+          icon={Plug}
+          title="Connect Your Kalshi Account"
+          description="Connect your Kalshi account to start trading and see your real account balance"
+          iconGradient="from-violet-500 to-fuchsia-500"
+        />
 
         <Card className="laurenzo-card border-violet-500/30 bg-violet-500/5">
           <CardContent className="pt-6">
@@ -324,14 +322,12 @@ export default function Dashboard() {
   if (!isFunded) {
     return (
       <div className="space-y-8">
-        <div>
-          <h1 className="text-5xl font-bold gradient-text mb-2">
-            Account Funding Required
-          </h1>
-          <p className="text-muted-foreground text-lg">
-            Your Kalshi account needs funds to start trading
-          </p>
-        </div>
+        <PageHeader
+          icon={AlertCircle}
+          title="Account Funding Required"
+          description="Your Kalshi account needs funds to start trading"
+          iconGradient="from-amber-500 to-rose-500"
+        />
 
         <Card className="laurenzo-card border-pink-500/30 bg-pink-500/5">
           <CardContent className="pt-6">
@@ -375,44 +371,52 @@ export default function Dashboard() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">Dashboard</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            {user?.name} · Kalshi equity: <strong className="text-foreground">${displayEquity.toFixed(2)}</strong>
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center justify-end gap-3">
-          <Button
-            onClick={handleRefreshDashboard}
-            variant="outline"
-            disabled={
-              performanceOverviewQuery.isFetching ||
-              accountStatusQuery.isFetching ||
-              autonomyActivityQuery.isFetching
-            }
-          >
-            <RefreshCw
-              className={`w-4 h-4 mr-2 ${
+      <PageHeader
+        icon={Activity}
+        title="Dashboard"
+        description={
+          <>
+            {user?.name} · Kalshi equity:{" "}
+            <strong className="text-foreground tabular-nums">${displayEquity.toFixed(2)}</strong>
+          </>
+        }
+        iconGradient="from-violet-500 to-indigo-500"
+        actions={
+          <>
+            <Button
+              onClick={handleRefreshDashboard}
+              variant="outline"
+              size="sm"
+              disabled={
                 performanceOverviewQuery.isFetching ||
                 accountStatusQuery.isFetching ||
                 autonomyActivityQuery.isFetching
-                  ? "animate-spin"
-                  : ""
-              }`}
-            />
-            Refresh
-          </Button>
-          <Button
-            onClick={handleKillSwitch}
-            variant={killSwitchConfirm ? "destructive" : "outline"}
-            className={killSwitchConfirm ? "bg-pink-600 hover:bg-pink-700" : ""}
-          >
-            <Zap className="w-4 h-4 mr-2" />
-            {killSwitchConfirm ? "Confirm Kill Switch" : "KILL SWITCH"}
-          </Button>
-        </div>
-      </div>
+              }
+              className="gap-2"
+            >
+              <RefreshCw
+                className={`w-4 h-4 ${
+                  performanceOverviewQuery.isFetching ||
+                  accountStatusQuery.isFetching ||
+                  autonomyActivityQuery.isFetching
+                    ? "animate-spin"
+                    : ""
+                }`}
+              />
+              Refresh
+            </Button>
+            <Button
+              onClick={handleKillSwitch}
+              size="sm"
+              variant={killSwitchConfirm ? "destructive" : "outline"}
+              className={`gap-2 ${killSwitchConfirm ? "bg-rose-600 hover:bg-rose-700 border-rose-500" : "border-rose-400/40 text-rose-300 hover:bg-rose-500/10 hover:text-rose-200"}`}
+            >
+              <Zap className="w-4 h-4" />
+              {killSwitchConfirm ? "Confirm Kill Switch" : "Kill Switch"}
+            </Button>
+          </>
+        }
+      />
 
       <Card className={`laurenzo-card ${isAccountDataStale ? "border-yellow-500/30 bg-yellow-500/5" : "border-cyan-500/20 bg-cyan-500/5"}`}>
         <CardContent className="flex flex-col gap-3 pt-6 md:flex-row md:items-center md:justify-between">

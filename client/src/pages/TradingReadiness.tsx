@@ -1,9 +1,11 @@
-import { Loader2 } from "lucide-react";
+import { Loader2, ClipboardCheck } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import PaperTradingStatus from "@/components/PaperTradingStatus";
 import DeskMemoryTape from "@/components/DeskMemoryTape";
 import AutonomyMetrics from "@/components/AutonomyMetrics";
 import PreLiveChecklist from "@/components/PreLiveChecklist";
+import { PageHeader } from "@/components/PageHeader";
+import { EmptyState } from "@/components/EmptyState";
 
 export default function TradingReadiness() {
   const readinessQuery = trpc.trading.getTradingReadinessStatus.useQuery(
@@ -21,8 +23,8 @@ export default function TradingReadiness() {
 
   if (readinessQuery.isLoading || metricsQuery.isLoading || checklistQuery.isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <Loader2 className="animate-spin w-8 h-8 text-primary" />
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <Loader2 className="animate-spin w-8 h-8 text-violet-400" />
       </div>
     );
   }
@@ -34,26 +36,27 @@ export default function TradingReadiness() {
   if (!readinessData || !metricsData || !checklistData) {
     return (
       <div className="space-y-6">
-        <h1 className="text-3xl font-bold tracking-wider gradient-text">
-          Trading Readiness Dashboard
-        </h1>
-        <div className="laurenzo-card text-center py-12">
-          <p className="text-muted-foreground">Unable to load readiness data</p>
-        </div>
+        <PageHeader
+          icon={ClipboardCheck}
+          title="Trading Readiness"
+          iconGradient="from-cyan-500 to-blue-500"
+        />
+        <EmptyState
+          title="Unable to load readiness data"
+          description="Please refresh the page or try again in a moment."
+        />
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-wider gradient-text">
-          Trading Readiness Dashboard
-        </h1>
-        <p className="text-muted-foreground text-sm mt-1">
-          Monitor your preparation for live trading
-        </p>
-      </div>
+      <PageHeader
+        icon={ClipboardCheck}
+        title="Trading Readiness"
+        description="Monitor your preparation for live trading"
+        iconGradient="from-cyan-500 to-blue-500"
+      />
 
       {/* Paper Trading Status */}
       <PaperTradingStatus data={readinessData} />

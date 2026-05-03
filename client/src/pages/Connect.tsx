@@ -8,6 +8,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { buildKalshiConnectionSuccessMessage, buildPolymarketConnectionSuccessMessage } from "@/lib/connectFlow";
 import { trpc } from "@/lib/trpc";
+import { PageHeader } from "@/components/PageHeader";
 
 // ---------- Kalshi panel ----------
 function KalshiConnectPanel() {
@@ -479,46 +480,37 @@ function PlatformSubscriptionCard() {
 // ---------- Main page ----------
 export default function Connect() {
   return (
-    <div className="flex-1">
-      <div className="max-w-5xl mx-auto">
-        <div className="mb-8">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="flex items-center justify-center w-12 h-12 rounded-2xl bg-gradient-to-br from-violet-500 to-indigo-500 shadow-lg shadow-violet-500/30">
-              <Link2 className="w-6 h-6 text-white" />
-            </div>
-            <div>
-              <h1 className="text-3xl font-bold gradient-text">Connect Platforms</h1>
-              <p className="text-muted-foreground text-sm">
-                Encrypted API credentials for autonomous trading
-              </p>
-            </div>
-          </div>
-          <Alert className="border-violet-400/30 bg-violet-500/10">
-            <ShieldCheck className="h-4 w-4 text-violet-400" />
-            <AlertDescription className="text-violet-200 text-sm">
-              Your credentials are validated live, then encrypted (AES-256-GCM) before storage. The bot trades on your behalf based on your autonomy settings.
-            </AlertDescription>
-          </Alert>
+    <div className="max-w-5xl mx-auto space-y-6">
+      <PageHeader
+        icon={Link2}
+        title="Connect Platforms"
+        description="Encrypted API credentials for autonomous trading"
+        iconGradient="from-violet-500 to-indigo-500"
+      />
+      <Alert className="border-violet-400/30 bg-violet-500/10">
+        <ShieldCheck className="h-4 w-4 text-violet-400" />
+        <AlertDescription className="text-violet-200 text-sm">
+          Your credentials are validated live, then encrypted (AES-256-GCM) before storage. The bot trades on your behalf based on your autonomy settings.
+        </AlertDescription>
+      </Alert>
+
+      <div className="grid gap-6">
+        {/* Connection cards side by side */}
+        <div className="grid md:grid-cols-2 gap-6">
+          <KalshiConnectPanel />
+          <PolymarketConnectPanel />
         </div>
 
-        <div className="grid gap-6">
-          {/* Connection cards side by side */}
-          <div className="grid md:grid-cols-2 gap-6">
-            <KalshiConnectPanel />
-            <PolymarketConnectPanel />
-          </div>
+        {/* Platform subscription */}
+        <PlatformSubscriptionCard />
 
-          {/* Platform subscription */}
-          <PlatformSubscriptionCard />
-
-          <Alert>
-            <ShieldCheck className="h-4 w-4" />
-            <AlertDescription>
-              <strong>Security:</strong> All credentials are AES-256-GCM encrypted before storage
-              and are scoped exclusively to your authenticated account.
-            </AlertDescription>
-          </Alert>
-        </div>
+        <Alert>
+          <ShieldCheck className="h-4 w-4" />
+          <AlertDescription>
+            <strong>Security:</strong> All credentials are AES-256-GCM encrypted before storage
+            and are scoped exclusively to your authenticated account.
+          </AlertDescription>
+        </Alert>
       </div>
     </div>
   );

@@ -3,10 +3,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { BookOpen, Plus, Trash2, Loader2, Clock, Filter, AlertCircle, ChevronDown, ChevronUp, X } from "lucide-react";
+import { BookOpen, Plus, Trash2, Loader2, Clock, Filter, AlertCircle, ChevronDown, ChevronUp, X, GraduationCap } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { Link } from "wouter";
 import { toast } from "sonner";
+import { PageHeader } from "@/components/PageHeader";
 
 const RULE_KEYS: Record<string, { label: string; placeholder: string; keys: string[] }> = {
   market_filter: { label: "Market rule", placeholder: "politics, sports, crypto…", keys: ["category", "title"] },
@@ -86,19 +87,18 @@ export default function Training() {
 
   return (
     <div className="space-y-8 max-w-5xl mx-auto">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-5xl font-bold gradient-text mb-2">Agent Training</h1>
-          <p className="text-muted-foreground text-lg">
-            Define trading instructions and rules. Your agent applies these to every autonomous scan.
-          </p>
-        </div>
-        <Button onClick={() => setShowNewForm(!showNewForm)} className="laurenzo-button" size="lg">
-          <Plus className="w-5 h-5 mr-2" />
-          New Instruction
-        </Button>
-      </div>
+      <PageHeader
+        icon={GraduationCap}
+        title="Agent Training"
+        description="Define trading instructions and rules. Your agent applies these to every autonomous scan."
+        iconGradient="from-violet-500 to-fuchsia-500"
+        actions={
+          <Button onClick={() => setShowNewForm(!showNewForm)} className="laurenzo-button gap-2" size="sm">
+            <Plus className="w-4 h-4" />
+            New Instruction
+          </Button>
+        }
+      />
 
       <Card className="laurenzo-card border-violet-500/30 bg-violet-500/5">
         <CardContent className="flex flex-col gap-4 pt-6 lg:flex-row lg:items-center lg:justify-between">
