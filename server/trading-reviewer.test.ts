@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  isOpenAiFallbackConfigured,
   isTradingReviewerConfigured,
   MAX_MARKET_SUMMARY_TITLE_CHARS,
   MAX_SIGNAL_SUMMARY_REASONING_CHARS,
@@ -24,32 +23,12 @@ const baseSignal = {
   marketId: "KXTEST-1",
   signalType: "momentum" as const,
   side: "yes" as const,
-  // confidence below the high-stakes threshold so we test normal-stakes default path
   confidence: 0.7,
   marketPrice: 0.1,
   impliedProbability: 0.57,
   expectedValue: 0.18,
   reasoning: "Explicit probability edge",
 };
-
-const highStakesSignal = {
-  ...baseSignal,
-  marketId: "KXTEST-2",
-  // 0.95 * 100 = $95 notional — well above the $25 high-stakes threshold
-  marketPrice: 0.95,
-  confidence: 0.95,
-};
-
-const highStakesMarket = { ...baseMarket, id: "KXTEST-2" };
-
-function okOpenAiResponse(content: string) {
-  return new Response(
-    JSON.stringify({
-      choices: [{ message: { content } }],
-    }),
-    { status: 200, headers: { "Content-Type": "application/json" } },
-  );
-}
 
 function anthropicResponse(content: string) {
   return {
@@ -77,27 +56,13 @@ function rejectedReviewJson(marketId: string, reasoning = "Vetoed.") {
   });
 }
 
-describe("AI trader reviewer (Claude-primary)", () => {
-  it("treats Claude alone as configured; OpenAI is optional", () => {
+describe("AI trader reviewer (Claude-only)", () => {
+  it("treats Claude alone as configured", () => {
     expect(isTradingReviewerConfigured({ anthropicApiKey: "anthropic-key" })).toBe(true);
-    expect(
-      isTradingReviewerConfigured({
-        anthropicApiKey: "anthropic-key",
-        openaiApiKey: "openai-key",
-      }),
-    ).toBe(true);
-    // Pin anthropic to empty so this assertion is not affected by local .env keys.
-    expect(isTradingReviewerConfigured({ openaiApiKey: "openai-key", anthropicApiKey: "" })).toBe(false);
-    expect(isTradingReviewerConfigured({ anthropicApiKey: "", openaiApiKey: "" })).toBe(false);
+    expect(isTradingReviewerConfigured({ anthropicApiKey: "" })).toBe(false);
   });
 
-  it("reports the OpenAI fallback as configured when its key is present", () => {
-    expect(isOpenAiFallbackConfigured({ openaiApiKey: "openai-key" })).toBe(true);
-    expect(isOpenAiFallbackConfigured({ anthropicApiKey: "anthropic-key" })).toBe(false);
-  });
-
-  it("approves a normal-stakes trade on Claude review alone (OpenAI not invoked)", async () => {
-    const openaiFetchImpl = vi.fn();
+  it("approves a trade on Claude review", async () => {
     const anthropicCreate = vi.fn().mockResolvedValue(
       anthropicResponse(approvedReviewJson("KXTEST-1", "Edge is sound.")),
     );
@@ -111,133 +76,16 @@ describe("AI trader reviewer (Claude-primary)", () => {
       {
         skipInTest: false,
         anthropicApiKey: "anthropic-key",
-        // OpenAI key intentionally absent — fallback path only fires when key present
-        openaiFetchImpl,
         anthropicClient: { messages: { create: anthropicCreate } },
       },
     );
 
     expect(result).toHaveLength(1);
     expect(result[0]?.reasoning).toContain("Claude solo review");
-    expect(result[0]?.reasoning).not.toContain("AI trader duo");
-    expect(openaiFetchImpl).not.toHaveBeenCalled();
     expect(anthropicCreate).toHaveBeenCalledTimes(1);
   });
 
-  it("on high-stakes trades, requires both Claude and OpenAI approval", async () => {
-    const openaiFetchImpl = vi
-      .fn()
-      .mockResolvedValue(okOpenAiResponse(approvedReviewJson("KXTEST-2", "Liquid edge.")));
-    const anthropicCreate = vi
-      .fn()
-      .mockResolvedValue(anthropicResponse(approvedReviewJson("KXTEST-2", "Approved.")));
-
-    const result = await reviewSignalsWithTrader(
-      {
-        markets: [highStakesMarket as any],
-        signals: [highStakesSignal as any],
-        maxSignals: 1,
-      },
-      {
-        skipInTest: false,
-        anthropicApiKey: "anthropic-key",
-        openaiApiKey: "openai-key",
-        openaiFetchImpl,
-        anthropicClient: { messages: { create: anthropicCreate } },
-      },
-    );
-
-    expect(result).toHaveLength(1);
-    expect(result[0]?.reasoning).toContain("AI trader duo");
-    expect(result[0]?.reasoning).toContain("Claude:");
-    expect(result[0]?.reasoning).toContain("OpenAI:");
-    expect(openaiFetchImpl).toHaveBeenCalledTimes(1);
-    expect(anthropicCreate).toHaveBeenCalledTimes(1);
-  });
-
-  it("on high-stakes trades, vetoes when OpenAI second-opinion disagrees", async () => {
-    const openaiFetchImpl = vi
-      .fn()
-      .mockResolvedValue(okOpenAiResponse(rejectedReviewJson("KXTEST-2", "Too thin.")));
-    const anthropicCreate = vi
-      .fn()
-      .mockResolvedValue(anthropicResponse(approvedReviewJson("KXTEST-2", "Looks fine.")));
-
-    const result = await reviewSignalsWithTrader(
-      {
-        markets: [highStakesMarket as any],
-        signals: [highStakesSignal as any],
-        maxSignals: 1,
-      },
-      {
-        skipInTest: false,
-        anthropicApiKey: "anthropic-key",
-        openaiApiKey: "openai-key",
-        openaiFetchImpl,
-        anthropicClient: { messages: { create: anthropicCreate } },
-      },
-    );
-
-    expect(result).toEqual([]);
-  });
-
-  it("falls back to OpenAI per-market when Claude omits the review", async () => {
-    const openaiFetchImpl = vi
-      .fn()
-      .mockResolvedValue(okOpenAiResponse(approvedReviewJson("KXTEST-1", "OpenAI fallback OK.")));
-    // Claude returns an empty review array — does not cover this market.
-    const anthropicCreate = vi
-      .fn()
-      .mockResolvedValue(anthropicResponse(JSON.stringify({ reviews: [] })));
-
-    const result = await reviewSignalsWithTrader(
-      {
-        markets: [baseMarket as any],
-        signals: [baseSignal as any],
-        maxSignals: 1,
-      },
-      {
-        skipInTest: false,
-        anthropicApiKey: "anthropic-key",
-        openaiApiKey: "openai-key",
-        openaiFetchImpl,
-        anthropicClient: { messages: { create: anthropicCreate } },
-      },
-    );
-
-    expect(result).toHaveLength(1);
-    expect(result[0]?.reasoning).toContain("OpenAI solo review");
-  });
-
-  it("falls back to OpenAI when the Claude API call throws", async () => {
-    const openaiFetchImpl = vi
-      .fn()
-      .mockResolvedValue(okOpenAiResponse(approvedReviewJson("KXTEST-1", "OpenAI fallback OK.")));
-    const anthropicCreate = vi.fn().mockRejectedValue(new Error("Anthropic 503"));
-
-    const result = await reviewSignalsWithTrader(
-      {
-        markets: [baseMarket as any],
-        signals: [baseSignal as any],
-        maxSignals: 1,
-      },
-      {
-        skipInTest: false,
-        anthropicApiKey: "anthropic-key",
-        openaiApiKey: "openai-key",
-        openaiFetchImpl,
-        anthropicClient: { messages: { create: anthropicCreate } },
-      },
-    );
-
-    expect(result).toHaveLength(1);
-    expect(result[0]?.reasoning).toContain("OpenAI solo review");
-  });
-
-  it("drops the signal when Claude vetoes (normal-stakes — OpenAI second opinion never consulted)", async () => {
-    const openaiFetchImpl = vi
-      .fn()
-      .mockResolvedValue(okOpenAiResponse(approvedReviewJson("KXTEST-1", "Looks fine.")));
+  it("drops the signal when Claude vetoes", async () => {
     const anthropicCreate = vi
       .fn()
       .mockResolvedValue(anthropicResponse(rejectedReviewJson("KXTEST-1", "Too thin.")));
@@ -251,8 +99,6 @@ describe("AI trader reviewer (Claude-primary)", () => {
       {
         skipInTest: false,
         anthropicApiKey: "anthropic-key",
-        openaiApiKey: "openai-key",
-        openaiFetchImpl,
         anthropicClient: { messages: { create: anthropicCreate } },
       },
     );
@@ -260,8 +106,28 @@ describe("AI trader reviewer (Claude-primary)", () => {
     expect(result).toEqual([]);
   });
 
-  it("drops the signal when both providers fail", async () => {
-    const openaiFetchImpl = vi.fn().mockRejectedValue(new Error("OpenAI 503"));
+  it("drops the signal when Claude omits the review for a market", async () => {
+    const anthropicCreate = vi
+      .fn()
+      .mockResolvedValue(anthropicResponse(JSON.stringify({ reviews: [] })));
+
+    const result = await reviewSignalsWithTrader(
+      {
+        markets: [baseMarket as any],
+        signals: [baseSignal as any],
+        maxSignals: 1,
+      },
+      {
+        skipInTest: false,
+        anthropicApiKey: "anthropic-key",
+        anthropicClient: { messages: { create: anthropicCreate } },
+      },
+    );
+
+    expect(result).toEqual([]);
+  });
+
+  it("drops the signal when the Claude API call throws", async () => {
     const anthropicCreate = vi.fn().mockRejectedValue(new Error("Anthropic 503"));
 
     const result = await reviewSignalsWithTrader(
@@ -273,8 +139,6 @@ describe("AI trader reviewer (Claude-primary)", () => {
       {
         skipInTest: false,
         anthropicApiKey: "anthropic-key",
-        openaiApiKey: "openai-key",
-        openaiFetchImpl,
         anthropicClient: { messages: { create: anthropicCreate } },
       },
     );
@@ -282,13 +146,13 @@ describe("AI trader reviewer (Claude-primary)", () => {
     expect(result).toEqual([]);
   });
 
-  it("fails closed when no providers are configured at all", async () => {
+  it("fails closed when no provider is configured", async () => {
     const result = await reviewSignalsWithTrader(
       {
         markets: [baseMarket as any],
         signals: [baseSignal as any],
       },
-      { skipInTest: false },
+      { skipInTest: false, anthropicApiKey: "" },
     );
     expect(result).toEqual([]);
   });
@@ -412,9 +276,7 @@ describe("AI trader reviewer (Claude-primary)", () => {
   it("runs Haiku triage when batch exceeds threshold and only forwards survivors", async () => {
     const anthropicCreate = vi
       .fn()
-      // 1st call: triage response
       .mockResolvedValueOnce(anthropicResponse(JSON.stringify({ keep: ["KXTEST-1"] })))
-      // 2nd call: full review of survivors
       .mockResolvedValueOnce(anthropicResponse(approvedReviewJson("KXTEST-1", "OK.")));
 
     const signals = [

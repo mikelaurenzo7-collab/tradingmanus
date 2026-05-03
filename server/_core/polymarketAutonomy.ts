@@ -14,7 +14,7 @@
  *     Instead it logs via the shared audit log.
  *
  * Enhanced capabilities (matching Kalshi):
- *   - AI trader duo review (OpenAI + Claude)
+ *   - AI trader review (Claude)
  *   - Dynamic risk limits based on capital and posture
  *   - Training instructions support
  *   - Comprehensive signal filtering
@@ -273,13 +273,12 @@ export async function runPolymarketAutonomousTrading(
     );
   }
 
-  // Import and use AI trader duo review
+  // Import and use Claude review
   const { reviewPolymarketSignalsWithTrader } = await import(
     "./polymarketSignalReviewer"
   );
 
-  // Claude is the primary reviewer (with optional OpenAI fallback /
-  // high-stakes second opinion).  Passing userId enables per-desk memory
+  // Claude is the sole reviewer.  Passing userId enables per-desk memory
   // injection — each Polymarket desk loads its prior win/loss tape from
   // the deskMemory table before this call.  Telemetry captures cache hit
   // rate, web_search invocations, and triage stats for the audit log.
@@ -310,8 +309,6 @@ export async function runPolymarketAutonomousTrading(
       triageKeptCount: telemetry.triageKeptCount,
       anthropicCalls: telemetry.anthropicCalls,
       anthropicFailures: telemetry.anthropicFailures,
-      openaiCalls: telemetry.openaiCalls,
-      openaiFailures: telemetry.openaiFailures,
     }),
     triggeredByOpenId,
   );
@@ -321,14 +318,14 @@ export async function runPolymarketAutonomousTrading(
       "polymarket_autonomy_run_generated_only",
       JSON.stringify({
         signalsGenerated: allSignals.length,
-        reason: "no signals passed AI trader duo review",
+        reason: "no signals passed Claude review",
       }),
       triggeredByOpenId
     );
     return {
       success: true,
       status: "generated_only",
-      reason: "no signals passed AI trader duo review",
+      reason: "no signals passed Claude review",
       signalsGenerated: allSignals.length,
       executionCandidates: 0,
       orderPlaced: false,

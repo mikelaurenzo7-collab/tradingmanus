@@ -121,7 +121,10 @@ async function autonomousTradingHandler(req: AppRequest, res: AppResponse) {
     const ownerUser = scopedUsers[0];
     if (ownerUser) {
       const lock = createAutonomousTradingLock(ownerUser.id);
-      const acquired = await lock.acquire({ ttlMs: 5 * 60 * 1000 }); // 5 minute timeout
+      // Cron fires every minute. TTL must be < cron interval so a stuck lock
+      // can't block the next cycle, but long enough that a normal review
+      // (Claude call + order placement) finishes inside it.
+      const acquired = await lock.acquire({ ttlMs: 50 * 1000 });
 
       if (!acquired) {
         logger.warn(
@@ -192,7 +195,9 @@ async function orderSyncHandler(req: AppRequest, res: AppResponse) {
     for (const user of scopedUsers as Array<{ id: number; openId: string }>) {
       // Use distributed lock to prevent concurrent order syncs for the same user
       const lock = createOrderSyncLock(user.id);
-      const acquired = await lock.acquire({ ttlMs: 60 * 1000 }); // 1 minute timeout
+      // Cron fires every minute; keep TTL just under that so the lock
+      // can't outlive its own cycle.
+      const acquired = await lock.acquire({ ttlMs: 50 * 1000 });
 
       if (!acquired) {
         logger.warn(

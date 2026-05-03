@@ -1,14 +1,11 @@
 /**
- * Polymarket Signal Reviewer — Claude-primary, OpenAI optional fallback / escalation.
+ * Polymarket Signal Reviewer — Claude-only.
  *
  * Topology:
  *   - Claude (per-category persona, prompt-cached, web_search-enabled, extended
- *     thinking on high-stakes) is the primary reviewer and the gate for normal
- *     trades.
- *   - OpenAI is optional. When configured it serves two roles:
- *       (a) automatic fallback for any market Claude failed to review
- *       (b) second-opinion escalation for high-stakes trades (both must approve)
- *   - When neither provider has an approval for a market, the signal is dropped.
+ *     thinking on high-stakes) is the sole reviewer and gate.
+ *   - When Claude is unavailable or omits a market, the signal is dropped
+ *     (fail-closed).
  */
 
 import Anthropic from "@anthropic-ai/sdk";
@@ -48,8 +45,6 @@ import {
   type DeskMemoryRecord,
 } from "../db.desk-memory";
 
-type ProviderName = "openai" | "anthropic";
-
 type TradingSignalReview = {
   marketId: string;
   approved: boolean;
@@ -72,7 +67,6 @@ type AnthropicClient = {
   };
 };
 
-const DEFAULT_OPENAI_ENDPOINT = "https://api.openai.com/v1/chat/completions";
 const DEFAULT_MAX_SIGNALS = 12;
 const MAX_REASONING_CHARS = 240;
 export const MAX_MARKET_SUMMARY_TITLE_CHARS = 160;
@@ -95,14 +89,8 @@ const reviewResponseSchema = z.union([
 ]);
 
 export type PolymarketReviewerOptions = {
-  providers?: ProviderName[];
   skipInTest?: boolean;
   logger?: Pick<Console, "warn" | "error">;
-  openaiApiKey?: string;
-  openaiModel?: string;
-  openaiTimeoutMs?: number;
-  openaiEndpoint?: string;
-  openaiFetchImpl?: typeof fetch;
   anthropicApiKey?: string;
   anthropicModel?: string;
   anthropicTimeoutMs?: number;
@@ -131,20 +119,10 @@ export function createPolymarketReviewer(
   };
 }
 
-/**
- * The reviewer is "configured" as long as Claude (the primary reviewer) is
- * available.  OpenAI is optional and only used as a fallback / escalation.
- */
 export function isPolymarketReviewerConfigured(
   options: PolymarketReviewerOptions = {},
 ) {
-  return getActiveProviders(options).includes("anthropic");
-}
-
-export function isPolymarketOpenAiFallbackConfigured(
-  options: PolymarketReviewerOptions = {},
-) {
-  return getActiveProviders(options).includes("openai");
+  return (options.anthropicApiKey ?? ENV.anthropicApiKey).trim().length > 0;
 }
 
 function clamp(value: number, minimum: number, maximum: number) {
@@ -222,18 +200,6 @@ function summarizeSignal(signal: PolymarketSignal) {
   };
 }
 
-const ALL_PROVIDERS: ProviderName[] = ["anthropic", "openai"];
-
-function getActiveProviders(options: PolymarketReviewerOptions) {
-  const requestedProviders = options.providers ?? ALL_PROVIDERS;
-  return requestedProviders.filter((provider) => {
-    if (provider === "openai") {
-      return (options.openaiApiKey ?? ENV.openaiApiKey).trim().length > 0;
-    }
-    return (options.anthropicApiKey ?? ENV.anthropicApiKey).trim().length > 0;
-  });
-}
-
 function stakesForSignals(signals: PolymarketSignal[]): StakesContext {
   let topConfidence = 0;
   let topNotional = 0;
@@ -277,32 +243,6 @@ function getReviewPayload(input: {
   };
 }
 
-function getOpenAiText(payload: unknown) {
-  if (
-    typeof payload === "object" &&
-    payload !== null &&
-    "choices" in payload &&
-    Array.isArray(payload.choices)
-  ) {
-    const content = payload.choices[0]?.message?.content;
-    if (typeof content === "string") {
-      return content.trim();
-    }
-  }
-  throw new Error("OpenAI response did not include JSON message content");
-}
-
-function buildOpenAiSystemPrompt(persona?: CategoryPersona): string {
-  const desk = persona?.label ?? "Polymarket Generalist Desk";
-  const personaMandate = persona?.systemMandate
-    ? `\n\nDesk-specific mandate (${desk}):\n${persona.systemMandate}`
-    : "";
-  return (
-    "You are OpenAI acting as a conservative Polymarket trading reviewer for one founder's small live account. You never place trades directly. You only approve, veto, or modestly adjust signal confidence and expected value. Capital preservation, liquidity, bounded downside, avoiding weak heuristic trades, and detecting wash-trading patterns are mandatory. Respond with a JSON object shaped as {\"reviews\":[...]} and nothing else." +
-    personaMandate
-  );
-}
-
 function buildAnthropicBaseMandate(persona?: CategoryPersona): string {
   const desk = persona?.label ?? "Polymarket Generalist Desk";
   const personaMandate = persona?.systemMandate
@@ -314,51 +254,6 @@ function buildAnthropicBaseMandate(persona?: CategoryPersona): string {
   );
 }
 
-async function requestOpenAiReviews(
-  reviewPayload: ReturnType<typeof getReviewPayload>,
-  options: PolymarketReviewerOptions,
-  persona?: CategoryPersona,
-) {
-  const controller = new AbortController();
-  const timeoutMs = options.openaiTimeoutMs ?? ENV.openaiTimeoutMs;
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const response = await (options.openaiFetchImpl ?? fetch)(
-      options.openaiEndpoint ?? DEFAULT_OPENAI_ENDPOINT,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${(options.openaiApiKey ?? ENV.openaiApiKey).trim()}`,
-        },
-        body: JSON.stringify({
-          model: options.openaiModel ?? ENV.openaiModel,
-          temperature: 0,
-          max_tokens: 1400,
-          response_format: { type: "json_object" },
-          messages: [
-            { role: "system", content: buildOpenAiSystemPrompt(persona) },
-            { role: "user", content: JSON.stringify(reviewPayload) },
-          ],
-        }),
-        signal: controller.signal,
-      },
-    );
-
-    if (!response.ok) {
-      throw new Error(`OpenAI request failed with status ${response.status}`);
-    }
-
-    return {
-      provider: "openai" as const,
-      reviews: parseTradingReviews(getOpenAiText(await response.json())),
-    };
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
-
 async function requestAnthropicReviews(
   reviewPayload: ReturnType<typeof getReviewPayload>,
   options: PolymarketReviewerOptions,
@@ -366,7 +261,7 @@ async function requestAnthropicReviews(
   stakes: StakesContext = {},
   memorySnippet: string | null = null,
 ) {
-  const timeoutMs = options.anthropicTimeoutMs ?? ENV.anthropicTimeoutMs;
+  const timeoutMs = options.anthropicTimeoutMs ?? 12000;
   const client =
     options.anthropicClient ??
     new Anthropic({ apiKey: (options.anthropicApiKey ?? ENV.anthropicApiKey).trim() });
@@ -424,7 +319,6 @@ async function requestAnthropicReviews(
     : [];
 
   return {
-    provider: "anthropic" as const,
     reviews: parseTradingReviews(extractAnthropicText(response)),
     citations,
   };
@@ -432,49 +326,19 @@ async function requestAnthropicReviews(
 
 function combineApprovedSignal(
   signal: PolymarketSignal,
-  providerReviews: Array<{ provider: ProviderName; review: TradingSignalReview }>,
+  review: TradingSignalReview,
   logger: Pick<Console, "warn" | "error">,
   desk?: string,
   citations: CitationSummary[] = [],
 ) {
-  if (providerReviews.length === 0) {
-    logger.warn(
-      `[PolymarketReviewer] No provider approvals for marketId=${signal.marketId} (desk=${desk ?? "default"}); dropping signal.`,
-    );
-    return null;
-  }
+  if (!review.approved) return null;
 
-  for (const providerReview of providerReviews) {
-    if (!providerReview.review.approved) return null;
-  }
+  const confidenceAdjustment = clamp(Number(review.confidenceAdjustment ?? 0), -0.25, 0.15);
+  const expectedValueAdjustment = clamp(Number(review.expectedValueAdjustment ?? 0), -0.1, 0.1);
 
-  const confidenceAdjustment =
-    providerReviews.reduce(
-      (total, providerReview) =>
-        total + clamp(Number(providerReview.review.confidenceAdjustment ?? 0), -0.25, 0.15),
-      0,
-    ) / providerReviews.length;
+  const reviewerReasoning = review.reasoning?.trim().slice(0, MAX_REASONING_CHARS)
+    || "Claude approved after conservative review.";
 
-  const expectedValueAdjustment =
-    providerReviews.reduce(
-      (total, providerReview) =>
-        total + clamp(Number(providerReview.review.expectedValueAdjustment ?? 0), -0.1, 0.1),
-      0,
-    ) / providerReviews.length;
-
-  const reviewerReasoning = providerReviews
-    .map(({ provider, review }) => {
-      const prefix = provider === "openai" ? "OpenAI" : "Claude";
-      const text =
-        review.reasoning?.trim().slice(0, MAX_REASONING_CHARS) ||
-        prefix.concat(" approved after conservative review.");
-      return `${prefix}: ${text}`;
-    })
-    .join(" | ");
-
-  const ledger = providerReviews.length === 1
-    ? `${providerReviews[0]?.provider === "anthropic" ? "Claude" : "OpenAI"} solo review`
-    : "AI trader duo";
   const deskLabel = desk ? ` [${desk}]` : "";
   const citationLabel = formatCitationsForReasoning(citations);
 
@@ -482,54 +346,8 @@ function combineApprovedSignal(
     ...signal,
     confidence: clamp(signal.confidence + confidenceAdjustment, 0.01, 0.99),
     expectedValue: Math.max(0, signal.expectedValue + expectedValueAdjustment),
-    reasoning: `${signal.reasoning} | ${ledger}${deskLabel}: ${reviewerReasoning}${citationLabel}`,
+    reasoning: `${signal.reasoning} | Claude solo review${deskLabel}: Claude: ${reviewerReasoning}${citationLabel}`,
   };
-}
-
-type ProviderBatchResult = {
-  provider: ProviderName;
-  reviewsByMarket: Map<string, TradingSignalReview>;
-  failed: boolean;
-  citations: CitationSummary[];
-};
-
-async function callProvider(
-  provider: ProviderName,
-  reviewPayload: ReturnType<typeof getReviewPayload>,
-  options: PolymarketReviewerOptions,
-  persona: CategoryPersona | undefined,
-  stakes: StakesContext,
-  logger: Pick<Console, "warn" | "error">,
-  memorySnippet: string | null = null,
-): Promise<ProviderBatchResult> {
-  try {
-    const response =
-      provider === "openai"
-        ? await requestOpenAiReviews(reviewPayload, options, persona)
-        : await requestAnthropicReviews(reviewPayload, options, persona, stakes, memorySnippet);
-    if (options.telemetry && provider === "openai") {
-      options.telemetry.openaiCalls += 1;
-    }
-    return {
-      provider,
-      reviewsByMarket: new Map(response.reviews.map((review) => [review.marketId, review])),
-      failed: false,
-      citations: "citations" in response ? response.citations : [],
-    };
-  } catch (error) {
-    if (options.telemetry) {
-      if (provider === "openai") {
-        options.telemetry.openaiCalls += 1;
-        options.telemetry.openaiFailures += 1;
-      } else {
-        options.telemetry.anthropicFailures += 1;
-      }
-    }
-    logger.warn(
-      `[PolymarketReviewer] ${provider} review failed for desk=${persona?.id ?? "default"}: ${error instanceof Error ? error.message : String(error)}`,
-    );
-    return { provider, reviewsByMarket: new Map(), failed: true, citations: [] };
-  }
 }
 
 async function runCategoryReview(
@@ -552,83 +370,45 @@ async function runCategoryReview(
     persona,
   });
 
-  const claudeConfigured = isPolymarketReviewerConfigured(options);
-  const openaiConfigured = isPolymarketOpenAiFallbackConfigured(options);
-  const escalateToOpenAi = isHighStakes(stakes) && openaiConfigured;
-
-  if (!claudeConfigured && !openaiConfigured) {
+  if (!isPolymarketReviewerConfigured(options)) {
     logger.error(
-      "[PolymarketReviewer] No reviewer providers configured; dropping all candidates so autonomous trading fails closed.",
+      "[PolymarketReviewer] ANTHROPIC_API_KEY missing; dropping all candidates so autonomous trading fails closed.",
     );
     return [];
   }
 
-  const providerCalls: Promise<ProviderBatchResult>[] = [];
-  if (claudeConfigured) {
-    providerCalls.push(
-      callProvider("anthropic", reviewPayload, options, persona, stakes, logger, memorySnippet),
+  let reviewsByMarket = new Map<string, TradingSignalReview>();
+  let citations: CitationSummary[] = [];
+  try {
+    const response = await requestAnthropicReviews(
+      reviewPayload,
+      options,
+      persona,
+      stakes,
+      memorySnippet,
     );
+    reviewsByMarket = new Map(response.reviews.map((review) => [review.marketId, review]));
+    citations = response.citations;
+  } catch (error) {
+    if (options.telemetry) {
+      options.telemetry.anthropicFailures += 1;
+    }
+    logger.warn(
+      `[PolymarketReviewer] Claude review failed for desk=${persona?.id ?? "default"}: ${error instanceof Error ? error.message : String(error)}; dropping bucket.`,
+    );
+    return [];
   }
-  if (openaiConfigured) {
-    providerCalls.push(callProvider("openai", reviewPayload, options, persona, stakes, logger));
-  }
-
-  const batchResults = await Promise.all(providerCalls);
-  const byProvider = new Map<ProviderName, ProviderBatchResult>(
-    batchResults.map((result) => [result.provider, result]),
-  );
-  const claudeBatch = byProvider.get("anthropic");
-  const openaiBatch = byProvider.get("openai");
-  const claudeCitations = claudeBatch?.citations ?? [];
 
   return signals
     .map((signal) => {
-      const claudeReview = claudeBatch?.reviewsByMarket.get(signal.marketId);
-      const openaiReview = openaiBatch?.reviewsByMarket.get(signal.marketId);
-
-      if (claudeReview) {
-        if (!claudeReview.approved) return null;
-        if (escalateToOpenAi) {
-          if (!openaiReview) {
-            logger.warn(
-              `[PolymarketReviewer] OpenAI second-opinion missing for high-stakes marketId=${signal.marketId}; dropping for safety.`,
-            );
-            return null;
-          }
-          if (!openaiReview.approved) return null;
-          return combineApprovedSignal(
-            signal,
-            [
-              { provider: "anthropic", review: claudeReview },
-              { provider: "openai", review: openaiReview },
-            ],
-            logger,
-            persona?.label,
-            claudeCitations,
-          );
-        }
-        return combineApprovedSignal(
-          signal,
-          [{ provider: "anthropic", review: claudeReview }],
-          logger,
-          persona?.label,
-          claudeCitations,
-        );
-      }
-
-      if (!openaiReview) {
+      const review = reviewsByMarket.get(signal.marketId);
+      if (!review) {
         logger.warn(
-          `[PolymarketReviewer] Both providers missing review for marketId=${signal.marketId} (desk=${persona?.id ?? "default"}); dropping signal.`,
+          `[PolymarketReviewer] Claude returned no review for marketId=${signal.marketId} (desk=${persona?.id ?? "default"}); dropping signal.`,
         );
         return null;
       }
-      if (!openaiReview.approved) return null;
-      return combineApprovedSignal(
-        signal,
-        [{ provider: "openai", review: openaiReview }],
-        logger,
-        persona?.label,
-      );
+      return combineApprovedSignal(signal, review, logger, persona?.label, citations);
     })
     .filter((signal): signal is PolymarketSignal => Boolean(signal));
 }
@@ -664,7 +444,7 @@ async function applyTriageFilter(
   });
 
   const keep = await runHaikuTriage(triageClient as { messages: { create: (input: unknown) => Promise<{ content: Array<{ type: string; text?: string }> }> } }, triageInput, {
-    timeoutMs: Math.min(options.anthropicTimeoutMs ?? ENV.anthropicTimeoutMs, 8000),
+    timeoutMs: Math.min(options.anthropicTimeoutMs ?? 12000, 8000),
     logger,
   });
   if (options.telemetry) {
@@ -710,16 +490,11 @@ export async function reviewPolymarketSignalsWithTrader(
   }
 
   const logger = options.logger ?? console;
-  if (!isPolymarketReviewerConfigured(options) && !isPolymarketOpenAiFallbackConfigured(options)) {
+  if (!isPolymarketReviewerConfigured(options)) {
     logger.error(
-      "[PolymarketReviewer] No reviewer provider configured (need ANTHROPIC_API_KEY at minimum, OPENAI_API_KEY optional fallback); dropping all candidates.",
+      "[PolymarketReviewer] ANTHROPIC_API_KEY missing; dropping all candidates so autonomous trading fails closed.",
     );
     return [];
-  }
-  if (!isPolymarketReviewerConfigured(options)) {
-    logger.warn(
-      "[PolymarketReviewer] ANTHROPIC_API_KEY missing; running OpenAI-only fallback mode. This is a degraded configuration.",
-    );
   }
 
   const cap = input.maxSignals ?? DEFAULT_MAX_SIGNALS;

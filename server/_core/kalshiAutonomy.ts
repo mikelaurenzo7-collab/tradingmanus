@@ -51,7 +51,12 @@ const MIN_SCHEDULED_MARKET_VOLUME = 500;
 // Markets resolving within this many hours are excluded from scheduled scans.
 // Imminent-resolution markets carry high adverse-selection risk and waste the
 // AI reviewer's budget on signals that can rarely be executed cleanly.
-const MIN_RESOLUTION_HOURS_AHEAD = 2;
+// Lowered from 2h to 0.5h so the bot can act on intra-hour markets (e.g.
+// 30-min crypto contracts) now that the cron runs every minute.  Anything
+// under 30 min is still excluded — by the time we generate signals, run
+// Claude review, and place an order, sub-30-min markets carry too much
+// adverse-selection risk to fill cleanly.
+const MIN_RESOLUTION_HOURS_AHEAD = 0.5;
 
 export type AwayTradingDecisionDetails = {
   marketId: string | null;
@@ -516,8 +521,7 @@ async function generateScheduledSignals(userId: number, minConfidence: number, a
     ? applyInstructionsToSignals(conditionFilteredSignals, activeInstructions)
     : conditionFilteredSignals;
 
-  // Claude is the primary reviewer (with optional OpenAI fallback /
-  // high-stakes second opinion).  Passing userId enables per-desk memory
+  // Claude is the sole reviewer.  Passing userId enables per-desk memory
   // injection — each desk loads its prior win/loss tape from the deskMemory
   // table before this call.  Telemetry captures cache hit rate, web_search
   // invocations, and triage stats for the audit log.
@@ -547,8 +551,6 @@ async function generateScheduledSignals(userId: number, minConfidence: number, a
       triageKeptCount: telemetry.triageKeptCount,
       anthropicCalls: telemetry.anthropicCalls,
       anthropicFailures: telemetry.anthropicFailures,
-      openaiCalls: telemetry.openaiCalls,
-      openaiFailures: telemetry.openaiFailures,
     }),
     `user:${userId}`,
   );

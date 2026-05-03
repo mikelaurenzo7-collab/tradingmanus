@@ -1,14 +1,11 @@
 /**
- * Category personas for the AI trader duo.
+ * Category personas for the Claude trading reviewer.
  *
  * Each (platform, category) pair selects a domain-expert reviewer mandate
- * the duo can use as the cached system prompt.  Both OpenAI and Claude
- * receive the same persona text — they're playing the same role just from
- * different vantage points — and the duo-approval guard still requires
- * unanimous approval before a trade can execute.
+ * Claude uses as the cached system prompt.
  *
  * The mandates are intentionally short and prescriptive: each one tells
- * Claude/OpenAI which signals to weight, which ones to veto, and the
+ * Claude which signals to weight, which ones to veto, and the
  * domain-specific failure modes to look out for.  Token budget matters
  * because this block is what the prompt cache is built around.
  */

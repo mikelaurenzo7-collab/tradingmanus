@@ -155,7 +155,7 @@ export default function TradingAutonomy() {
         <div>
           <h1 className="text-2xl font-bold">Trading Autonomy</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Configure how autonomous the OpenAI + Claude duo is, then arm live trading when you're ready.
+            Configure how autonomous the Claude reviewer is, then arm live trading when you're ready.
           </p>
         </div>
         <div className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold ${
@@ -201,8 +201,8 @@ export default function TradingAutonomy() {
         <CardHeader className="pb-4">
           <StepHeader
             n={1}
-            title="Choose how autonomous the OpenAI + Claude duo is"
-            subtitle="This controls whether the AI duo can place live orders automatically or only prepares analysis."
+            title="Choose how autonomous the Claude reviewer is"
+            subtitle="This controls whether the AI reviewer can place live orders automatically or only prepares analysis."
           />
         </CardHeader>
         <CardContent className="space-y-4">
@@ -220,15 +220,15 @@ export default function TradingAutonomy() {
           {/* Cadence — hidden for manual mode */}
           {form.autonomyMode !== "manual" && (
             <div>
-              <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-2 mt-4">How often the AI duo scans</p>
+              <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-2 mt-4">How often Claude scans</p>
               <div className="grid gap-2 sm:grid-cols-2">
                 {EXECUTION_CADENCES.map((c) => {
                   const active = form.executionCadence === c;
                   const cadenceDescriptions: Record<string, string> = {
                     manual_only: "Only acts during sessions you manually start.",
                     session_assisted: "Stays active while you're guiding in-app.",
-                    hourly_watch: "Scans markets once per hour automatically.",
-                    continuous_watch: "Most proactive — scans as often as allowed.",
+                    hourly_watch: "Scans markets once per minute (rate-limited to ~hourly cadence).",
+                    continuous_watch: "Most proactive — scans every cron tick (1 min).",
                   };
                   return (
                     <button
@@ -260,7 +260,7 @@ export default function TradingAutonomy() {
           <StepHeader
             n={2}
             title="Set thresholds and size limits"
-            subtitle="These numbers define the guardrails the AI duo must stay within on every order."
+            subtitle="These numbers define the guardrails Claude must stay within on every order."
           />
         </CardHeader>
         <CardContent className="space-y-6">
@@ -310,7 +310,7 @@ export default function TradingAutonomy() {
                 onChange={(e) => setForm((f) => ({ ...f, minSignalConfidence: Number(e.target.value) }))}
                 className="w-full"
               />
-              <p className="text-xs text-muted-foreground">The AI duo only acts on signals that meet this quality threshold.</p>
+              <p className="text-xs text-muted-foreground">Claude only acts on signals that meet this quality threshold.</p>
             </label>
 
             <label className="space-y-2 text-sm">

@@ -16,9 +16,7 @@
  *
  * Topology:
  *   - Claude is the only reviewer (these are inherently complex multi-leg
- *     trades that benefit from extended thinking; running OpenAI here adds
- *     cost without adding meaningful redundancy beyond what the deterministic
- *     scanner already provides).
+ *     trades that benefit from extended thinking).
  *   - Prompt caching, web_search, and extended thinking are always on for
  *     this desk because every approval is high-stakes by definition.
  */

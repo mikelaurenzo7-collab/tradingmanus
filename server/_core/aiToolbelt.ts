@@ -220,8 +220,6 @@ export type ReviewerTelemetry = {
   // Provider call counts.
   anthropicCalls: number;
   anthropicFailures: number;
-  openaiCalls: number;
-  openaiFailures: number;
 };
 
 export function newReviewerTelemetry(): ReviewerTelemetry {
@@ -238,8 +236,6 @@ export function newReviewerTelemetry(): ReviewerTelemetry {
     triageKeptCount: 0,
     anthropicCalls: 0,
     anthropicFailures: 0,
-    openaiCalls: 0,
-    openaiFailures: 0,
   };
 }
 
