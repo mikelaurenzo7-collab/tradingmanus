@@ -32,6 +32,7 @@ import {
   alertDrawdownApproaching,
 } from "./alerting";
 import { logger } from "./logger";
+import { ENV } from "./env";
 
 const BASE_RISK_LIMITS = {
   maxLossPerTrade: 5,
@@ -1308,6 +1309,7 @@ export async function runScheduledAutonomousTrading(
         reason: result.error ?? "unknown",
         exchangeRequest: result.exchangeRequest ?? null,
         exchangeResponse: result.exchangeResponse ?? null,
+        simulated: ENV.paperTradeMode,
       }),
       triggeredByOpenId
     );
@@ -1365,6 +1367,7 @@ export async function runScheduledAutonomousTrading(
       maxLossOnTrade,
       reconciliationStatus: result.needsReconciliation ? "pending" : "not_required",
       reconciliationReason: result.reconciliationReason ?? null,
+      simulated: ENV.paperTradeMode,
     }),
     triggeredByOpenId
   );
