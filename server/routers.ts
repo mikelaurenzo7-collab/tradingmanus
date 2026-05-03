@@ -71,6 +71,7 @@ import { trainingRouter } from "./training.router";
 import { advancedRouter } from "./advanced.router";
 import { chatRouter } from "./chat.router";
 import { calculateKalshiBuyOrderRisk, MAX_KALSHI_ORDER_CONTRACTS } from "./_core/kalshiRisk";
+import { withUserLock } from "./_core/userMutex";
 import {
   generateMMQuotePairs,
   detectYesNoMispricings,
@@ -668,6 +669,10 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         try {
           const userId = getRequiredUserId(ctx);
+          // Serialise the check-and-execute block per user so two concurrent
+          // requests can't both pass risk checks against stale state and then
+          // both submit orders (TOCTOU race).
+          return await withUserLock(userId, async () => {
           const [capital, openPositions, todayRealizedLoss, riskLimits, preferences, todayOrderCount] = await Promise.all([
             db.getKalshiCapital(userId),
             db.getOpenKalshiPositions(userId),
@@ -754,6 +759,7 @@ export const appRouter = router({
           }
 
           return result;
+          }); // end withUserLock
         } catch (error) {
           console.error("[Kalshi] Place order error:", error);
           return { success: false, error: String(error) };

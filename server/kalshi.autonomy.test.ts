@@ -299,6 +299,30 @@ describe("scheduled away-from-chat trading", () => {
     expect(mocks.placeKalshiOrder).not.toHaveBeenCalled();
   });
 
+  it("emits a kalshi_signal_pipeline audit event capturing filter stage counts", async () => {
+    // Use mock return values that can be tracked through each stage.
+    const rawSignals = [candidateSignal, { ...candidateSignal, marketId: "KXTEST-2" }];
+    const afterConfidence = [candidateSignal]; // one dropped by confidence
+    mocks.generateSignalsForMarkets.mockResolvedValueOnce(rawSignals);
+    mocks.filterSignalsByConfidence.mockImplementationOnce(() => afterConfidence);
+    mocks.filterSignalsByMarketConditions.mockImplementationOnce((s: any[]) => s); // no drop
+
+    await runScheduledAutonomousTrading(testUser);
+
+    const pipelineCalls = mocks.logAuditEvent.mock.calls.filter(
+      (c: any[]) => c[0] === "kalshi_signal_pipeline"
+    );
+    expect(pipelineCalls).toHaveLength(1);
+
+    const payload = JSON.parse(pipelineCalls[0][1]);
+    expect(payload.signalsGenerated).toBe(2);
+    expect(payload.afterConfidenceFilter).toBe(1);
+    expect(payload.afterInstructionFilter).toBe(1);
+    expect(typeof payload.marketsDiscovered).toBe("number");
+    expect(typeof payload.actionableMarkets).toBe("number");
+    expect(pipelineCalls[0][2]).toBe("user:7");
+  });
+
   it("skips duplicate scheduled invocations for the same time bucket before re-running the autonomy flow", async () => {
     mocks.createAutonomyRun.mockResolvedValueOnce(null);
 

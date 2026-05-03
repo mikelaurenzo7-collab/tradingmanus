@@ -561,6 +561,26 @@ async function generateScheduledSignals(userId: number, minConfidence: number, a
 
   await saveSignals(savedSignals, userId);
 
+  // Emit a single structured audit event capturing every filter stage count.
+  // This answers "why did we end up with N signals?" without requiring log
+  // scraping — the full cascade is visible in the audit table.
+  await db.logAuditEvent(
+    "kalshi_signal_pipeline",
+    JSON.stringify({
+      marketsDiscovered: markets.length,
+      marketsAfterInstructionFilter: filteredMarkets.length,
+      actionableMarkets: actionableMarkets.length,
+      signalsGenerated: allSignals.length,
+      afterConfidenceFilter: confidenceFilteredSignals.length,
+      afterConditionFilter: conditionFilteredSignals.length,
+      afterInstructionFilter: instructionFilteredSignals.length,
+      afterReviewerFilter: savedSignals.length,
+      activeInstructionCount: activeInstructions.length,
+      minConfidence,
+    }),
+    `user:${userId}`,
+  );
+
   return {
     actionableMarkets,
     savedSignals,
