@@ -955,14 +955,20 @@ export async function getAuditLog(
 
 /**
  * Lightweight DB connectivity probe — used by the /api/health endpoint.
- * Returns true if the database responds, false otherwise.
+ * Returns true if the database responds, false otherwise.  Bounded by a
+ * hard timeout so a hung Neon endpoint cannot stall the health-check
+ * request and cause Railway to mark the container unhealthy.
  */
-export async function pingDb(): Promise<boolean> {
+export async function pingDb(timeoutMs = 2000): Promise<boolean> {
   const database = await getDb();
   if (!database) return false;
 
   try {
-    await database.execute(sql`SELECT 1`);
+    const probe = database.execute(sql`SELECT 1`);
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("pingDb timeout")), timeoutMs)
+    );
+    await Promise.race([probe, timeout]);
     return true;
   } catch {
     return false;
