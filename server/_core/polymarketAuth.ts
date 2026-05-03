@@ -9,6 +9,8 @@
  */
 
 import crypto from "crypto";
+import { getEffectiveMode } from "./tradingMode";
+import { logAuditEvent } from "../db";
 
 const POLYMARKET_CLOB_BASE_URL = "https://clob.polymarket.com";
 
@@ -245,4 +247,35 @@ export async function placePolymarketOrder(
       error: error instanceof Error ? error.message : "Failed to place order",
     };
   }
+}
+
+export async function gatedPlacePolymarketOrder(
+  userId: number,
+  apiKey: string,
+  apiSecret: string,
+  apiPassphrase: string,
+  order: { tokenId: string; side: "BUY" | "SELL"; price: number; size: number },
+): Promise<{ success: boolean; orderId?: string; error?: string; shadowed?: boolean; blocked?: boolean }> {
+  const effective = await getEffectiveMode(userId, "polymarket");
+
+  if (effective.paused) {
+    void logAuditEvent(
+      "order_blocked_kill_switch",
+      JSON.stringify({ platform: "polymarket", reason: effective.reason }),
+      `user:${userId}`,
+    );
+    return { success: false, blocked: true, error: `Polymarket trading paused: ${effective.reason}` };
+  }
+
+  if (effective.mode === "shadow" || effective.mode === "paper") {
+    // Paper mode: Polymarket position tables don't exist yet (deferred to SP-5). Degrade to shadow.
+    void logAuditEvent(
+      "shadow_order_logged",
+      JSON.stringify({ platform: "polymarket", tokenId: order.tokenId, side: order.side, size: order.size, mode: effective.mode }),
+      `user:${userId}`,
+    );
+    return { success: false, shadowed: true, error: `${effective.mode} mode: polymarket order logged but not placed` };
+  }
+
+  return placePolymarketOrder(apiKey, apiSecret, apiPassphrase, order);
 }

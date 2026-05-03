@@ -55,6 +55,7 @@ import {
   validatePolymarketCredentials,
   fetchPolymarketMarkets,
   placePolymarketOrder,
+  gatedPlacePolymarketOrder,
 } from "./_core/polymarketAuth";
 import { generatePolymarketSignals } from "./_core/polymarketSignals";
 import {
@@ -1839,7 +1840,8 @@ export const appRouter = router({
             };
           }
 
-          const result = await placePolymarketOrder(
+          const result = await gatedPlacePolymarketOrder(
+            userId,
             creds.apiKey,
             creds.apiSecret,
             creds.apiPassphrase,
@@ -2463,7 +2465,7 @@ export const appRouter = router({
               placeKalshiOrder: (marketId, side, quantity, limitPrice) =>
                 placeKalshiOrder(userId, marketId, side, quantity, limitPrice),
               placePolymarketOrder: (tokenId, side, price, size) =>
-                placePolymarketOrder(pmKey, pmSecret, pmPass, {
+                gatedPlacePolymarketOrder(userId, pmKey, pmSecret, pmPass, {
                   tokenId,
                   side,
                   price,
