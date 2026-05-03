@@ -5,7 +5,7 @@
 
 import crypto from "crypto";
 import { URL } from "url";
-import { db, logAuditEvent } from "../db";
+import { db, transaction, logAuditEvent } from "../db";
 import * as kalshiCredDb from "../db.kalshi-credentials";
 import { kalshiOrders, kalshiFills, kalshiPositions } from "../../drizzle/schema";
 import { and, eq, inArray } from "drizzle-orm";
@@ -308,18 +308,22 @@ export async function placeKalshiOrder(
     // our DB does not.  We use the client_order_id as the unique key
     // until the exchange returns its own orderId.  If this insert fails
     // we abort entirely and never call the exchange.
+    // Wrapped in a transaction so that any constraint violation rolls back
+    // cleanly rather than leaving a partial write.
     try {
-      await db.insert(kalshiOrders).values({
-        userId: scopedUserId,
-        orderId: clientOrderId,
-        marketId,
-        action: "buy",
-        side,
-        quantity: risk.quantity,
-        limitPrice: risk.limitPrice,
-        status: "pending",
-        filledQuantity: 0,
-        averagePrice: 0,
+      await transaction(async (tx) => {
+        await tx.insert(kalshiOrders).values({
+          userId: scopedUserId,
+          orderId: clientOrderId,
+          marketId,
+          action: "buy",
+          side,
+          quantity: risk.quantity,
+          limitPrice: risk.limitPrice,
+          status: "pending",
+          filledQuantity: 0,
+          averagePrice: 0,
+        });
       });
     } catch (preWriteError) {
       console.error(
@@ -417,16 +421,20 @@ export async function placeKalshiOrder(
     // Update the pre-written row with the exchange-issued orderId.  If
     // this update fails we still have the order on the exchange and a
     // pending local row keyed by clientOrderId — flag for reconciliation.
+    // Wrapped in a transaction so that future additions (capital, position)
+    // to this post-exchange write set remain atomic.
     try {
-      await db
-        .update(kalshiOrders)
-        .set({ orderId })
-        .where(
-          and(
-            eq(kalshiOrders.orderId, clientOrderId),
-            eq(kalshiOrders.userId, scopedUserId),
-          ),
-        );
+      await transaction(async (tx) => {
+        await tx
+          .update(kalshiOrders)
+          .set({ orderId })
+          .where(
+            and(
+              eq(kalshiOrders.orderId, clientOrderId),
+              eq(kalshiOrders.userId, scopedUserId),
+            ),
+          );
+      });
     } catch (storageError) {
       console.error(
         `[Kalshi] Order ${orderId} accepted by Kalshi but local ledger update from clientOrderId=${clientOrderId} failed. Manual reconciliation required:`,
