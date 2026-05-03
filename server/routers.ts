@@ -771,18 +771,15 @@ export const appRouter = router({
       .input(z.object({ orderId: z.string() }))
       .mutation(async ({ input, ctx }) => {
         try {
+          // Pass openId so audit events inside cancelKalshiOrder use the
+          // authenticated user's identity rather than a numeric fallback.
+          // Audit logging (success + failure) is handled inside cancelKalshiOrder.
           const result = await cancelKalshiOrder(
             getRequiredUserId(ctx),
-            input.orderId
+            input.orderId,
+            undefined,
+            ctx.user!.openId
           );
-
-          if (result.success) {
-            await db.logAuditEvent(
-              "kalshi_order_cancelled",
-              input.orderId,
-              ctx.user!.openId
-            );
-          }
 
           return result;
         } catch (error) {
@@ -838,20 +835,17 @@ export const appRouter = router({
       )
       .mutation(async ({ input, ctx }) => {
         try {
+          // Pass openId so audit events inside closeKalshiPosition use the
+          // authenticated user's identity rather than a numeric fallback.
+          // Audit logging (success + failure) is handled inside closeKalshiPosition.
           const result = await closeKalshiPosition(
             getRequiredUserId(ctx),
             input.positionId,
             input.marketId,
-            input.currentPrice
+            input.currentPrice,
+            undefined,
+            ctx.user!.openId
           );
-
-          if (result.success) {
-            await db.logAuditEvent(
-              "kalshi_position_closed",
-              JSON.stringify(input),
-              ctx.user!.openId
-            );
-          }
 
           return result;
         } catch (error) {
@@ -2116,7 +2110,11 @@ export const appRouter = router({
           })
           .optional(),
       )
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
+        const userId = getRequiredUserId(ctx);
+        if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+        }
         try {
           const markets = await fetchPolymarketMarkets({
             limit: POLYMARKET_SIGNAL_GENERATION_MARKET_LIMIT,
@@ -2141,6 +2139,9 @@ export const appRouter = router({
     runAutonomousTrading: protectedProcedure.mutation(async ({ ctx }) => {
       try {
         const userId = getRequiredUserId(ctx);
+        if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+        }
         const result = await runPolymarketAutonomousTrading(userId, {
           triggeredByOpenId: ctx.user!.openId,
         });
@@ -2221,7 +2222,11 @@ export const appRouter = router({
           })
           .optional(),
       )
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
+        const userId = getRequiredUserId(ctx);
+        if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+        }
         try {
           const rawMarkets = await fetchPolymarketMarkets({
             limit: POLYMARKET_SIGNAL_GENERATION_MARKET_LIMIT,
@@ -2264,7 +2269,11 @@ export const appRouter = router({
           })
           .optional(),
       )
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
+        const userId = getRequiredUserId(ctx);
+        if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+        }
         try {
           const [rawKalshi, rawPolymarket] = await Promise.all([
             fetchKalshiMarkets({ status: "open" }),
@@ -2336,6 +2345,9 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         try {
           const userId = getRequiredUserId(ctx);
+          if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+          }
           const minConfidence = input?.minConfidence ?? 0.5;
           const limit = input?.limit ?? 30;
 
@@ -2440,6 +2452,10 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         try {
           const userId = getRequiredUserId(ctx);
+
+          if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+          }
 
           if (input.netEdge <= 0) {
             return {

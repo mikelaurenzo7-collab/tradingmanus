@@ -164,6 +164,36 @@ export async function getPlatformSubscriptions(userId: number) {
 }
 
 /**
+ * Check whether a user is currently subscribed to the Polymarket platform.
+ * Returns true when the user's subscribedPlatforms value is 'polymarket' or 'both'.
+ * Defaults to false (deny) on any database error.
+ */
+export async function isUserSubscribedToPolymarket(userId: number): Promise<boolean> {
+  const database = await getDb();
+  if (!database) {
+    return false;
+  }
+
+  try {
+    const result = await database
+      .select({ subscribedPlatforms: userPlatformSubscriptions.subscribedPlatforms })
+      .from(userPlatformSubscriptions)
+      .where(eq(userPlatformSubscriptions.userId, userId))
+      .limit(1);
+
+    if (!result || result.length === 0) {
+      return false;
+    }
+
+    const { subscribedPlatforms } = result[0];
+    return subscribedPlatforms === "polymarket" || subscribedPlatforms === "both";
+  } catch (error) {
+    logger.error({ err: error }, "[Database] isUserSubscribedToPolymarket check failed");
+    return false;
+  }
+}
+
+/**
  * Save platform subscriptions for a user
  */
 export async function savePlatformSubscriptions(
