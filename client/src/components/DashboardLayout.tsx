@@ -1,3 +1,5 @@
+import { TradingModeBanner } from "./TradingModeBanner";
+import { PauseAllButton } from "./PauseAllButton";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -254,6 +256,7 @@ export default function DashboardLayout({
         </SidebarFooter>
       </Sidebar>
       <SidebarInset>
+        <TradingModeBanner />
         <header className="flex items-center justify-between h-16 px-6 border-b border-border bg-background/50 backdrop-blur-sm">
           <div className="flex items-center gap-2">
             <SidebarTrigger />
@@ -293,6 +296,7 @@ export default function DashboardLayout({
         <main className="flex-1 overflow-auto">
           {children}
         </main>
+        <PauseAllButton />
       </SidebarInset>
     </SidebarProvider>
   );

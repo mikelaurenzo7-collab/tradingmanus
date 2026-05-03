@@ -1,3 +1,4 @@
+import { TradingModePanel } from "@/components/TradingModePanel";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
 import { CheckCircle2, Circle, Loader2, Shield, Zap, ChevronRight, Clock, Ban, Activity } from "lucide-react";
@@ -150,6 +151,7 @@ export default function TradingAutonomy() {
 
   return (
     <div className="p-6 space-y-8 max-w-4xl">
+      <TradingModePanel />
       {/* Page title + status pill */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
