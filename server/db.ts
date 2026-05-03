@@ -111,6 +111,23 @@ export const db = {
   },
 };
 
+/**
+ * Run a set of DB operations inside a single database transaction.
+ *
+ * NOTE: the neon-http driver used in production does NOT support real
+ * transactions (it throws "No transactions support in neon-http driver").
+ * This wrapper exists so that callers can adopt the transactional pattern
+ * now; switching to the neon-serverless (WebSocket) driver in future will
+ * make it fully ACID without further code changes.
+ *
+ * In tests, vi.mock("./db") replaces this with a mock that calls the
+ * callback directly, so the pattern is validated without hitting the driver.
+ */
+export const transaction = <T>(fn: (tx: typeof _db) => Promise<T>): Promise<T> => {
+  if (!_db) throw new Error("Database not initialized");
+  return (_db as any).transaction(fn as never) as Promise<T>;
+};
+
 // User queries
 export async function upsertUser(payload: { 
   openId: string; 
@@ -422,7 +439,10 @@ export async function getPendingKalshiOrders(userId: number) {
     .select()
     .from(kalshiOrders)
     .where(
-      and(eq(kalshiOrders.userId, scopedUserId), eq(kalshiOrders.status, "pending"))
+      and(
+        eq(kalshiOrders.userId, scopedUserId),
+        inArray(kalshiOrders.status, ["pending", "partial"]),
+      )
     );
 }
 
