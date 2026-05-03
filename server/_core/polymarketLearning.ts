@@ -383,19 +383,30 @@ export async function getPolymarketPerformanceOverview(
     (p) => p.positionStatus === "open" || p.positionStatus === "closing"
   );
 
-  const metrics = calculatePerformanceMetricsFromTrades(allPositions, {
-    startingBalance: 0,
-    openPositions,
-  });
-
-  // Derive the current balance from all realized P&L across positions.
-  const currentBalance = allPositions.reduce(
-    (sum, p) => sum + Number(p.realizedPnl ?? 0) + Number(p.unrealizedPnl ?? 0),
+  // Starting balance is the total capital deployed into all positions (sum of
+  // sizeUsdc).  This is the most accurate proxy for Polymarket initial capital
+  // until a dedicated polymarketCapital table is added.
+  const startingBalance = allPositions.reduce(
+    (sum, p) => sum + Number(p.sizeUsdc ?? 0),
     0,
   );
 
+  const metrics = calculatePerformanceMetricsFromTrades(allPositions, {
+    startingBalance,
+    openPositions,
+  });
+
+  // Current balance = deployed capital + total realized P&L.
+  // Unrealized P&L is tracked separately inside the metrics object and should
+  // not be folded into the account balance (which reflects closed results only).
+  const totalRealizedPnl = allPositions.reduce(
+    (sum, p) => sum + Number(p.realizedPnl ?? 0),
+    0,
+  );
+  const currentBalance = startingBalance + totalRealizedPnl;
+
   return {
-    startingBalance: 0,
+    startingBalance,
     currentBalance,
     metrics,
     signalPerformance: analyzeSignalPerformanceFromData(signals, allPositions),

@@ -28,7 +28,7 @@ const Chat = lazy(() => import("./pages/Chat"));
 function PageFallback() {
   return (
     <div className="flex items-center justify-center h-64 text-muted-foreground">
-      Loading\u2026
+      Loading…
     </div>
   );
 }
