@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Glassmorphism & Effects Demo</title>
+    <link rel="stylesheet" href="../index.css">
+    <style>
+        body {
+            padding: 40px;
+            min-height: 100vh;
+        }
+        .demo-section {
+            margin-bottom: 40px;
+        }
+        .demo-title {
+            font-size: 1.5rem;
+            margin-bottom: 20px;
+            color: #a855f7;
+        }
+        .demo-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+        }
+        .demo-card {
+            padding: 20px;
+            border-radius: 12px;
+            min-height: 120px;
+        }
+        .skeleton {
+            width: 100%;
+            height: 20px;
+            border-radius: 4px;
+            margin: 8px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1 style="margin-bottom: 40px;">Glassmorphism & Advanced Effects Demo</h1>
+
+    <!-- Glass Card Demo -->
+    <div class="demo-section">
+        <h2 class="demo-title">1. Glass Card (.glass-card)</h2>
+        <div class="demo-grid">
+            <div class="glass-card demo-card">
+                <h3>Basic Glass Card</h3>
+                <p>Background with backdrop blur and subtle border</p>
+            </div>
+            <div class="glass-card demo-card glow-primary">
+                <h3>Glass Card + Primary Glow</h3>
+                <p>Glass card with purple glow effect</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Primary Glow Demo -->
+    <div class="demo-section">
+        <h2 class="demo-title">2. Primary Glow (.glow-primary)</h2>
+        <div class="demo-grid">
+            <div class="demo-card glow-primary" style="background: rgba(18, 18, 24, 0.8); border: 1px solid rgba(255, 255, 255, 0.1);">
+                <h3>Glow Effect</h3>
+                <p>Box shadow with primary purple color</p>
+            </div>
+            <div class="demo-card glow-primary glow-hover" style="background: rgba(18, 18, 24, 0.8); border: 1px solid rgba(255, 255, 255, 0.1);">
+                <h3>Glow + Hover</h3>
+                <p>Hover to see enhanced glow</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Gradient Border Demo -->
+    <div class="demo-section">
+        <h2 class="demo-title">3. Gradient Border (.gradient-border-image)</h2>
+        <div class="demo-grid">
+            <div class="demo-card gradient-border-image" style="background: rgba(18, 18, 24, 0.8);">
+                <h3>Gradient Border</h3>
+                <p>Purple to pink gradient border using border-image</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Live Update Pulse Demo -->
+    <div class="demo-section">
+        <h2 class="demo-title">4. Live Update Pulse (.pulse-live)</h2>
+        <div class="demo-grid">
+            <div class="demo-card pulse-live" style="background: rgba(18, 18, 24, 0.8);">
+                <h3>⚡ Live Update</h3>
+                <p>Green pulsing border for real-time indicators</p>
+                <small style="color: #22c55e;">● Status: Connected</small>
+            </div>
+        </div>
+    </div>
+
+    <!-- Shimmer Loading Demo -->
+    <div class="demo-section">
+        <h2 class="demo-title">5. Shimmer Loading (.shimmer-load)</h2>
+        <div class="demo-grid">
+            <div class="demo-card" style="background: rgba(18, 18, 24, 0.8); border: 1px solid rgba(255, 255, 255, 0.1);">
+                <h3>Loading Skeleton</h3>
+                <div class="skeleton shimmer-load" style="background: rgba(255, 255, 255, 0.05);"></div>
+                <div class="skeleton shimmer-load" style="background: rgba(255, 255, 255, 0.05); width: 80%;"></div>
+                <div class="skeleton shimmer-load" style="background: rgba(255, 255, 255, 0.05); width: 60%;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Transition Effects Demo -->
+    <div class="demo-section">
+        <h2 class="demo-title">6. Smooth Transitions</h2>
+        <div class="demo-grid">
+            <div class="demo-card transition-scale" style="background: rgba(18, 18, 24, 0.8); border: 1px solid rgba(255, 255, 255, 0.1);">
+                <h3>Scale Transition</h3>
+                <p>Hover to scale up smoothly</p>
+            </div>
+            <div class="demo-card transition-card glass-card">
+                <h3>Card Transition</h3>
+                <p>Hover for lift + scale + opacity change</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Combined Effects Demo -->
+    <div class="demo-section">
+        <h2 class="demo-title">7. Combined Effects</h2>
+        <div class="demo-grid">
+            <div class="glass-card glow-primary transition-card demo-card fade-in-gpu">
+                <h3>🎨 Premium Card</h3>
+                <p>Glass + Glow + Transitions + Fade In</p>
+                <small style="opacity: 0.7;">All effects combined</small>
+            </div>
+            <div class="glass-card pulse-live transition-scale demo-card">
+                <h3>📊 Live Dashboard Card</h3>
+                <p>Real-time data indicator</p>
+                <small style="color: #22c55e;">● Live updates enabled</small>
+            </div>
+        </div>
+    </div>
+
+    <div style="margin-top: 60px; padding: 20px; background: rgba(168, 85, 247, 0.1); border-radius: 12px; border: 1px solid rgba(168, 85, 247, 0.3);">
+        <h3>✓ Accessibility: Reduced Motion Support</h3>
+        <p>All animations respect <code>prefers-reduced-motion: reduce</code> media query.</p>
+        <p>Test by enabling "Reduce motion" in your OS accessibility settings.</p>
+    </div>
+
+    <div style="margin-top: 20px; padding: 20px; background: rgba(34, 197, 94, 0.1); border-radius: 12px; border: 1px solid rgba(34, 197, 94, 0.3);">
+        <h3>⚡ Performance: GPU Acceleration</h3>
+        <p>All effects use GPU-accelerated properties:</p>
+        <ul style="margin-left: 20px; margin-top: 10px;">
+            <li><code>transform</code> - for scale and translate</li>
+            <li><code>opacity</code> - for fade effects</li>
+            <li><code>filter</code> / <code>backdrop-filter</code> - for blur</li>
+            <li><code>will-change</code> - optimization hints for browser</li>
+        </ul>
+    </div>
+</body>
+</html>

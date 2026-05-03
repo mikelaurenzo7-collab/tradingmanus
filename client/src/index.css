@@ -511,3 +511,159 @@
     background: rgba(136, 100, 255, 0.5);
   }
 }
+
+/* ============================================
+   UTILITIES LAYER - Glassmorphism & Effects
+   ============================================ */
+@layer utilities {
+  /* Glassmorphism card utility */
+  .glass-card {
+    background: rgba(18, 18, 24, 0.6);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px); /* Safari support */
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    will-change: transform; /* GPU acceleration hint */
+  }
+
+  /* Primary glow effect */
+  .glow-primary {
+    box-shadow: 0 0 20px rgba(168, 85, 247, 0.4);
+    will-change: transform; /* GPU acceleration hint */
+  }
+
+  /* Gradient border using border-image */
+  .gradient-border-image {
+    border-width: 2px;
+    border-style: solid;
+    border-image: linear-gradient(135deg, #a855f7, #ec4899) 1;
+  }
+
+  /* Live update pulse animation - green border for real-time indicators */
+  @keyframes pulse-live {
+    0%, 100% {
+      border-color: rgba(34, 197, 94, 0.4);
+      box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.4);
+    }
+    50% {
+      border-color: rgba(34, 197, 94, 0.8);
+      box-shadow: 0 0 0 8px rgba(34, 197, 94, 0);
+    }
+  }
+
+  .pulse-live {
+    animation: pulse-live 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    border-width: 2px;
+    border-style: solid;
+    will-change: transform; /* GPU acceleration */
+  }
+
+  /* Shimmer loading animation for skeleton screens */
+  @keyframes shimmer-load {
+    0% {
+      background-position: -200% 0;
+    }
+    100% {
+      background-position: 200% 0;
+    }
+  }
+
+  .shimmer-load {
+    background: linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0) 0%,
+      rgba(255, 255, 255, 0.05) 20%,
+      rgba(255, 255, 255, 0.1) 50%,
+      rgba(255, 255, 255, 0.05) 80%,
+      rgba(255, 255, 255, 0) 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer-load 1.5s ease-in-out infinite;
+    will-change: background-position; /* GPU acceleration */
+  }
+
+  /* Smooth scale transition utility */
+  .transition-scale {
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    will-change: transform;
+  }
+
+  .transition-scale:hover {
+    transform: scale(1.02);
+  }
+
+  /* Smooth opacity transition utility */
+  .transition-opacity-smooth {
+    transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    will-change: opacity;
+  }
+
+  /* Combined scale and opacity transition for cards */
+  .transition-card {
+    transition: 
+      transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+      opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+      box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    will-change: transform, opacity;
+  }
+
+  .transition-card:hover {
+    transform: translateY(-2px) scale(1.01);
+    opacity: 0.95;
+  }
+
+  /* Enhanced glow on hover for interactive elements */
+  .glow-hover {
+    transition: box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .glow-hover:hover {
+    box-shadow: 0 0 30px rgba(168, 85, 247, 0.6);
+  }
+
+  /* GPU-accelerated fade in */
+  .fade-in-gpu {
+    animation: fade-in-gpu 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  @keyframes fade-in-gpu {
+    from {
+      opacity: 0;
+      transform: translateZ(0) translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateZ(0) translateY(0);
+    }
+  }
+
+  /* Respect user motion preferences */
+  @media (prefers-reduced-motion: reduce) {
+    .pulse-live,
+    .shimmer-load,
+    .fade-in-gpu {
+      animation: none;
+    }
+
+    .transition-scale,
+    .transition-opacity-smooth,
+    .transition-card,
+    .glow-hover {
+      transition: none;
+    }
+
+    .transition-scale:hover,
+    .transition-card:hover {
+      transform: none;
+    }
+
+    /* Preserve critical visual feedback but remove motion */
+    .pulse-live {
+      border-color: rgba(34, 197, 94, 0.8);
+      box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.2);
+    }
+
+    .shimmer-load {
+      background: rgba(255, 255, 255, 0.05);
+    }
+  }
+}
