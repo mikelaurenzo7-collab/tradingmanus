@@ -288,7 +288,7 @@
 ### Phase 4: Error Handling (PENDING)
 
 - [ ] **BUG: Silent failures on API errors** - Many procedures return empty arrays instead of errors
-- [ ] **ISSUE: No retry logic** - API calls fail once and don't retry on transient errors
+- [x] **ISSUE: No retry logic** - Added `fetchWithRetry` with exponential backoff + jitter; wired into Kalshi market data fetchers (5xx/408/425/429 + network errors)
 - [ ] **ISSUE: No circuit breaker** - Cascading failures possible if Kalshi API is down
 - [ ] **ISSUE: Error messages not user-friendly** - Technical errors exposed to frontend
 
