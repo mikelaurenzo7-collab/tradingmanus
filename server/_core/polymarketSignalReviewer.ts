@@ -249,32 +249,6 @@ function getReviewPayload(input: {
   };
 }
 
-function getOpenAiText(payload: unknown) {
-  if (
-    typeof payload === "object" &&
-    payload !== null &&
-    "choices" in payload &&
-    Array.isArray(payload.choices)
-  ) {
-    const content = payload.choices[0]?.message?.content;
-    if (typeof content === "string") {
-      return content.trim();
-    }
-  }
-  throw new Error("OpenAI response did not include JSON message content");
-}
-
-function buildOpenAiSystemPrompt(persona?: CategoryPersona): string {
-  const desk = persona?.label ?? "Polymarket Generalist Desk";
-  const personaMandate = persona?.systemMandate
-    ? `\n\nDesk-specific mandate (${desk}):\n${persona.systemMandate}`
-    : "";
-  return (
-    "You are OpenAI acting as a conservative Polymarket trading reviewer for one founder's small live account. You never place trades directly. You only approve, veto, or modestly adjust signal confidence and expected value. Capital preservation, liquidity, bounded downside, avoiding weak heuristic trades, and detecting wash-trading patterns are mandatory. Respond with a JSON object shaped as {\"reviews\":[...]} and nothing else." +
-    personaMandate
-  );
-}
-
 function buildAnthropicBaseMandate(persona?: CategoryPersona): string {
   const desk = persona?.label ?? "Polymarket Generalist Desk";
   const personaMandate = persona?.systemMandate

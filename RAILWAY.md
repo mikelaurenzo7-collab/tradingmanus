@@ -85,16 +85,14 @@ In **Project → Variables** (or `railway variables --set KEY=value`), set
 
 | Variable | Notes |
 |---|---|
-| `OPENAI_API_KEY` | Required for high-stakes trades (≥$25, near-resolution, or confidence ≥0.9) where both providers must approve. |
 | `LOG_LEVEL` | `info` (default in production). |
 | `ALERT_WEBHOOK_URL` | Slack/PagerDuty/etc. webhook for critical alerts. |
 
 ### Optional
 
 `KALSHI_API_KEY`, `GNEWS_API_KEY`, `ANTHROPIC_MODEL`, `ANTHROPIC_TRIAGE_MODEL`,
-`ANTHROPIC_DEEP_MODEL`, `ANTHROPIC_TIMEOUT_MS`, `OPENAI_MODEL`,
-`OPENAI_TIMEOUT_MS`, all `ENABLE_AI_*` flags, `AI_TRIAGE_THRESHOLD`,
-`VITE_ANALYTICS_ENDPOINT`, `VITE_ANALYTICS_WEBSITE_ID`.
+`ANTHROPIC_DEEP_MODEL`, `ANTHROPIC_TIMEOUT_MS`, all `ENABLE_AI_*` flags,
+`AI_TRIAGE_THRESHOLD`, `VITE_ANALYTICS_ENDPOINT`, `VITE_ANALYTICS_WEBSITE_ID`.
 
 ### Not needed on Railway
 
