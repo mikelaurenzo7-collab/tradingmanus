@@ -1,7 +1,7 @@
 import { logger } from "./logger";
 import { getDb } from "../db";
 import { distributedLocks } from "../../drizzle/schema";
-import { eq, lt } from "drizzle-orm";
+import { and, eq, lt } from "drizzle-orm";
 import { nanoid } from "nanoid";
 
 export interface LockOptions {
@@ -37,6 +37,7 @@ export class DistributedLock {
   // Generation counter prevents a stale TTL timeout from releasing a lock
   // that was already released and re-acquired on the same instance.
   private generation = 0;
+  private autoReleaseTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(lockKey: string) {
     this.lockKey = lockKey;
@@ -96,8 +97,9 @@ export class DistributedLock {
 
           // Auto-release after TTL to avoid permanently stuck locks.
           // The generation check ensures this timer only fires if this
-          // acquisition is still the current one.
-          setTimeout(() => {
+          // acquisition is still the current one.  We unref() so a pending
+          // timer never keeps the Node event loop alive past shutdown.
+          const timer = setTimeout(() => {
             if (this.generation === currentGeneration) {
               this.release().catch((error) => {
                 logger.error(
@@ -107,6 +109,10 @@ export class DistributedLock {
               });
             }
           }, ttlMs);
+          if (typeof timer.unref === "function") {
+            timer.unref();
+          }
+          this.autoReleaseTimer = timer;
 
           return true;
         }
@@ -131,7 +137,11 @@ export class DistributedLock {
 
   /**
    * Release the lock.  Clears the holder state before the async DB call so
-   * concurrent calls on the same instance cannot double-delete.
+   * concurrent calls on the same instance cannot double-delete.  The DELETE
+   * is scoped to `acquiredBy = holderId` so a late release from a previous
+   * holder (whose TTL had expired and the row has already been re-acquired
+   * by someone else) cannot wipe the successor's lock — this is "fencing":
+   * each lock acquisition can only ever delete its own row.
    */
   async release(): Promise<void> {
     const holderId = this.acquiredBy;
@@ -139,8 +149,13 @@ export class DistributedLock {
       return;
     }
 
-    // Clear immediately to prevent concurrent release calls.
+    // Clear immediately to prevent concurrent release calls and to disarm
+    // the auto-release timer.
     this.acquiredBy = null;
+    if (this.autoReleaseTimer) {
+      clearTimeout(this.autoReleaseTimer);
+      this.autoReleaseTimer = null;
+    }
 
     try {
       const db = await getDb();
@@ -151,7 +166,12 @@ export class DistributedLock {
 
       await db
         .delete(distributedLocks)
-        .where(eq(distributedLocks.lockKey, this.lockKey));
+        .where(
+          and(
+            eq(distributedLocks.lockKey, this.lockKey),
+            eq(distributedLocks.acquiredBy, holderId)
+          )
+        );
 
       logger.debug({ lockKey: this.lockKey, holderId }, "Lock released");
     } catch (error) {
