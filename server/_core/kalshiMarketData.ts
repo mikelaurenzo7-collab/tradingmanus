@@ -3,6 +3,8 @@
  * Fetches real-time market data from Kalshi prediction markets API
  */
 
+import { fetchWithRetry } from "./fetchWithRetry";
+
 export interface KalshiMarket {
   id: string;
   title: string;
@@ -182,11 +184,15 @@ export async function fetchKalshiMarkets(filters?: {
     params.append("limit", "200");
 
     const url = `${KALSHI_API_BASE}/markets?${params.toString()}`;
-    const response = await fetch(url, {
-      headers: {
-        "Content-Type": "application/json",
+    const response = await fetchWithRetry(
+      url,
+      {
+        headers: {
+          "Content-Type": "application/json",
+        },
       },
-    });
+      { label: "Kalshi.fetchMarkets" }
+    );
 
     if (!response.ok) {
       console.error(`[Kalshi] API error: ${response.status}`);
@@ -211,11 +217,15 @@ export async function fetchKalshiMarkets(filters?: {
 export async function fetchKalshiMarketDetails(marketId: string): Promise<KalshiMarket | null> {
   try {
     const url = `${KALSHI_API_BASE}/markets/${marketId}`;
-    const response = await fetch(url, {
-      headers: {
-        "Content-Type": "application/json",
+    const response = await fetchWithRetry(
+      url,
+      {
+        headers: {
+          "Content-Type": "application/json",
+        },
       },
-    });
+      { label: "Kalshi.fetchMarketDetails" }
+    );
 
     if (!response.ok) {
       console.error(`[Kalshi] Market details error: ${response.status}`);

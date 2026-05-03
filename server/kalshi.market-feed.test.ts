@@ -12,14 +12,17 @@ import {
 } from "../server/_core/kalshiMarketFeed";
 import * as db from "../server/db";
 import * as kalshiMarketData from "../server/_core/kalshiMarketData";
+import * as kalshiMarketSnapshots from "../server/_core/kalshiMarketSnapshots";
 
 // Mock dependencies
 vi.mock("../server/db");
 vi.mock("../server/_core/kalshiMarketData");
+vi.mock("../server/_core/kalshiMarketSnapshots");
 
 describe("Kalshi Market Feed", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(kalshiMarketSnapshots.saveMarketSnapshot).mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -57,6 +60,37 @@ describe("Kalshi Market Feed", () => {
       expect(feed?.currentSnapshot.yesPrice).toBe(0.65);
       expect(feed?.dataQualityScore).toBe(1.0);
       expect(feed?.priceHistory.length).toBe(1);
+    });
+
+    it("persists an immutable timestamped history row on initial subscribe", async () => {
+      const mockMarket = {
+        id: "market-history-1",
+        title: "History Persistence",
+        category: "crypto",
+        description: "",
+        resolutionDate: "2025-12-31",
+        status: "open" as const,
+        yesPrice: 0.42,
+        noPrice: 0.58,
+        yesVolume: 250,
+        noVolume: 175,
+        impliedProbability: 0.42,
+      };
+
+      vi.mocked(kalshiMarketData.fetchKalshiMarketDetails).mockResolvedValue(mockMarket);
+      vi.mocked(db.upsertKalshiMarket).mockResolvedValue(undefined);
+
+      await subscribeToMarketFeed("market-history-1", 1000);
+
+      expect(kalshiMarketSnapshots.saveMarketSnapshot).toHaveBeenCalledTimes(1);
+      const persisted = vi.mocked(kalshiMarketSnapshots.saveMarketSnapshot).mock.calls[0][0];
+      expect(persisted.marketId).toBe("market-history-1");
+      expect(persisted.yesPrice).toBe(0.42);
+      expect(persisted.noPrice).toBe(0.58);
+      expect(persisted.yesVolume).toBe(250);
+      expect(persisted.noVolume).toBe(175);
+      expect(persisted.impliedProbability).toBe(0.42);
+      expect(persisted.timestamp).toBeInstanceOf(Date);
     });
 
     it("should return null if market fetch fails", async () => {

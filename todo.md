@@ -280,7 +280,7 @@
 
 ### Phase 3: Data Integrity (PENDING)
 
-- [ ] **BUG: Market price persistence missing** - Market snapshots not timestamped properly for history
+- [x] **BUG: Market price persistence missing** - Market snapshots now timestamped via dedicated `kalshiMarketSnapshots` table with feed-loop wiring + regression test
 - [ ] **ISSUE: No transaction isolation** - Concurrent trades could cause race conditions
 - [ ] **ISSUE: Audit log not comprehensive** - Missing logs for signal generation, filtering, ranking
 - [ ] **ISSUE: No data validation on Kalshi API responses** - Could accept malformed market data
@@ -288,14 +288,14 @@
 ### Phase 4: Error Handling (PENDING)
 
 - [ ] **BUG: Silent failures on API errors** - Many procedures return empty arrays instead of errors
-- [ ] **ISSUE: No retry logic** - API calls fail once and don't retry on transient errors
+- [x] **ISSUE: No retry logic** - Added `fetchWithRetry` with exponential backoff + jitter; wired into Kalshi market data fetchers (5xx/408/425/429 + network errors)
 - [ ] **ISSUE: No circuit breaker** - Cascading failures possible if Kalshi API is down
 - [ ] **ISSUE: Error messages not user-friendly** - Technical errors exposed to frontend
 
 ### Phase 5: Frontend User Flows (PENDING)
 
-- [ ] **ISSUE: No loading states during order placement** - User doesn't know if order is processing
-- [ ] **ISSUE: No confirmation dialog before trading** - User could accidentally place large orders
+- [x] **ISSUE: No loading states during order placement** - Close-position flow now has confirm dialog, sonner toasts, and a visible spinner
+- [x] **ISSUE: No confirmation dialog before trading** - Close-position flow gates on a `window.confirm` showing side, quantity, market, and exit price
 - [ ] **ISSUE: Performance dashboard not wired** - UI created but no backend data flowing
 - [ ] **ISSUE: Training instructions not enforced** - Agent doesn't actually filter signals by training rules
 
