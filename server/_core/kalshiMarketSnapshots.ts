@@ -1,6 +1,6 @@
 import { db } from "../db";
-import { kalshiMarkets } from "../../drizzle/schema";
-import { eq } from "drizzle-orm";
+import { kalshiMarkets, kalshiMarketSnapshots } from "../../drizzle/schema";
+import { desc, eq } from "drizzle-orm";
 
 /**
  * Phase 2: Market Snapshot Persistence
@@ -21,8 +21,31 @@ export interface MarketSnapshot {
  * Save market snapshot to database
  */
 export async function saveMarketSnapshot(snapshot: MarketSnapshot): Promise<void> {
+  const liquidity = snapshot.yesVolume + snapshot.noVolume;
+
+  // Insert immutable timestamped row into history table.
+  // The schema column `snapshotTime` defaults to `now()`, but we insert it
+  // explicitly so the persisted timestamp matches the in-memory snapshot.
   try {
-    // Update market with latest snapshot data
+    await db.insert(kalshiMarketSnapshots).values({
+      marketId: snapshot.marketId,
+      yesPrice: snapshot.yesPrice,
+      noPrice: snapshot.noPrice,
+      yesVolume: snapshot.yesVolume,
+      noVolume: snapshot.noVolume,
+      impliedProbability: snapshot.impliedProbability,
+      liquidity,
+      snapshotTime: snapshot.timestamp,
+    });
+  } catch (error) {
+    console.error("[Kalshi] Insert market snapshot failed:", error);
+    throw error;
+  }
+
+  // Update the latest-known market row so dashboards see fresh prices.
+  // Failure here is logged but not fatal — the immutable history row is
+  // already persisted, which is what historical analysis depends on.
+  try {
     await db
       .update(kalshiMarkets)
       .set({
@@ -35,8 +58,7 @@ export async function saveMarketSnapshot(snapshot: MarketSnapshot): Promise<void
       })
       .where(eq(kalshiMarkets.marketId, snapshot.marketId));
   } catch (error) {
-    console.error("[Kalshi] Save market snapshot failed:", error);
-    throw error;
+    console.error("[Kalshi] Update market latest snapshot failed:", error);
   }
 }
 
@@ -45,30 +67,27 @@ export async function saveMarketSnapshot(snapshot: MarketSnapshot): Promise<void
  */
 export async function getMarketHistory(marketId: string, limit: number = 60): Promise<MarketSnapshot[]> {
   try {
-    // For now, return current market data
-    // In production, would query a separate market_snapshots table with timestamps
-    const market = await db
+    // Read from the dedicated history table. Rows are returned newest-first
+    // so callers can take the head of the array; we reverse to chronological
+    // order for momentum/volatility helpers that expect oldest-first.
+    const rows = await db
       .select()
-      .from(kalshiMarkets)
-      .where(eq(kalshiMarkets.marketId, marketId))
-      .limit(1);
+      .from(kalshiMarketSnapshots)
+      .where(eq(kalshiMarketSnapshots.marketId, marketId))
+      .orderBy(desc(kalshiMarketSnapshots.snapshotTime))
+      .limit(limit);
 
-    if (!market.length) {
-      return [];
-    }
-
-    const m = market[0];
-    return [
-      {
-        marketId: m.marketId,
-        timestamp: m.lastUpdated,
-        yesPrice: m.yesPrice,
-        noPrice: m.noPrice,
-        yesVolume: m.yesVolume,
-        noVolume: m.noVolume,
-        impliedProbability: m.impliedProbability,
-      },
-    ];
+    return rows
+      .map((s: typeof kalshiMarketSnapshots.$inferSelect) => ({
+        marketId: s.marketId,
+        timestamp: s.snapshotTime,
+        yesPrice: s.yesPrice,
+        noPrice: s.noPrice,
+        yesVolume: s.yesVolume,
+        noVolume: s.noVolume,
+        impliedProbability: s.impliedProbability,
+      }))
+      .reverse();
   } catch (error) {
     console.error("[Kalshi] Get market history failed:", error);
     return [];

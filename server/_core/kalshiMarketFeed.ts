@@ -4,6 +4,7 @@
  */
 
 import { fetchKalshiMarkets, fetchKalshiMarketDetails, KalshiMarket } from "./kalshiMarketData";
+import { saveMarketSnapshot } from "./kalshiMarketSnapshots";
 import * as db from "../db";
 
 export interface MarketSnapshot {
@@ -31,6 +32,31 @@ export interface MarketFeed {
 // In-memory feed cache (per-market)
 const feedCache = new Map<string, MarketFeed>();
 const subscriptionTimers = new Map<string, NodeJS.Timeout>();
+
+/**
+ * Persist a single in-memory snapshot to the dedicated history table.
+ *
+ * The in-memory snapshot uses `timestamp: number` (epoch millis), but the
+ * persistence layer expects a `Date`. We adapt here so callers don't have
+ * to think about the boundary. Failures are swallowed (and logged inside
+ * `saveMarketSnapshot`) so a transient DB error never tears down the
+ * polling loop or causes a market subscription to fail.
+ */
+async function persistSnapshot(snapshot: MarketSnapshot): Promise<void> {
+  try {
+    await saveMarketSnapshot({
+      marketId: snapshot.marketId,
+      timestamp: new Date(snapshot.timestamp),
+      yesPrice: snapshot.yesPrice,
+      noPrice: snapshot.noPrice,
+      yesVolume: snapshot.yesVolume,
+      noVolume: snapshot.noVolume,
+      impliedProbability: snapshot.impliedProbability,
+    });
+  } catch (error) {
+    console.error(`[MarketFeed] Persist snapshot failed for ${snapshot.marketId}:`, error);
+  }
+}
 
 /**
  * Start polling a market for real-time updates
@@ -77,8 +103,10 @@ export async function subscribeToMarketFeed(
 
   feedCache.set(marketId, feed);
 
-  // Persist initial snapshot
+  // Persist initial market row and a timestamped history snapshot so the
+  // dedicated kalshiMarketSnapshots table reflects subscribe-time state.
   await db.upsertKalshiMarket(market);
+  await persistSnapshot(snapshot);
 
   // Start polling
   const timer = setInterval(async () => {
@@ -139,8 +167,10 @@ async function updateMarketFeed(marketId: string): Promise<void> {
     feed.dataQualityScore = Math.min(1.0, feed.dataQualityScore + 0.05);
     feed.lastUpdateTime = Date.now();
 
-    // Persist update
+    // Persist update: refresh the latest-known market row and append a
+    // new immutable history row in the snapshots table.
     await db.upsertKalshiMarket(market);
+    await persistSnapshot(snapshot);
   } catch (error) {
     console.error(`[MarketFeed] Update failed for market ${marketId}:`, error);
     feed.dataQualityScore = Math.max(0, feed.dataQualityScore - 0.1);
