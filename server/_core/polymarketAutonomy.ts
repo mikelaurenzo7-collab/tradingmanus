@@ -26,7 +26,7 @@ import * as polymarketCredDb from "../db.polymarket-credentials";
 import * as tradingPreferencesDb from "../db.trading-preferences";
 import type { RiskPosture } from "../db.trading-preferences";
 import { getUserTrainingInstructions, isInstructionActiveNow, applyInstructionsToSignals } from "../db.training";
-import { fetchPolymarketMarkets, placePolymarketOrder } from "./polymarketAuth";
+import { fetchPolymarketMarkets, gatedPlacePolymarketOrder } from "./polymarketAuth";
 import { generatePolymarketSignals, type PolymarketSignal } from "./polymarketSignals";
 import {
   estimateSizeForRiskBudget,
@@ -426,7 +426,8 @@ export async function runPolymarketAutonomousTrading(
 
   // --- 6. Place the order ---
   try {
-    const orderResult = await placePolymarketOrder(
+    const orderResult = await gatedPlacePolymarketOrder(
+      scopedUserId,
       creds.apiKey,
       creds.apiSecret,
       creds.apiPassphrase,
