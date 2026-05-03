@@ -13,7 +13,7 @@ export interface TwoFactorSecret {
  */
 export async function generateTwoFactorSecret(
   email: string,
-  issuer: string = "TradingManus"
+  issuer: string = "Laurenzo"
 ): Promise<TwoFactorSecret> {
   try {
     const secret = speakeasy.generateSecret({

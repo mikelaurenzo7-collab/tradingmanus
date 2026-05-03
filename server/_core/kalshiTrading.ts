@@ -5,6 +5,7 @@
 
 import * as db from "../db";
 import { assertPositiveIntegerUserId } from "./userScope";
+import { logger } from "./logger";
 
 export interface KalshiOrder {
   orderId: string;
@@ -65,7 +66,7 @@ export async function placeMarketOrder(
     status: "pending",
   });
 
-  console.log(`[Trading] Order placed: ${orderId} - ${side} ${quantity} @ $${maxPrice}`);
+  logger.info({ orderId, side, quantity, limitPrice: maxPrice }, "[Trading] Order placed");
   
   // Simulate immediate fill (in production, would check actual Kalshi API)
   setTimeout(async () => {
