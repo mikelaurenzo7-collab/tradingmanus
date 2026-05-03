@@ -9,15 +9,21 @@ Railway.
 
 ## What is in the repo
 
-- `railway.json` — tells Railway to build with NIXPACKS and health-check
-  `/api/health`.
-- `nixpacks.toml` — pins Node 20 and installs `pnpm@10.4.1` directly via
-  `npm install -g` (we deliberately bypass `corepack` because Railway's
-  BuildKit image periodically fails the `packageManager` hash/signature
-  verification, surfacing as a non-descriptive
-  `ELIFECYCLE Command failed with exit code 1.`). The build steps then
-  run `pnpm install --frozen-lockfile`, `pnpm build`, `pnpm build:server`,
-  and start with `pnpm start`.
+- `railway.json` — tells Railway to build with the repo `Dockerfile` and
+  health-check `/api/health`.
+- `Dockerfile` — pins Node 20 (matches `.nvmrc`) and installs `pnpm@10.4.1`
+  directly via `npm install -g` (we deliberately bypass `corepack` because
+  Railway's BuildKit image periodically fails the `packageManager`
+  hash/signature verification, surfacing as a non-descriptive
+  `ELIFECYCLE Command failed with exit code 1.`). It runs
+  `pnpm install --frozen-lockfile`, `pnpm build`, `pnpm build:server`, and
+  starts with `pnpm start`. We use a Dockerfile (rather than Nixpacks or
+  Railpack) so the build is deterministic regardless of which auto-builder
+  the Railway service was originally created with.
+- `nixpacks.toml` — kept for reference / fallback if you flip the builder
+  back to NIXPACKS in `railway.json`. Not used by the default Dockerfile
+  build.
+- `.dockerignore` — keeps the Docker build context small.
 - `.nvmrc` — pins Node 20 (matches local + CI).
 
 You do not need to commit any other Railway-specific files. The
