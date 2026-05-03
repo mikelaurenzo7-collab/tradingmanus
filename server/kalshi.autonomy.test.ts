@@ -37,6 +37,7 @@ const mocks = vi.hoisted(() => ({
   placeKalshiOrder: vi.fn(),
   syncPendingOrders: vi.fn(),
   fetchKalshiMarketDetails: vi.fn(),
+  isMarketDataStale: vi.fn(),
 }));
 
 vi.mock("./db.trading-preferences", () => ({
@@ -74,6 +75,7 @@ vi.mock("./_core/kalshiMarketData", () => ({
 
 vi.mock("./_core/kalshiMarketFeed", () => ({
   getMarketFeed: mocks.getMarketFeed,
+  isMarketDataStale: mocks.isMarketDataStale,
 }));
 
 vi.mock("./_core/kalshiSignals", () => ({
@@ -441,6 +443,78 @@ describe("scheduled away-from-chat trading", () => {
   });
 });
 
+describe("credential and equity blocking paths", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getTradingPreferences.mockResolvedValue(mocks.DEFAULT_PREFERENCES);
+    mocks.createAutonomyRun.mockResolvedValue({ runId: "run-123" });
+    mocks.updateAutonomyRun.mockResolvedValue({ runId: "run-123" });
+    mocks.logAuditEvent.mockResolvedValue(true);
+  });
+
+  it("blocks when no Kalshi credentials are found for the user", async () => {
+    mocks.getKalshiCredentials.mockResolvedValue(null);
+
+    const result = await runScheduledAutonomousTrading(testUser);
+
+    expect(result.status).toBe("blocked");
+    expect(result.reason).toContain("no connected live Kalshi account");
+    expect(mocks.fetchKalshiAccountEquity).not.toHaveBeenCalled();
+    expect(mocks.placeKalshiOrder).not.toHaveBeenCalled();
+  });
+
+  it("blocks when Kalshi credentials require re-authentication", async () => {
+    mocks.getKalshiCredentials.mockResolvedValue({
+      userId: 7,
+      accountStatus: "connected",
+      apiKey: "expired-key",
+      privateKey: "expired-pk",
+      needsReauth: true,
+    });
+
+    const result = await runScheduledAutonomousTrading(testUser);
+
+    expect(result.status).toBe("blocked");
+    expect(result.reason).toMatch(/re-authentication required/i);
+    expect(mocks.fetchKalshiAccountEquity).not.toHaveBeenCalled();
+  });
+
+  it("blocks when the Kalshi account status is not connected", async () => {
+    mocks.getKalshiCredentials.mockResolvedValue({
+      userId: 7,
+      accountStatus: "disconnected",
+      apiKey: "key",
+      privateKey: "pk",
+    });
+
+    const result = await runScheduledAutonomousTrading(testUser);
+
+    expect(result.status).toBe("blocked");
+    expect(result.reason).toContain("no connected live Kalshi account");
+    expect(mocks.fetchKalshiAccountEquity).not.toHaveBeenCalled();
+  });
+
+  it("returns error status when the live equity refresh fails", async () => {
+    mocks.getKalshiCredentials.mockResolvedValue({
+      userId: 7,
+      accountStatus: "connected",
+      apiKey: "key",
+      privateKey: "pk",
+    });
+    mocks.fetchKalshiAccountEquity.mockResolvedValue({
+      equity: 0,
+      error: "connection timeout",
+    });
+
+    const result = await runScheduledAutonomousTrading(testUser);
+
+    expect(result.status).toBe("error");
+    expect(result.reason).toContain("live equity refresh failed");
+    expect(result.reason).toContain("connection timeout");
+    expect(mocks.placeKalshiOrder).not.toHaveBeenCalled();
+  });
+});
+
 describe("execution guardrails — safety blocking paths", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -467,6 +541,7 @@ describe("execution guardrails — safety blocking paths", () => {
       },
     ]);
     mocks.getMarketFeed.mockReturnValue(null);
+    mocks.isMarketDataStale.mockReturnValue(false);
     mocks.generateSignalsForMarkets.mockResolvedValue([candidateSignal]);
     mocks.filterSignalsByConfidence.mockImplementation((signals: any[]) => signals);
     mocks.filterSignalsByMarketConditions.mockImplementation((signals: any[]) => signals);
@@ -625,6 +700,19 @@ describe("execution guardrails — safety blocking paths", () => {
       expect.stringContaining('"anthropicFailures":2'),
       "away-open-id"
     );
+    expect(mocks.placeKalshiOrder).not.toHaveBeenCalled();
+  });
+
+  it("skips a candidate when its market feed data is stale at evaluation time", async () => {
+    // getMarketFeed returns a non-null feed object so the stale-check branch runs,
+    // and isMarketDataStale is forced to true so the candidate is rejected.
+    mocks.getMarketFeed.mockReturnValue({ marketId: "KXTEST-1", lastUpdateTime: 1640000000000 });
+    mocks.isMarketDataStale.mockReturnValue(true);
+
+    const result = await runScheduledAutonomousTrading(testUser);
+
+    expect(result.status).toBe("generated_only");
+    expect(result.orderPlaced).toBe(false);
     expect(mocks.placeKalshiOrder).not.toHaveBeenCalled();
   });
 });
