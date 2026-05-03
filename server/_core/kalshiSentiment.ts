@@ -467,10 +467,9 @@ export function extractSocialSentiment(posts: SocialPost[]): number {
 }
 
 export async function fetchLiveSocialSummary(_topic: string): Promise<LiveSocialSummary | null> {
-  // Reddit social ingestion was provided by the Manus DataAPI which is no longer
-  // available on Vercel. Return null so downstream sentiment falls back to news +
-  // market price action only. This can be re-enabled once a hosted Reddit
-  // adapter is wired in.
+  // Reddit social ingestion is not currently enabled. Return null so downstream
+  // sentiment falls back to news + market price action only. This can be
+  // re-enabled once a hosted Reddit adapter is wired in.
   return null;
 }
 

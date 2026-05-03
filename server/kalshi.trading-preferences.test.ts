@@ -32,7 +32,7 @@ vi.mock("./db", () => ({
   createKalshiSignal: vi.fn(),
   syncKalshiCapitalWithLiveEquity: vi.fn(),
   logAuditEvent: mocks.logAuditEvent,
-  getUserBetaAccessLevel: vi.fn(async () => "internal"),
+  getUserBetaAccessLevel: vi.fn(async () => "none"),
 }));
 
 vi.mock("./db.kalshi-credentials", () => ({
@@ -266,5 +266,38 @@ describe("kalshi trading preferences", () => {
       "kalshi-open-id"
     );
     expect(result).toEqual({ success: true, preferences: armedPreferences });
+  });
+
+  it("arms live trading regardless of betaAccessLevel — no approval gating for single-owner app", async () => {
+    const armedPreferences = {
+      ...mocks.DEFAULT_PREFERENCES,
+      autonomyMode: "fully_autonomous" as const,
+      liveTradingEnabled: true,
+      executionCadence: "continuous_watch" as const,
+    };
+
+    mocks.getKalshiCredentials.mockResolvedValue({
+      userId: 7,
+      accountStatus: "connected",
+      accountEquity: 100,
+    });
+    mocks.getTradingPreferences.mockResolvedValue({
+      ...mocks.DEFAULT_PREFERENCES,
+      autonomyMode: "fully_autonomous",
+      executionCadence: "continuous_watch",
+    });
+    mocks.saveTradingPreferences.mockResolvedValue(armedPreferences);
+    mocks.logAuditEvent.mockResolvedValue(true);
+
+    // betaAccessLevel is "none" (default mock) — arming must succeed without approval gating
+    const caller = appRouter.createCaller(createProtectedContext());
+    const result = await caller.kalshi.setTradingActivation({ enabled: true });
+
+    expect(result).toEqual({ success: true, preferences: armedPreferences });
+    expect(mocks.logAuditEvent).toHaveBeenCalledWith(
+      "live_trading_armed",
+      "Mode: fully_autonomous",
+      "kalshi-open-id"
+    );
   });
 });
