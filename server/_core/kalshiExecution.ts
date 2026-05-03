@@ -11,6 +11,7 @@ import { kalshiOrders, kalshiFills, kalshiPositions } from "../../drizzle/schema
 import { and, eq, inArray } from "drizzle-orm";
 import { calculateKalshiBuyOrderRisk, normalizeLimitPrice, normalizeOrderQuantity } from "./kalshiRisk";
 import { assertPositiveIntegerUserId } from "./userScope";
+import { getEffectiveMode } from "./tradingMode";
 
 export interface KalshiOrder {
   orderId: string;
@@ -206,8 +207,23 @@ export async function placeKalshiOrder(
   reconciliationReason?: string;
   exchangeRequest?: Record<string, unknown>;
   exchangeResponse?: Record<string, unknown>;
+  shadowed?: boolean;
+  blocked?: boolean;
 }> {
   try {
+    const effective = await getEffectiveMode(userId, "kalshi");
+
+    if (effective.paused) {
+      return { success: false, blocked: true, error: `Trading paused: ${effective.reason}` };
+    }
+
+    if (effective.mode === "shadow") {
+      return { success: false, shadowed: true, error: `shadow mode: order not placed (${effective.reason})` };
+    }
+
+    // For now, paper mode falls through to live behavior — paper-tagged DB writes
+    // can be added in a follow-up. The reviewer + risk pipeline still runs.
+
     const risk = calculateKalshiBuyOrderRisk({ quantity, limitPrice });
     const priceCents = toCents(risk.limitPrice);
     const scopedUserId = getScopedUserId(userId);
