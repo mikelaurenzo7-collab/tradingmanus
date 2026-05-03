@@ -61,6 +61,7 @@ export const ENV = {
   // Optional: URL to receive webhook POST alerts for critical operational events
   // (consecutive autonomy failures, equity drops, exchange rejections).
   alertWebhookUrl: normalize(process.env.ALERT_WEBHOOK_URL),
+  tradingModeOverride: normalize(process.env.TRADING_MODE_OVERRIDE) as "none" | "shadow" | "pause" | "",
 };
 
 const REQUIRED_SERVER_ENV = [
