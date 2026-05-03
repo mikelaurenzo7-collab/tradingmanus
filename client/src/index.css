@@ -561,4 +561,81 @@
     pointer-events: all;
     user-select: none;
   }
+
+  /* Focus visible styles for accessibility */
+  :focus-visible {
+    outline: 2px solid oklch(0.88 0.35 280);
+    outline-offset: 2px;
+  }
+
+  button:focus-visible,
+  a:focus-visible,
+  [role="button"]:focus-visible {
+    outline: 2px solid oklch(0.88 0.35 280);
+    outline-offset: 2px;
+  }
+
+  /* Improved text selection */
+  ::selection {
+    background: oklch(0.88 0.35 280 / 0.3);
+    color: oklch(0.98 0.01 65);
+  }
+
+  /* Reduce motion for accessibility */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+
+  /* Skip to content link for screen readers */
+  .skip-to-content {
+    position: absolute;
+    top: -100px;
+    left: 0;
+    background: oklch(0.88 0.35 280);
+    color: oklch(0.98 0.01 65);
+    padding: 0.5rem 1rem;
+    z-index: 100;
+    border-radius: 0 0 0.5rem 0;
+  }
+
+  .skip-to-content:focus {
+    top: 0;
+  }
+
+  /* Mobile-specific improvements */
+  @media (max-width: 768px) {
+    body::before {
+      background: 
+        radial-gradient(circle at 20% 50%, rgba(136, 100, 255, 0.08) 0%, transparent 40%),
+        radial-gradient(circle at 80% 80%, rgba(255, 100, 150, 0.06) 0%, transparent 40%);
+    }
+
+    .laurenzo-card {
+      padding: 1rem;
+    }
+
+    h1 {
+      font-size: 1.75rem;
+    }
+
+    h2 {
+      font-size: 1.5rem;
+    }
+  }
+
+  /* Touch-friendly tap targets */
+  @media (pointer: coarse) {
+    button,
+    a,
+    [role="button"] {
+      min-height: 44px;
+      min-width: 44px;
+    }
+  }
 }
