@@ -3,7 +3,20 @@
  * Fetches real-time market data from Kalshi prediction markets API
  */
 
+import { CircuitBreaker, CircuitOpenError } from "./circuitBreaker";
 import { fetchWithRetry } from "./fetchWithRetry";
+
+/**
+ * Single shared breaker for all Kalshi market-data calls. When Kalshi has
+ * a sustained outage, callers fail fast with `CircuitOpenError` instead
+ * of piling up retry budgets across signal generation, polling, and the UI.
+ */
+const kalshiBreaker = new CircuitBreaker({
+  name: "kalshi.market-data",
+  failureThreshold: 5,
+  windowMs: 30_000,
+  cooldownMs: 30_000,
+});
 
 export interface KalshiMarket {
   id: string;
@@ -191,7 +204,7 @@ export async function fetchKalshiMarkets(filters?: {
           "Content-Type": "application/json",
         },
       },
-      { label: "Kalshi.fetchMarkets" }
+      { label: "Kalshi.fetchMarkets", breaker: kalshiBreaker }
     );
 
     if (!response.ok) {
@@ -206,7 +219,11 @@ export async function fetchKalshiMarkets(filters?: {
       .filter((market: KalshiMarket) => isDisplaySafeActionableMarket(market))
       .sort((a: KalshiMarket, b: KalshiMarket) => getMarketActionabilityScore(b) - getMarketActionabilityScore(a));
   } catch (error) {
-    console.error("[Kalshi] Market fetch failed:", error);
+    if (error instanceof CircuitOpenError) {
+      console.warn("[Kalshi] Market fetch short-circuited; upstream is unhealthy.");
+    } else {
+      console.error("[Kalshi] Market fetch failed:", error);
+    }
     return [];
   }
 }
@@ -224,7 +241,7 @@ export async function fetchKalshiMarketDetails(marketId: string): Promise<Kalshi
           "Content-Type": "application/json",
         },
       },
-      { label: "Kalshi.fetchMarketDetails" }
+      { label: "Kalshi.fetchMarketDetails", breaker: kalshiBreaker }
     );
 
     if (!response.ok) {
@@ -237,7 +254,11 @@ export async function fetchKalshiMarketDetails(marketId: string): Promise<Kalshi
     const normalized = normalizeKalshiMarket(market);
     return normalized && isDisplaySafeActionableMarket(normalized) ? normalized : null;
   } catch (error) {
-    console.error(`[Kalshi] Market details fetch failed for ${marketId}:`, error);
+    if (error instanceof CircuitOpenError) {
+      console.warn(`[Kalshi] Market details for ${marketId} short-circuited; upstream is unhealthy.`);
+    } else {
+      console.error(`[Kalshi] Market details fetch failed for ${marketId}:`, error);
+    }
     return null;
   }
 }
