@@ -1529,18 +1529,6 @@ export const appRouter = router({
             });
           }
 
-          // Beta gate: live trading with autonomous modes requires beta access.
-          // Internal and invited beta users can arm live trading.
-          // "none" access blocks arming until explicitly granted by an admin.
-          const betaLevel = await db.getUserBetaAccessLevel(userId);
-          if (betaLevel === "none") {
-            throw new TRPCError({
-              code: "FORBIDDEN",
-              message:
-                "Live autonomous trading is in closed beta. Request beta access to arm live trading.",
-            });
-          }
-
           const saved = await tradingPreferencesDb.saveTradingPreferences(userId, {
             ...preferences,
             liveTradingEnabled: true,
@@ -1717,61 +1705,6 @@ export const appRouter = router({
         } catch (error) {
           logger.error({ err: error }, "[Kalshi] Get risk tuning history error");
           return { history: [], count: 0 };
-        }
-      }),
-  }),
-
-  // Beta access management
-  beta: router({
-    /** Return the current user's beta access level. */
-    getStatus: protectedProcedure.query(async ({ ctx }) => {
-      try {
-        const userId = getRequiredUserId(ctx);
-        const betaAccessLevel = await db.getUserBetaAccessLevel(userId);
-        return {
-          betaAccessLevel,
-          hasLiveAccess: betaAccessLevel !== "none",
-        };
-      } catch (error) {
-        logger.error({ err: error }, "[Beta] Get beta status error");
-        return { betaAccessLevel: "none" as const, hasLiveAccess: false };
-      }
-    }),
-
-    /** Admin-only: grant or revoke beta access for a user by their integer id. */
-    setAccess: protectedProcedure
-      .input(
-        z.object({
-          targetUserId: z.number().int().positive(),
-          level: z.enum(["none", "internal", "invited", "public"]),
-        })
-      )
-      .mutation(async ({ input, ctx }) => {
-        try {
-          const requestingUser = ctx.user;
-          if (requestingUser?.role !== "admin") {
-            throw new TRPCError({
-              code: "FORBIDDEN",
-              message: "Only admins can modify beta access.",
-            });
-          }
-
-          const updated = await db.setBetaAccessLevel(input.targetUserId, input.level);
-          await db.logAuditEvent(
-            "beta_access_updated",
-            JSON.stringify({ targetUserId: input.targetUserId, level: input.level }),
-            requestingUser.openId
-          );
-
-          return { success: true, user: updated };
-        } catch (error) {
-          if (error instanceof TRPCError) throw error;
-          logger.error({ err: error }, "[Beta] Set beta access error");
-          throw new TRPCError({
-            code: "INTERNAL_SERVER_ERROR",
-            message: "Unable to update beta access level",
-            cause: error,
-          });
         }
       }),
   }),

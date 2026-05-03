@@ -1,7 +1,7 @@
 /**
- * Tests for the 7 platform-readiness items:
+ * Tests for platform-readiness items:
  *  6. Alerting module (consecutive failures, equity drop, exchange rejection)
- *  7. Beta access gate in setTradingActivation
+ *  7. setTradingActivation arming — no approval gating for single-owner app
  *
  * Signal scoring (item 4) is tested in kalshi.signals.resolution.test.ts
  * because it must import the real kalshiSignals module.
@@ -263,13 +263,18 @@ function createProtectedContext(overrides: Partial<TrpcContext> = {}): TrpcConte
   };
 }
 
-describe("kalshi.setTradingActivation – beta gate", () => {
+describe("kalshi.setTradingActivation – no approval gating", () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
   });
 
-  it("blocks arming live trading when beta access level is none", async () => {
+  it("arms live trading for any authenticated user regardless of betaAccessLevel", async () => {
+    const armedPreferences = {
+      ...betaMocks.DEFAULT_PREFERENCES,
+      liveTradingEnabled: true,
+    };
+
     betaMocks.getKalshiCredentials.mockResolvedValue({
       userId: 7,
       accountStatus: "connected",
@@ -278,17 +283,19 @@ describe("kalshi.setTradingActivation – beta gate", () => {
     betaMocks.getTradingPreferences.mockResolvedValue({
       ...betaMocks.DEFAULT_PREFERENCES,
     });
+    betaMocks.saveTradingPreferences.mockResolvedValue(armedPreferences);
+    betaMocks.logAuditEvent.mockResolvedValue(true);
+    // betaAccessLevel "none" — must NOT block arming in the single-owner app
     betaMocks.getUserBetaAccessLevel.mockResolvedValue("none");
 
     const { appRouter } = await import("./routers");
     const caller = appRouter.createCaller(createProtectedContext());
+    const result = await caller.kalshi.setTradingActivation({ enabled: true });
 
-    await expect(
-      caller.kalshi.setTradingActivation({ enabled: true })
-    ).rejects.toThrow("closed beta");
+    expect(result.success).toBe(true);
   });
 
-  it("allows arming when beta access level is internal", async () => {
+  it("arms live trading when beta access level is internal", async () => {
     const armedPreferences = {
       ...betaMocks.DEFAULT_PREFERENCES,
       liveTradingEnabled: true,
@@ -313,7 +320,7 @@ describe("kalshi.setTradingActivation – beta gate", () => {
     expect(result.success).toBe(true);
   });
 
-  it("allows arming when beta access level is invited", async () => {
+  it("arms live trading when beta access level is invited", async () => {
     const armedPreferences = {
       ...betaMocks.DEFAULT_PREFERENCES,
       liveTradingEnabled: true,
