@@ -14,6 +14,7 @@ import { and, eq } from "drizzle-orm";
 import { deskMemory } from "../drizzle/schema";
 import { getDb } from "./db";
 import { assertPositiveIntegerUserId } from "./_core/userScope";
+import { logger } from "./_core/logger";
 
 export type DeskPlatform = "kalshi" | "polymarket";
 export type DeskOutcome = "win" | "loss" | "scratch";
@@ -139,6 +140,16 @@ export async function appendDeskMemoryNote(
     ...(existing?.notes ?? []),
     { ts: new Date().toISOString(), outcome, note: trimmedNote },
   ];
+
+  if (nextNotes.length > MAX_NOTES) {
+    logger.warn("Desk memory capacity exceeded", {
+      desk: deskId,
+      totalNotes: nextNotes.length,
+      maxNotes: MAX_NOTES,
+      droppedCount: nextNotes.length - MAX_NOTES,
+    });
+  }
+
   const serialized = serializeNotes(nextNotes);
 
   const winInc = outcome === "win" ? 1 : 0;
@@ -181,10 +192,18 @@ export async function appendDeskMemoryNote(
 export function formatDeskMemoryForPrompt(record: DeskMemoryRecord | null): string | null {
   if (!record || record.notes.length === 0) return null;
   const winRate = record.tradeCount > 0 ? Math.round((record.winCount / record.tradeCount) * 100) : 0;
-  const recent = record.notes.slice(-12);
+  if (record.notes.length > MAX_NOTES) {
+    logger.warn("Desk memory capacity exceeded", {
+      desk: record.deskId,
+      totalNotes: record.notes.length,
+      maxNotes: MAX_NOTES,
+      droppedCount: record.notes.length - MAX_NOTES,
+    });
+  }
+  const recent = record.notes.slice(-MAX_NOTES);
   const lines = recent.map((entry) => `- [${entry.outcome.toUpperCase()}] ${entry.note}`);
   return [
-    `Desk learning tape (${record.tradeCount} prior trades, ${winRate}% win rate, last 12 lessons):`,
+    `Desk learning tape (${record.tradeCount} prior trades, ${winRate}% win rate, last ${MAX_NOTES} lessons):`,
     ...lines,
     "Apply these prior lessons when reviewing today's candidates; weight your own veto more heavily on patterns previously associated with losses.",
   ].join("\n");

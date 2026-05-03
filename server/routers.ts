@@ -1786,7 +1786,11 @@ export const appRouter = router({
           })
           .optional()
       )
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
+        const userId = getRequiredUserId(ctx);
+        if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+        }
         try {
           return await fetchPolymarketMarkets({
             limit: input?.limit ?? 50,
@@ -1809,6 +1813,10 @@ export const appRouter = router({
           .optional()
       )
       .mutation(async ({ input, ctx }) => {
+        const userId = getRequiredUserId(ctx);
+        if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+        }
         try {
           const markets = await fetchPolymarketMarkets({ limit: POLYMARKET_SIGNAL_GENERATION_MARKET_LIMIT });
           const signals = generatePolymarketSignals(markets, {
@@ -1842,6 +1850,9 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         try {
           const userId = getRequiredUserId(ctx);
+          if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+          }
           // Serialise the check-and-execute block per user so two concurrent
           // requests can't both pass credential/risk checks against stale state
           // and then both submit orders (TOCTOU race).
@@ -1873,12 +1884,37 @@ export const appRouter = router({
               JSON.stringify(input),
               ctx.user!.openId
             );
+          } else {
+            await db.logAuditEvent(
+              "polymarket_order_blocked_or_failed",
+              JSON.stringify({
+                tokenId: input.tokenId,
+                side: input.side,
+                price: input.price,
+                size: input.size,
+                reason: "REST_ERROR",
+                error: result.error ?? "unknown",
+              }),
+              ctx.user!.openId
+            );
           }
 
           return result;
           }); // end withUserLock
         } catch (error) {
           logger.error({ err: error }, "[Polymarket] Place order error");
+          await db.logAuditEvent(
+            "polymarket_order_blocked_or_failed",
+            JSON.stringify({
+              tokenId: input.tokenId,
+              side: input.side,
+              price: input.price,
+              size: input.size,
+              reason: "REST_ERROR",
+              error: error instanceof Error ? error.message : String(error),
+            }),
+            ctx.user!.openId
+          ).catch(() => {/* best-effort audit — do not swallow original error */});
           return { success: false, error: String(error) };
         }
       }),
@@ -1886,7 +1922,11 @@ export const appRouter = router({
     // --- Cluster monitoring ---
 
     /** Return the static profiles of all 7 documented wash-trading clusters. */
-    getKnownClusters: protectedProcedure.query(() => {
+    getKnownClusters: protectedProcedure.query(async ({ ctx }) => {
+      const userId = getRequiredUserId(ctx);
+      if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+      }
       return KNOWN_CLUSTERS;
     }),
 
@@ -1910,7 +1950,11 @@ export const appRouter = router({
           })
           .optional(),
       )
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
+        const userId = getRequiredUserId(ctx);
+        if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+        }
         try {
           const markets = await fetchPolymarketMarkets({
             limit: POLYMARKET_SIGNAL_GENERATION_MARKET_LIMIT,
@@ -1966,6 +2010,10 @@ export const appRouter = router({
           .optional(),
       )
       .mutation(async ({ input, ctx }) => {
+        const userId = getRequiredUserId(ctx);
+        if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+        }
         try {
           const markets = await fetchPolymarketMarkets({
             limit: POLYMARKET_SIGNAL_GENERATION_MARKET_LIMIT,
@@ -2023,7 +2071,11 @@ export const appRouter = router({
           })
           .optional(),
       )
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
+        const userId = getRequiredUserId(ctx);
+        if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+        }
         try {
           const markets = await fetchPolymarketMarkets({
             limit: POLYMARKET_SIGNAL_GENERATION_MARKET_LIMIT,
