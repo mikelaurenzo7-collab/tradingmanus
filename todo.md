@@ -283,7 +283,9 @@
 - [x] **BUG: Market price persistence missing** - Market snapshots now timestamped via dedicated `kalshiMarketSnapshots` table with feed-loop wiring + regression test
 - [ ] **ISSUE: No transaction isolation** - Concurrent trades could cause race conditions
 - [ ] **ISSUE: Audit log not comprehensive** - Missing logs for signal generation, filtering, ranking
-- [ ] **ISSUE: No data validation on Kalshi API responses** - Could accept malformed market data
+- [x] **ISSUE: No data validation on Kalshi API responses** - Could accept malformed market data
+  - `normalizeKalshiMarket` now rejects null/non-object payloads, missing or non-string/numeric IDs, prices outside `[0, 1]`, non-finite values, and negative volumes; cent-scale Kalshi prices are explicitly converted to dollars via `centsToDollars`/`pickPriceDollars`.
+  - Regression coverage in `server/kalshi.market-data.test.ts` for valid markets, cent-scale conversion, missing IDs, out-of-range prices, non-finite prices, negative volumes, and null/garbage entries.
 
 ### Phase 4: Error Handling (PENDING)
 
