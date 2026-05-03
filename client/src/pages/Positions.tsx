@@ -1,5 +1,5 @@
 import { trpc } from "@/lib/trpc";
-import { Loader2, X } from "lucide-react";
+import { Loader2, X, TrendingUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -77,20 +77,41 @@ export default function Positions() {
   };
 
   return (
-    <div className="space-y-6 p-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-wider gradient-text">Open Positions</h1>
-        <p className="text-muted-foreground text-sm mt-1">
-          {positions.length} active Kalshi position{positions.length !== 1 ? "s" : ""}
-        </p>
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-wider gradient-text">Open Positions</h1>
+          <p className="text-muted-foreground text-sm mt-2 flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            {positions.length} active Kalshi position{positions.length !== 1 ? "s" : ""}
+          </p>
+        </div>
+        <Button 
+          variant="outline" 
+          size="sm" 
+          onClick={() => positionsQuery.refetch()}
+          disabled={positionsQuery.isRefetching}
+          className="gap-2"
+        >
+          {positionsQuery.isRefetching ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+          Refresh
+        </Button>
       </div>
 
       {positions.length === 0 ? (
-        <div className="laurenzo-card text-center py-12">
-          <p className="text-muted-foreground">No open positions</p>
+        <div className="laurenzo-card text-center py-16">
+          <div className="flex flex-col items-center gap-4">
+            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-violet-500/20 to-indigo-500/20 border border-violet-400/30 flex items-center justify-center">
+              <TrendingUp className="w-8 h-8 text-violet-400" />
+            </div>
+            <div>
+              <p className="text-lg font-semibold text-white/80">No open positions</p>
+              <p className="text-sm text-muted-foreground mt-1">Your active positions will appear here once you start trading</p>
+            </div>
+          </div>
         </div>
       ) : (
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto rounded-xl border border-white/10 bg-white/[0.02] backdrop-blur-sm">
           <table className="laurenzo-table">
             <thead>
               <tr>
