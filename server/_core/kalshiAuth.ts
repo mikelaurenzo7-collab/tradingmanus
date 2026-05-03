@@ -183,6 +183,19 @@ export function encryptCredential(plaintext: string, userId: number): string {
 }
 
 /**
+ * Sentinel error class for credential decryption failures caused by a
+ * mismatched CREDENTIAL_ENCRYPTION_SECRET.  Callers can `instanceof`-check
+ * this to distinguish "wrong key" from other unexpected errors and surface a
+ * re-authentication prompt instead of crashing.
+ */
+export class CredentialDecryptionError extends Error {
+  constructor(message = "Credential cannot be decrypted — re-authentication required") {
+    super(message);
+    this.name = "CredentialDecryptionError";
+  }
+}
+
+/**
  * Decrypt sensitive data
  */
 export function decryptCredential(encrypted: string, userId: number): string {
@@ -193,7 +206,7 @@ export function decryptCredential(encrypted: string, userId: number): string {
     if (parts[0] === CREDENTIAL_CIPHER_VERSION) {
       const [, saltHex, ivHex, authTagHex, encryptedHex] = parts;
       if (!saltHex || !ivHex || !authTagHex || !encryptedHex) {
-        throw new Error("Invalid encrypted credential format");
+        throw new CredentialDecryptionError("Invalid encrypted credential format");
       }
 
       const salt = Buffer.from(saltHex, "hex");
@@ -214,7 +227,7 @@ export function decryptCredential(encrypted: string, userId: number): string {
 
     const [ivHex, encryptedHex] = parts;
     if (!ivHex || !encryptedHex) {
-      throw new Error("Invalid encrypted credential format");
+      throw new CredentialDecryptionError("Invalid encrypted credential format");
     }
     const key = getLegacyEncryptionKey();
     const iv = Buffer.from(ivHex, "hex");
@@ -225,8 +238,17 @@ export function decryptCredential(encrypted: string, userId: number): string {
 
     return decrypted;
   } catch (error) {
+    // Re-throw typed decryption errors as-is so callers can distinguish them.
+    if (error instanceof CredentialDecryptionError) {
+      throw error;
+    }
+    // Node's crypto module throws "Unsupported state or unable to authenticate
+    // data" when the auth tag check fails (wrong key / corrupted ciphertext).
+    // Wrap these as a CredentialDecryptionError so callers can prompt re-auth.
     console.error("[Kalshi Auth] Decryption failed:", error);
-    throw new Error("Failed to decrypt credential");
+    throw new CredentialDecryptionError(
+      "Stored credential cannot be decrypted with the current encryption secret — please re-authenticate with Kalshi"
+    );
   }
 }
 

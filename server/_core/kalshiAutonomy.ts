@@ -784,7 +784,30 @@ export async function runScheduledAutonomousTrading(
   }
 
   const creds = await kalshiCredDb.getKalshiCredentials(userId);
-  if (!creds || creds.accountStatus !== "connected") {
+  if (!creds) {
+    return finalize({
+      status: "blocked",
+      reason: "no connected live Kalshi account is available",
+      signalsGenerated: 0,
+      executionCandidates: 0,
+      orderPlaced: false,
+      autonomyMode: preferences.autonomyMode,
+      executionCadence: preferences.executionCadence,
+    });
+  }
+  if ("needsReauth" in creds && creds.needsReauth) {
+    console.warn(`[Autonomy] Skipping user ${userId}: Kalshi credentials require re-authentication`);
+    return finalize({
+      status: "blocked",
+      reason: "Kalshi credentials are invalid — re-authentication required. Please reconnect your Kalshi account.",
+      signalsGenerated: 0,
+      executionCandidates: 0,
+      orderPlaced: false,
+      autonomyMode: preferences.autonomyMode,
+      executionCadence: preferences.executionCadence,
+    });
+  }
+  if (creds.accountStatus !== "connected") {
     return finalize({
       status: "blocked",
       reason: "no connected live Kalshi account is available",

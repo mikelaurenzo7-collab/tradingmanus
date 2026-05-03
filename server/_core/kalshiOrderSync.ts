@@ -30,7 +30,12 @@ export async function syncPendingOrders(userId: number): Promise<void> {
 
   try {
     const creds = await kalshiCredDb.getKalshiCredentials(scopedUserId);
-    if (!creds || !creds.apiKey || !creds.privateKey) return;
+    if (!creds) return;
+    if ("needsReauth" in creds && creds.needsReauth) {
+      console.warn(`[OrderSync] Skipping user ${scopedUserId}: credentials require re-authentication`);
+      return;
+    }
+    if (!creds.apiKey || !creds.privateKey) return;
 
     const pending = await db
       .select()
@@ -104,7 +109,12 @@ export async function syncPendingOrders(userId: number): Promise<void> {
 export async function syncLivePositions(userId: number): Promise<void> {
   const scopedUserId = assertPositiveIntegerUserId(userId, "syncLivePositions userId");
   const creds = await kalshiCredDb.getKalshiCredentials(scopedUserId);
-  if (!creds || !creds.apiKey || !creds.privateKey) return;
+  if (!creds) return;
+  if ("needsReauth" in creds && creds.needsReauth) {
+    console.warn(`[OrderSync] Skipping syncLivePositions for user ${scopedUserId}: credentials require re-authentication`);
+    return;
+  }
+  if (!creds.apiKey || !creds.privateKey) return;
 
   try {
     const KALSHI_ENVIRONMENTS = [

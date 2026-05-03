@@ -16,6 +16,7 @@ import { correlationIdMiddleware } from "./correlationId";
 import { apiLimiter, authLimiter, scheduledLimiter } from "./rateLimiter";
 import { csrfProtection } from "./csrf";
 import { createAutonomousTradingLock, createOrderSyncLock } from "./distributedLock";
+import { clearInvalidKalshiCredentials } from "../db.kalshi-credentials";
 
 type AppRequest = IncomingMessage & {
   headers: IncomingHttpHeaders;
@@ -253,6 +254,17 @@ export async function createApp(options: { runStartupMigrations?: boolean } = {}
   }
   if (options.runStartupMigrations) {
     await runMigrations();
+  }
+
+  // Purge any Kalshi credentials that cannot be decrypted with the current
+  // CREDENTIAL_ENCRYPTION_SECRET.  This is a no-op when all credentials are
+  // valid, and safely removes corrupted/stale rows when the secret has changed.
+  // Affected users will be prompted to re-authenticate on their next visit.
+  try {
+    await clearInvalidKalshiCredentials();
+  } catch (cleanupError) {
+    // Never let credential cleanup crash the server startup.
+    logger.warn({ error: cleanupError }, "[Startup] Kalshi credential cleanup encountered an error");
   }
 
   const app = express();
