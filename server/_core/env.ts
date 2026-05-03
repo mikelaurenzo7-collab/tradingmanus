@@ -58,6 +58,10 @@ export const ENV = {
   kalshiApiKey: normalize(process.env.KALSHI_API_KEY),
   isProduction: process.env.NODE_ENV === "production",
   gnewsApiKey: normalize(process.env.GNEWS_API_KEY),
+  // Optional extra origin to add to the production CORS allow-list.
+  // Set to the full base URL of your deployed frontend (e.g. https://app.example.com).
+  // Vercel preview URLs (*.vercel.app) are always allowed in production regardless.
+  allowedOrigin: normalize(process.env.ALLOWED_ORIGIN),
   // Optional: URL to receive webhook POST alerts for critical operational events
   // (consecutive autonomy failures, equity drops, exchange rejections).
   alertWebhookUrl: normalize(process.env.ALERT_WEBHOOK_URL),
