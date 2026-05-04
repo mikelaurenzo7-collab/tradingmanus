@@ -17,9 +17,10 @@ describe("validateServerEnv", () => {
     process.env = { ...ORIGINAL_ENV };
   });
 
-  it("does not throw when ANTHROPIC_API_KEY is absent in production (emits warning only)", async () => {
+  it("does not throw when OPENROUTER_API_KEY is absent in production (emits warning only)", async () => {
     setBaseRequiredEnv();
     process.env.NODE_ENV = "production";
+    delete process.env.OPENROUTER_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
 
     const envModule = await import("./_core/env");
@@ -31,7 +32,7 @@ describe("validateServerEnv", () => {
     setBaseRequiredEnv();
     process.env.NODE_ENV = "production";
     process.env.CRON_SECRET = "short"; // Less than 32 chars
-    process.env.ANTHROPIC_API_KEY = "sk-ant-test";
+    process.env.OPENROUTER_API_KEY = "sk-or-test";
 
     const envModule = await import("./_core/env");
 
@@ -40,9 +41,20 @@ describe("validateServerEnv", () => {
     expect(() => envModule.validateServerEnv()).not.toThrow();
   });
 
-  it("accepts a complete production env with Anthropic API key", async () => {
+  it("accepts a complete production env with OpenRouter API key", async () => {
     setBaseRequiredEnv();
     process.env.NODE_ENV = "production";
+    process.env.OPENROUTER_API_KEY = "sk-or-test";
+
+    const envModule = await import("./_core/env");
+
+    expect(() => envModule.validateServerEnv()).not.toThrow();
+  });
+
+  it("also accepts ANTHROPIC_API_KEY as backward-compatible fallback", async () => {
+    setBaseRequiredEnv();
+    process.env.NODE_ENV = "production";
+    delete process.env.OPENROUTER_API_KEY;
     process.env.ANTHROPIC_API_KEY = "sk-ant-test";
 
     const envModule = await import("./_core/env");
