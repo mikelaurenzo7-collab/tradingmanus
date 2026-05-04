@@ -198,7 +198,7 @@ export default function DashboardLayout({
               <Zap className="w-7 h-7 text-white" />
             </div>
             <div className="text-4xl font-bold gradient-text tracking-tight">LAURENZO</div>
-            <p className="text-sm text-muted-foreground">Prediction market intelligence</p>
+            <p className="text-sm text-muted-foreground">Prediction Market Intelligence</p>
           </div>
 
           {/* Login card */}
@@ -258,7 +258,7 @@ export default function DashboardLayout({
             </div>
             <div className="flex flex-col">
               <span className="text-[15px] font-bold gradient-text tracking-tight leading-none">LAURENZO</span>
-              <span className="text-[10px] text-muted-foreground/70 tracking-widest uppercase leading-none mt-0.5">Trading Intelligence</span>
+              <span className="text-[10px] text-muted-foreground/70 tracking-widest uppercase leading-none mt-0.5">Market Intelligence</span>
             </div>
           </div>
         </SidebarHeader>
