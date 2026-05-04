@@ -9,6 +9,7 @@ import { protectedProcedure, router } from "./_core/trpc";
 import { z } from "zod";
 import OpenAI from "openai";
 import { ENV } from "./_core/env";
+import { logger } from "./_core/logger";
 import * as chatDb from "./db.chat";
 import type { ChatMessage } from "../drizzle/schema";
 import * as db from "./db";
@@ -516,8 +517,11 @@ export const chatRouter = router({
           let toolInput: Record<string, unknown> = {};
           try {
             toolInput = JSON.parse(toolCall.function.arguments) as Record<string, unknown>;
-          } catch {
-            // ignore parse error — use empty input
+          } catch (parseErr) {
+            logger.warn(
+              { err: parseErr, toolName: toolCall.function.name, args: toolCall.function.arguments },
+              "[Chat] Failed to parse tool call arguments as JSON; using empty input",
+            );
           }
           const { result, actionType } = await executeTool(
             toolCall.function.name,

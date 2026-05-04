@@ -41,8 +41,8 @@ export const ENV = {
   enableAiCategoryRouting: normalizeBoolean(process.env.ENABLE_AI_CATEGORY_ROUTING, true),
   // Web search and extended thinking are Anthropic-only features; they are
   // disabled when routing through OpenRouter.
-  enableAiWebSearch: false as boolean,
-  enableAiExtendedThinking: false as boolean,
+  enableAiWebSearch: false,
+  enableAiExtendedThinking: false,
   // Per-desk persistent learning tape (loaded into the cached system prompt).
   enableAiDeskMemory: normalizeBoolean(process.env.ENABLE_AI_DESK_MEMORY, true),
   // Cheap Haiku pre-filter when the candidate batch is large.

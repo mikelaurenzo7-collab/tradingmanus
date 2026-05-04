@@ -5,8 +5,8 @@
  * routes calls through OpenRouter's OpenAI-compatible API endpoint.
  *
  * This lets all existing reviewer code (tradingReviewer, polymarketSignalReviewer,
- * arbitrageReviewer, aiToolbelt.runHaikuTriage) keep its Anthropic-shaped call
- * sites unchanged.  The adapter handles three conversions:
+ * arbitrageReviewer, runHaikuTriage) keep its Anthropic-shaped call sites unchanged.
+ * The adapter handles three conversions:
  *
  *   1. System prompt: SystemBlock[] with optional cache_control → plain string
  *      (OpenRouter / OpenAI does not support Anthropic prompt caching)
@@ -63,6 +63,12 @@ function systemBlocksToString(system: string | SystemBlock[]): string {
   return system.map((b) => b.text.trim()).filter(Boolean).join("\n\n");
 }
 
+/** Named type for OpenAI-format function tool entries returned by filterTools. */
+type FunctionTool = {
+  type: "function";
+  function: { name: string; description?: string; parameters: Record<string, unknown> };
+};
+
 /**
  * Filter out Anthropic-only hosted tools (e.g. web_search_20250305) that are
  * not available on OpenRouter, and return only plain function-call tools.
@@ -70,7 +76,7 @@ function systemBlocksToString(system: string | SystemBlock[]): string {
  */
 function filterTools(
   tools: Array<{ type?: string; name?: string; [key: string]: unknown }>,
-): Array<{ type: "function"; function: { name: string; description?: string; parameters: Record<string, unknown> } }> | undefined {
+): FunctionTool[] | undefined {
   const functionTools = tools.filter(
     (t) => t.type !== "web_search_20250305" && typeof t.name === "string",
   );
@@ -131,8 +137,8 @@ export function createOpenRouterClient(apiKey: string): {
           } else if (Array.isArray(msg.content)) {
             // Concatenate text blocks for simplicity
             const text = msg.content
-              .filter((b): b is { type: "text"; text: string } => b.type === "text" && typeof (b as any).text === "string")
-              .map((b) => (b as any).text as string)
+              .filter((b): b is { type: "text"; text: string } => b.type === "text" && typeof b.text === "string")
+              .map((b) => b.text)
               .join("\n");
             openaiMessages.push({ role: msg.role, content: text });
           }

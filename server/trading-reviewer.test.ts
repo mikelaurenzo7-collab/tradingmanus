@@ -427,9 +427,8 @@ describe("AI trading reviewer (OpenRouter/hy3)", () => {
     expect(result).toHaveLength(1);
     // Second call must use the configured OpenRouter model for deep-tier review.
     const secondCall = anthropicCreate.mock.calls[1]?.[0];
-    expect(String(secondCall.model)).toBeTruthy();
-    // Deep call should not include extended thinking (not supported by OpenRouter).
-    // thinking field may be undefined since extended thinking is disabled.
+    expect(String(secondCall.model)).toBe("tencent/hy3-preview:free");
+    // Deep call should not include extended thinking (disabled for OpenRouter).
   });
 
   it("drops the trade when the Opus second opinion disagrees with Sonnet", async () => {
