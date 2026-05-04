@@ -7,7 +7,7 @@
 
 import { protectedProcedure, router } from "./_core/trpc";
 import { z } from "zod";
-import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
 import { ENV } from "./_core/env";
 import * as chatDb from "./db.chat";
 import type { ChatMessage } from "../drizzle/schema";
@@ -27,7 +27,7 @@ type Platform = "kalshi" | "polymarket";
 
 const MEMORY_COMPRESSION_THRESHOLD = 30; // compress after this many messages
 const MAX_CONTEXT_MESSAGES = 20; // messages to send to AI each turn
-const CHAT_MODEL = "claude-haiku-4-5"; // fast + cheap for chat
+const CHAT_MODEL = ENV.openrouterModel; // Configured OpenRouter model
 
 // ---------------------------------------------------------------------------
 // System prompt builder
@@ -99,60 +99,72 @@ function triggerCapLine(enabled: number, description: string): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// Tool definitions for Anthropic
+// Tool definitions (OpenAI function calling format)
 // ---------------------------------------------------------------------------
 
-const TOOL_GET_SIGNALS = {
-  name: "get_signals",
-  description: "Fetch the latest trading signals for the current platform. Returns top opportunities ranked by confidence.",
-  input_schema: {
-    type: "object" as const,
-    properties: {
-      limit: {
-        type: "number",
-        description: "Maximum number of signals to return (1-20). Default 10.",
+const TOOL_GET_SIGNALS: OpenAI.Chat.ChatCompletionTool = {
+  type: "function",
+  function: {
+    name: "get_signals",
+    description: "Fetch the latest trading signals for the current platform. Returns top opportunities ranked by confidence.",
+    parameters: {
+      type: "object",
+      properties: {
+        limit: {
+          type: "number",
+          description: "Maximum number of signals to return (1-20). Default 10.",
+        },
+        minConfidence: {
+          type: "number",
+          description: "Minimum confidence threshold 0-1. Default 0.65.",
+        },
       },
-      minConfidence: {
-        type: "number",
-        description: "Minimum confidence threshold 0-1. Default 0.65.",
-      },
+      required: [],
     },
-    required: [],
   },
 };
 
-const TOOL_GET_POSITIONS = {
-  name: "get_positions",
-  description: "Fetch the user's current open positions and capital summary for the platform.",
-  input_schema: {
-    type: "object" as const,
-    properties: {},
-    required: [],
-  },
-};
-
-const TOOL_GET_MARKETS = {
-  name: "get_markets",
-  description: "Search active markets on the current platform. Useful for exploring opportunities.",
-  input_schema: {
-    type: "object" as const,
-    properties: {
-      limit: {
-        type: "number",
-        description: "How many markets to return (1-30). Default 15.",
-      },
+const TOOL_GET_POSITIONS: OpenAI.Chat.ChatCompletionTool = {
+  type: "function",
+  function: {
+    name: "get_positions",
+    description: "Fetch the user's current open positions and capital summary for the platform.",
+    parameters: {
+      type: "object",
+      properties: {},
+      required: [],
     },
-    required: [],
   },
 };
 
-const TOOL_RUN_SIGNALS = {
-  name: "run_signals",
-  description: "Generate fresh AI trading signals by scanning live markets on the current platform. More thorough than get_signals.",
-  input_schema: {
-    type: "object" as const,
-    properties: {},
-    required: [],
+const TOOL_GET_MARKETS: OpenAI.Chat.ChatCompletionTool = {
+  type: "function",
+  function: {
+    name: "get_markets",
+    description: "Search active markets on the current platform. Useful for exploring opportunities.",
+    parameters: {
+      type: "object",
+      properties: {
+        limit: {
+          type: "number",
+          description: "How many markets to return (1-30). Default 15.",
+        },
+      },
+      required: [],
+    },
+  },
+};
+
+const TOOL_RUN_SIGNALS: OpenAI.Chat.ChatCompletionTool = {
+  type: "function",
+  function: {
+    name: "run_signals",
+    description: "Generate fresh AI trading signals by scanning live markets on the current platform. More thorough than get_signals.",
+    parameters: {
+      type: "object",
+      properties: {},
+      required: [],
+    },
   },
 };
 
@@ -258,7 +270,7 @@ async function maybeCompressMemory(
   platform: Platform,
   existingConfig: Awaited<ReturnType<typeof chatDb.getBotConfig>>
 ): Promise<void> {
-  if (!ENV.anthropicApiKey) return;
+  if (!ENV.openrouterApiKey) return;
 
   const messages = await chatDb.getChatMessages(userId, platform, MEMORY_COMPRESSION_THRESHOLD + 10);
   if (messages.length < MEMORY_COMPRESSION_THRESHOLD) return;
@@ -267,7 +279,14 @@ async function maybeCompressMemory(
   const toCompress = messages.slice(0, Math.floor(messages.length / 2));
   if (toCompress.length === 0) return;
 
-  const client = new Anthropic({ apiKey: ENV.anthropicApiKey });
+  const client = new OpenAI({
+    apiKey: ENV.openrouterApiKey,
+    baseURL: "https://openrouter.ai/api/v1",
+    defaultHeaders: {
+      "HTTP-Referer": "https://github.com/mikelaurenzo7-collab/tradingmanus",
+      "X-Title": "TradingManus",
+    },
+  });
   const transcript = toCompress
     .map((m: Pick<ChatMessage, "role" | "content">) => `${m.role.toUpperCase()}: ${m.content}`)
     .join("\n");
@@ -275,12 +294,15 @@ async function maybeCompressMemory(
   const existing = existingConfig?.memorySummary ?? "";
 
   try {
-    const response = await client.messages.create({
+    const response = await client.chat.completions.create({
       model: CHAT_MODEL,
       max_tokens: 512,
-      system:
-        "You are a memory compressor. Summarize the conversation transcript into a concise paragraph (max 400 words) capturing: key topics discussed, decisions made, user preferences revealed, and any strategies or markets mentioned. Preserve facts, numbers, and dates. Be dense and specific.",
       messages: [
+        {
+          role: "system",
+          content:
+            "You are a memory compressor. Summarize the conversation transcript into a concise paragraph (max 400 words) capturing: key topics discussed, decisions made, user preferences revealed, and any strategies or markets mentioned. Preserve facts, numbers, and dates. Be dense and specific.",
+        },
         {
           role: "user",
           content: `Previous summary (if any):\n${existing}\n\nNew transcript to incorporate:\n${transcript}`,
@@ -288,11 +310,7 @@ async function maybeCompressMemory(
       ],
     });
 
-    const summary = response.content
-      .filter((b) => b.type === "text")
-      .map((b) => (b as { type: "text"; text: string }).text)
-      .join(" ")
-      .trim();
+    const summary = response.choices[0]?.message?.content?.trim() ?? "";
 
     if (summary) {
       await chatDb.upsertBotConfig(userId, platform, { memorySummary: summary });
@@ -387,11 +405,11 @@ export const chatRouter = router({
     .mutation(async ({ input, ctx }) => {
       const userId = assertPositiveIntegerUserId(ctx.user!.id, "chat sendMessage userId");
 
-      if (!ENV.anthropicApiKey) {
+      if (!ENV.openrouterApiKey) {
         return {
           success: false,
           message: null,
-          error: "AI chat requires ANTHROPIC_API_KEY to be configured.",
+          error: "AI chat requires OPENROUTER_API_KEY (or ANTHROPIC_API_KEY) to be configured.",
         };
       }
 
@@ -432,22 +450,32 @@ export const chatRouter = router({
 
       contextMessages.push({ role: "user", content: input.content });
 
-      // 4. Tools available to the bot
-      const tools: Anthropic.Tool[] = [
+      // 4. Tools available to the bot (OpenAI function calling format)
+      const tools: OpenAI.Chat.ChatCompletionTool[] = [
         TOOL_GET_SIGNALS,
         TOOL_GET_POSITIONS,
         TOOL_GET_MARKETS,
         TOOL_RUN_SIGNALS,
       ];
 
-      const client = new Anthropic({ apiKey: ENV.anthropicApiKey });
+      const client = new OpenAI({
+        apiKey: ENV.openrouterApiKey,
+        baseURL: "https://openrouter.ai/api/v1",
+        defaultHeaders: {
+          "HTTP-Referer": "https://github.com/mikelaurenzo7-collab/tradingmanus",
+          "X-Title": "TradingManus",
+        },
+      });
 
       // 5. Agentic loop — handle tool calls
       let assistantContent = "";
       let finalActionType: string | null = null;
       let finalActionData: string | null = null;
 
-      const anthropicMessages: Anthropic.MessageParam[] = contextMessages;
+      const oaiMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+        { role: "system", content: systemPrompt },
+        ...contextMessages,
+      ];
 
       let iterations = 0;
       const MAX_TOOL_ITERATIONS = 4;
@@ -455,53 +483,56 @@ export const chatRouter = router({
       while (iterations < MAX_TOOL_ITERATIONS) {
         iterations++;
 
-        const response = await client.messages.create({
+        const response = await client.chat.completions.create({
           model: CHAT_MODEL,
           max_tokens: 1024,
-          system: systemPrompt,
+          messages: oaiMessages,
           tools,
-          messages: anthropicMessages,
+          tool_choice: "auto",
         });
 
-        // Collect text from this response
-        const textBlocks = response.content
-          .filter((b) => b.type === "text")
-          .map((b) => (b as Anthropic.TextBlock).text);
-        if (textBlocks.length > 0) {
-          assistantContent = textBlocks.join("\n").trim();
+        const choice = response.choices[0];
+        if (!choice) break;
+
+        const { message } = choice;
+        if (message.content) {
+          assistantContent = message.content;
         }
 
-        if (response.stop_reason === "end_turn" || response.stop_reason === "max_tokens") {
+        if (choice.finish_reason === "stop" || choice.finish_reason === "length") {
           break;
         }
 
-        // Handle tool_use
-        const toolUseBlocks = response.content.filter((b) => b.type === "tool_use") as Anthropic.ToolUseBlock[];
-        if (toolUseBlocks.length === 0) break;
+        // Handle tool_calls
+        const toolCalls = message.tool_calls;
+        if (!toolCalls || toolCalls.length === 0) break;
 
-        // Add the assistant's message with tool_use blocks to the history
-        anthropicMessages.push({ role: "assistant", content: response.content });
+        // Add the assistant's message (with tool_calls) to history
+        oaiMessages.push({ role: "assistant", content: message.content ?? null, tool_calls: toolCalls });
 
-        // Execute each tool and build tool_result blocks
-        const toolResults: Anthropic.ToolResultBlockParam[] = [];
-
-        for (const toolUse of toolUseBlocks) {
+        // Execute each tool and add tool result messages
+        for (const toolCall of toolCalls) {
+          if (toolCall.type !== "function") continue;
+          let toolInput: Record<string, unknown> = {};
+          try {
+            toolInput = JSON.parse(toolCall.function.arguments) as Record<string, unknown>;
+          } catch {
+            // ignore parse error — use empty input
+          }
           const { result, actionType } = await executeTool(
-            toolUse.name,
-            toolUse.input as Record<string, unknown>,
+            toolCall.function.name,
+            toolInput,
             input.platform,
             userId
           );
           finalActionType = actionType;
           finalActionData = JSON.stringify(result);
-          toolResults.push({
-            type: "tool_result",
-            tool_use_id: toolUse.id,
+          oaiMessages.push({
+            role: "tool",
+            tool_call_id: toolCall.id,
             content: JSON.stringify(result),
           });
         }
-
-        anthropicMessages.push({ role: "user", content: toolResults });
       }
 
       // Fallback if we got no text content

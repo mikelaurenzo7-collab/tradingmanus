@@ -16,30 +16,33 @@ export const ENV = {
   ownerEmail: normalize(process.env.OWNER_EMAIL),
   ownerPassword: normalize(process.env.OWNER_PASSWORD),
   cronSecret: normalize(process.env.CRON_SECRET),
-  anthropicApiKey: normalize(process.env.ANTHROPIC_API_KEY),
-  // Default Sonnet 4.5 for normal-stakes review.  Pinned to the current
-  // generation so the resolved model is logged/inspectable.
-  anthropicModel: normalize(process.env.ANTHROPIC_MODEL) || "claude-sonnet-4-5",
+  // OpenRouter API key.  OPENROUTER_API_KEY is the canonical variable;
+  // ANTHROPIC_API_KEY is accepted as a backward-compatible fallback so
+  // existing deployments do not need to rename their environment variable.
+  openrouterApiKey: normalize(process.env.OPENROUTER_API_KEY) || normalize(process.env.ANTHROPIC_API_KEY),
+  // Keep anthropicApiKey as an alias so existing call-sites compile without
+  // change during the transition period.
+  get anthropicApiKey() { return this.openrouterApiKey; },
+  // The model served through OpenRouter.  Override via OPENROUTER_MODEL.
+  // All tiers (triage / review / deep) resolve to this single model since
+  // tencent/hy3-preview:free is the configured provider.
+  openrouterModel: normalize(process.env.OPENROUTER_MODEL) || "tencent/hy3-preview:free",
+  // Backward-compat model aliases — all resolve to openrouterModel.
+  get anthropicModel() { return this.openrouterModel; },
+  get anthropicTriageModel() { return this.openrouterModel; },
+  get anthropicDeepModel() { return this.openrouterModel; },
   anthropicTimeoutMs: normalizePositiveInt(process.env.ANTHROPIC_TIMEOUT_MS, 12000),
   /**
-   * Deep-tier timeout in milliseconds.  Opus + extended thinking + multiple
-   * web_search invocations need more wall-clock budget than the bulk Sonnet
-   * reviewer; bulk reviewer keeps the tighter ANTHROPIC_TIMEOUT_MS so missed
-   * cron ticks remain rare.  Defaults to 25s.
+   * Deep-tier timeout in milliseconds.  Defaults to 25 s.
    */
   anthropicDeepTimeoutMs: normalizePositiveInt(process.env.ANTHROPIC_DEEP_TIMEOUT_MS, 25000),
-  // Tiered Claude models for the per-category trading reviewers.
-  // Triage: cheap/fast Haiku for large candidate sets and low-stakes filtering.
-  // Deep: Opus for high-stakes trades that warrant extended thinking.
-  anthropicTriageModel: normalize(process.env.ANTHROPIC_TRIAGE_MODEL) || "claude-haiku-4-5",
-  anthropicDeepModel: normalize(process.env.ANTHROPIC_DEEP_MODEL) || "claude-opus-4-5",
   // Feature toggles for the AI toolbelt.
   enableAiPromptCache: normalizeBoolean(process.env.ENABLE_AI_PROMPT_CACHE, true),
   enableAiCategoryRouting: normalizeBoolean(process.env.ENABLE_AI_CATEGORY_ROUTING, true),
-  // Defaults are ON now that Claude is the primary reviewer; both features are
-  // gated per-call by stakes / availability inside aiToolbelt.
-  enableAiWebSearch: normalizeBoolean(process.env.ENABLE_AI_WEB_SEARCH, true),
-  enableAiExtendedThinking: normalizeBoolean(process.env.ENABLE_AI_EXTENDED_THINKING, true),
+  // Web search and extended thinking are Anthropic-only features; they are
+  // disabled when routing through OpenRouter.
+  enableAiWebSearch: false as boolean,
+  enableAiExtendedThinking: false as boolean,
   // Per-desk persistent learning tape (loaded into the cached system prompt).
   enableAiDeskMemory: normalizeBoolean(process.env.ENABLE_AI_DESK_MEMORY, true),
   // Cheap Haiku pre-filter when the candidate batch is large.
@@ -138,9 +141,9 @@ export function validateServerEnv() {
     );
   }
 
-  if (ENV.isProduction && ENV.anthropicApiKey.length === 0) {
+  if (ENV.isProduction && ENV.openrouterApiKey.length === 0) {
     console.warn(
-      "[ENV] ANTHROPIC_API_KEY is not set. The AI trading reviewer requires this to be configured."
+      "[ENV] OPENROUTER_API_KEY is not set. The AI trading reviewer requires this to be configured."
     );
   }
 }
