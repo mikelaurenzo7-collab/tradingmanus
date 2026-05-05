@@ -25,6 +25,7 @@ import { LayoutDashboard, LogOut, TrendingUp, Shield, FileText, Plug, BookOpen, 
 import { CSSProperties, FormEvent, useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
+import { CommandPalette } from './CommandPalette';
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { trpc } from "@/lib/trpc";
@@ -294,6 +295,7 @@ export default function DashboardLayout({
           {children}
         </main>
       </SidebarInset>
+      <CommandPalette />
     </SidebarProvider>
   );
 }
