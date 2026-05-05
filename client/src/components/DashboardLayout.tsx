@@ -51,9 +51,11 @@ import { FormEvent, useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
 import { CommandPalette } from "./CommandPalette";
+import { KeyboardShortcuts } from "./KeyboardShortcuts";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { trpc } from "@/lib/trpc";
+import { ThemeToggle } from "./ThemeToggle";
 
 type NavItem = { icon: typeof LayoutDashboard; label: string; path: string };
 type NavSection = { label: string; items: NavItem[] };
@@ -301,12 +303,15 @@ export default function DashboardLayout({
 
         {/* ── User footer ──────────────────────────────────────────── */}
         <SidebarFooter className="border-t border-sidebar-border">
-          {/* Command palette hint */}
-          <div className="mx-2 my-2 flex items-center justify-center gap-1.5 text-xs text-muted-foreground/60">
-            <span>Quick search</span>
-            <kbd className="inline-flex h-5 items-center gap-0.5 rounded border border-border/40 bg-muted/30 px-1.5 font-mono text-[10px] font-medium">
-              <span className="text-[9px]">⌘</span>K
-            </kbd>
+          {/* Command palette hint + theme toggle */}
+          <div className="mx-2 my-2 flex items-center justify-between">
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground/60">
+              <span>Quick search</span>
+              <kbd className="inline-flex h-5 items-center gap-0.5 rounded border border-border/40 bg-muted/30 px-1.5 font-mono text-[10px] font-medium">
+                <span className="text-[9px]">⌘</span>K
+              </kbd>
+            </div>
+            <ThemeToggle />
           </div>
           {liveTradingArmed && (
             <div className="mx-2 mb-1 flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/8 px-3 py-2">
@@ -405,6 +410,7 @@ export default function DashboardLayout({
         </main>
       </SidebarInset>
       <CommandPalette />
+      <KeyboardShortcuts />
     </SidebarProvider>
   );
 }
