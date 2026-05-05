@@ -129,7 +129,9 @@ describe("Kalshi Signal Generation", () => {
         impliedProbability: 0.95,
       };
 
-      const signals = await generateSignalsForMarket(market);
+      // Pass fundamentalProbability close to impliedProbability to avoid also generating a value signal,
+      // which would be consolidated with the contrarian signal into a confluence signal
+      const signals = await generateSignalsForMarket(market, undefined, 0.94);
 
       const contrarianSignal = signals.find((s) => s.signalType === "contrarian");
       expect(contrarianSignal).toBeDefined();

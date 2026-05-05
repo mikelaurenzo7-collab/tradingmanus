@@ -94,6 +94,15 @@ vi.mock("./_core/kalshiSignals", () => ({
   filterSignalsByMarketConditions: mocks.filterSignalsByMarketConditions,
   getTopSignalsForExecution: mocks.getTopSignalsForExecution,
   saveSignals: mocks.saveSignals,
+  computeKellyFraction: vi.fn((confidence: number, marketPrice: number) => {
+    if (!Number.isFinite(confidence) || !Number.isFinite(marketPrice) || marketPrice <= 0 || marketPrice >= 1) {
+      return 0;
+    }
+    const odds = (1 - marketPrice) / marketPrice;
+    const lossProbability = 1 - confidence;
+    const fullKelly = (confidence * odds - lossProbability) / odds;
+    return Math.max(0, Math.min(0.2, fullKelly * 0.25));
+  }),
 }));
 
 vi.mock("./_core/tradingReviewer", () => ({
