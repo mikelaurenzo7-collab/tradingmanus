@@ -2,6 +2,7 @@ import { polymarketCredentials, userPlatformSubscriptions } from "../drizzle/sch
 import { eq } from "drizzle-orm";
 import { getDb } from "./db";
 import { encryptCredential, decryptCredential } from "./_core/kalshiAuth";
+import { logger } from "./_core/logger";
 
 /**
  * Save Polymarket CLOB credentials for a user
@@ -45,7 +46,7 @@ export async function savePolymarketCredentials(
 
     return { success: true };
   } catch (error) {
-    console.error("[Database] Save Polymarket credentials failed:", error);
+    logger.error({ err: error }, "[Database] Save Polymarket credentials failed");
     throw error;
   }
 }
@@ -81,7 +82,7 @@ export async function getPolymarketCredentials(userId: number) {
       lastSyncedAt: cred.lastSyncedAt,
     };
   } catch (error) {
-    console.error("[Database] Get Polymarket credentials failed:", error);
+    logger.error({ err: error }, "[Database] Get Polymarket credentials failed");
     return null;
   }
 }
@@ -109,7 +110,7 @@ export async function updatePolymarketAccountStatus(
 
     return { success: true };
   } catch (error) {
-    console.error("[Database] Update Polymarket account status failed:", error);
+    logger.error({ err: error }, "[Database] Update Polymarket account status failed");
     throw error;
   }
 }
@@ -130,7 +131,7 @@ export async function deletePolymarketCredentials(userId: number) {
 
     return { success: true };
   } catch (error) {
-    console.error("[Database] Delete Polymarket credentials failed:", error);
+    logger.error({ err: error }, "[Database] Delete Polymarket credentials failed");
     throw error;
   }
 }
@@ -157,8 +158,38 @@ export async function getPlatformSubscriptions(userId: number) {
 
     return { subscribedPlatforms: result[0].subscribedPlatforms };
   } catch (error) {
-    console.error("[Database] Get platform subscriptions failed:", error);
+    logger.error({ err: error }, "[Database] Get platform subscriptions failed");
     return { subscribedPlatforms: "kalshi" as const };
+  }
+}
+
+/**
+ * Check whether a user is currently subscribed to the Polymarket platform.
+ * Returns true when the user's subscribedPlatforms value is 'polymarket' or 'both'.
+ * Defaults to false (deny) on any database error.
+ */
+export async function isUserSubscribedToPolymarket(userId: number): Promise<boolean> {
+  const database = await getDb();
+  if (!database) {
+    return false;
+  }
+
+  try {
+    const result = await database
+      .select({ subscribedPlatforms: userPlatformSubscriptions.subscribedPlatforms })
+      .from(userPlatformSubscriptions)
+      .where(eq(userPlatformSubscriptions.userId, userId))
+      .limit(1);
+
+    if (!result || result.length === 0) {
+      return false;
+    }
+
+    const { subscribedPlatforms } = result[0];
+    return subscribedPlatforms === "polymarket" || subscribedPlatforms === "both";
+  } catch (error) {
+    logger.error({ err: error }, "[Database] isUserSubscribedToPolymarket check failed");
+    return false;
   }
 }
 
@@ -185,7 +216,7 @@ export async function savePlatformSubscriptions(
 
     return { success: true, subscribedPlatforms };
   } catch (error) {
-    console.error("[Database] Save platform subscriptions failed:", error);
+    logger.error({ err: error }, "[Database] Save platform subscriptions failed");
     throw error;
   }
 }

@@ -9,6 +9,21 @@ import { eq, and, inArray } from "drizzle-orm";
 import { getKalshiOrderStatus, createPositionFromFill, closePositionFromFill } from "./kalshiExecution";
 import * as kalshiCredDb from "../db.kalshi-credentials";
 import { assertPositiveIntegerUserId } from "./userScope";
+import { logger } from "./logger";
+import { centsToDollars } from "./kalshiMarketData";
+import { fetchWithRetry } from "./fetchWithRetry";
+import { CircuitBreaker } from "./circuitBreaker";
+
+/**
+ * Shared circuit breaker for all Kalshi order-sync HTTP calls.
+ * Trips after 5 failures in 30 s, fails fast for 30 s, then half-open probe.
+ */
+const kalshiOrderSyncBreaker = new CircuitBreaker({
+  name: "kalshiOrderSync",
+  failureThreshold: 5,
+  windowMs: 30_000,
+  cooldownMs: 30_000,
+});
 
 // Guards against two concurrent sync intervals processing the same user's pending orders
 const _syncRunningByUser = new Set<string>();
@@ -32,7 +47,7 @@ export async function syncPendingOrders(userId: number): Promise<void> {
     const creds = await kalshiCredDb.getKalshiCredentials(scopedUserId);
     if (!creds) return;
     if ("needsReauth" in creds && creds.needsReauth) {
-      console.warn(`[OrderSync] Skipping user ${scopedUserId}: credentials require re-authentication`);
+      logger.warn({ userId: scopedUserId }, "[OrderSync] Skipping user %d: credentials require re-authentication", scopedUserId);
       return;
     }
     if (!creds.apiKey || !creds.privateKey) return;
@@ -58,7 +73,7 @@ export async function syncPendingOrders(userId: number): Promise<void> {
             );
 
             if (!closed) {
-              console.warn(`[OrderSync] Filled close order ${order.orderId} had no matching open position`);
+              logger.warn({ orderId: order.orderId }, "[OrderSync] Filled close order %s had no matching open position", order.orderId);
             }
             continue;
           }
@@ -77,7 +92,7 @@ export async function syncPendingOrders(userId: number): Promise<void> {
             .then((rows: any[]) => rows[0]);
 
           if (existingOpen) {
-            console.log(`[OrderSync] Position for ${order.marketId} already exists, skipping`);
+            logger.info({ marketId: order.marketId }, "[OrderSync] Position for %s already exists, skipping", order.marketId);
             continue;
           }
 
@@ -94,7 +109,7 @@ export async function syncPendingOrders(userId: number): Promise<void> {
           );
         }
       } catch (err) {
-        console.error(`[OrderSync] Failed to sync order ${order.orderId}:`, err);
+        logger.error({ err, orderId: order.orderId }, "[OrderSync] Failed to sync order %s", order.orderId);
       }
     }
   } finally {
@@ -111,7 +126,7 @@ export async function syncLivePositions(userId: number): Promise<void> {
   const creds = await kalshiCredDb.getKalshiCredentials(scopedUserId);
   if (!creds) return;
   if ("needsReauth" in creds && creds.needsReauth) {
-    console.warn(`[OrderSync] Skipping syncLivePositions for user ${scopedUserId}: credentials require re-authentication`);
+    logger.warn({ userId: scopedUserId }, "[OrderSync] Skipping syncLivePositions for user %d: credentials require re-authentication", scopedUserId);
     return;
   }
   if (!creds.apiKey || !creds.privateKey) return;
@@ -166,7 +181,11 @@ export async function syncLivePositions(userId: number): Promise<void> {
     for (const base of KALSHI_ENVIRONMENTS) {
       try {
         const url = `${base}/portfolio/positions`;
-        const resp = await fetch(url, { method: "GET", headers: buildHeaders(url) });
+        const resp = await fetchWithRetry(
+          url,
+          { method: "GET", headers: buildHeaders(url) },
+          { label: "kalshiOrderSync.syncLivePositions", breaker: kalshiOrderSyncBreaker },
+        );
         if (!resp.ok) continue;
         const payload = await resp.json() as { market_positions?: any[]; positions?: any[] };
         livePositions = payload.market_positions ?? payload.positions ?? [];
@@ -190,11 +209,10 @@ export async function syncLivePositions(userId: number): Promise<void> {
       const quantity = side === "yes" ? yesQty : noQty;
       if (quantity <= 0) continue;
 
-      // Average price from Kalshi comes as cents; normalize to decimal.
-      const rawPrice = Number(
-        pos.average_price ?? pos.yes_price ?? pos.no_price ?? 0,
-      );
-      const entryPrice = rawPrice > 1 ? rawPrice / 100 : rawPrice;
+      // Average price from Kalshi comes as cent-scale (0..100); convert via
+      // the canonical boundary helper so this file never does a bare /100.
+      const rawPrice = pos.average_price ?? pos.yes_price ?? pos.no_price ?? 0;
+      const entryPrice = centsToDollars(rawPrice) ?? 0;
       const currentPrice = entryPrice;
 
       const existing = await db
@@ -236,6 +254,6 @@ export async function syncLivePositions(userId: number): Promise<void> {
       }
     }
   } catch (err) {
-    console.error("[OrderSync] syncLivePositions failed:", err);
+    logger.error({ err }, "[OrderSync] syncLivePositions failed");
   }
 }

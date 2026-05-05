@@ -19,6 +19,7 @@
  */
 
 import type { CircuitBreaker } from "./circuitBreaker";
+import { logger } from "./logger";
 
 export interface RetryOptions {
   /** Maximum total attempts including the first call. Default 3. */
@@ -81,7 +82,7 @@ export async function fetchWithRetry(
         }
         if (attempt < maxAttempts) {
           const wait = computeBackoff(attempt, baseDelayMs, maxDelayMs);
-          console.warn(`[${label}] attempt ${attempt}/${maxAttempts} got ${response.status}; retrying in ${wait}ms`);
+          logger.warn({ label, attempt, maxAttempts, status: response.status, wait }, `[${label}] attempt ${attempt}/${maxAttempts} got ${response.status}; retrying in ${wait}ms`);
           await delay(wait);
           continue;
         }
@@ -96,7 +97,7 @@ export async function fetchWithRetry(
         lastError = error;
         if (attempt >= maxAttempts) break;
         const wait = computeBackoff(attempt, baseDelayMs, maxDelayMs);
-        console.warn(`[${label}] attempt ${attempt}/${maxAttempts} threw ${(error as Error)?.message ?? error}; retrying in ${wait}ms`);
+        logger.warn({ label, attempt, maxAttempts, err: error, wait }, `[${label}] attempt ${attempt}/${maxAttempts} threw ${(error as Error)?.message ?? error}; retrying in ${wait}ms`);
         await delay(wait);
       }
     }

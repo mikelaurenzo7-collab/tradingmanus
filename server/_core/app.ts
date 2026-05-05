@@ -7,7 +7,7 @@ import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { validateServerEnv, ENV } from "./env";
-import { getDb, runMigrations, getUsersEligibleForAutomaticScheduledTrading, pingDb } from "../db";
+import { getDb, runMigrations, getUsersEligibleForAutomaticScheduledTrading, checkDbHealth } from "../db";
 import { authenticateRequest } from "./auth";
 import { runScheduledAutonomousTradingBatch } from "./kalshiAutonomy";
 import { syncPendingOrders, syncLivePositions } from "./kalshiOrderSync";
@@ -277,9 +277,15 @@ export async function createApp(options: { runStartupMigrations?: boolean } = {}
   }));
 
   // CORS configuration
+  const productionOrigins: (string | RegExp)[] = [
+    /^https:\/\/[a-zA-Z0-9-]+\.vercel\.app$/,
+  ];
+  if (ENV.allowedOrigin) {
+    productionOrigins.push(ENV.allowedOrigin);
+  }
   app.use(cors({
     origin: ENV.isProduction
-      ? [/^https:\/\/[a-zA-Z0-9-]+\.vercel\.app$/, /^https:\/\/(?:[a-zA-Z0-9-]+\.)?tradingmanus\.com$/]
+      ? productionOrigins
       : ["http://localhost:5008", "http://127.0.0.1:5008"],
     credentials: true,
   }));
@@ -328,22 +334,11 @@ export async function createApp(options: { runStartupMigrations?: boolean } = {}
   // platform restart policy.
   app.get("/api/health/ready", async (_req: unknown, res: unknown) => {
     const startMs = Date.now();
-    let dbStatus: "ok" | "error" = "ok";
-    let dbLatencyMs: number | null = null;
-
-    try {
-      const t0 = Date.now();
-      const alive = await pingDb();
-      dbLatencyMs = Date.now() - t0;
-      if (!alive) dbStatus = "error";
-    } catch {
-      dbStatus = "error";
-    }
-
-    const overall = dbStatus === "ok" ? "ok" : "degraded";
+    const db = await checkDbHealth();
+    const overall = db.status === "ok" ? "ok" : "degraded";
     (res as AppResponse).status(overall === "ok" ? 200 : 503).json({
       status: overall,
-      checks: { database: { status: dbStatus, latencyMs: dbLatencyMs } },
+      checks: { database: { status: db.status, latencyMs: db.latencyMs } },
       responseMs: Date.now() - startMs,
     });
   });
@@ -354,27 +349,16 @@ export async function createApp(options: { runStartupMigrations?: boolean } = {}
   // the entire deployment down.
   app.get("/api/health", async (_req: unknown, res: unknown) => {
     const startMs = Date.now();
-    let dbStatus: "ok" | "error" = "ok";
-    let dbLatencyMs: number | null = null;
-
-    try {
-      const t0 = Date.now();
-      const alive = await pingDb();
-      dbLatencyMs = Date.now() - t0;
-      if (!alive) dbStatus = "error";
-    } catch {
-      dbStatus = "error";
-    }
-
+    const db = await checkDbHealth();
     (res as AppResponse).status(200).json({
-      status: dbStatus === "ok" ? "ok" : "degraded",
+      status: db.status === "ok" ? "ok" : "degraded",
       runtime: process.env.VERCEL ? "vercel" : "node",
       scheduler: process.env.VERCEL ? "vercel-cron" : "node-interval",
       interval_minutes: 15,
       checks: {
         database: {
-          status: dbStatus,
-          latencyMs: dbLatencyMs,
+          status: db.status,
+          latencyMs: db.latencyMs,
         },
       },
       uptimeMs: process.uptime() * 1000,

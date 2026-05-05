@@ -6,6 +6,7 @@
 import { fetchKalshiMarkets, fetchKalshiMarketDetails, KalshiMarket } from "./kalshiMarketData";
 import { saveMarketSnapshot } from "./kalshiMarketSnapshots";
 import * as db from "../db";
+import { logger } from "./logger";
 
 export interface MarketSnapshot {
   marketId: string;
@@ -54,7 +55,7 @@ async function persistSnapshot(snapshot: MarketSnapshot): Promise<void> {
       impliedProbability: snapshot.impliedProbability,
     });
   } catch (error) {
-    console.error(`[MarketFeed] Persist snapshot failed for ${snapshot.marketId}:`, error);
+    logger.error({ err: error, marketId: snapshot.marketId }, "[MarketFeed] Persist snapshot failed for %s", snapshot.marketId);
   }
 }
 
@@ -74,7 +75,7 @@ export async function subscribeToMarketFeed(
   // Fetch initial market data
   const market = await fetchKalshiMarketDetails(marketId);
   if (!market) {
-    console.error(`[MarketFeed] Failed to fetch initial data for market ${marketId}`);
+    logger.error({ marketId }, "[MarketFeed] Failed to fetch initial data for market %s", marketId);
     return null;
   }
 
@@ -115,7 +116,7 @@ export async function subscribeToMarketFeed(
 
   subscriptionTimers.set(marketId, timer);
 
-  console.log(`[MarketFeed] Subscribed to market ${marketId} with ${pollIntervalMs}ms polling`);
+  logger.info({ marketId, pollIntervalMs }, "[MarketFeed] Subscribed to market %s with %dms polling", marketId, pollIntervalMs);
   return feed;
 }
 
@@ -172,7 +173,7 @@ async function updateMarketFeed(marketId: string): Promise<void> {
     await db.upsertKalshiMarket(market);
     await persistSnapshot(snapshot);
   } catch (error) {
-    console.error(`[MarketFeed] Update failed for market ${marketId}:`, error);
+    logger.error({ err: error, marketId }, "[MarketFeed] Update failed for market %s", marketId);
     feed.dataQualityScore = Math.max(0, feed.dataQualityScore - 0.1);
   }
 }
@@ -188,7 +189,7 @@ export function unsubscribeFromMarketFeed(marketId: string): void {
   }
 
   feedCache.delete(marketId);
-  console.log(`[MarketFeed] Unsubscribed from market ${marketId}`);
+  logger.info({ marketId }, "[MarketFeed] Unsubscribed from market %s", marketId);
 }
 
 /**
@@ -220,7 +221,7 @@ export function unsubscribeFromAllMarkets(): void {
   subscriptionTimers.forEach((timer) => clearInterval(timer));
   subscriptionTimers.clear();
   feedCache.clear();
-  console.log("[MarketFeed] Unsubscribed from all markets");
+  logger.info("[MarketFeed] Unsubscribed from all markets");
 }
 
 /**

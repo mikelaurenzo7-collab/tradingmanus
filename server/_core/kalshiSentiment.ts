@@ -3,6 +3,9 @@
  * Integrates news, market action, and external topic attention.
  */
 
+import { logger } from "./logger";
+import { fetchWithRetry } from "./fetchWithRetry";
+
 export interface SentimentData {
   marketId: string;
   sentiment: number;
@@ -366,7 +369,7 @@ export async function fetchGdeltTopicSignal(topic: string): Promise<ExternalTopi
       queriedAt: new Date(),
     };
   } catch (error) {
-    console.error("[Sentiment] Wikimedia topic fetch failed:", error);
+    logger.error({ err: error }, "[Sentiment] Wikimedia topic fetch failed");
     return null;
   }
 }
@@ -385,12 +388,12 @@ export async function fetchLiveNewsSummary(topic: string): Promise<LiveNewsSumma
   const url = `https://gnews.io/api/v4/search?q=${encodeURIComponent(cleanTopic)}&lang=en&max=5&apikey=${apiKey}`;
 
   try {
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
       headers: {
         Accept: "application/json",
         "User-Agent": "nexus-omega-dashboard/1.0 live news sentiment",
       },
-    });
+    }, { label: "GNews", maxAttempts: 3, baseDelayMs: 500 });
 
     if (!response.ok) {
       return {
@@ -433,7 +436,7 @@ export async function fetchLiveNewsSummary(topic: string): Promise<LiveNewsSumma
       fetchedAt: new Date(),
     };
   } catch (error) {
-    console.error("[Sentiment] GNews fetch failed:", error);
+    logger.error({ err: error }, "[Sentiment] GNews fetch failed");
     return null;
   }
 }
@@ -464,12 +467,89 @@ export function extractSocialSentiment(posts: SocialPost[]): number {
   return totalWeight > 0 ? weightedSentiment / totalWeight : 0;
 }
 
-export async function fetchLiveSocialSummary(_topic: string): Promise<LiveSocialSummary | null> {
-  // Reddit social ingestion was provided by the Manus DataAPI which is no longer
-  // available on Vercel. Return null so downstream sentiment falls back to news +
-  // market price action only. This can be re-enabled once a hosted Reddit
-  // adapter is wired in.
-  return null;
+export async function fetchLiveSocialSummary(topic: string): Promise<LiveSocialSummary | null> {
+  const cleanTopic = topic.trim();
+  if (!cleanTopic) return null;
+
+  const subreddit = pickSocialSubreddit(cleanTopic);
+  // Use Reddit's public JSON search endpoint — no API key or OAuth required for
+  // read-only queries. restrict_sr=1 scopes results to the chosen subreddit so
+  // the signal stays on-topic. Results are capped to the last 24 hours and
+  // sorted by relevance so we surface trending discussion around the topic.
+  const url =
+    `https://www.reddit.com/r/${encodeURIComponent(subreddit)}/search.json` +
+    `?q=${encodeURIComponent(cleanTopic)}&sort=relevance&limit=10&t=day&restrict_sr=1`;
+
+  try {
+    const response = await fetchWithRetry(url, {
+      headers: {
+        Accept: "application/json",
+        // Reddit blocks requests with no User-Agent string.
+        "User-Agent": "nexus-omega-dashboard/1.0 social sentiment",
+      },
+    }, { label: "Reddit", maxAttempts: 2, baseDelayMs: 500 });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const payload = (await response.json()) as {
+      data?: {
+        children?: Array<{
+          data?: {
+            title?: string;
+            url?: string;
+            subreddit?: string;
+            score?: number;
+            num_comments?: number;
+            created_utc?: number;
+          };
+        }>;
+      };
+    };
+
+    const children = payload?.data?.children;
+    if (!Array.isArray(children) || children.length === 0) {
+      return null;
+    }
+
+    const posts: SocialPost[] = children
+      .map((child) => {
+        const d = child?.data;
+        if (!d?.title) return null;
+        return {
+          title: d.title.trim(),
+          url: d.url ?? "",
+          subreddit: d.subreddit ?? subreddit,
+          score: typeof d.score === "number" ? d.score : 0,
+          commentCount: typeof d.num_comments === "number" ? d.num_comments : 0,
+          createdAt:
+            typeof d.created_utc === "number"
+              ? new Date(d.created_utc * 1000)
+              : new Date(),
+          // Per-post sentiment is derived from title keywords by extractSocialSentiment
+          // rather than stored here; the field exists for display/audit purposes only.
+          sentiment: 0,
+          relevance: 1,
+        };
+      })
+      .filter((p): p is SocialPost => p !== null);
+
+    if (posts.length === 0) return null;
+
+    return {
+      query: cleanTopic,
+      subreddit,
+      postCount: posts.length,
+      mentions: posts.reduce((s, p) => s + p.score + p.commentCount, 0),
+      posts,
+      derivedSentiment: extractSocialSentiment(posts),
+      fetchedAt: new Date(),
+    };
+  } catch (error) {
+    logger.warn({ err: error }, "[Sentiment] Reddit fetch failed; social signal skipped");
+    return null;
+  }
 }
 
 /**

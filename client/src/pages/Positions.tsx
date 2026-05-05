@@ -1,8 +1,10 @@
 import { trpc } from "@/lib/trpc";
-import { Loader2, X } from "lucide-react";
+import { Loader2, X, TrendingUp, Briefcase } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
 import { toast } from "sonner";
+import { PageHeader } from "@/components/PageHeader";
+import { EmptyState } from "@/components/EmptyState";
 
 type KalshiPositionRow = {
   id: number;
@@ -33,8 +35,8 @@ export default function Positions() {
 
   if (positionsQuery.isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <Loader2 className="animate-spin w-8 h-8 text-primary" />
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <Loader2 className="animate-spin w-8 h-8 text-violet-400" />
       </div>
     );
   }
@@ -77,20 +79,39 @@ export default function Positions() {
   };
 
   return (
-    <div className="space-y-6 p-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-wider gradient-text">Open Positions</h1>
-        <p className="text-muted-foreground text-sm mt-1">
-          {positions.length} active Kalshi position{positions.length !== 1 ? "s" : ""}
-        </p>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        icon={Briefcase}
+        title="Open Positions"
+        description={
+          <span className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            {positions.length} active Kalshi position{positions.length !== 1 ? "s" : ""}
+          </span>
+        }
+        iconGradient="from-emerald-500 to-teal-500"
+        actions={
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => positionsQuery.refetch()}
+            disabled={positionsQuery.isRefetching}
+            className="gap-2"
+          >
+            {positionsQuery.isRefetching ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+            Refresh
+          </Button>
+        }
+      />
 
       {positions.length === 0 ? (
-        <div className="laurenzo-card text-center py-12">
-          <p className="text-muted-foreground">No open positions</p>
-        </div>
+        <EmptyState
+          icon={TrendingUp}
+          title="No open positions"
+          description="Your active positions will appear here once you start trading."
+        />
       ) : (
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto rounded-xl border border-white/10 bg-white/[0.02] backdrop-blur-sm">
           <table className="laurenzo-table">
             <thead>
               <tr>

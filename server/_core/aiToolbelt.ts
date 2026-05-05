@@ -25,7 +25,6 @@
  * existing duo review still works exactly as before when toggles are off.
  */
 
-import type Anthropic from "@anthropic-ai/sdk";
 import { ENV } from "./env";
 
 export type ModelTier = "triage" | "review" | "deep";
@@ -84,20 +83,14 @@ export function isHighStakes(context: StakesContext): boolean {
 }
 
 /**
- * Pick the right Claude model for the given tier, honoring per-tier env
- * overrides so operators can dial in cost vs depth without code changes.
+ * Pick the right model for the given tier.  All tiers resolve to the same
+ * OpenRouter model (tencent/hy3-preview:free by default); the override arg
+ * still lets callers pin a specific model string if needed.
  */
 export function selectAnthropicModel(tier: ModelTier, override?: string): string {
   if (override && override.trim()) return override.trim();
-  switch (tier) {
-    case "triage":
-      return ENV.anthropicTriageModel || "claude-haiku-4-5";
-    case "deep":
-      return ENV.anthropicDeepModel || ENV.anthropicModel || "claude-opus-4-5";
-    case "review":
-    default:
-      return ENV.anthropicModel || "claude-sonnet-4-5";
-  }
+  // All tiers use the single configured OpenRouter model.
+  return ENV.openrouterModel || "tencent/hy3-preview:free";
 }
 
 /**
@@ -123,11 +116,13 @@ export function buildWebSearchTool(maxUses = 3): WebSearchTool {
 }
 
 export function isWebSearchEnabled(): boolean {
-  return ENV.enableAiWebSearch === true;
+  // Web search is an Anthropic-hosted feature not available on OpenRouter.
+  return false;
 }
 
 export function isExtendedThinkingEnabled(): boolean {
-  return ENV.enableAiExtendedThinking === true;
+  // Extended thinking is an Anthropic-only feature not available on OpenRouter.
+  return false;
 }
 
 /**

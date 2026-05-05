@@ -3,6 +3,8 @@ import type { IncomingHttpHeaders } from "node:http";
 import type { User } from "../../drizzle/schema";
 import { authenticateRequest } from "./auth";
 import { parse as parseCookieHeader } from "cookie";
+import { logger } from "./logger";
+import { ENV } from "./env";
 
 export type TrpcRequest = {
   headers: IncomingHttpHeaders;
@@ -19,6 +21,7 @@ export type TrpcContext = {
   req: TrpcRequest;
   res: TrpcResponse;
   user: User | null;
+  paperTradeMode: boolean;
 };
 
 export async function createContext(
@@ -40,7 +43,7 @@ export async function createContext(
     user = await authenticateRequest(req);
   } catch (error) {
     // Authentication is optional for public procedures.
-    console.warn("[Context] Auth error:", error);
+    logger.warn({ err: error }, "[Context] Auth error");
     user = null;
   }
 
@@ -48,5 +51,6 @@ export async function createContext(
     req,
     res,
     user,
+    paperTradeMode: ENV.paperTradeMode,
   };
 }

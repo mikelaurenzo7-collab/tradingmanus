@@ -2,6 +2,7 @@ import { kalshiCredentials } from "../drizzle/schema";
 import { eq } from "drizzle-orm";
 import { getDb } from "./db";
 import { encryptCredential, decryptCredential, CredentialDecryptionError } from "./_core/kalshiAuth";
+import { logger } from "./_core/logger";
 
 /**
  * Save Kalshi credentials for a user
@@ -44,7 +45,7 @@ export async function saveKalshiCredentials(
 
     return { success: true };
   } catch (error) {
-    console.error("[Database] Save Kalshi credentials failed:", error);
+    logger.error({ err: error }, "[Database] Save Kalshi credentials failed");
     throw error;
   }
 }
@@ -98,9 +99,9 @@ export async function getKalshiCredentials(userId: number): Promise<
       privateKey = decryptCredential(cred.privateKeyEncrypted, cred.userId);
     } catch (decryptError) {
       if (decryptError instanceof CredentialDecryptionError) {
-        console.warn(
-          `[Database] Kalshi credentials for user ${userId} cannot be decrypted — ` +
-          "CREDENTIAL_ENCRYPTION_SECRET mismatch. User must re-authenticate."
+        logger.warn(
+          { userId },
+          `[Database] Kalshi credentials for user ${userId} cannot be decrypted — CREDENTIAL_ENCRYPTION_SECRET mismatch. User must re-authenticate.`
         );
         return { needsReauth: true, userId };
       }
@@ -117,7 +118,7 @@ export async function getKalshiCredentials(userId: number): Promise<
       lastSyncedAt: cred.lastSyncedAt,
     };
   } catch (error) {
-    console.error("[Database] Get Kalshi credentials failed:", error);
+    logger.error({ err: error }, "[Database] Get Kalshi credentials failed");
     return null;
   }
 }
@@ -142,7 +143,7 @@ export async function updateKalshiAccountEquity(userId: number, equity: number) 
 
     return { success: true };
   } catch (error) {
-    console.error("[Database] Update account equity failed:", error);
+    logger.error({ err: error }, "[Database] Update account equity failed");
     throw error;
   }
 }
@@ -170,7 +171,7 @@ export async function updateKalshiAccountStatus(
 
     return { success: true };
   } catch (error) {
-    console.error("[Database] Update account status failed:", error);
+    logger.error({ err: error }, "[Database] Update account status failed");
     throw error;
   }
 }
@@ -191,7 +192,7 @@ export async function deleteKalshiCredentials(userId: number) {
 
     return { success: true };
   } catch (error) {
-    console.error("[Database] Delete Kalshi credentials failed:", error);
+    logger.error({ err: error }, "[Database] Delete Kalshi credentials failed");
     throw error;
   }
 }
@@ -223,7 +224,7 @@ export async function clearInvalidKalshiCredentials(): Promise<number> {
       })
       .from(kalshiCredentials);
   } catch (error) {
-    console.error("[Database] clearInvalidKalshiCredentials: failed to fetch rows:", error);
+    logger.error({ err: error }, "[Database] clearInvalidKalshiCredentials: failed to fetch rows");
     return 0;
   }
 
@@ -244,26 +245,26 @@ export async function clearInvalidKalshiCredentials(): Promise<number> {
           .delete(kalshiCredentials)
           .where(eq(kalshiCredentials.userId, row.userId));
         cleared++;
-        console.warn(
-          `[Database] Removed undecryptable Kalshi credentials for user ${row.userId}. ` +
-          "User must re-authenticate with Kalshi."
+        logger.warn(
+          { userId: row.userId },
+          `[Database] Removed undecryptable Kalshi credentials for user ${row.userId}. User must re-authenticate with Kalshi.`
         );
       } catch (deleteError) {
-        console.error(
-          `[Database] Failed to remove invalid credentials for user ${row.userId}:`,
-          deleteError
+        logger.error(
+          { err: deleteError, userId: row.userId },
+          `[Database] Failed to remove invalid credentials for user ${row.userId}`
         );
       }
     }
   }
 
   if (cleared > 0) {
-    console.warn(
-      `[Database] Credential cleanup complete: removed ${cleared} invalid Kalshi credential row(s). ` +
-      "Affected users must re-authenticate with Kalshi."
+    logger.warn(
+      { cleared },
+      `[Database] Credential cleanup complete: removed ${cleared} invalid Kalshi credential row(s). Affected users must re-authenticate with Kalshi.`
     );
   } else {
-    console.log("[Database] Credential cleanup: all stored Kalshi credentials are valid.");
+    logger.info("[Database] Credential cleanup: all stored Kalshi credentials are valid.");
   }
 
   return cleared;

@@ -10,7 +10,7 @@ import { applySentimentBoost, calculateCompositeSentiment, fetchGdeltTopicSignal
 import * as db from "../db";
 import { assertPositiveIntegerUserId } from "./userScope";
 
-export type SignalType = "value_play" | "momentum" | "contrarian" | "arbitrage" | "sentiment";
+export type SignalType = "value_play" | "momentum" | "contrarian" | "arbitrage" | "sentiment" | "confluence";
 
 export interface KalshiSignal {
   marketId: string;
@@ -39,6 +39,12 @@ export interface KalshiSignal {
     strategyProfile?: StrategyProfileKey;
     /** ISO-8601 resolution date from Kalshi, used for time-to-resolution scoring. */
     resolutionDate?: string;
+    /** Number of independent signal types that agree on direction (confluence signals only). */
+    confluenceCount?: number;
+    /** The individual signal types that contributed to this confluence signal. */
+    confluenceSignalTypes?: SignalType[];
+    /** Kelly fraction recommended for position sizing based on edge and confidence. */
+    kellyFraction?: number;
   };
 }
 
@@ -175,6 +181,124 @@ function applySentimentOverlay(
 }
 
 /**
+ * Category-specific fundamental probability priors.
+ * Used as a fallback when no explicit fundamental probability is provided.
+ * Based on the typical base rate for "YES" outcomes in each category:
+ * - politics/elections: near-even by nature, slight lean toward status quo.
+ * - crypto: highly volatile; no reliable directional prior.
+ * - macro_data: data releases slightly more likely to come in near-consensus.
+ * - weather/natural events: most extreme events are <50% probable.
+ * - sports: roughly even match-up markets.
+ */
+const CATEGORY_FUNDAMENTAL_PRIORS: Record<StrategyProfileKey, number> = {
+  macro_data: 0.52,      // slight lean toward "consensus outcome"
+  weather_event: 0.42,   // extreme events are below-50 by nature
+  politics_event: 0.50,  // intentionally neutral; politics are hard to forecast
+  sports_event: 0.50,    // match-up markets are designed near even
+  crypto_event: 0.50,    // no directional edge from category alone
+  general_event: 0.50,
+};
+
+/**
+ * Resolve a category-aware fundamental prior for a market.
+ * Returns the category prior when no explicit value is provided.
+ */
+export function resolveFundamentalPrior(market: KalshiMarket, explicit?: number): { value: number; source: "explicit" | "category_prior" | "neutral_fallback" } {
+  if (explicit != null && Number.isFinite(explicit) && explicit > 0 && explicit < 1) {
+    return { value: explicit, source: "explicit" };
+  }
+  const profile = resolveStrategyProfile(market);
+  const prior = CATEGORY_FUNDAMENTAL_PRIORS[profile];
+  if (prior !== 0.5) {
+    return { value: prior, source: "category_prior" };
+  }
+  return { value: 0.5, source: "neutral_fallback" };
+}
+
+/**
+ * Compute Kelly fraction for a signal.
+ *
+ * Uses fractional Kelly (25%) to limit over-sizing.  The win probability is
+ * the signal confidence and the "odds" are derived from the market price:
+ *   odds = (1 / marketPrice) - 1  (net profit per dollar risked on a win)
+ *
+ * Returns a value in [0, 0.2] that can be multiplied by available capital to
+ * get a target exposure.
+ */
+export function computeKellyFraction(confidence: number, marketPrice: number): number {
+  if (!Number.isFinite(confidence) || !Number.isFinite(marketPrice) || marketPrice <= 0 || marketPrice >= 1) {
+    return 0;
+  }
+  // Net odds: profit per $ staked if correct
+  const odds = (1 - marketPrice) / marketPrice;
+  const lossProbability = 1 - confidence;
+  const fullKelly = (confidence * odds - lossProbability) / odds;
+  // Quarter-Kelly for safety; cap at 20% of capital per position
+  return Math.max(0, Math.min(0.2, fullKelly * 0.25));
+}
+
+/**
+ * Consolidate multiple signals on the same market into a single high-conviction
+ * confluence signal when two or more independent signal types agree on direction.
+ *
+ * Confluence boosts confidence by a diminishing-returns formula so a three-type
+ * agreement is stronger than a two-type agreement, but not infinitely so.
+ * The best-EV signal among agreeing types is used as the base so execution
+ * scoring starts from the most favourable raw edge.
+ *
+ * Signals that disagree on direction are left as-is (no confluence formed).
+ */
+export function consolidateSignalsForMarket(signals: KalshiSignal[]): KalshiSignal[] {
+  if (signals.length <= 1) return signals;
+
+  // Group by direction
+  const yesSigs = signals.filter((s) => s.side === "yes");
+  const noSigs = signals.filter((s) => s.side === "no");
+
+  const result: KalshiSignal[] = [];
+
+  for (const group of [yesSigs, noSigs]) {
+    if (group.length === 0) continue;
+
+    if (group.length === 1) {
+      result.push(group[0]!);
+      continue;
+    }
+
+    // Build confluence signal from the best-EV base signal
+    const base = group.reduce((best, s) =>
+      s.expectedValue > best.expectedValue ? s : best
+    );
+
+    const contributingTypes = [...new Set(group.map((s) => s.signalType))];
+    // Confidence boost: +0.08 for each additional agreeing type (diminishing)
+    const boost = (contributingTypes.length - 1) * 0.08;
+    const avgConfidence = group.reduce((sum, s) => sum + s.confidence, 0) / group.length;
+    const boostedConfidence = Math.min(0.95, Math.max(avgConfidence, base.confidence) + boost);
+    const avgEV = group.reduce((sum, s) => sum + s.expectedValue, 0) / group.length;
+
+    const typeLabels = contributingTypes.join(" + ");
+    const kelly = computeKellyFraction(boostedConfidence, base.marketPrice);
+
+    result.push({
+      ...base,
+      signalType: "confluence",
+      confidence: boostedConfidence,
+      expectedValue: Math.max(base.expectedValue, avgEV),
+      reasoning: `Confluence (${typeLabels}): ${group.length} independent signal types agree on ${base.side.toUpperCase()} — ${base.reasoning}`,
+      metadata: {
+        ...base.metadata,
+        confluenceCount: group.length,
+        confluenceSignalTypes: contributingTypes,
+        kellyFraction: kelly,
+      },
+    });
+  }
+
+  return result;
+}
+
+/**
  * Generate signals for a market
  * Combines multiple signal types and scores them
  */
@@ -216,18 +340,25 @@ export async function generateSignalsForMarket(
     fundamentalProbability = undefined; // Skip invalid fundamental probability
   }
 
-  // Value play: detect mispriced markets
-  const usesFallbackFundamental = fundamentalProbability == null;
-  const baselineFundamentalProbability = clampProbability(fundamentalProbability ?? 0.5);
+  // Value play: detect mispriced markets.
+  // Use category-aware prior instead of universal 0.5 fallback so value
+  // signals reflect genuine mispricing rather than arbitrary baseline noise.
+  const resolvedFundamental = resolveFundamentalPrior(market, fundamentalProbability);
+  const usesFallbackFundamental = resolvedFundamental.source === "neutral_fallback";
+  const baselineFundamentalProbability = clampProbability(resolvedFundamental.value);
   const valueOpportunity = detectValueOpportunity(market, baselineFundamentalProbability, 0.05);
   if (valueOpportunity) {
     const confidence = Math.min(
       0.95,
       Math.abs(baselineFundamentalProbability - market.impliedProbability) * 2
     );
-    const reasoning = usesFallbackFundamental
-      ? `Market mispriced (heuristic baseline): ${valueOpportunity.side.toUpperCase()} probability ${(market.impliedProbability * 100).toFixed(1)}% vs neutral baseline ${(baselineFundamentalProbability * 100).toFixed(1)}%`
-      : `Market mispriced: ${valueOpportunity.side.toUpperCase()} probability ${(market.impliedProbability * 100).toFixed(1)}% vs fundamental ${(baselineFundamentalProbability * 100).toFixed(1)}%`;
+    const reasoningPrefix =
+      resolvedFundamental.source === "explicit"
+        ? "Market mispriced"
+        : resolvedFundamental.source === "category_prior"
+          ? "Market mispriced (category prior)"
+          : "Market mispriced (heuristic baseline)";
+    const reasoning = `${reasoningPrefix}: ${valueOpportunity.side.toUpperCase()} probability ${(market.impliedProbability * 100).toFixed(1)}% vs ${resolvedFundamental.source === "explicit" ? "fundamental" : resolvedFundamental.source === "category_prior" ? "category prior" : "neutral baseline"} ${(baselineFundamentalProbability * 100).toFixed(1)}%`;
     if (isFinite(confidence) && isFinite(valueOpportunity.expectedValue)) {
       signals.push({
         marketId: market.id,
@@ -240,7 +371,7 @@ export async function generateSignalsForMarket(
         expectedValue: valueOpportunity.expectedValue,
         metadata: {
           fundamentalProbability: baselineFundamentalProbability,
-          fundamentalSource: usesFallbackFundamental ? "neutral_fallback" : "explicit",
+          fundamentalSource: resolvedFundamental.source === "neutral_fallback" ? "neutral_fallback" : "explicit",
         },
       });
     }
@@ -386,7 +517,7 @@ export async function generateSignalsForMarket(
       )
     : signals;
 
-  return sentimentAdjustedSignals
+  const withLiquidity = sentimentAdjustedSignals
     .map((signal) => ({
       ...signal,
       metadata: {
@@ -397,6 +528,11 @@ export async function generateSignalsForMarket(
       },
     }))
     .map((signal) => attachLiquidityMetadata(signal, feed));
+
+  // Apply confluence combining: when multiple independent signal types agree on
+  // direction, merge them into a single higher-conviction signal so the execution
+  // scorer can concentrate capital on the strongest opportunities.
+  return consolidateSignalsForMarket(withLiquidity);
 }
 
 /**
@@ -480,11 +616,16 @@ export function scoreSignalForExecution(signal: KalshiSignal): number {
   const strategyProfile = signal.metadata?.strategyProfile ?? "general_event";
   const strategyConfig = STRATEGY_PROFILES[strategyProfile];
 
-  // Reward more statistically stable styles; discount styles with wider downside variance.
-  if (signal.signalType === "value_play") score += 0.06;
-  if (signal.signalType === "arbitrage") score += 0.04;
-  if (signal.signalType === "momentum") score -= 0.04;
-  if (signal.signalType === "contrarian") score -= 0.08;
+  // Reward statistically stable styles; discount wider-variance styles.
+  // Confluence signals get the biggest bonus because they represent multiple
+  // independent confirmation layers.
+  if (signal.signalType === "confluence") {
+    const count = signal.metadata?.confluenceCount ?? 2;
+    score += 0.08 + Math.min(0.06, (count - 2) * 0.03); // +0.08 base, +0.03 per extra type
+  } else if (signal.signalType === "value_play") score += 0.06;
+  else if (signal.signalType === "arbitrage") score += 0.04;
+  else if (signal.signalType === "momentum") score -= 0.04;
+  else if (signal.signalType === "contrarian") score -= 0.08;
 
   score += strategyConfig.executionAdjustment;
 
@@ -541,6 +682,8 @@ export function scoreSignalForExecution(signal: KalshiSignal): number {
  * Rank signals by execution readiness
  */
 function isHeuristicBaselineSignal(signal: KalshiSignal): boolean {
+  // Confluence signals are never considered baseline — they require ≥2 agreement
+  if (signal.signalType === "confluence") return false;
   return (
     signal.metadata?.fundamentalSource === "neutral_fallback" ||
     signal.reasoning.includes("heuristic baseline") ||

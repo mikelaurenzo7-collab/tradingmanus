@@ -17,6 +17,30 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
+    rolldownOptions: {
+      output: {
+        // Keep vendor libraries in a stable named chunk so browsers can cache
+        // them across app deploys.  Page components are split automatically
+        // by the React.lazy() dynamic imports in App.tsx.
+        manualChunks: (id: string) => {
+          if (id.includes("node_modules/react") || id.includes("node_modules/react-dom")) {
+            return "vendor-react";
+          }
+          if (id.includes("node_modules/@tanstack")) {
+            return "vendor-query";
+          }
+          if (id.includes("node_modules/@trpc")) {
+            return "vendor-trpc";
+          }
+          if (id.includes("node_modules/recharts")) {
+            return "vendor-charts";
+          }
+          if (id.includes("node_modules/@radix-ui") || id.includes("node_modules/lucide-react")) {
+            return "vendor-ui";
+          }
+        },
+      },
+    },
   },
   server: {
     host: true,

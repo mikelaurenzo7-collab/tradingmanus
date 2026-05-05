@@ -5,6 +5,7 @@
 
 import { CircuitBreaker, CircuitOpenError } from "./circuitBreaker";
 import { fetchWithRetry } from "./fetchWithRetry";
+import { logger } from "./logger";
 
 /**
  * Single shared breaker for all Kalshi market-data calls. When Kalshi has
@@ -96,8 +97,12 @@ function parseDollarValue(value: unknown): number {
  * Convert a Kalshi cent-scale price (0..100) to dollars (0..1).
  * Returns `undefined` if the input is missing or cannot be coerced
  * to a finite number, so it can be skipped in fallback chains.
+ *
+ * Exported so other Kalshi modules (kalshiAuth, kalshiOrderSync, etc.)
+ * can perform the same boundary conversion without duplicating the logic
+ * or resorting to raw `/ 100` expressions.
  */
-function centsToDollars(value: unknown): number | undefined {
+export function centsToDollars(value: unknown): number | undefined {
   if (value === undefined || value === null) {
     return undefined;
   }
@@ -274,7 +279,7 @@ export async function fetchKalshiMarkets(filters?: {
     );
 
     if (!response.ok) {
-      console.error(`[Kalshi] API error: ${response.status}`);
+      logger.error({ status: response.status }, "[Kalshi] API error: %d", response.status);
       return [];
     }
 
@@ -286,9 +291,9 @@ export async function fetchKalshiMarkets(filters?: {
       .sort((a: KalshiMarket, b: KalshiMarket) => getMarketActionabilityScore(b) - getMarketActionabilityScore(a));
   } catch (error) {
     if (error instanceof CircuitOpenError) {
-      console.warn("[Kalshi] Market fetch short-circuited; upstream is unhealthy.");
+      logger.warn("[Kalshi] Market fetch short-circuited; upstream is unhealthy.");
     } else {
-      console.error("[Kalshi] Market fetch failed:", error);
+      logger.error({ err: error }, "[Kalshi] Market fetch failed");
     }
     return [];
   }
@@ -311,7 +316,7 @@ export async function fetchKalshiMarketDetails(marketId: string): Promise<Kalshi
     );
 
     if (!response.ok) {
-      console.error(`[Kalshi] Market details error: ${response.status}`);
+      logger.error({ status: response.status }, "[Kalshi] Market details error: %d", response.status);
       return null;
     }
 
@@ -321,9 +326,9 @@ export async function fetchKalshiMarketDetails(marketId: string): Promise<Kalshi
     return normalized && isDisplaySafeActionableMarket(normalized) ? normalized : null;
   } catch (error) {
     if (error instanceof CircuitOpenError) {
-      console.warn(`[Kalshi] Market details for ${marketId} short-circuited; upstream is unhealthy.`);
+      logger.warn({ marketId }, "[Kalshi] Market details for %s short-circuited; upstream is unhealthy.", marketId);
     } else {
-      console.error(`[Kalshi] Market details fetch failed for ${marketId}:`, error);
+      logger.error({ err: error, marketId }, "[Kalshi] Market details fetch failed for %s", marketId);
     }
     return null;
   }

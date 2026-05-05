@@ -6,6 +6,7 @@ import {
 } from "../drizzle/schema";
 import { eq, and } from "drizzle-orm";
 import { getDb } from "./db";
+import { logger } from "./_core/logger";
 
 /**
  * Create a new training instruction
@@ -35,7 +36,7 @@ export async function createTrainingInstruction(payload: {
 
     return { success: true, instructionId: created?.id };
   } catch (error) {
-    console.error("[Database] Create training instruction failed:", error);
+    logger.error({ err: error }, "[Database] Create training instruction failed");
     throw error;
   }
 }
@@ -76,7 +77,7 @@ export async function getUserTrainingInstructions(userId: number) {
 
     return enriched;
   } catch (error) {
-    console.error("[Database] Get training instructions failed:", error);
+    logger.error({ err: error }, "[Database] Get training instructions failed");
     return [];
   }
 }
@@ -103,7 +104,7 @@ export async function addInstructionRule(payload: {
 
     return { success: true };
   } catch (error) {
-    console.error("[Database] Add instruction rule failed:", error);
+    logger.error({ err: error }, "[Database] Add instruction rule failed");
     throw error;
   }
 }
@@ -134,7 +135,7 @@ export async function addInstructionSchedule(payload: {
 
     return { success: true };
   } catch (error) {
-    console.error("[Database] Add instruction schedule failed:", error);
+    logger.error({ err: error }, "[Database] Add instruction schedule failed");
     throw error;
   }
 }
@@ -154,7 +155,7 @@ export async function updateInstructionStatus(instructionId: number, isActive: b
 
     return { success: true };
   } catch (error) {
-    console.error("[Database] Update instruction status failed:", error);
+    logger.error({ err: error }, "[Database] Update instruction status failed");
     throw error;
   }
 }
@@ -192,7 +193,7 @@ export async function deleteTrainingInstruction(instructionId: number, userId: s
 
     return { success: true };
   } catch (error) {
-    console.error("[Database] Delete training instruction failed:", error);
+    logger.error({ err: error }, "[Database] Delete training instruction failed");
     throw error;
   }
 }

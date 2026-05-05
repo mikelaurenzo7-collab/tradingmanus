@@ -50,14 +50,15 @@ describe("aiToolbelt", () => {
   });
 
   describe("selectAnthropicModel", () => {
-    it("falls back to a sensible default when no override is provided", () => {
-      expect(selectAnthropicModel("review")).toMatch(/claude/);
-      expect(selectAnthropicModel("triage")).toMatch(/claude/);
-      expect(selectAnthropicModel("deep")).toMatch(/claude/);
+    it("falls back to the configured OpenRouter model when no override is provided", () => {
+      // All tiers resolve to tencent/hy3-preview:free (or the env override).
+      expect(selectAnthropicModel("review")).toBeTruthy();
+      expect(selectAnthropicModel("triage")).toBeTruthy();
+      expect(selectAnthropicModel("deep")).toBeTruthy();
     });
 
     it("honors an explicit override", () => {
-      expect(selectAnthropicModel("review", "claude-test-9")).toBe("claude-test-9");
+      expect(selectAnthropicModel("review", "custom-model-xyz")).toBe("custom-model-xyz");
     });
   });
 

@@ -21,7 +21,7 @@
  *     this desk because every approval is high-stakes by definition.
  */
 
-import Anthropic from "@anthropic-ai/sdk";
+import { createOpenRouterClient } from "./openrouterClient";
 import { z } from "zod";
 import { ENV } from "./env";
 import {
@@ -176,7 +176,7 @@ export async function reviewArbitrageOpportunities(
   const logger = options.logger ?? console;
   if (!isArbReviewerConfigured(options)) {
     logger.error(
-      "[ArbReviewer] ANTHROPIC_API_KEY missing; dropping all arbitrage candidates so we never auto-execute multi-leg trades without AI sign-off.",
+      "[ArbReviewer] OPENROUTER_API_KEY missing; dropping all arbitrage candidates so we never auto-execute multi-leg trades without AI sign-off.",
     );
     return [];
   }
@@ -194,12 +194,12 @@ export async function reviewArbitrageOpportunities(
   const tools = buildToolList([], { allowWebSearch: true, maxWebSearchUses: 4 });
   const client =
     options.anthropicClient ??
-    new Anthropic({ apiKey: (options.anthropicApiKey ?? ENV.anthropicApiKey).trim() });
+    createOpenRouterClient((options.anthropicApiKey ?? ENV.anthropicApiKey).trim());
 
   const messageInput: Record<string, unknown> = {
     // Always use Sonnet (or the configured deep model) — these are by
     // definition high-stakes multi-leg trades; we want depth over speed.
-    model: options.anthropicModel ?? ENV.anthropicDeepModel ?? ENV.anthropicModel ?? "claude-sonnet-4-5",
+    model: options.anthropicModel ?? ENV.anthropicDeepModel ?? ENV.anthropicModel,
     max_tokens: ARB_REVIEWER_MAX_TOKENS,
     temperature: 0,
     system: cachedSystem,
@@ -227,7 +227,7 @@ export async function reviewArbitrageOpportunities(
     }
   } catch (error) {
     logger.error(
-      `[ArbReviewer] Claude review failed: ${error instanceof Error ? error.message : String(error)}; dropping all arbitrage candidates.`,
+      `[ArbReviewer] AI review failed: ${error instanceof Error ? error.message : String(error)}; dropping all arbitrage candidates.`,
     );
     return [];
   }

@@ -14,12 +14,14 @@ import {
   generateSignalsForMarkets,
   getTopSignalsForExecution,
   saveSignals,
+  computeKellyFraction,
   type KalshiSignal,
 } from "./kalshiSignals";
 import { placeKalshiOrder } from "./kalshiExecution";
 import { syncPendingOrders } from "./kalshiOrderSync";
 import { calculateKalshiBuyOrderRisk, estimateContractsForRiskBudget } from "./kalshiRisk";
 import { assertPositiveIntegerUserId } from "./userScope";
+import { withUserLock } from "./userMutex";
 import { reviewSignalsWithTrader } from "./tradingReviewer";
 import { getCacheHitRatio, newReviewerTelemetry } from "./aiToolbelt";
 import { createOrderSyncLock } from "./distributedLock";
@@ -28,7 +30,10 @@ import {
   alertEquityDrop,
   alertExchangeRejection,
   alertAiReviewerFailure,
+  alertDrawdownApproaching,
 } from "./alerting";
+import { logger } from "./logger";
+import { ENV } from "./env";
 
 const BASE_RISK_LIMITS = {
   maxLossPerTrade: 5,
@@ -47,6 +52,10 @@ const MARKET_DATA_STALE_AFTER_MS = 30 * 1000;
 // reasonable tolerance — anything beyond that means the signal's
 // pricing thesis no longer holds.
 const MAX_EXECUTION_PRICE_DRIFT = 0.02;
+// Maximum open positions allowed in the same market category at once.
+// Prevents the portfolio from stacking correlated directional bets
+// (e.g., five consecutive crypto positions) which amplify category risk.
+const MAX_OPEN_POSITIONS_PER_CATEGORY = 2;
 // Total market pool scanned per scheduled run — larger pool improves diversity
 // and gives the AI reviewer more high-quality candidates to choose from.
 const MAX_SCHEDULED_MARKETS = 48;
@@ -601,6 +610,8 @@ function evaluateExecutionCandidate(
     preferences: Awaited<ReturnType<typeof tradingPreferencesDb.getTradingPreferences>>;
     effectiveMinConfidence: number;
     maxBudget: number;
+    /** Map of open position marketId → category string for concentration checks */
+    openPositionCategories?: Map<string, string>;
   }
 ) {
   const marketAlreadyOpen = input.openPositions.some(
@@ -624,6 +635,23 @@ function evaluateExecutionCandidate(
       blockedBy: "pending_order_in_flight",
       reason: "an unfilled pending order already exists for this market",
     };
+  }
+
+  // Category concentration guard: prevent stacking too many correlated
+  // positions from the same market category (e.g., multiple crypto markets).
+  const signalCategory = (signal.metadata?.marketCategory ?? "").toLowerCase();
+  if (signalCategory && signalCategory !== "unknown" && input.openPositionCategories) {
+    let sameCategory = 0;
+    for (const cat of Array.from(input.openPositionCategories.values())) {
+      if (cat.toLowerCase() === signalCategory) sameCategory++;
+    }
+    if (sameCategory >= MAX_OPEN_POSITIONS_PER_CATEGORY) {
+      return {
+        eligible: false as const,
+        blockedBy: "category_concentration_limit",
+        reason: `already have ${sameCategory} open positions in category "${signalCategory}" (limit ${MAX_OPEN_POSITIONS_PER_CATEGORY})`,
+      };
+    }
   }
 
   const feed = getMarketFeed(signal.marketId);
@@ -816,7 +844,7 @@ export async function runScheduledAutonomousTrading(
     });
   }
   if ("needsReauth" in creds && creds.needsReauth) {
-    console.warn(`[Autonomy] Skipping user ${userId}: Kalshi credentials require re-authentication`);
+    logger.warn({ userId }, "[Autonomy] Skipping user %d: Kalshi credentials require re-authentication", userId);
     return finalize({
       status: "blocked",
       reason: "Kalshi credentials are invalid — re-authentication required. Please reconnect your Kalshi account.",
@@ -862,6 +890,20 @@ export async function runScheduledAutonomousTrading(
     kalshiCredDb.updateKalshiAccountEquity(userId, equityResult.equity),
     db.syncKalshiCapitalWithLiveEquity(equityResult.equity, userId),
   ]);
+
+  // Alert when cumulative drawdown from the starting capital approaches or
+  // exceeds the daily-loss limit.  We read the persisted capital record
+  // immediately after syncing so we have the latest startingBalance.
+  const capitalRecord = await db.getKalshiCapital(userId);
+  if (capitalRecord) {
+    const startingBalance = Number(capitalRecord.startingBalance ?? 0);
+    void alertDrawdownApproaching(
+      userId,
+      startingBalance,
+      equityResult.equity,
+      BASE_RISK_LIMITS.maxLossPerDay
+    );
+  }
 
   const allInstructions = await getUserTrainingInstructions(userId);
   const activeInstructions = allInstructions.filter(isInstructionActiveNow);
@@ -954,6 +996,11 @@ export async function runScheduledAutonomousTrading(
     });
   }
 
+  // Serialise the risk-check-and-execute block per user to prevent TOCTOU
+  // races where two concurrent autonomy runs both pass risk checks against
+  // stale capital/position state then both submit orders (silent overrun).
+  return await withUserLock(userId, async () => {
+
   // Race protection: before we read open positions and pending orders,
   // run a best-effort sync of any in-flight fills the 30-second order-sync
   // may not yet have processed.  Without this an order placed on cycle N
@@ -964,9 +1011,10 @@ export async function runScheduledAutonomousTrading(
   try {
     await syncPendingOrders(userId);
   } catch (syncErr) {
-    console.warn(
-      `[Autonomy] pre-execution order sync failed for user ${userId}; proceeding with potentially stale ledger:`,
-      syncErr,
+    logger.warn(
+      { err: syncErr, userId },
+      "[Autonomy] pre-execution order sync failed for user %d; proceeding with potentially stale ledger",
+      userId,
     );
   }
 
@@ -1031,19 +1079,43 @@ export async function runScheduledAutonomousTrading(
   let eligibleSignal: (KalshiSignal & { executionScore?: number }) | null = null;
   let eligibleMaxBudget: number | null = null;
 
+  // Build a category → count map from currently open positions so the
+  // concentration guard can see how many same-category slots are taken.
+  const openPositionCategories = new Map<string, string>();
+  for (const pos of openPositions as any[]) {
+    const mid = String(pos.marketId ?? "");
+    const cat = String(pos.category ?? pos.marketCategory ?? "unknown").toLowerCase();
+    if (mid) openPositionCategories.set(mid, cat);
+  }
+
   for (const signal of executionCandidates) {
-    const maxBudget = Math.min(
+    // Kelly-adjusted budget: scale the raw max budget by the signal's
+    // Kelly fraction so high-edge signals get proportionally more capital
+    // and marginal signals are automatically sized smaller.
+    const rawBudget = Math.min(
       preferences.maxOrderNotional,
       riskLimits.maxPositionSize,
       riskLimits.maxLossPerTrade,
       Number(capital?.currentBalance ?? 0)
     );
+    const kellyFraction = signal.metadata?.kellyFraction
+      ?? computeKellyFraction(signal.confidence, signal.marketPrice);
+    const availableNow = Number(capital?.currentBalance ?? 0);
+    // Kelly-sized budget: Kelly fraction × available capital, bounded by the raw cap.
+    // A Kelly fraction of 0 means no edge; use at least 1¢ so budget checks
+    // still fire the risk_budget_below_one_contract guard rather than silently
+    // blocking with a misleading error.
+    const kellyBudget = kellyFraction > 0
+      ? Math.min(rawBudget, Math.max(0.01, availableNow * kellyFraction))
+      : rawBudget;
+    const maxBudget = kellyBudget;
     const evaluation = evaluateExecutionCandidate(signal, {
       openPositions,
       pendingOrderMarketIds,
       preferences,
       effectiveMinConfidence,
       maxBudget,
+      openPositionCategories,
     });
 
     if (evaluation.eligible && !eligibleSignal) {
@@ -1250,9 +1322,10 @@ export async function runScheduledAutonomousTrading(
   } catch (refreshErr) {
     // Best-effort refresh; if it fails, fall through to placement.
     // The lower-level execution path still has its own validation.
-    console.warn(
-      `[Autonomy] live price refresh failed for ${eligibleSignal.marketId}; proceeding with signal price:`,
-      refreshErr,
+    logger.warn(
+      { err: refreshErr, marketId: eligibleSignal.marketId },
+      "[Autonomy] live price refresh failed for %s; proceeding with signal price",
+      eligibleSignal.marketId,
     );
   }
 
@@ -1284,6 +1357,7 @@ export async function runScheduledAutonomousTrading(
         reason: result.error ?? "unknown",
         exchangeRequest: result.exchangeRequest ?? null,
         exchangeResponse: result.exchangeResponse ?? null,
+        simulated: ENV.paperTradeMode,
       }),
       triggeredByOpenId
     );
@@ -1341,6 +1415,7 @@ export async function runScheduledAutonomousTrading(
       maxLossOnTrade,
       reconciliationStatus: result.needsReconciliation ? "pending" : "not_required",
       reconciliationReason: result.reconciliationReason ?? null,
+      simulated: ENV.paperTradeMode,
     }),
     triggeredByOpenId
   );
@@ -1374,6 +1449,8 @@ export async function runScheduledAutonomousTrading(
     exchangeRequest: safeJsonStringify(result.exchangeRequest ?? null),
     exchangeResponse: safeJsonStringify(result.exchangeResponse ?? null),
   });
+
+  }); // end withUserLock
 }
 
 export async function runScheduledAutonomousTradingBatch(

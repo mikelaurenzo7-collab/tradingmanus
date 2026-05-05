@@ -17,6 +17,7 @@ import { eq, and, desc, gte, inArray, ne, sql } from "drizzle-orm";
 import { neon } from "@neondatabase/serverless";
 import { drizzle as drizzleInit } from "drizzle-orm/neon-http";
 import { assertPositiveIntegerUserId } from "./_core/userScope";
+import { logger } from "./_core/logger";
 
 let _db: any = null;
 let _dbInitPromise: Promise<any> | null = null;
@@ -80,7 +81,7 @@ export async function getDb() {
   try {
     return await ensureHealthyDb();
   } catch (error) {
-    console.warn("[Database] Failed to connect:", error);
+    logger.warn({ err: error }, "[Database] Failed to connect");
     _db = null;
     return null;
   }
@@ -124,7 +125,7 @@ export async function upsertUser(payload: {
 }) {
   const database = await getDb();
   if (!database) {
-    console.warn("[Database] Connection not available, skipping upsertUser");
+    logger.warn("[Database] Connection not available, skipping upsertUser");
     return;
   }
 
@@ -159,7 +160,7 @@ export async function upsertUser(payload: {
     if (error?.code === "23505") {
       return;
     }
-    console.error("[Database] Upsert user failed:", error);
+    logger.error({ err: error }, "[Database] Upsert user failed");
     // Don't throw - allow auth to proceed even if DB sync fails
   }
 }
@@ -196,7 +197,7 @@ export async function updateUser(
     
     return { success: true };
   } catch (error) {
-    console.error("[Database] Error updating user:", error);
+    logger.error({ err: error }, "[Database] Error updating user");
     throw error;
   }
 }
@@ -904,7 +905,7 @@ export async function logAuditEvent(
     });
     return true;
   } catch (error) {
-    console.error("[AuditLog] Failed to write audit event:", error);
+    logger.error({ err: error }, "[AuditLog] Failed to write audit event");
     return false;
   }
 }
@@ -963,16 +964,38 @@ export async function pingDb(timeoutMs = 2000): Promise<boolean> {
   const database = await getDb();
   if (!database) return false;
 
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const probe = database.execute(sql`SELECT 1`);
-    const timeout = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("pingDb timeout")), timeoutMs)
-    );
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("pingDb timeout")), timeoutMs);
+    });
     await Promise.race([probe, timeout]);
     return true;
   } catch {
     return false;
+  } finally {
+    clearTimeout(timer);
   }
+}
+
+export interface DbHealthResult {
+  status: "ok" | "error";
+  latencyMs: number;
+}
+
+/**
+ * Measures DB reachability and latency in a single call.
+ * Returned by the /api/health and /api/health/ready routes so the logic
+ * lives in one place rather than being copy-pasted between handlers.
+ */
+export async function checkDbHealth(): Promise<DbHealthResult> {
+  const t0 = Date.now();
+  const alive = await pingDb();
+  return {
+    status: alive ? "ok" : "error",
+    latencyMs: Date.now() - t0,
+  };
 }
 
 // Kalshi fill queries

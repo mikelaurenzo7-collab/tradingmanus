@@ -2,8 +2,9 @@ import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { AlertCircle, CheckCircle2, Siren, ShieldCheck, ShieldAlert, TriangleAlert } from "lucide-react";
+import { AlertCircle, CheckCircle2, Siren, ShieldCheck, ShieldAlert, TriangleAlert, Shield } from "lucide-react";
 import { classifyRiskPosture, formatPercent, summarizeRiskBudget } from "@/lib/riskPerformanceDiagnostics";
+import { PageHeader } from "@/components/PageHeader";
 
 export default function RiskControls() {
   const [killSwitchResult, setKillSwitchResult] = useState<string | null>(null);
@@ -63,7 +64,7 @@ export default function RiskControls() {
 
   if (isLoading) {
     return (
-      <div className="p-6">
+      <div>
         <h1 className="text-2xl font-bold mb-1">Risk Controls</h1>
         <p className="text-muted-foreground text-sm">Loading…</p>
       </div>
@@ -72,7 +73,7 @@ export default function RiskControls() {
 
   if (isError || !riskLimits.data || !capital.data) {
     return (
-      <div className="p-6">
+      <div>
         <h1 className="text-2xl font-bold mb-1">Risk Controls</h1>
         <p className="text-sm text-rose-400 flex items-center gap-2">
           <AlertCircle className="w-4 h-4" />
@@ -104,29 +105,28 @@ export default function RiskControls() {
   const PostureIcon = pc.icon;
 
   return (
-    <div className="p-6 space-y-6 max-w-4xl">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-bold">Risk Controls</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Hard limits enforced before every live order. The AI duo never bypasses these.
-          </p>
-        </div>
-        <Button
-          variant="outline"
-          className="border-rose-500/60 bg-rose-950/30 text-rose-300 hover:bg-rose-950/50"
-          disabled={killSwitch.isPending}
-          onClick={() => { setKillSwitchResult(null); killSwitch.mutate(); }}
-        >
-          <Siren className="w-4 h-4 mr-2" />
-          {killSwitch.isPending ? "Flattening…" : "Kill Switch"}
-        </Button>
-      </div>
+    <div className="space-y-6 max-w-5xl mx-auto">
+      <PageHeader
+        icon={Shield}
+        title="Risk Controls"
+        description="Hard limits enforced before every live order. The AI duo never bypasses these."
+        iconGradient="from-rose-500 to-orange-500"
+        actions={
+          <Button
+            variant="outline"
+            className="border-rose-500/60 bg-rose-950/30 text-rose-200 hover:bg-rose-950/50 gap-2"
+            disabled={killSwitch.isPending}
+            onClick={() => { setKillSwitchResult(null); killSwitch.mutate(); }}
+          >
+            <Siren className="w-4 h-4" />
+            {killSwitch.isPending ? "Flattening…" : "Kill Switch"}
+          </Button>
+        }
+      />
 
       {/* Kill switch result */}
       {killSwitchResult && (
-        <div className="flex items-start gap-3 rounded-lg border border-rose-800 bg-rose-950/30 px-4 py-3 text-sm text-rose-200">
+        <div className="flex items-start gap-3 rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
           <ShieldAlert className="w-4 h-4 mt-0.5 shrink-0" />
           {killSwitchResult}
         </div>

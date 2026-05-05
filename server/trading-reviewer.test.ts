@@ -69,13 +69,13 @@ function rejectedReviewJson(marketId: string, reasoning = "Vetoed.") {
   });
 }
 
-describe("AI trading reviewer (Claude-only)", () => {
-  it("treats Claude as the required sole provider", () => {
-    expect(isTradingReviewerConfigured({ anthropicApiKey: "anthropic-key" })).toBe(true);
+describe("AI trading reviewer (OpenRouter/hy3)", () => {
+  it("treats the LLM reviewer as the required sole provider", () => {
+    expect(isTradingReviewerConfigured({ anthropicApiKey: "openrouter-key" })).toBe(true);
     expect(isTradingReviewerConfigured({ anthropicApiKey: "" })).toBe(false);
   });
 
-  it("approves a normal-stakes trade on Claude review", async () => {
+  it("approves a normal-stakes trade on AI review", async () => {
     const anthropicCreate = vi.fn().mockResolvedValue(
       anthropicResponse(approvedReviewJson("KXTEST-1", "Edge is sound.")),
     );
@@ -94,7 +94,7 @@ describe("AI trading reviewer (Claude-only)", () => {
     );
 
     expect(result).toHaveLength(1);
-    expect(result[0]?.reasoning).toContain("Claude review");
+    expect(result[0]?.reasoning).toContain("AI review");
     expect(anthropicCreate).toHaveBeenCalledTimes(1);
   });
 
@@ -374,7 +374,7 @@ describe("AI trading reviewer (Claude-only)", () => {
     expect(reviewedIds).not.toContain("KXTEST-3");
   });
 
-  it("escalates contested mid-stakes Sonnet approvals to a deep Opus second pass", async () => {
+  it("escalates contested mid-stakes approvals to a deep second pass", async () => {
     const anthropicCreate = vi
       .fn()
       // 1st call: Sonnet approves but tugs confidence down by 0.15 (contested).
@@ -425,11 +425,10 @@ describe("AI trading reviewer (Claude-only)", () => {
 
     expect(anthropicCreate).toHaveBeenCalledTimes(2);
     expect(result).toHaveLength(1);
-    // Second call must use the deep-tier (Opus) model.
+    // Second call must use the configured OpenRouter model for deep-tier review.
     const secondCall = anthropicCreate.mock.calls[1]?.[0];
-    expect(String(secondCall.model)).toMatch(/opus/i);
-    // Deep call should include extended thinking config.
-    expect(secondCall.thinking).toBeDefined();
+    expect(String(secondCall.model)).toBe("tencent/hy3-preview:free");
+    // Deep call should not include extended thinking (disabled for OpenRouter).
   });
 
   it("drops the trade when the Opus second opinion disagrees with Sonnet", async () => {

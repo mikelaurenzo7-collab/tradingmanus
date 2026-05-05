@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { PageHeader } from "@/components/PageHeader";
 
 const CLUSTER_COLORS: Record<number, string> = {
   1: "from-orange-500/20 to-red-500/20 border-orange-400/40",
@@ -87,22 +88,26 @@ export default function ClusterMonitor() {
 
   return (
     <div className="space-y-8">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-4xl font-bold gradient-text mb-2">CLUSTER MONITOR</h1>
-          <p className="text-muted-foreground">
+      <PageHeader
+        icon={Network}
+        title="Cluster Monitor"
+        description={
+          <>
             Wash-trading cluster detection · Fade strategies · Combinatorial arbitrage
-          </p>
-          <p className="text-xs text-slate-500 mt-1">
-            Based on Columbia University "Network-Based Detection of Wash Trading" (SSRN, Nov 2025)
-          </p>
-        </div>
-        <Button onClick={handleRefreshActivity} variant="outline" className="border-slate-600 gap-2">
-          <RefreshCw className={`w-4 h-4 ${activityQuery.isFetching ? "animate-spin" : ""}`} />
-          Refresh
-        </Button>
-      </div>
+            <br />
+            <span className="text-xs text-muted-foreground">
+              Based on Columbia University "Network-Based Detection of Wash Trading" (SSRN, Nov 2025)
+            </span>
+          </>
+        }
+        iconGradient="from-rose-500 to-orange-500"
+        actions={
+          <Button onClick={handleRefreshActivity} variant="outline" size="sm" className="gap-2">
+            <RefreshCw className={`w-4 h-4 ${activityQuery.isFetching ? "animate-spin" : ""}`} />
+            Refresh
+          </Button>
+        }
+      />
 
       {/* Tab navigation */}
       <div className="flex gap-2 border-b border-slate-700/50 pb-2">

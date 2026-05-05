@@ -423,9 +423,9 @@ This iteration prioritizes prediction quality by introducing a more independent 
 - [x] Add regression coverage for the new autonomy decision-detail semantics so the explanation layer stays truthful over time
 - [x] Remove the remaining stale "Kalshi Trading Dashboard" labels from the dashboard shell so Laurenzo branding is fully consistent in visible navigation chrome and page copy
 - [x] Add regression coverage so the dashboard shell and landing page cannot quietly regress back to the stale Kalshi title copy
-- [ ] Remove Manus-specific user-approval gating from the live trading flow so end users without Manus accounts are not blocked from using the product
-- [ ] Make automatic live execution follow each user’s saved autonomy settings and connection state rather than assuming a Manus approval path
-- [ ] Add regression coverage proving non-Manus end users can rely on autonomy settings without seeing misleading approval-required behavior
+- [x] Remove Manus-specific user-approval gating from the live trading flow so end users without Manus accounts are not blocked from using the product
+- [x] Make automatic live execution follow each user’s saved autonomy settings and connection state rather than assuming a Manus approval path
+- [x] Add regression coverage proving non-Manus end users can rely on autonomy settings without seeing misleading approval-required behavior
 - [ ] Convert the live trading platform from single-operator assumptions to true multi-tenant behavior with isolated per-user identity, credentials, and autonomy state
 - [ ] Remove fallback user-ID behavior from trading, capital, training, and autonomy paths so each request uses the authenticated tenant explicitly
 - [ ] Make scheduled autonomous trading fan out across eligible tenants based on each tenant’s own saved autonomy settings instead of the triggering requester alone

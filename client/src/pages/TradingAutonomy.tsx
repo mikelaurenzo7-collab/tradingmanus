@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { trpc } from "@/lib/trpc";
+import { PageHeader } from "@/components/PageHeader";
 import {
   AUTONOMY_MODES,
   DEFAULT_TRADING_PREFERENCES,
@@ -149,24 +150,23 @@ export default function TradingAutonomy() {
   }
 
   return (
-    <div className="p-6 space-y-8 max-w-4xl">
-      {/* Page title + status pill */}
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-bold">Trading Autonomy</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Configure how autonomous the Claude AI reviewer is, then arm live trading when you're ready.
-          </p>
-        </div>
-        <div className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold ${
-          isArmed
-            ? "border-rose-400/50 bg-rose-500/10 text-rose-200"
-            : "border-border/60 bg-background/50 text-muted-foreground"
-        }`}>
-          {isArmed ? <Zap className="w-3.5 h-3.5" /> : <Shield className="w-3.5 h-3.5" />}
-          {isArmed ? "Armed — live trading active" : "Disarmed"}
-        </div>
-      </div>
+    <div className="space-y-8 max-w-4xl mx-auto">
+      <PageHeader
+        icon={isArmed ? Zap : Shield}
+        title="Trading Autonomy"
+        description="Configure how autonomous the Claude AI reviewer is, then arm live trading when you're ready."
+        iconGradient={isArmed ? "from-rose-500 to-orange-500" : "from-violet-500 to-indigo-500"}
+        badge={
+          <div className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold ${
+            isArmed
+              ? "border-rose-400/50 bg-rose-500/10 text-rose-200"
+              : "border-white/10 bg-white/5 text-muted-foreground"
+          }`}>
+            {isArmed ? <Zap className="w-3 h-3" /> : <Shield className="w-3 h-3" />}
+            {isArmed ? "Armed — live trading active" : "Disarmed"}
+          </div>
+        }
+      />
 
       {/* Connection gate */}
       {!connected && (

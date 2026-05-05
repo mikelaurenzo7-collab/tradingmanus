@@ -1,10 +1,11 @@
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { AlertCircle, TrendingUp, Zap, AlertTriangle, RefreshCw, Sparkles, Target } from "lucide-react";
+import { AlertCircle, TrendingUp, Zap, AlertTriangle, RefreshCw, Sparkles, Target, Radar } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
 import { toast } from "sonner";
+import { PageHeader } from "@/components/PageHeader";
 
 export default function Signals() {
   const signals = trpc.kalshi.getRecentSignals.useQuery();
@@ -195,21 +196,23 @@ export default function Signals() {
 
   return (
     <div className="space-y-8">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-4xl font-bold gradient-text mb-2">SIGNAL REGISTRY</h1>
-          <p className="text-muted-foreground">Real-time market signals with confidence scoring and execution readiness</p>
-        </div>
-        <Button
-          onClick={handleGenerateSignals}
-          disabled={isGenerating || generateSignalsMutation.isPending}
-          className="laurenzo-button whitespace-nowrap"
-        >
-          <RefreshCw className={`w-5 h-5 mr-2 ${isGenerating ? "animate-spin" : ""}`} />
-          {isGenerating ? "Generating..." : "Generate Signals"}
-        </Button>
-      </div>
+      <PageHeader
+        icon={Radar}
+        title="Signal Registry"
+        description="Real-time market signals with confidence scoring and execution readiness"
+        iconGradient="from-cyan-500 to-violet-500"
+        actions={
+          <Button
+            onClick={handleGenerateSignals}
+            disabled={isGenerating || generateSignalsMutation.isPending}
+            className="laurenzo-button gap-2 whitespace-nowrap"
+            size="sm"
+          >
+            <RefreshCw className={`w-4 h-4 ${isGenerating ? "animate-spin" : ""}`} />
+            {isGenerating ? "Generating…" : "Generate Signals"}
+          </Button>
+        }
+      />
 
       {/* Top Execution-Ready Signals */}
       {topSignals.data && topSignals.data.length > 0 && (

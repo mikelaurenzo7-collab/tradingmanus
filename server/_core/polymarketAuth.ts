@@ -9,6 +9,21 @@
  */
 
 import crypto from "crypto";
+import { CircuitBreaker } from "./circuitBreaker";
+import { fetchWithRetry } from "./fetchWithRetry";
+import { logger } from "./logger";
+
+/**
+ * Single shared breaker for all Polymarket CLOB / gamma API calls.
+ * Trips after 5 failures in 30 s, fails fast for 30 s, then half-open probe.
+ * `now` is injectable so tests can drive the clock deterministically.
+ */
+export const polymarketBreaker = new CircuitBreaker({
+  name: "polymarket",
+  failureThreshold: 5,
+  windowMs: 30_000,
+  cooldownMs: 30_000,
+});
 
 const POLYMARKET_CLOB_BASE_URL = "https://clob.polymarket.com";
 
@@ -77,7 +92,7 @@ export async function validatePolymarketCredentials(
       path,
     );
 
-    const response = await fetch(url, { method: "GET", headers });
+    const response = await fetchWithRetry(url, { method: "GET", headers }, { label: "Polymarket.validateCredentials", breaker: polymarketBreaker });
 
     // A 200 means the key is accepted; anything else is an auth failure.
     if (response.ok) {
@@ -96,7 +111,7 @@ export async function validatePolymarketCredentials(
 
     return { valid: false, error: message };
   } catch (error) {
-    console.error("[Polymarket Auth] Validation failed:", error);
+    logger.error({ err: error }, "[Polymarket Auth] Validation failed");
     return {
       valid: false,
       error:
@@ -133,10 +148,7 @@ export async function fetchPolymarketMarkets(options: {
     const offset = options.offset ?? 0;
     const url = `https://gamma-api.polymarket.com/markets?active=true&closed=false&limit=${limit}&offset=${offset}`;
 
-    const response = await fetch(url, {
-      method: "GET",
-      headers: { Accept: "application/json" },
-    });
+    const response = await fetchWithRetry(url, { method: "GET", headers: { Accept: "application/json" } }, { label: "Polymarket.fetchMarkets", breaker: polymarketBreaker });
 
     if (!response.ok) {
       throw new Error(`Polymarket gamma API returned HTTP ${response.status}`);
@@ -182,7 +194,7 @@ export async function fetchPolymarketMarkets(options: {
       } satisfies PolymarketMarket;
     });
   } catch (error) {
-    console.error("[Polymarket] Fetch markets failed:", error);
+    logger.error({ err: error }, "[Polymarket] Fetch markets failed");
     return [];
   }
 }
@@ -221,7 +233,7 @@ export async function placePolymarketOrder(
       body,
     );
 
-    const response = await fetch(url, { method: "POST", headers, body });
+    const response = await fetchWithRetry(url, { method: "POST", headers, body }, { label: "Polymarket.placeOrder", breaker: polymarketBreaker });
     const payload = (await response.json()) as Record<string, unknown>;
 
     if (!response.ok) {
@@ -239,7 +251,7 @@ export async function placePolymarketOrder(
       orderId: typeof payload.order_id === "string" ? payload.order_id : undefined,
     };
   } catch (error) {
-    console.error("[Polymarket] Place order failed:", error);
+    logger.error({ err: error }, "[Polymarket] Place order failed");
     return {
       success: false,
       error: error instanceof Error ? error.message : "Failed to place order",

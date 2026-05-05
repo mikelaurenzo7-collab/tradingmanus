@@ -79,6 +79,7 @@ function createProtectedContext(): TrpcContext {
       headers: {},
     } as TrpcContext["req"],
     res: {} as TrpcContext["res"],
+    paperTradeMode: false,
   };
 }
 

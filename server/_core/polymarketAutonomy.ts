@@ -35,6 +35,7 @@ import {
 } from "./polymarketRisk";
 import { assertPositiveIntegerUserId } from "./userScope";
 import { recordPolymarketTradeEntry } from "./polymarketLearning";
+import { logger } from "./logger";
 
 const MAX_SCHEDULED_MARKETS = 80;
 const BASE_RISK_LIMITS = {
@@ -158,6 +159,20 @@ export async function runPolymarketAutonomousTrading(
 ): Promise<PolymarketAutonomyRunResult> {
   const scopedUserId = assertPositiveIntegerUserId(userId, "polymarket autonomy userId");
   const triggeredByOpenId = options.triggeredByOpenId ?? `user:${scopedUserId}`;
+
+  // --- 0. Subscription gate: user must be subscribed to Polymarket ---
+  const subscribed = await polymarketCredDb.isUserSubscribedToPolymarket(scopedUserId);
+  if (!subscribed) {
+    logger.info({ userId: scopedUserId }, "[PolymarketAutonomy] Run skipped — user not subscribed to Polymarket");
+    return {
+      success: true,
+      status: "skipped",
+      reason: "user is not subscribed to Polymarket",
+      signalsGenerated: 0,
+      executionCandidates: 0,
+      orderPlaced: false,
+    };
+  }
 
   // --- 1. Load preferences ---
   const preferences = await tradingPreferencesDb.getTradingPreferences(scopedUserId);
@@ -384,12 +399,39 @@ export async function runPolymarketAutonomousTrading(
   );
   const scaledSize = clamp(rawSize * sizeScale, 0.01, maxBudget);
 
+  if (bankroll <= 0) {
+    const blockReasonZero = "bankroll is zero — cannot size Polymarket order";
+    await db.logAuditEvent(
+      "polymarket_autonomy_run_blocked",
+      JSON.stringify({ reason: blockReasonZero, marketId: best.marketId }),
+      triggeredByOpenId,
+    );
+    await db.logAuditEvent(
+      "polymarket_order_blocked_or_failed",
+      JSON.stringify({
+        market: best.marketId,
+        side: best.side,
+        reason: "RISK_BLOCK_ZERO_BANKROLL",
+        size: scaledSize,
+      }),
+      triggeredByOpenId,
+    );
+    return {
+      success: true,
+      status: "blocked",
+      reason: blockReasonZero,
+      signalsGenerated: allSignals.length,
+      executionCandidates: candidates.length,
+      orderPlaced: false,
+    };
+  }
+
   const riskCheck = validatePolymarketOrderRisk(
     { price: best.limitPrice, size: scaledSize },
     {
       maxOrderUsdc: preferences.maxOrderNotional,
       maxExposurePercent: 0.05,
-      bankroll: bankroll > 0 ? bankroll : 1000,
+      bankroll,
     },
   );
 
@@ -397,6 +439,17 @@ export async function runPolymarketAutonomousTrading(
     await db.logAuditEvent(
       "polymarket_autonomy_run_blocked",
       JSON.stringify({ reason: riskCheck.reason, marketId: best.marketId }),
+      triggeredByOpenId,
+    );
+    await db.logAuditEvent(
+      "polymarket_order_blocked_or_failed",
+      JSON.stringify({
+        market: best.marketId,
+        side: best.side,
+        reason: "RISK_BLOCK_VALIDATION",
+        size: scaledSize,
+        error: riskCheck.reason ?? "order failed risk validation",
+      }),
       triggeredByOpenId,
     );
     return {
@@ -414,6 +467,16 @@ export async function runPolymarketAutonomousTrading(
     preferences.autonomyMode === "semi_autonomous" &&
     scaledSize > preferences.requireApprovalAbove
   ) {
+    await db.logAuditEvent(
+      "polymarket_order_blocked_or_failed",
+      JSON.stringify({
+        market: best.marketId,
+        side: best.side,
+        reason: "RISK_BLOCK_APPROVAL_REQUIRED",
+        size: scaledSize,
+      }),
+      triggeredByOpenId,
+    );
     return {
       success: true,
       status: "blocked",
@@ -442,6 +505,16 @@ export async function runPolymarketAutonomousTrading(
       await db.logAuditEvent(
         "polymarket_autonomy_run_error",
         JSON.stringify({ error: orderResult.error, marketId: best.marketId }),
+        triggeredByOpenId,
+      );
+      await db.logAuditEvent(
+        "polymarket_order_blocked_or_failed",
+        JSON.stringify({
+          market: best.marketId,
+          side: best.side,
+          reason: "REST_ERROR",
+          error: orderResult.error ?? "order placement failed",
+        }),
         triggeredByOpenId,
       );
       return {
@@ -498,7 +571,7 @@ export async function runPolymarketAutonomousTrading(
       executedSizeUsdc: scaledSize,
     };
   } catch (error) {
-    console.error("[PolymarketAutonomy] Order placement error:", error);
+    logger.error({ err: error, marketId: best.marketId }, "[PolymarketAutonomy] Order placement error");
     await db.logAuditEvent(
       "polymarket_autonomy_run_error",
       JSON.stringify({

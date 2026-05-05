@@ -1,6 +1,6 @@
 # Security Features Documentation
 
-This document provides comprehensive documentation for all security improvements implemented in the TradingManus application.
+This document provides comprehensive documentation for all security improvements implemented in the Laurenzo Dashboard application.
 
 ## Table of Contents
 
@@ -21,7 +21,7 @@ This document provides comprehensive documentation for all security improvements
 
 ## Overview
 
-The TradingManus application includes comprehensive security improvements to protect against common vulnerabilities and attacks. These improvements cover authentication, authorization, data encryption, rate limiting, logging, and distributed system coordination.
+The Laurenzo Dashboard application includes comprehensive security improvements to protect against common vulnerabilities and attacks. These improvements cover authentication, authorization, data encryption, rate limiting, logging, and distributed system coordination.
 
 ## Dependency Security
 

@@ -1,4 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { createOpenRouterClient } from "./openrouterClient";
 import type { KalshiMarket } from "./kalshiMarketData";
 import type { KalshiSignal } from "./kalshiSignals";
 import { ENV } from "./env";
@@ -286,13 +286,13 @@ function categoryOfSignal(
   return classifyMarketCategory({ category: market.category, title: market.title });
 }
 
-function buildAnthropicBaseMandate(persona?: CategoryPersona): string {
+function buildReviewerBaseMandate(persona?: CategoryPersona): string {
   const desk = persona?.label ?? "Kalshi Generalist Desk";
   const personaMandate = persona?.systemMandate
     ? `\n\nDesk-specific mandate (${desk}):\n${persona.systemMandate}`
     : "";
   return (
-    "You are Claude acting as a conservative Kalshi trading reviewer for one founder's small live account. You do not place trades directly. You only approve, veto, or modestly adjust signal confidence and expected value. Capital preservation, liquidity, bounded downside, and avoiding weak heuristic trades are mandatory. Respond with JSON only as {\"reviews\":[...]}." +
+    "You are an AI trading reviewer acting as a conservative Kalshi trading reviewer for one founder's small live account. You do not place trades directly. You only approve, veto, or modestly adjust signal confidence and expected value. Capital preservation, liquidity, bounded downside, and avoiding weak heuristic trades are mandatory. Respond with JSON only as {\"reviews\":[...]}." +
     personaMandate
   );
 }
@@ -305,9 +305,9 @@ async function requestAnthropicReviews(
   memorySnippet: string | null = null,
   forceDeep = false,
 ) {
-  const client = options.anthropicClient ?? new Anthropic({
-    apiKey: (options.anthropicApiKey ?? ENV.anthropicApiKey).trim(),
-  });
+  const client = options.anthropicClient ?? createOpenRouterClient(
+    (options.anthropicApiKey ?? ENV.anthropicApiKey).trim(),
+  );
 
   const useDeepModel = forceDeep || isHighStakes(stakes);
   // Deep-tier calls (Opus + extended thinking + multiple web_search uses)
@@ -335,7 +335,7 @@ async function requestAnthropicReviews(
   // Splitting them lets the persona block stay cache-warm even when memory
   // changes between runs.
   const personaBlocks = ENV.enableAiPromptCache
-    ? buildCachedSystemPrompt(buildAnthropicBaseMandate(persona))
+    ? buildCachedSystemPrompt(buildReviewerBaseMandate(persona))
     : null;
   const memoryBlock = ENV.enableAiDeskMemory ? buildMemorySystemBlock(memorySnippet) : null;
 
@@ -354,8 +354,8 @@ async function requestAnthropicReviews(
     messageInput.system = memoryBlock ? [...personaBlocks, memoryBlock] : personaBlocks;
   } else {
     messageInput.system = memorySnippet
-      ? `${buildAnthropicBaseMandate(persona)}\n\n${memorySnippet}`
-      : buildAnthropicBaseMandate(persona);
+      ? `${buildReviewerBaseMandate(persona)}\n\n${memorySnippet}`
+      : buildReviewerBaseMandate(persona);
   }
   if (thinking) {
     messageInput.thinking = thinking;
@@ -410,9 +410,9 @@ function combineApprovedSignal(
   const confidenceAdjustment = clamp(Number(review.confidenceAdjustment ?? 0), -0.25, 0.15);
   const expectedValueAdjustment = clamp(Number(review.expectedValueAdjustment ?? 0), -0.1, 0.1);
 
-  const reviewerReasoning = review.reasoning?.trim().slice(0, MAX_REASONING_CHARS) || "Claude approved after conservative review.";
+  const reviewerReasoning = review.reasoning?.trim().slice(0, MAX_REASONING_CHARS) || "AI approved after conservative review.";
 
-  const ledger = "Claude review";
+  const ledger = "AI review";
   const deskLabel = desk ? ` [${desk}]` : "";
   const citationLabel = formatCitationsForReasoning(citations);
 
@@ -434,7 +434,7 @@ type ReviewBatchResult = {
   citations: CitationSummary[];
 };
 
-async function callClaude(
+async function callReviewer(
   reviewPayload: ReturnType<typeof getReviewPayload>,
   options: TradingReviewerOptions,
   persona: CategoryPersona | undefined,
@@ -462,7 +462,7 @@ async function callClaude(
       options.telemetry.anthropicFailures += 1;
     }
     logger.warn(
-      `[TradingReviewer] Claude review failed for desk=${persona?.id ?? "default"}: ${error instanceof Error ? error.message : String(error)}`,
+      `[TradingReviewer] AI review failed for desk=${persona?.id ?? "default"}: ${error instanceof Error ? error.message : String(error)}`,
     );
     return { reviewsByMarket: new Map(), failed: true, citations: [] };
   }
@@ -496,12 +496,12 @@ async function runCategoryReview(
 
   if (!isTradingReviewerConfigured(options)) {
     logger.error(
-      "[TradingReviewer] Claude not configured; dropping all candidates so autonomous trading fails closed.",
+      "[TradingReviewer] AI reviewer not configured; dropping all candidates so autonomous trading fails closed.",
     );
     return [];
   }
 
-  const batchResult = await callClaude(reviewPayload, options, persona, stakes, logger, memorySnippet);
+  const batchResult = await callReviewer(reviewPayload, options, persona, stakes, logger, memorySnippet);
 
   // Intra-Claude second opinion: when the bulk Sonnet pass approves a
   // non-high-stakes trade but materially tugged confidence down or moved EV,
@@ -534,7 +534,7 @@ async function runCategoryReview(
             ...stakesForSignals([signal]),
             highStakes: true,
           };
-          const deepResult = await callClaude(
+          const deepResult = await callReviewer(
             singlePayload,
             options,
             persona,
@@ -550,7 +550,7 @@ async function runCategoryReview(
             batchResult.reviewsByMarket.set(signal.marketId, {
               marketId: signal.marketId,
               approved: false,
-              reasoning: "Intra-Claude second opinion unavailable; capital preservation veto.",
+              reasoning: "Intra-model second opinion unavailable; capital preservation veto.",
             });
             return;
           }
@@ -576,7 +576,7 @@ async function runCategoryReview(
       const review = batchResult.reviewsByMarket.get(signal.marketId);
       if (!review) {
         logger.warn(
-          `[TradingReviewer] Claude review missing for marketId=${signal.marketId} (desk=${persona?.id ?? "default"}); dropping signal.`,
+          `[TradingReviewer] AI review missing for marketId=${signal.marketId} (desk=${persona?.id ?? "default"}); dropping signal.`,
         );
         return null;
       }
@@ -604,9 +604,9 @@ async function applyTriageFilter(
   const threshold = options.triageThresholdOverride ?? getTriageThreshold();
   if (signals.length <= threshold) return signals;
 
-  const triageClient = options.anthropicClient ?? new Anthropic({
-    apiKey: (options.anthropicApiKey ?? ENV.anthropicApiKey).trim(),
-  });
+  const triageClient = options.anthropicClient ?? createOpenRouterClient(
+    (options.anthropicApiKey ?? ENV.anthropicApiKey).trim(),
+  );
 
   const triageInput: TriageCandidate[] = signals.map((signal) => {
     const market = marketsById.get(signal.marketId);
@@ -687,7 +687,7 @@ export async function reviewSignalsWithTrader(
   const logger = options.logger ?? console;
   if (!isTradingReviewerConfigured(options)) {
     logger.error(
-      "[TradingReviewer] Claude not configured (need ANTHROPIC_API_KEY); dropping all candidates.",
+      "[TradingReviewer] AI reviewer not configured (need OPENROUTER_API_KEY or ANTHROPIC_API_KEY); dropping all candidates.",
     );
     return [];
   }

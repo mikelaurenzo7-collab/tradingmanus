@@ -5,12 +5,17 @@
 
 import crypto from "crypto";
 import { URL } from "url";
-import { db } from "../db";
+import { db, logAuditEvent } from "../db";
 import * as kalshiCredDb from "../db.kalshi-credentials";
 import { kalshiOrders, kalshiFills, kalshiPositions } from "../../drizzle/schema";
 import { and, eq, inArray } from "drizzle-orm";
 import { calculateKalshiBuyOrderRisk, normalizeLimitPrice, normalizeOrderQuantity } from "./kalshiRisk";
 import { assertPositiveIntegerUserId } from "./userScope";
+import { logger } from "./logger";
+import { withUserLock } from "./userMutex";
+import { normalizePrivateKey } from "./keyUtils";
+import { ENV } from "./env";
+import { simulateKalshiOrderFill, simulateKalshiOrderCancellation, simulateKalshiPositionClose } from "./paperTrading";
 
 export interface KalshiOrder {
   orderId: string;
@@ -52,21 +57,6 @@ function normalizeExchangePrice(rawPrice: unknown) {
   }
 
   return price > 1 ? price / 100 : price;
-}
-
-function normalizePrivateKey(privateKey: string) {
-  const trimmed = privateKey.trim();
-  if (trimmed.includes("BEGIN") && trimmed.includes("PRIVATE KEY")) {
-    return trimmed;
-  }
-
-  const normalizedBody = trimmed
-    .replace(/-----BEGIN PRIVATE KEY-----/g, "")
-    .replace(/-----END PRIVATE KEY-----/g, "")
-    .replace(/\s+/g, "");
-
-  const wrapped = normalizedBody.match(/.{1,64}/g)?.join("\n") ?? normalizedBody;
-  return `-----BEGIN PRIVATE KEY-----\n${wrapped}\n-----END PRIVATE KEY-----`;
 }
 
 async function resolveCredentials(
@@ -190,6 +180,7 @@ function toCents(price: number): number {
 /**
  * Place an order on Kalshi
  * limitPrice must be in decimal dollar form (0.01–0.99); it is converted to cents internally.
+ * If PAPER_TRADE_MODE is enabled, simulates an immediate fill at current market price.
  */
 export async function placeKalshiOrder(
   userId: number,
@@ -207,6 +198,11 @@ export async function placeKalshiOrder(
   exchangeRequest?: Record<string, unknown>;
   exchangeResponse?: Record<string, unknown>;
 }> {
+  // Route to paper trading simulator if enabled
+  if (ENV.paperTradeMode) {
+    return simulateKalshiOrderFill(userId, marketId, side, quantity, limitPrice);
+  }
+
   try {
     const risk = calculateKalshiBuyOrderRisk({ quantity, limitPrice });
     const priceCents = toCents(risk.limitPrice);
@@ -243,9 +239,9 @@ export async function placeKalshiOrder(
         averagePrice: 0,
       });
     } catch (preWriteError) {
-      console.error(
-        "[Kalshi] Local ledger pre-write failed; refusing to submit order to exchange:",
-        preWriteError,
+      logger.error(
+        { err: preWriteError },
+        "[Kalshi] Local ledger pre-write failed; refusing to submit order to exchange",
       );
       return {
         success: false,
@@ -274,7 +270,10 @@ export async function placeKalshiOrder(
     );
 
     if (!result.ok) {
-      console.error("[Kalshi] Order placement failed:", result.error);
+      logger.error(
+        { error: result.error, clientOrderId, marketId },
+        "[Kalshi] Order placement failed",
+      );
       // Mark the pre-written row as rejected so the local ledger reflects
       // the failed exchange call.  Best-effort: any failure here is logged
       // but does not change the surfaced error.
@@ -289,9 +288,9 @@ export async function placeKalshiOrder(
             ),
           );
       } catch (cleanupError) {
-        console.error(
-          `[Kalshi] Failed to mark pre-written order ${clientOrderId} as rejected:`,
-          cleanupError,
+        logger.error(
+          { err: cleanupError, clientOrderId },
+          "[Kalshi] Failed to mark pre-written order as rejected",
         );
       }
       return {
@@ -349,9 +348,9 @@ export async function placeKalshiOrder(
           ),
         );
     } catch (storageError) {
-      console.error(
-        `[Kalshi] Order ${orderId} accepted by Kalshi but local ledger update from clientOrderId=${clientOrderId} failed. Manual reconciliation required:`,
-        storageError,
+      logger.error(
+        { err: storageError, orderId, clientOrderId },
+        "[Kalshi] Order accepted by Kalshi but local ledger update failed. Manual reconciliation required",
       );
       return {
         success: true,
@@ -396,7 +395,7 @@ export async function placeKalshiOrder(
       },
     };
   } catch (error) {
-    console.error("[Kalshi] Order placement error:", error);
+    logger.error({ err: error }, "[Kalshi] Order placement error");
     return {
       success: false,
       error: String(error),
@@ -408,42 +407,119 @@ export async function placeKalshiOrder(
 }
 
 /**
- * Cancel an order on Kalshi
+ * Cancel an order on Kalshi.
+ *
+ * Emits `kalshi_order_cancelled` on success and `kalshi_order_cancel_failed`
+ * on any failure so that every cancellation outcome is captured in the audit
+ * trail regardless of the call site.
+ *
+ * In paper mode, cancels from the local ledger only (no exchange call).
+ *
+ * @param triggeredByOpenId  The openId of the acting user.  Falls back to
+ *   String(userId) when omitted so the audit assertion is always satisfied.
  */
 export async function cancelKalshiOrder(
   userId: number,
   orderId: string,
   privateKey?: string,
+  triggeredByOpenId?: string,
 ): Promise<{ success: boolean; error?: string }> {
-  try {
+  // Serialise per user: prevents TOCTOU races where two concurrent
+  // cancellation requests both read stale order state and attempt to
+  // cancel the same (or interleaved) orders simultaneously.
+  return await withUserLock(userId, async () => {
     const scopedUserId = getScopedUserId(userId);
-    const result = await signedKalshiRequest<unknown>(
-      scopedUserId,
-      "DELETE",
-      `/portfolio/orders/${orderId}`,
-      { privateKey },
-    );
+    // Fall back to a stringified userId when no openId is available so that
+    // logAuditEvent's non-empty string assertion is always satisfied.
+    const auditOpenId = triggeredByOpenId ?? String(scopedUserId);
+    try {
+      // In paper mode, cancel from local ledger only
+      if (ENV.paperTradeMode) {
+        const result = await simulateKalshiOrderCancellation(userId, orderId);
+        if (!result.success) {
+          void logAuditEvent(
+            "kalshi_order_cancel_failed",
+            JSON.stringify({
+              orderId,
+              error: result.error,
+              simulated: true,
+            }),
+            auditOpenId,
+          ).catch((auditErr) =>
+            logger.error({ err: auditErr, orderId }, "[Kalshi] Failed to write simulated order_cancel_failed audit event"),
+          );
+          return { success: false, error: result.error };
+        }
 
-    if (!result.ok) {
-      console.error("[Kalshi] Cancel failed:", result.error);
-      return { success: false, error: result.error };
-    }
+        void logAuditEvent(
+          "kalshi_order_cancelled",
+          JSON.stringify({ orderId, simulated: true }),
+          auditOpenId,
+        ).catch((auditErr) =>
+          logger.error({ err: auditErr, orderId }, "[Kalshi] Failed to write simulated order_cancelled audit event"),
+        );
 
-    await db
-      .update(kalshiOrders)
-      .set({ status: "cancelled", cancelledAt: new Date() })
-      .where(
-        and(
-          eq(kalshiOrders.orderId, orderId),
-          eq(kalshiOrders.userId, scopedUserId),
-        )
+        return { success: true };
+      }
+
+      const result = await signedKalshiRequest<unknown>(
+        scopedUserId,
+        "DELETE",
+        `/portfolio/orders/${orderId}`,
+        { privateKey },
       );
 
-    return { success: true };
-  } catch (error) {
-    console.error("[Kalshi] Cancel error:", error);
-    return { success: false, error: String(error) };
-  }
+      if (!result.ok) {
+        logger.error({ error: result.error, orderId }, "[Kalshi] Cancel failed");
+        // Best-effort audit: do not suppress the original error if logging fails.
+        void logAuditEvent(
+          "kalshi_order_cancel_failed",
+          JSON.stringify({
+            orderId,
+            error: result.error,
+          }),
+          auditOpenId,
+        ).catch((auditErr) =>
+          logger.error({ err: auditErr, orderId }, "[Kalshi] Failed to write order_cancel_failed audit event"),
+        );
+        return { success: false, error: result.error };
+      }
+
+      await db
+        .update(kalshiOrders)
+        .set({ status: "cancelled", cancelledAt: new Date() })
+        .where(
+          and(
+            eq(kalshiOrders.orderId, orderId),
+            eq(kalshiOrders.userId, scopedUserId),
+          )
+        );
+
+      // Best-effort audit: do not fail the cancellation if logging fails.
+      void logAuditEvent(
+        "kalshi_order_cancelled",
+        JSON.stringify({ orderId }),
+        auditOpenId,
+      ).catch((auditErr) =>
+        logger.error({ err: auditErr, orderId }, "[Kalshi] Failed to write order_cancelled audit event"),
+      );
+
+      return { success: true };
+    } catch (error) {
+      logger.error({ err: error }, "[Kalshi] Cancel error");
+      void logAuditEvent(
+        "kalshi_order_cancel_failed",
+        JSON.stringify({
+          orderId,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+        auditOpenId,
+      ).catch((auditErr) =>
+        logger.error({ err: auditErr, orderId }, "[Kalshi] Failed to write order_cancel_failed audit event (exception path)"),
+      );
+      return { success: false, error: String(error) };
+    }
+  });
 }
 
 /**
@@ -464,7 +540,10 @@ export async function getKalshiOrderStatus(
     );
 
     if (!result.ok || !result.data.order) {
-      console.error("[Kalshi] Order status fetch failed:", result.ok ? "missing order" : result.error);
+      logger.error(
+        { error: result.ok ? "missing order" : result.error, orderId },
+        "[Kalshi] Order status fetch failed",
+      );
       return null;
     }
 
@@ -514,7 +593,7 @@ export async function getKalshiOrderStatus(
       averagePrice,
     };
   } catch (error) {
-    console.error("[Kalshi] Order status error:", error);
+    logger.error({ err: error }, "[Kalshi] Order status error");
     return null;
   }
 }
@@ -537,7 +616,7 @@ export async function getKalshiOrderFills(
     );
 
     if (!result.ok) {
-      console.error("[Kalshi] Fills fetch failed:", result.error);
+      logger.error({ error: result.error, orderId }, "[Kalshi] Fills fetch failed");
       return [];
     }
 
@@ -565,7 +644,7 @@ export async function getKalshiOrderFills(
       fillTime: new Date(f.created_time || f.timestamp || Date.now()),
     }));
   } catch (error) {
-    console.error("[Kalshi] Fills fetch error:", error);
+    logger.error({ err: error }, "[Kalshi] Fills fetch error");
     return [];
   }
 }
@@ -587,13 +666,22 @@ export async function getKalshiPositions(userId: number): Promise<any[]> {
       );
     return positions;
   } catch (error) {
-    console.error("[Kalshi] Positions fetch error:", error);
+    logger.error({ err: error }, "[Kalshi] Positions fetch error");
     return [];
   }
 }
 
 /**
- * Close a position
+ * Close a position.
+ *
+ * Emits `kalshi_position_closed` on success and `kalshi_position_close_failed`
+ * on any failure so that every close attempt is captured in the audit trail
+ * regardless of the call site.
+ *
+ * In paper mode, simulates an immediate fill at current market price.
+ *
+ * @param triggeredByOpenId  The openId of the acting user.  Falls back to
+ *   String(userId) when omitted so the audit assertion is always satisfied.
  */
 export async function closeKalshiPosition(
   userId: number,
@@ -601,109 +689,259 @@ export async function closeKalshiPosition(
   marketId: string,
   currentPrice: number,
   privateKey?: string,
+  triggeredByOpenId?: string,
 ): Promise<{ success: boolean; error?: string; mode?: "exchange" | "local"; orderId?: string }> {
-  try {
-    normalizeLimitPrice(currentPrice, "currentPrice");
+  // Serialise per user: prevents the TOCTOU race where a concurrent
+  // placeOrder call reads stale position state while a close is in-flight,
+  // potentially resulting in an over-sell or double-close.
+  return await withUserLock(userId, async () => {
     const scopedUserId = getScopedUserId(userId);
-    const position = await db
-      .select()
-      .from(kalshiPositions)
-      .where(
-        and(
-          eq(kalshiPositions.id, positionId),
-          eq(kalshiPositions.userId, scopedUserId),
-        )
-      )
-      .then((rows: any[]) => rows[0]);
-
-    if (!position) {
-      return { success: false, error: "Position not found" };
-    }
-
-    const entryPrice = Number(position.entryPrice ?? 0);
-    const markPrice = Number(currentPrice ?? position.currentPrice ?? entryPrice);
-    const quantity = normalizeOrderQuantity(Number(position.quantity ?? 0), Number.MAX_SAFE_INTEGER);
-    const side = position.side as "yes" | "no";
-
-    let orderId: string | undefined;
-
-    const credentials = await resolveCredentials(scopedUserId, privateKey);
-    if (!credentials) {
-      return {
-        success: false,
-        error: "Cannot close a live Kalshi position without connected credentials.",
-      };
-    }
-
-    const priceCents = toCents(markPrice);
-    const closeBody = {
-      ticker: marketId,
-      type: "limit",
-      client_order_id: `nexus-close-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
-      action: "sell",
-      side,
-      count: quantity,
-      yes_price: side === "yes" ? priceCents : undefined,
-      no_price: side === "no" ? priceCents : undefined,
-      time_in_force: "good_till_cancelled",
-    };
-
-    const closeResult = await signedKalshiRequest<{ order?: { order_id?: string; id?: string } }>(
-      scopedUserId,
-      "POST",
-      "/portfolio/orders",
-      { privateKey, body: closeBody },
-    );
-
-    if (!closeResult.ok) {
-      console.error("[Kalshi] Close position order failed:", closeResult.error);
-      return { success: false, error: closeResult.error };
-    }
-
-    const closeOrderId = closeResult.data.order?.order_id || closeResult.data.order?.id;
-    if (!closeOrderId) {
-      return { success: false, error: "Kalshi close order created without an order ID" };
-    }
-
+    // Fall back to a stringified userId when no openId is available so that
+    // logAuditEvent's non-empty string assertion is always satisfied.
+    const auditOpenId = triggeredByOpenId ?? String(scopedUserId);
     try {
-      await db.insert(kalshiOrders).values({
-        userId: scopedUserId,
-        orderId: closeOrderId,
-        marketId,
+      normalizeLimitPrice(currentPrice, "currentPrice");
+      const position = await db
+        .select()
+        .from(kalshiPositions)
+        .where(
+          and(
+            eq(kalshiPositions.id, positionId),
+            eq(kalshiPositions.userId, scopedUserId),
+          )
+        )
+        .then((rows: any[]) => rows[0]);
+
+      if (!position) {
+        void logAuditEvent(
+          "kalshi_position_close_failed",
+          JSON.stringify({
+            positionId,
+            marketId,
+            error: "Position not found",
+          }),
+          auditOpenId,
+        ).catch((auditErr) =>
+          logger.error({ err: auditErr, positionId }, "[Kalshi] Failed to write position_close_failed audit event"),
+        );
+        return { success: false, error: "Position not found" };
+      }
+
+      const entryPrice = Number(position.entryPrice ?? 0);
+      const markPrice = Number(currentPrice ?? position.currentPrice ?? entryPrice);
+      const quantity = normalizeOrderQuantity(Number(position.quantity ?? 0), Number.MAX_SAFE_INTEGER);
+      const side = position.side as "yes" | "no";
+
+      let orderId: string | undefined;
+
+      // In paper mode, simulate the close without credentials
+      if (ENV.paperTradeMode) {
+        const closeResult = await simulateKalshiPositionClose(userId, marketId, side, quantity, markPrice);
+        if (!closeResult.success) {
+          void logAuditEvent(
+            "kalshi_position_close_failed",
+            JSON.stringify({
+              positionId,
+              marketId,
+              side,
+              quantity,
+              markPrice,
+              error: closeResult.error,
+              simulated: true,
+            }),
+            auditOpenId,
+          ).catch((auditErr) =>
+            logger.error({ err: auditErr, positionId }, "[Kalshi] Failed to write simulated position_close_failed audit event"),
+          );
+          return { success: false, error: closeResult.error };
+        }
+
+        // Update position status to closing in DB
+        await db
+          .update(kalshiPositions)
+          .set({
+            currentPrice: markPrice,
+            positionStatus: "closing",
+          })
+          .where(
+            and(
+              eq(kalshiPositions.id, positionId),
+              eq(kalshiPositions.userId, scopedUserId),
+            )
+          );
+
+        orderId = closeResult.orderId;
+
+        void logAuditEvent(
+          "kalshi_position_closed",
+          JSON.stringify({
+            positionId,
+            marketId,
+            side,
+            quantity,
+            markPrice,
+            orderId,
+            simulated: true,
+          }),
+          auditOpenId,
+        ).catch((auditErr) =>
+          logger.error({ err: auditErr, positionId }, "[Kalshi] Failed to write simulated position_closed audit event"),
+        );
+
+        return { success: true, mode: "local", orderId };
+      }
+
+      const credentials = await resolveCredentials(scopedUserId, privateKey);
+      if (!credentials) {
+        void logAuditEvent(
+          "kalshi_position_close_failed",
+          JSON.stringify({
+            positionId,
+            marketId,
+            side,
+            quantity,
+            error: "Cannot close a live Kalshi position without connected credentials.",
+          }),
+          auditOpenId,
+        ).catch((auditErr) =>
+          logger.error({ err: auditErr, positionId }, "[Kalshi] Failed to write position_close_failed audit event"),
+        );
+        return {
+          success: false,
+          error: "Cannot close a live Kalshi position without connected credentials.",
+        };
+      }
+
+      const priceCents = toCents(markPrice);
+      const closeBody = {
+        ticker: marketId,
+        type: "limit",
+        client_order_id: `nexus-close-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
         action: "sell",
         side,
-        quantity,
-        limitPrice: markPrice,
-        status: "pending",
-        filledQuantity: 0,
-        averagePrice: 0,
-      });
-    } catch (storageError) {
-      console.error(
-        `[Kalshi] Close order ${closeOrderId} accepted by Kalshi but local ledger write failed. Manual reconciliation required:`,
-        storageError,
+        count: quantity,
+        yes_price: side === "yes" ? priceCents : undefined,
+        no_price: side === "no" ? priceCents : undefined,
+        time_in_force: "good_till_cancelled",
+      };
+
+      const closeResult = await signedKalshiRequest<{ order?: { order_id?: string; id?: string } }>(
+        scopedUserId,
+        "POST",
+        "/portfolio/orders",
+        { privateKey, body: closeBody },
       );
+
+      if (!closeResult.ok) {
+        logger.error(
+          { error: closeResult.error, positionId, marketId },
+          "[Kalshi] Close position order failed",
+        );
+        // Best-effort audit: do not suppress the original error if logging fails.
+        void logAuditEvent(
+          "kalshi_position_close_failed",
+          JSON.stringify({
+            positionId,
+            marketId,
+            side,
+            quantity,
+            markPrice,
+            error: closeResult.error,
+          }),
+          auditOpenId,
+        ).catch((auditErr) =>
+          logger.error({ err: auditErr, positionId }, "[Kalshi] Failed to write position_close_failed audit event"),
+        );
+        return { success: false, error: closeResult.error };
+      }
+
+      const closeOrderId = closeResult.data.order?.order_id || closeResult.data.order?.id;
+      if (!closeOrderId) {
+        void logAuditEvent(
+          "kalshi_position_close_failed",
+          JSON.stringify({
+            positionId,
+            marketId,
+            side,
+            quantity,
+            markPrice,
+            error: "Kalshi close order created without an order ID",
+          }),
+          auditOpenId,
+        ).catch((auditErr) =>
+          logger.error({ err: auditErr, positionId }, "[Kalshi] Failed to write position_close_failed audit event"),
+        );
+        return { success: false, error: "Kalshi close order created without an order ID" };
+      }
+
+      try {
+        await db.insert(kalshiOrders).values({
+          userId: scopedUserId,
+          orderId: closeOrderId,
+          marketId,
+          action: "sell",
+          side,
+          quantity,
+          limitPrice: markPrice,
+          status: "pending",
+          filledQuantity: 0,
+          averagePrice: 0,
+        });
+      } catch (storageError) {
+        logger.error(
+          { err: storageError, closeOrderId, positionId, marketId },
+          "[Kalshi] Close order accepted by Kalshi but local ledger write failed. Manual reconciliation required",
+        );
+      }
+
+      await db
+        .update(kalshiPositions)
+        .set({
+          currentPrice: markPrice,
+          positionStatus: "closing",
+        })
+        .where(
+          and(
+            eq(kalshiPositions.id, positionId),
+            eq(kalshiPositions.userId, scopedUserId),
+          )
+        );
+
+      orderId = closeOrderId;
+
+      // Best-effort audit: do not fail the close if logging fails.
+      void logAuditEvent(
+        "kalshi_position_closed",
+        JSON.stringify({
+          positionId,
+          marketId,
+          side,
+          quantity,
+          markPrice,
+          orderId,
+        }),
+        auditOpenId,
+      ).catch((auditErr) =>
+        logger.error({ err: auditErr, positionId }, "[Kalshi] Failed to write position_closed audit event"),
+      );
+
+      return { success: true, mode: "exchange", orderId };
+    } catch (error) {
+      logger.error({ err: error, positionId, marketId }, "[Kalshi] Close position error");
+      void logAuditEvent(
+        "kalshi_position_close_failed",
+        JSON.stringify({
+          positionId,
+          marketId,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+        auditOpenId,
+      ).catch((auditErr) =>
+        logger.error({ err: auditErr, positionId }, "[Kalshi] Failed to write position_close_failed audit event (exception path)"),
+      );
+      return { success: false, error: String(error) };
     }
-
-    await db
-      .update(kalshiPositions)
-      .set({
-        currentPrice: markPrice,
-        positionStatus: "closing",
-      })
-      .where(
-        and(
-          eq(kalshiPositions.id, positionId),
-          eq(kalshiPositions.userId, scopedUserId),
-        )
-      );
-
-    orderId = closeOrderId;
-    return { success: true, mode: "exchange", orderId };
-  } catch (error) {
-    console.error("[Kalshi] Close position error:", error);
-    return { success: false, error: String(error) };
-  }
+  });
 }
 
 /**
@@ -732,7 +970,7 @@ export async function createPositionFromFill(
       openedAt: new Date(),
     });
   } catch (error) {
-    console.error("[Kalshi] Create position error:", error);
+    logger.error({ err: error, marketId, orderId }, "[Kalshi] Create position error");
   }
 }
 
@@ -804,7 +1042,7 @@ export async function closePositionFromFill(
 
     return true;
   } catch (error) {
-    console.error("[Kalshi] Close position from fill error:", error);
+    logger.error({ err: error, marketId, side }, "[Kalshi] Close position from fill error");
     return false;
   }
 }
@@ -882,6 +1120,6 @@ export async function updatePositionMarkPrice(
       })
       .where(eq(kalshiPositions.id, positionId));
   } catch (error) {
-    console.error("[Kalshi] Update position error:", error);
+    logger.error({ err: error, positionId }, "[Kalshi] Update position error");
   }
 }
