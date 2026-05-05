@@ -278,7 +278,14 @@ export default function DashboardLayout({
                     return (
                       <SidebarMenuItem key={item.path}>
                         <SidebarMenuButton asChild isActive={isActive}>
-                          <Link href={item.path} className="flex items-center gap-2 cursor-pointer">
+                          <Link 
+                            href={item.path} 
+                            className={`flex items-center gap-2 cursor-pointer transition-colors duration-200 ${
+                              isActive 
+                                ? "border-l-2 border-primary bg-primary/10 glow-primary" 
+                                : ""
+                            }`}
+                          >
                             <item.icon className="w-4 h-4 shrink-0" />
                             <span>{item.label}</span>
                           </Link>
@@ -294,6 +301,13 @@ export default function DashboardLayout({
 
         {/* ── User footer ──────────────────────────────────────────── */}
         <SidebarFooter className="border-t border-sidebar-border">
+          {/* Command palette hint */}
+          <div className="mx-2 my-2 flex items-center justify-center gap-1.5 text-xs text-muted-foreground/60">
+            <span>Quick search</span>
+            <kbd className="inline-flex h-5 items-center gap-0.5 rounded border border-border/40 bg-muted/30 px-1.5 font-mono text-[10px] font-medium">
+              <span className="text-[9px]">⌘</span>K
+            </kbd>
+          </div>
           {liveTradingArmed && (
             <div className="mx-2 mb-1 flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/8 px-3 py-2">
               <div className="w-2 h-2 rounded-full bg-red-400 animate-pulse shrink-0" />

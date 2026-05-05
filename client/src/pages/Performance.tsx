@@ -1,21 +1,25 @@
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { trpc } from "@/lib/trpc";
 import {
   formatCurrency,
   formatPercent,
   summarizeLearningMetrics,
 } from "@/lib/riskPerformanceDiagnostics";
-import { BrainCircuit, CandlestickChart, CircleOff, DollarSign, Sparkles, TrendingUp, BarChart3, Loader2 } from "lucide-react";
+import { BarChart3, TrendingUp, TrendingDown, Target, Clock, Activity, DollarSign } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
+import { StatCard } from "@/components/widgets/StatCard";
+import { PerformanceChart } from "@/components/charts/PerformanceChart";
+import { DistributionChart } from "@/components/charts/DistributionChart";
+import { HeatmapChart } from "@/components/charts/HeatmapChart";
+import { DashboardSkeleton } from "@/components/enhanced/Skeletons";
+import { ErrorState } from "@/components/EmptyStates";
+import { Button } from "@/components/ui/button";
+import { useState, useMemo } from "react";
+
+type TimeRange = '1D' | '1W' | '1M' | '3M' | '1Y' | 'All';
 
 export default function Performance() {
+  const [timeRange, setTimeRange] = useState<TimeRange>('All');
+  
   const performanceOverviewQuery = trpc.kalshi.getPerformanceOverview.useQuery();
 
   const performanceOverview = performanceOverviewQuery.data;
@@ -23,97 +27,91 @@ export default function Performance() {
   const signalPerformance = performanceOverview?.signalPerformance ?? [];
   const hasTradeHistory = (performanceMetrics?.totalTrades ?? 0) > 0;
 
-  const realizedPnL = performanceMetrics?.realizedPnL ?? 0;
-  const unrealizedPnL = performanceMetrics?.unrealizedPnL ?? 0;
-  const dailyPnL = performanceMetrics?.dailyPnL ?? 0;
-  const activePositions = performanceMetrics?.activePositions ?? 0;
-  const learning = summarizeLearningMetrics({
-    avgWin: performanceMetrics?.avgWin ?? 0,
-    avgLoss: performanceMetrics?.avgLoss ?? 0,
-    breakevenTrades: performanceMetrics?.breakevenTrades ?? 0,
-    profitFactor: performanceMetrics?.profitFactor ?? 0,
-    recoveryFactor: performanceMetrics?.recoveryFactor ?? 0,
-  });
+  // Calculate return percentage
+  const returnPercent = useMemo(() => {
+    if (!performanceOverview || performanceOverview.startingBalance === 0) return 0;
+    return ((performanceMetrics?.totalPnL ?? 0) / performanceOverview.startingBalance) * 100;
+  }, [performanceOverview, performanceMetrics]);
 
-  const attributionCards = [
-    {
-      label: "Realized P&L",
-      value: formatCurrency(realizedPnL),
-      description: "Closed-trade contribution",
-      tone: realizedPnL >= 0 ? "text-green-400" : "text-red-400",
-    },
-    {
-      label: "Unrealized P&L",
-      value: formatCurrency(unrealizedPnL),
-      description: "Open-position contribution",
-      tone: unrealizedPnL >= 0 ? "text-cyan-400" : "text-red-400",
-    },
-    {
-      label: "Daily P&L",
-      value: formatCurrency(dailyPnL),
-      description: "Current trading-day impact",
-      tone: dailyPnL >= 0 ? "text-emerald-400" : "text-orange-400",
-    },
-    {
-      label: "Active Positions",
-      value: activePositions.toString(),
-      description: "Currently contributing live risk",
-      tone: "text-violet-400",
-    },
-  ];
-  const topSignal = signalPerformance[0];
-  const weakestSignal = signalPerformance.at(-1);
+  // Build equity curve data (mock demonstration — replace with real historical data when available)
+  const equityCurveData = useMemo(() => {
+    if (!performanceOverview) return [];
+    const startBal = performanceOverview.startingBalance;
+    const currentBal = performanceOverview.currentBalance;
+    const totalPnL = performanceMetrics?.totalPnL ?? 0;
 
-  const metricCards = [
-    {
-      label: "Sharpe Ratio",
-      value: performanceMetrics?.sharpeRatio?.toFixed(2) ?? "0.00",
-      description: "Risk-adjusted returns",
-      icon: <TrendingUp className="h-5 w-5 text-violet-300" />,
-    },
-    {
-      label: "Max Drawdown",
-      value: formatPercent(performanceMetrics?.maxDrawdown ?? 0),
-      description: "Peak-to-trough decline",
-      icon: <CandlestickChart className="h-5 w-5 text-rose-300" />,
-    },
-    {
-      label: "Win Rate",
-      value: formatPercent(performanceMetrics?.winRate ?? 0),
-      description: "Winning trades ratio",
-      icon: <Sparkles className="h-5 w-5 text-emerald-300" />,
-    },
-    {
-      label: "Total P&L",
-      value: formatCurrency(performanceMetrics?.totalPnL ?? 0),
-      description: "Realized plus unrealized",
-      icon: <DollarSign className="h-5 w-5 text-cyan-300" />,
-    },
-  ];
+    // Generate a simple 30-day mock curve for visualization
+    const data = [];
+    const days = 30;
+    for (let i = 0; i <= days; i++) {
+      const progress = i / days;
+      const equity = startBal + (totalPnL * progress);
+      data.push({
+        date: new Date(Date.now() - (days - i) * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        equity: equity,
+      });
+    }
+    return data;
+  }, [performanceOverview, performanceMetrics]);
+
+  // Build distribution chart data from signal performance
+  const distributionData = useMemo(() => {
+    if (signalPerformance.length === 0) return [];
+    return signalPerformance.map((perf) => ({
+      label: perf.signalType.replaceAll('_', ' '),
+      value: perf.successRate * 100,
+      color: perf.totalPnL >= 0 ? '#86efac' : '#f87171',
+    }));
+  }, [signalPerformance]);
+
+  // Build heatmap data for activity tracking (MOCK DATA — replace when real activity tracking is available)
+  const heatmapData = useMemo(() => {
+    // Demo data: day-of-week x hour-of-day activity
+    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const hours = Array.from({ length: 24 }, (_, i) => i);
+    const data: Array<{ row: string | number; col: string | number; value: number }> = [];
+    
+    for (const day of days) {
+      for (const hour of hours) {
+        // Simulate higher activity during market hours (9-16) on weekdays
+        let value = Math.random() * 20;
+        if (['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].includes(day) && hour >= 9 && hour <= 16) {
+          value += Math.random() * 30;
+        }
+        data.push({ row: day, col: hour, value: Math.round(value) });
+      }
+    }
+    return data;
+  }, []);
+
+  const heatmapRows = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const heatmapCols = Array.from({ length: 24 }, (_, i) => i);
 
   if (performanceOverviewQuery.isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <Loader2 className="animate-spin w-8 h-8 text-violet-400" />
-      </div>
-    );
+    return <DashboardSkeleton />;
   }
 
   if (performanceOverviewQuery.isError) {
     return (
-      <Card className="border-rose-500/30 bg-rose-500/5">
-        <CardContent className="pt-6">
-          <p className="text-rose-300">Failed to load performance metrics. Please try again.</p>
-          <Button onClick={() => performanceOverviewQuery.refetch()} className="mt-4">
-            Retry
-          </Button>
-        </CardContent>
-      </Card>
+      <div className="space-y-8 max-w-7xl mx-auto">
+        <PageHeader
+          icon={BarChart3}
+          title="Performance Metrics"
+          description="Track trading quality, capital attribution, and signal-learning posture from real Kalshi activity."
+          iconGradient="from-emerald-500 to-cyan-500"
+        />
+        <div className="glass-card p-8">
+          <ErrorState
+            error="Failed to load performance metrics"
+            onRetry={() => performanceOverviewQuery.refetch()}
+          />
+        </div>
+      </div>
     );
   }
 
   return (
-    <div className="space-y-8 max-w-7xl mx-auto">
+    <div className="space-y-8 max-w-7xl mx-auto animate-fade-in">
       <PageHeader
         icon={BarChart3}
         title="Performance Metrics"
@@ -121,244 +119,113 @@ export default function Performance() {
         iconGradient="from-emerald-500 to-cyan-500"
       />
 
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          {metricCards.map((metric) => (
-            <Card key={metric.label} className="border border-slate-700 bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-xl">
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-sm font-medium text-slate-300">{metric.label}</CardTitle>
-                  {metric.icon}
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="mb-1 text-3xl font-bold text-slate-100">{metric.value}</div>
-                <p className="text-xs text-slate-500">{metric.description}</p>
-              </CardContent>
-            </Card>
-          ))}
+      {/* Stat Cards Grid — 6 key metrics */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+        <StatCard
+          label="Return"
+          value={`${returnPercent >= 0 ? '+' : ''}${returnPercent.toFixed(2)}%`}
+          icon={returnPercent >= 0 ? <TrendingUp size={20} /> : <TrendingDown size={20} />}
+          color={returnPercent >= 0 ? '#86efac' : '#f87171'}
+          change={returnPercent}
+        />
+        
+        <StatCard
+          label="Win Rate"
+          value={formatPercent(performanceMetrics?.winRate ?? 0)}
+          icon={<Target size={20} />}
+          color="#a78bfa"
+        />
+        
+        <StatCard
+          label="Sharpe Ratio"
+          value={performanceMetrics?.sharpeRatio?.toFixed(2) ?? '0.00'}
+          icon={<Activity size={20} />}
+          color="#60a5fa"
+        />
+        
+        <StatCard
+          label="Max Drawdown"
+          value={formatPercent(performanceMetrics?.maxDrawdown ?? 0)}
+          icon={<TrendingDown size={20} />}
+          color="#f87171"
+        />
+        
+        <StatCard
+          label="Avg Hold Time"
+          value="—"
+          icon={<Clock size={20} />}
+          color="#fbbf24"
+        />
+        
+        <StatCard
+          label="Total Trades"
+          value={performanceMetrics?.totalTrades ?? 0}
+          icon={<DollarSign size={20} />}
+          color="#34d399"
+        />
+      </div>
+
+      {/* Time Range Selector */}
+      <div className="flex gap-2 items-center justify-end">
+        {(['1D', '1W', '1M', '3M', '1Y', 'All'] as TimeRange[]).map((range) => (
+          <Button
+            key={range}
+            variant={timeRange === range ? 'default' : 'ghost'}
+            size="sm"
+            onClick={() => setTimeRange(range)}
+            className={timeRange === range ? 'bg-primary/20 glow-primary' : ''}
+          >
+            {range}
+          </Button>
+        ))}
+      </div>
+
+      {/* Equity Curve Chart — Full Width */}
+      {equityCurveData.length > 0 && (
+        <div className="glass-card p-6 glow-subtle">
+          <h3 className="text-lg font-semibold mb-4 text-foreground">Equity Curve</h3>
+          <PerformanceChart
+            data={equityCurveData}
+            series={[{ key: 'equity', name: 'Account Balance', color: '#8b5cf6' }]}
+            height={350}
+            areaShading
+            formatY={(v: number) => formatCurrency(v)}
+            formatX={(v: string | number) => {
+              const d = new Date(v);
+              return `${d.getMonth() + 1}/${d.getDate()}`;
+            }}
+          />
         </div>
+      )}
 
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          {attributionCards.map((metric) => (
-            <Card key={metric.label} className="border border-slate-700 bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-xl">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-sm font-medium text-slate-300">{metric.label}</CardTitle>
-                <CardDescription>{metric.description}</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className={`text-3xl font-bold ${metric.tone}`}>{metric.value}</div>
-              </CardContent>
-            </Card>
-          ))}
+      {/* Distribution Chart — Signal Type Win Rates */}
+      {distributionData.length > 0 && (
+        <div className="glass-card p-6 glow-subtle">
+          <h3 className="text-lg font-semibold mb-4 text-foreground">Strategy Win Rate Distribution</h3>
+          <DistributionChart
+            data={distributionData}
+            formatValue={(v: number) => `${v.toFixed(1)}%`}
+            colorByIndex={false}
+          />
         </div>
+      )}
 
-        <div className="grid gap-4 xl:grid-cols-3">
-          <Card className="border border-slate-700 bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-xl">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-slate-100">
-                <BrainCircuit className="h-5 w-5 text-violet-300" />
-                Learning Diagnostics
-              </CardTitle>
-              <CardDescription>Backend-derived trade learning metrics that help rank edge quality.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="rounded-xl border border-slate-700/60 bg-slate-900/40 p-3">
-                <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Average Win / Loss</p>
-                <p className="mt-2 text-xl font-semibold text-slate-100">
-                  {formatCurrency(performanceMetrics?.avgWin ?? 0)} / {formatCurrency(performanceMetrics?.avgLoss ?? 0)}
-                </p>
-              </div>
-              <div className="rounded-xl border border-slate-700/60 bg-slate-900/40 p-3">
-                <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Edge Ratio</p>
-                <p className="mt-2 text-xl font-semibold text-emerald-300">{learning.edgeRatio.toFixed(2)}x</p>
-              </div>
-              <div className="rounded-xl border border-slate-700/60 bg-slate-900/40 p-3">
-                <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Profit / Recovery</p>
-                <p className="mt-2 text-xl font-semibold text-cyan-300">
-                  {learning.profitFactor.toFixed(2)} / {learning.recoveryFactor.toFixed(2)}
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border border-slate-700 bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-xl">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-slate-100">
-                <CircleOff className="h-5 w-5 text-amber-300" />
-                Trade Outcome Mix
-              </CardTitle>
-              <CardDescription>Closed-trade result composition from the performance engine.</CardDescription>
-            </CardHeader>
-            <CardContent className="grid gap-3 md:grid-cols-3 xl:grid-cols-1">
-              <div className="rounded-xl border border-slate-700/60 bg-slate-900/40 p-3">
-                <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Winning Trades</p>
-                <p className="mt-2 text-xl font-semibold text-emerald-300">{performanceMetrics?.winningTrades ?? 0}</p>
-              </div>
-              <div className="rounded-xl border border-slate-700/60 bg-slate-900/40 p-3">
-                <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Losing Trades</p>
-                <p className="mt-2 text-xl font-semibold text-rose-300">{performanceMetrics?.losingTrades ?? 0}</p>
-              </div>
-              <div className="rounded-xl border border-slate-700/60 bg-slate-900/40 p-3">
-                <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Breakeven Trades</p>
-                <p className="mt-2 text-xl font-semibold text-amber-300">{learning.breakevenTrades}</p>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border border-slate-700 bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-xl">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-slate-100">
-                <Sparkles className="h-5 w-5 text-cyan-300" />
-                Operator Guidance
-              </CardTitle>
-              <CardDescription>Practical takeaways from the current performance posture.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3 text-sm text-slate-300">
-              <div className="rounded-xl border border-slate-700/60 bg-slate-900/40 p-3">
-                <span className="font-medium text-slate-100">Sizing posture:</span>{" "}
-                {learning.edgeRatio >= 1.5
-                  ? "Average wins still exceed average losses by a healthy margin."
-                  : "Edge compression is visible; reduce size until win/loss asymmetry improves."}
-              </div>
-              <div className="rounded-xl border border-slate-700/60 bg-slate-900/40 p-3">
-                <span className="font-medium text-slate-100">Recovery posture:</span>{" "}
-                {learning.recoveryFactor >= 1
-                  ? "Recovered capital remains ahead of drawdown pressure."
-                  : "Recovery factor is weak relative to recent stress and should be monitored closely."}
-              </div>
-              <div className="rounded-xl border border-slate-700/60 bg-slate-900/40 p-3">
-                <span className="font-medium text-slate-100">Signal posture:</span>{" "}
-                {topSignal
-                  ? `Favor ${topSignal.signalType.replaceAll("_", " ")} while weaker cohorts are reevaluated.`
-                  : "Generate more closed trades to unlock stronger strategy-level ranking confidence."}
-              </div>
-            </CardContent>
-          </Card>
+      {/* Heatmap Chart — Activity Tracking (Demo Data) */}
+      <div className="glass-card p-6 glow-subtle">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-foreground">Trading Activity Heatmap</h3>
+          <span className="text-xs text-muted-foreground">Demo data — activity tracking coming soon</span>
         </div>
-
-        {(topSignal || weakestSignal) && (
-          <div className="grid gap-4 lg:grid-cols-2">
-            <Card className="border border-slate-700 bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-xl">
-              <CardHeader>
-                <CardTitle>Strategy Leaderboard</CardTitle>
-                <CardDescription>
-                  The learning loop ranks signal families by realized quality and confidence.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {topSignal && (
-                  <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4">
-                    <p className="text-xs uppercase tracking-[0.2em] text-emerald-300">Highest Conviction</p>
-                    <p className="mt-2 text-xl font-semibold capitalize text-slate-100">
-                      {topSignal.signalType.replaceAll("_", " ")}
-                    </p>
-                    <p className="mt-1 text-sm text-slate-400">
-                      {topSignal.recommendation.replaceAll("_", " ")} with {(topSignal.successRate * 100).toFixed(1)}% win rate across {topSignal.totalSignals} signals.
-                    </p>
-                  </div>
-                )}
-                {weakestSignal && weakestSignal !== topSignal && (
-                  <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
-                    <p className="text-xs uppercase tracking-[0.2em] text-amber-300">Needs Adjustment</p>
-                    <p className="mt-2 text-xl font-semibold capitalize text-slate-100">
-                      {weakestSignal.signalType.replaceAll("_", " ")}
-                    </p>
-                    <p className="mt-1 text-sm text-slate-400">
-                      Recommendation: {weakestSignal.recommendation.replaceAll("_", " ")} based on {formatCurrency(weakestSignal.totalPnL)} realized P&amp;L.
-                    </p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card className="border border-slate-700 bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-xl">
-              <CardHeader>
-                <CardTitle>Capital Summary</CardTitle>
-                <CardDescription>
-                  {hasTradeHistory
-                    ? "Account balance and trading statistics"
-                    : "Account balance is real, trade metrics will populate after closed trades"}
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="grid gap-4 md:grid-cols-3">
-                  <div className="border-l-4 border-violet-500 pl-4">
-                    <p className="mb-1 text-sm text-slate-500">Starting Balance</p>
-                    <p className="text-2xl font-bold text-slate-200">{formatCurrency(performanceOverview?.startingBalance ?? 0)}</p>
-                  </div>
-                  <div className="border-l-4 border-cyan-500 pl-4">
-                    <p className="mb-1 text-sm text-slate-500">Current Balance</p>
-                    <p className="text-2xl font-bold text-slate-200">{formatCurrency(performanceOverview?.currentBalance ?? 0)}</p>
-                  </div>
-                  <div className={`border-l-4 ${(performanceMetrics?.totalPnL ?? 0) >= 0 ? "border-green-500" : "border-red-500"} pl-4`}>
-                    <p className="mb-1 text-sm text-slate-500">Return on Capital</p>
-                    <p className={`text-2xl font-bold ${(performanceMetrics?.totalPnL ?? 0) >= 0 ? "text-green-400" : "text-red-400"}`}>
-                      {performanceOverview && performanceOverview.startingBalance > 0
-                        ? `${(((performanceMetrics?.totalPnL ?? 0) / performanceOverview.startingBalance) * 100).toFixed(1)}%`
-                        : "0.0%"}
-                    </p>
-                  </div>
-                </div>
-
-                {!hasTradeHistory && (
-                  <div className="mt-6 rounded-lg border border-dashed border-slate-700 bg-slate-900/40 p-4 text-sm text-slate-400">
-                    Close a few trades to unlock richer learning signals, average-win diagnostics, and strategy promotion or demotion guidance.
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-        )}
-
-        {signalPerformance.length > 0 && (
-          <Card className="border border-slate-700 bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-xl">
-            <CardHeader>
-              <CardTitle>Signal Performance by Type</CardTitle>
-              <CardDescription>
-                Win rates, realized P&amp;L, and recommendation quality for each signal family.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {signalPerformance.map((perf) => (
-                  <div key={perf.signalType} className="rounded-lg border border-slate-700/50 bg-slate-900/30 p-4">
-                    <div className="mb-3 flex items-center justify-between">
-                      <h3 className="font-semibold capitalize text-slate-200">{perf.signalType.replace("_", " ")}</h3>
-                      <span className="text-sm text-slate-400">{perf.totalSignals} signals</span>
-                    </div>
-
-                    <div className="grid gap-4 md:grid-cols-5">
-                      <div>
-                        <p className="mb-1 text-xs text-slate-500">Win Rate</p>
-                        <p className="text-lg font-bold text-green-400">{formatPercent(perf.successRate)}</p>
-                      </div>
-                      <div>
-                        <p className="mb-1 text-xs text-slate-500">Avg Confidence</p>
-                        <p className="text-lg font-bold text-violet-400">{perf.avgConfidence.toFixed(2)}</p>
-                      </div>
-                      <div>
-                        <p className="mb-1 text-xs text-slate-500">Recommendation</p>
-                        <p className="text-lg font-bold capitalize text-cyan-400">{perf.recommendation.replace("_", " ")}</p>
-                      </div>
-                      <div>
-                        <p className="mb-1 text-xs text-slate-500">Realized P&amp;L</p>
-                        <p className={`text-lg font-bold ${perf.totalPnL >= 0 ? "text-green-400" : "text-red-400"}`}>{formatCurrency(perf.totalPnL)}</p>
-                      </div>
-                      <div>
-                        <p className="mb-1 text-xs text-slate-500">Per-Signal Edge</p>
-                        <p className="text-lg font-bold text-amber-300">{perf.profitFactor.toFixed(2)}</p>
-                      </div>
-                    </div>
-
-                    <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-800/50">
-                      <div className="h-full bg-gradient-to-r from-violet-500 to-cyan-500 transition-all" style={{ width: `${perf.successRate * 100}%` }} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        )}
+        <HeatmapChart
+          data={heatmapData}
+          rows={heatmapRows}
+          cols={heatmapCols}
+          height={280}
+          formatValue={(v: number) => `${v} signals`}
+          colorScale="purple-coral"
+          showValues={false}
+        />
+      </div>
     </div>
   );
 }

@@ -1,10 +1,13 @@
 import { trpc } from "@/lib/trpc";
-import { Loader2, X, TrendingUp, Briefcase } from "lucide-react";
+import { Loader2, X, TrendingUp, Briefcase, DollarSign } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useState } from "react";
+import { Badge } from "@/components/ui/badge";
+import { useState, useMemo } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/PageHeader";
-import { EmptyState } from "@/components/EmptyState";
+import { EmptyState } from "@/components/EmptyStates";
+import { EnhancedTable, type Column } from "@/components/enhanced/Table";
+import { Sparkline } from "@/components/charts/Sparkline";
 
 type KalshiPositionRow = {
   id: number;
@@ -33,17 +36,40 @@ export default function Positions() {
   const closePositionMutation = trpc.kalshi.closePosition.useMutation();
   const [closingId, setClosingId] = useState<number | null>(null);
 
-  if (positionsQuery.isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <Loader2 className="animate-spin w-8 h-8 text-violet-400" />
-      </div>
+  const positions = useMemo(() => {
+    return ((positionsQuery.data ?? []) as KalshiPositionRow[]).filter(
+      (position) => position.positionStatus !== "closed"
     );
-  }
+  }, [positionsQuery.data]);
 
-  const positions = ((positionsQuery.data ?? []) as KalshiPositionRow[]).filter(
-    (position) => position.positionStatus !== "closed"
-  );
+  // Calculate summary metrics
+  const summary = useMemo(() => {
+    const totalPnl = positions.reduce((sum, p) => {
+      const entryPrice = Number(p.entryPrice ?? 0);
+      const currentPrice = Number(p.currentPrice ?? 0);
+      const quantity = Number(p.quantity ?? 0);
+      const storedUnrealized = Number(p.unrealizedPnl ?? 0);
+      const computedUnrealized =
+        p.side === "no"
+          ? quantity * (entryPrice - currentPrice)
+          : quantity * (currentPrice - entryPrice);
+      const unrealizedPnl =
+        Number.isFinite(storedUnrealized) && storedUnrealized !== 0
+          ? storedUnrealized
+          : computedUnrealized;
+      return sum + unrealizedPnl;
+    }, 0);
+
+    const totalExposure = positions.reduce((sum, p) => {
+      return sum + Number(p.quantity ?? 0) * Number(p.entryPrice ?? 0);
+    }, 0);
+
+    return {
+      count: positions.length,
+      totalPnl,
+      totalExposure,
+    };
+  }, [positions]);
 
   const handleClosePosition = async (
     positionId: number,
@@ -78,6 +104,178 @@ export default function Positions() {
     }
   };
 
+  // Define table columns
+  const columns: Column<KalshiPositionRow>[] = useMemo(
+    () => [
+      {
+        key: "marketId",
+        header: "Market",
+        sortable: true,
+        width: "25%",
+        render: (value) => (
+          <span className="font-mono text-xs font-semibold text-white/90">
+            {String(value)}
+          </span>
+        ),
+      },
+      {
+        key: "side",
+        header: "Side",
+        sortable: true,
+        width: 80,
+        render: (value) => (
+          <Badge
+            variant={value === "yes" ? "default" : "destructive"}
+            className={
+              value === "yes"
+                ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30 uppercase"
+                : "bg-rose-500/20 text-rose-400 border-rose-500/30 uppercase"
+            }
+          >
+            {String(value)}
+          </Badge>
+        ),
+      },
+      {
+        key: "quantity",
+        header: "Qty",
+        sortable: true,
+        width: 80,
+        render: (value) => (
+          <span className="font-mono text-sm">{formatQuantity(Number(value))}</span>
+        ),
+      },
+      {
+        key: "entryPrice",
+        header: "Entry",
+        sortable: true,
+        width: 100,
+        render: (value) => (
+          <span className="font-mono text-sm">{formatPrice(Number(value))}</span>
+        ),
+      },
+      {
+        key: "currentPrice",
+        header: "Current",
+        sortable: true,
+        width: 140,
+        render: (value, row) => {
+          // Placeholder for sparkline - can be populated with historical data
+          const mockPriceHistory = Array.from({ length: 10 }, (_, i) => {
+            const basePrice = Number(row.entryPrice ?? 0);
+            const currentPriceVal = Number(value ?? 0);
+            const priceDiff = currentPriceVal - basePrice;
+            return basePrice + (priceDiff * i) / 9 + (Math.random() - 0.5) * 0.02;
+          });
+
+          return (
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-sm">{formatPrice(Number(value))}</span>
+              {mockPriceHistory.length > 1 && (
+                <Sparkline
+                  data={mockPriceHistory}
+                  width={60}
+                  height={20}
+                  color={
+                    Number(value) >= Number(row.entryPrice)
+                      ? "rgb(52, 211, 153)"
+                      : "rgb(251, 113, 133)"
+                  }
+                  strokeWidth={1.5}
+                />
+              )}
+            </div>
+          );
+        },
+      },
+      {
+        key: "unrealizedPnl",
+        header: "P&L",
+        sortable: true,
+        width: 120,
+        render: (value, row) => {
+          const entryPrice = Number(row.entryPrice ?? 0);
+          const currentPrice = Number(row.currentPrice ?? 0);
+          const quantity = Number(row.quantity ?? 0);
+          const storedUnrealized = Number(value ?? 0);
+          const computedUnrealized =
+            row.side === "no"
+              ? quantity * (entryPrice - currentPrice)
+              : quantity * (currentPrice - entryPrice);
+          const unrealizedPnl =
+            Number.isFinite(storedUnrealized) && storedUnrealized !== 0
+              ? storedUnrealized
+              : computedUnrealized;
+          const isProfit = unrealizedPnl > 0;
+
+          return (
+            <span
+              className={`font-mono text-sm font-bold ${
+                isProfit
+                  ? "text-emerald-400"
+                  : unrealizedPnl < 0
+                    ? "text-rose-400"
+                    : "text-muted-foreground"
+              }`}
+            >
+              {isProfit ? "+" : ""}${unrealizedPnl.toFixed(2)}
+            </span>
+          );
+        },
+      },
+      {
+        key: "id",
+        header: "Actions",
+        width: 100,
+        pinned: "right",
+        render: (value, row) => {
+          const positionId = Number(value);
+          const isClosing = closingId === positionId || row.positionStatus === "closing";
+
+          return (
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleClosePosition(
+                  positionId,
+                  row.marketId,
+                  Number(row.currentPrice),
+                  row.side,
+                  Number(row.quantity),
+                );
+              }}
+              disabled={isClosing}
+              className="h-8 px-3"
+            >
+              {isClosing ? (
+                <>
+                  <Loader2 className="w-3 h-3 mr-1.5 animate-spin" />
+                  Closing
+                </>
+              ) : (
+                <>
+                  <X className="w-3 h-3 mr-1.5" />
+                  Close
+                </>
+              )}
+            </Button>
+          );
+        },
+      },
+    ],
+    [closingId],
+  );
+
+  if (positionsQuery.isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <Loader2 className="animate-spin w-8 h-8 text-violet-400" />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -86,7 +284,7 @@ export default function Positions() {
         description={
           <span className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            {positions.length} active Kalshi position{positions.length !== 1 ? "s" : ""}
+            {summary.count} active Kalshi position{summary.count !== 1 ? "s" : ""}
           </span>
         }
         iconGradient="from-emerald-500 to-teal-500"
@@ -104,108 +302,124 @@ export default function Positions() {
         }
       />
 
-      {positions.length === 0 ? (
-        <EmptyState
-          icon={TrendingUp}
-          title="No open positions"
-          description="Your active positions will appear here once you start trading."
-        />
-      ) : (
-        <div className="overflow-x-auto rounded-xl border border-white/10 bg-white/[0.02] backdrop-blur-sm">
-          <table className="laurenzo-table">
-            <thead>
-              <tr>
-                <th>Market</th>
-                <th>Side</th>
-                <th>Quantity</th>
-                <th>Entry Price</th>
-                <th>Current Price</th>
-                <th>Unrealized P&amp;L</th>
-                <th>Status</th>
-                <th>Opened</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {positions.map((position) => {
-                const entryPrice = Number(position.entryPrice ?? 0);
-                const currentPrice = Number(position.currentPrice ?? 0);
-                const quantity = Number(position.quantity ?? 0);
-                const storedUnrealized = Number(position.unrealizedPnl ?? 0);
-                const computedUnrealized =
-                  position.side === "no"
-                    ? quantity * (entryPrice - currentPrice)
-                    : quantity * (currentPrice - entryPrice);
-                const unrealizedPnl =
-                  Number.isFinite(storedUnrealized) && storedUnrealized !== 0
-                    ? storedUnrealized
-                    : computedUnrealized;
-                const isProfit = unrealizedPnl > 0;
+      {/* Summary Cards */}
+      {positions.length > 0 && (
+        <div
+          className="grid grid-cols-1 md:grid-cols-3 gap-4"
+          style={{
+            animation: "fadeSlideUp 0.5s ease-out",
+          }}
+        >
+          <div className="glass-card p-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-violet-500/20 flex items-center justify-center">
+                <Briefcase className="w-5 h-5 text-violet-400" />
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground uppercase tracking-wide">
+                  Total Positions
+                </p>
+                <p className="text-2xl font-bold text-white">{summary.count}</p>
+              </div>
+            </div>
+          </div>
 
-                return (
-                  <tr key={position.id}>
-                    <td className="font-mono font-bold text-xs">{position.marketId}</td>
-                    <td>
-                      <span
-                        className={
-                          position.side === "yes"
-                            ? "text-emerald-400 font-semibold uppercase"
-                            : "text-rose-400 font-semibold uppercase"
-                        }
-                      >
-                        {position.side}
-                      </span>
-                    </td>
-                    <td className="font-mono">{formatQuantity(quantity)}</td>
-                    <td className="font-mono">{formatPrice(entryPrice)}</td>
-                    <td className="font-mono">{formatPrice(currentPrice)}</td>
-                    <td
-                      className={`font-mono font-bold ${
-                        isProfit
-                          ? "text-emerald-400"
-                          : unrealizedPnl < 0
-                            ? "text-rose-400"
-                            : "text-muted-foreground"
-                      }`}
-                    >
-                      {isProfit ? "+" : ""}${unrealizedPnl.toFixed(2)}
-                    </td>
-                    <td className="capitalize text-xs">{position.positionStatus}</td>
-                    <td className="text-xs text-muted-foreground">
-                      {position.openedAt ? new Date(position.openedAt).toLocaleString() : "—"}
-                    </td>
-                    <td>
-                      <Button
-                        size="sm"
-                        variant="destructive"
-                        onClick={() =>
-                          handleClosePosition(
-                            position.id,
-                            position.marketId,
-                            currentPrice,
-                            position.side,
-                            quantity,
-                          )
-                        }
-                        disabled={
-                          closingId === position.id || position.positionStatus === "closing"
-                        }
-                      >
-                        {closingId === position.id ? (
-                          <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                        ) : (
-                          <X className="w-3 h-3 mr-1" />
-                        )}
-                        {closingId === position.id ? "Closing…" : "Close"}
-                      </Button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <div className="glass-card p-4">
+            <div className="flex items-center gap-3">
+              <div
+                className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                  summary.totalPnl >= 0
+                    ? "bg-emerald-500/20"
+                    : "bg-rose-500/20"
+                }`}
+              >
+                <TrendingUp
+                  className={`w-5 h-5 ${
+                    summary.totalPnl >= 0 ? "text-emerald-400" : "text-rose-400"
+                  }`}
+                />
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground uppercase tracking-wide">
+                  Total P&L
+                </p>
+                <p
+                  className={`text-2xl font-bold ${
+                    summary.totalPnl >= 0
+                      ? "text-emerald-400"
+                      : "text-rose-400"
+                  }`}
+                >
+                  {summary.totalPnl >= 0 ? "+" : ""}${summary.totalPnl.toFixed(2)}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="glass-card p-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center">
+                <DollarSign className="w-5 h-5 text-blue-400" />
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground uppercase tracking-wide">
+                  Total Exposure
+                </p>
+                <p className="text-2xl font-bold text-white">
+                  ${summary.totalExposure.toFixed(2)}
+                </p>
+              </div>
+            </div>
+          </div>
         </div>
       )}
+
+      {/* Positions Table */}
+      {positions.length === 0 ? (
+        <div
+          className="glass-card"
+          style={{
+            animation: "fadeSlideUp 0.5s ease-out 0.1s both",
+          }}
+        >
+          <EmptyState
+            icon={TrendingUp}
+            title="No open positions"
+            message="Your active positions will appear here once you start trading."
+          />
+        </div>
+      ) : (
+        <div
+          className="glass-card overflow-hidden"
+          style={{
+            animation: "fadeSlideUp 0.5s ease-out 0.1s both",
+          }}
+        >
+          <EnhancedTable
+            columns={columns}
+            data={positions}
+            stickyHeader={true}
+            zebraStriping={true}
+            hoverGlow={true}
+            emptyMessage="No positions found"
+          />
+        </div>
+      )}
+
+      <style>
+        {`
+          @keyframes fadeSlideUp {
+            from {
+              opacity: 0;
+              transform: translateY(20px);
+            }
+            to {
+              opacity: 1;
+              transform: translateY(0);
+            }
+          }
+        `}
+      </style>
     </div>
   );
 }
