@@ -33,6 +33,8 @@ export interface MicrostructureResult {
   hasStrongImbalance: boolean;    // |imbalance| > 0.6
   imbalanceDirection: "bullish" | "bearish" | "neutral";
   confidenceAdjustment: number;   // -0.20 to +0.15
+  informedTradingScore: number;   // 0-1, higher = more likely informed trading
+  largeOrderDetected: boolean;    // true when volume24h > 500
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -52,7 +54,7 @@ function clamp(value: number, min: number, max: number): number {
  * aggregate volume metrics.
  */
 export function analyzeMicrostructure(input: MicrostructureInput): MicrostructureResult {
-  const { marketId, yesBid, yesAsk } = input;
+  const { marketId, yesBid, yesAsk, volume24h, openInterest } = input;
 
   // ── Spread ────────────────────────────────────────────────────────────────
   const spread = Math.max(0, yesAsk - yesBid);
@@ -61,14 +63,24 @@ export function analyzeMicrostructure(input: MicrostructureInput): Microstructur
   const spreadScore = clamp(1 - spreadPct * 10, 0, 1);
   const hasWidespread = spreadPct > 0.05;
 
-  // ── Order-book imbalance (price-position proxy) ───────────────────────────
+  // ── Volume weight for imbalance ───────────────────────────────────────────
+  // Kalshi REST does not provide bid/ask depth separately, so we use volume24h
+  // and openInterest as a confidence weight: high turnover → price signal is
+  // more reliable.  volumeRatio in [0, 3], volumeWeight in [0, 1].
+  const volumeSurge = volume24h / (openInterest + 1);
+  const volumeRatio = clamp(volumeSurge, 0, 3);
+  const volumeWeight = clamp(volumeRatio / 3, 0, 1);
+
+  // ── Order-book imbalance (volume-weighted price-position proxy) ───────────
   // Ask-side approximation is the complement of the ask price from the NO
   // perspective: (1 - yesAsk) represents how much of the book is on the
-  // ask side.  This gives an imbalance in [-1, 1].
+  // ask side.  The price imbalance is then scaled by (0.5 + 0.5*volumeWeight)
+  // so that low-volume markets contribute less signal.  Range stays [-1, 1].
   const bidSide = Math.max(0, yesBid);
   const askSide = Math.max(0, 1 - yesAsk);
   const imbalanceDenom = bidSide + askSide + epsilon;
-  const imbalance = clamp((bidSide - askSide) / imbalanceDenom, -1, 1);
+  const priceImbalance = clamp((bidSide - askSide) / imbalanceDenom, -1, 1);
+  const imbalance = clamp(priceImbalance * (0.5 + 0.5 * volumeWeight), -1, 1);
   const hasStrongImbalance = Math.abs(imbalance) > 0.6;
   const imbalanceDirection: "bullish" | "bearish" | "neutral" = hasStrongImbalance
     ? imbalance > 0
@@ -85,11 +97,23 @@ export function analyzeMicrostructure(input: MicrostructureInput): Microstructur
   const buyFraction = clamp((midPrice - yesBid) / spreadForVpin, 0, 1);
   const vpin = clamp(Math.abs(2 * buyFraction - 1), 0, 1);
 
+  // ── Informed trading detection ────────────────────────────────────────────
+  // Proxies for large/aggressive order detection using available scalar data.
+  // volumeSurge (already computed above) measures turnover vs open interest.
+  const turnoverScore = volumeWeight; // same value as volumeWeight, different semantic use
+  const largeOrderDetected = volume24h > 500;
+  const informedTradingScore = clamp(
+    0.5 * turnoverScore + 0.5 * (largeOrderDetected ? 0.8 : 0.2),
+    0,
+    1
+  );
+
   // ── Composite score ───────────────────────────────────────────────────────
-  // 40% spread quality + 35% imbalance (normalized to [0,1]) + 25% inverse VPIN
+  // 35% spread quality + 30% imbalance (normalized to [0,1]) + 20% inverse VPIN
+  // + 15% informed trading score
   const imbalanceNorm = (imbalance + 1) / 2;
   const microstructureScore = clamp(
-    0.4 * spreadScore + 0.35 * imbalanceNorm + 0.25 * (1 - vpin),
+    0.35 * spreadScore + 0.30 * imbalanceNorm + 0.20 * (1 - vpin) + 0.15 * informedTradingScore,
     0,
     1
   );
@@ -105,7 +129,7 @@ export function analyzeMicrostructure(input: MicrostructureInput): Microstructur
   }
 
   logger.debug(
-    { marketId, spread: spread.toFixed(4), spreadPct: spreadPct.toFixed(4), imbalance: imbalance.toFixed(3), vpin: vpin.toFixed(3), microstructureScore: microstructureScore.toFixed(3) },
+    { marketId, spread: spread.toFixed(4), spreadPct: spreadPct.toFixed(4), imbalance: imbalance.toFixed(3), vpin: vpin.toFixed(3), microstructureScore: microstructureScore.toFixed(3), informedTradingScore: informedTradingScore.toFixed(3), largeOrderDetected },
     "microstructure analysis"
   );
 
@@ -125,6 +149,8 @@ export function analyzeMicrostructure(input: MicrostructureInput): Microstructur
     hasStrongImbalance,
     imbalanceDirection,
     confidenceAdjustment,
+    informedTradingScore,
+    largeOrderDetected,
   };
 }
 

@@ -99,18 +99,21 @@ describe("analyzeMicrostructure — order book imbalance", () => {
   });
 
   it("detects strong bid (bullish) imbalance when yesBid >> 1-yesAsk", () => {
-    // yesBid=0.80, yesAsk=0.82 → askSide = 0.18, bidSide = 0.80
-    // imbalance = (0.80 - 0.18) / (0.80 + 0.18) ≈ 0.63 → bullish
-    const result = analyzeMicrostructure(makeInput({ yesBid: 0.80, yesAsk: 0.82 }));
+    // yesBid=0.85, yesAsk=0.87 → askSide = 0.13, bidSide = 0.85
+    // priceImbalance = (0.85 - 0.13) / (0.85 + 0.13) ≈ 0.735
+    // with default volume24h=5000, openInterest=2000 → volumeWeight≈0.833
+    // imbalance ≈ 0.735 * 0.917 ≈ 0.674 → bullish
+    const result = analyzeMicrostructure(makeInput({ yesBid: 0.85, yesAsk: 0.87 }));
     expect(result.imbalance).toBeGreaterThan(0.6);
     expect(result.hasStrongImbalance).toBe(true);
     expect(result.imbalanceDirection).toBe("bullish");
   });
 
   it("detects strong ask (bearish) imbalance when 1-yesAsk >> yesBid", () => {
-    // yesBid=0.18, yesAsk=0.20 → askSide = 0.80, bidSide = 0.18
-    // imbalance = (0.18 - 0.80) / (0.18 + 0.80) ≈ -0.63 → bearish
-    const result = analyzeMicrostructure(makeInput({ yesBid: 0.18, yesAsk: 0.20 }));
+    // yesBid=0.13, yesAsk=0.15 → askSide = 0.85, bidSide = 0.13
+    // priceImbalance ≈ -0.735, with default volumeWeight≈0.833
+    // imbalance ≈ -0.674 → bearish
+    const result = analyzeMicrostructure(makeInput({ yesBid: 0.13, yesAsk: 0.15 }));
     expect(result.imbalance).toBeLessThan(-0.6);
     expect(result.hasStrongImbalance).toBe(true);
     expect(result.imbalanceDirection).toBe("bearish");
@@ -216,10 +219,10 @@ describe("analyzeMicrostructure — confidenceAdjustment baseline", () => {
   });
 
   it("returns +0.15 for strong imbalance market (bullish)", () => {
-    // yesBid=0.80, yesAsk=0.82 → imbalance > 0.6, no wide spread
+    // yesBid=0.85, yesAsk=0.87 → narrow spread, imbalance > 0.6 with default volume
     const spread = 0.02;
-    const spreadPct = spread / 0.80; // 0.025 < 0.05
-    const result = analyzeMicrostructure(makeInput({ yesBid: 0.80, yesAsk: 0.82 }));
+    const spreadPct = spread / 0.85; // ≈ 0.0235 < 0.05
+    const result = analyzeMicrostructure(makeInput({ yesBid: 0.85, yesAsk: 0.87 }));
     expect(spreadPct).toBeLessThan(0.05);
     expect(result.hasStrongImbalance).toBe(true);
     expect(result.confidenceAdjustment).toBe(+0.15);
@@ -257,6 +260,8 @@ describe("applyMicrostructureToSignal", () => {
       hasStrongImbalance: false,
       imbalanceDirection: "neutral",
       confidenceAdjustment: 0,
+      informedTradingScore: 0.5,
+      largeOrderDetected: false,
       ...overrides,
     };
   }
@@ -354,6 +359,66 @@ describe("applyMicrostructureToSignal", () => {
     const adjusted = applyMicrostructureToSignal(signal, result);
     // 0.70 - 0.20 = 0.50, no boost
     expect(adjusted.confidence).toBeCloseTo(0.50, 5);
+  });
+});
+
+// ── Informed trading tests ────────────────────────────────────────────────────
+
+describe("analyzeMicrostructure — informed trading score", () => {
+  it("largeOrderDetected=true and higher informedTradingScore when volume24h>500", () => {
+    const result = analyzeMicrostructure(makeInput({ volume24h: 1000, openInterest: 100 }));
+    expect(result.largeOrderDetected).toBe(true);
+    // turnoverScore = clamp((1000/101)/3, 0,1) = 1, informedTradingScore = 0.5*1 + 0.5*0.8 = 0.9
+    expect(result.informedTradingScore).toBeCloseTo(0.9, 3);
+  });
+
+  it("largeOrderDetected=false and lower informedTradingScore when volume24h<100", () => {
+    const result = analyzeMicrostructure(makeInput({ volume24h: 50, openInterest: 100 }));
+    expect(result.largeOrderDetected).toBe(false);
+    // volumeSurge = 50/101 ≈ 0.495, turnoverScore ≈ 0.165
+    // informedTradingScore = 0.5*0.165 + 0.5*0.2 ≈ 0.1825
+    expect(result.informedTradingScore).toBeLessThan(0.3);
+  });
+
+  it("informedTradingScore is in [0, 1] for all inputs", () => {
+    const cases: Array<Partial<MicrostructureInput>> = [
+      { volume24h: 0, openInterest: 0 },
+      { volume24h: 9999, openInterest: 0 },
+      { volume24h: 500, openInterest: 500 },
+      { volume24h: 100, openInterest: 10000 },
+    ];
+    for (const overrides of cases) {
+      const result = analyzeMicrostructure(makeInput(overrides));
+      expect(result.informedTradingScore).toBeGreaterThanOrEqual(0);
+      expect(result.informedTradingScore).toBeLessThanOrEqual(1);
+    }
+  });
+});
+
+// ── Volume-weighted imbalance tests ───────────────────────────────────────────
+
+describe("analyzeMicrostructure — volume-weighted imbalance", () => {
+  it("imbalance increases with higher volume24h for the same prices", () => {
+    // yesBid=0.65, yesAsk=0.70: askSide=0.30, bidSide=0.65, priceImbalance ≈ 0.368
+    // Low vol: imbalance = priceImbalance * 0.5 ≈ 0.184
+    // High vol (volume24h=1000, openInterest=0): volumeWeight=1, imbalance ≈ 0.368
+    const lowVol = analyzeMicrostructure(
+      makeInput({ yesBid: 0.65, yesAsk: 0.70, volume24h: 0, openInterest: 0 })
+    );
+    const highVol = analyzeMicrostructure(
+      makeInput({ yesBid: 0.65, yesAsk: 0.70, volume24h: 1000, openInterest: 0 })
+    );
+    expect(highVol.imbalance).toBeGreaterThan(lowVol.imbalance);
+  });
+
+  it("imbalance with volume24h=0 is half the price-only imbalance", () => {
+    // With volumeWeight=0: imbalance = priceImbalance * 0.5
+    const result = analyzeMicrostructure(
+      makeInput({ yesBid: 0.65, yesAsk: 0.70, volume24h: 0, openInterest: 0 })
+    );
+    // bidSide=0.65, askSide=0.30 → priceImbalance ≈ 0.368
+    // imbalance = 0.368 * 0.5 ≈ 0.184
+    expect(result.imbalance).toBeCloseTo(0.184, 2);
   });
 });
 
