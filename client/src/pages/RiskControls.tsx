@@ -2,9 +2,10 @@ import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { AlertCircle, CheckCircle2, Siren, ShieldCheck, ShieldAlert, TriangleAlert, Shield } from "lucide-react";
+import { AlertCircle, CheckCircle2, Siren, ShieldCheck, ShieldAlert, TriangleAlert, Shield, Activity, TrendingDown, DollarSign } from "lucide-react";
 import { classifyRiskPosture, formatPercent, summarizeRiskBudget } from "@/lib/riskPerformanceDiagnostics";
 import { PageHeader } from "@/components/PageHeader";
+import { StatCard } from "@/components/widgets/StatCard";
 
 export default function RiskControls() {
   const [killSwitchResult, setKillSwitchResult] = useState<string | null>(null);
@@ -105,16 +106,16 @@ export default function RiskControls() {
   const PostureIcon = pc.icon;
 
   return (
-    <div className="space-y-6 max-w-5xl mx-auto">
+    <div className="space-y-6 max-w-5xl mx-auto animate-fade-in">
       <PageHeader
         icon={Shield}
         title="Risk Controls"
-        description="Hard limits enforced before every live order. The AI duo never bypasses these."
+        description="Trading risk guardrails — hard limits enforced on every order"
         iconGradient="from-rose-500 to-orange-500"
         actions={
           <Button
             variant="outline"
-            className="border-rose-500/60 bg-rose-950/30 text-rose-200 hover:bg-rose-950/50 gap-2"
+            className="border-rose-500/60 bg-rose-950/30 text-rose-200 hover:bg-rose-950/50 gap-2 glow-destructive"
             disabled={killSwitch.isPending}
             onClick={() => { setKillSwitchResult(null); killSwitch.mutate(); }}
           >
@@ -126,25 +127,48 @@ export default function RiskControls() {
 
       {/* Kill switch result */}
       {killSwitchResult && (
-        <div className="flex items-start gap-3 rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+        <div className="flex items-start gap-3 rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200 glow-destructive animate-fade-in">
           <ShieldAlert className="w-4 h-4 mt-0.5 shrink-0" />
           {killSwitchResult}
         </div>
       )}
 
       {/* Posture banner */}
-      <div className={`flex items-center gap-3 rounded-lg border px-4 py-3 text-sm font-medium ${pc.bg} ${pc.color}`}>
+      <div className={`flex items-center gap-3 rounded-lg border px-4 py-3 text-sm font-medium ${pc.bg} ${pc.color} ${posture === 'critical' ? 'glow-destructive' : ''}`}>
         <PostureIcon className="w-4 h-4 shrink-0" />
         {pc.label}
       </div>
 
+      {/* Risk metrics cards */}
+      <div className="grid gap-4 md:grid-cols-3 animate-fade-in" style={{ animationDelay: '100ms' }}>
+        <StatCard
+          label="Current Exposure"
+          value={`$${capitalData.currentBalance.toFixed(2)}`}
+          icon={<DollarSign className="w-5 h-5" />}
+          color="#8864ff"
+        />
+        <StatCard
+          label="Daily P&L"
+          value={`${(metrics?.dailyPnL ?? 0) >= 0 ? '+' : ''}$${(metrics?.dailyPnL ?? 0).toFixed(2)}`}
+          change={(metrics?.dailyPnL ?? 0) / Math.max(capitalData.currentBalance, 1) * 100}
+          icon={<TrendingDown className="w-5 h-5" />}
+          color={(metrics?.dailyPnL ?? 0) >= 0 ? '#10b981' : '#ef4444'}
+        />
+        <StatCard
+          label="Max Allowed Drawdown"
+          value={`${formatPercent(capitalData.maxDrawdown)}`}
+          icon={<Activity className="w-5 h-5" />}
+          color="#06b6d4"
+        />
+      </div>
+
       {/* Live snapshot + hard limits side-by-side */}
-      <div className="grid gap-4 md:grid-cols-2">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">Live Snapshot</CardTitle>
-          </CardHeader>
-          <CardContent className="text-sm">
+      <div className="grid gap-4 md:grid-cols-2 animate-fade-in" style={{ animationDelay: '200ms' }}>
+        <div className="glass-card laurenzo-card">
+          <div className="mb-4">
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">Live Snapshot</h3>
+          </div>
+          <div className="text-sm">
             {[
               ["Balance", `$${capitalData.currentBalance.toFixed(2)}`],
               ["Daily P&L", `${(metrics?.dailyPnL ?? 0) >= 0 ? "+" : ""}$${(metrics?.dailyPnL ?? 0).toFixed(2)}`],
@@ -157,14 +181,14 @@ export default function RiskControls() {
                 <span className="font-medium tabular-nums">{value}</span>
               </div>
             ))}
-          </CardContent>
-        </Card>
+          </div>
+        </div>
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">Enforced Hard Limits</CardTitle>
-          </CardHeader>
-          <CardContent className="text-sm">
+        <div className="glass-card laurenzo-card glow-destructive">
+          <div className="mb-4">
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">Enforced Hard Limits</h3>
+          </div>
+          <div className="text-sm">
             {[
               ["Max loss per trade", `$${limits.maxLossPerTrade} (${formatPercent(riskBudget.perTradeUsage)} of balance)`],
               ["Max loss per day", `$${limits.maxLossPerDay} (${formatPercent(riskBudget.dailyUsage)} of balance)`],
@@ -177,19 +201,17 @@ export default function RiskControls() {
                 <span className="font-medium tabular-nums">{value}</span>
               </div>
             ))}
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       </div>
 
       {/* Alerts */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-widest flex items-center gap-2">
-            Active Alerts
-            {riskAlerts.length > 0 && <span className="text-rose-400">({riskAlerts.length})</span>}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="text-sm">
+      <div className="glass-card animate-fade-in" style={{ animationDelay: '300ms' }}>
+        <div className="mb-4 flex items-center gap-2">
+          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">Active Alerts</h3>
+          {riskAlerts.length > 0 && <span className="text-rose-400 text-xs font-semibold">({riskAlerts.length})</span>}
+        </div>
+        <div className="text-sm">
           {riskAlerts.length === 0 ? (
             <div className="flex items-center gap-2 text-emerald-300">
               <CheckCircle2 className="w-4 h-4" />
@@ -205,15 +227,15 @@ export default function RiskControls() {
               ))}
             </ul>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
       {/* How limits work */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">How These Limits Work</CardTitle>
-        </CardHeader>
-        <CardContent className="text-sm text-muted-foreground space-y-2">
+      <div className="glass-card animate-fade-in" style={{ animationDelay: '400ms' }}>
+        <div className="mb-4">
+          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">How These Limits Work</h3>
+        </div>
+        <div className="text-sm text-muted-foreground space-y-2">
           <p>Every order is blocked if <strong className="text-foreground">any</strong> of the following are true at submission time:</p>
           <ul className="space-y-1 ml-4 list-disc">
             <li>Daily realized loss has already reached the daily cap.</li>
@@ -222,8 +244,8 @@ export default function RiskControls() {
             <li>Available capital is below the required order exposure.</li>
           </ul>
           <p className="pt-1">These checks run in the backend before the Kalshi API is ever called. The kill switch closes all open positions and disarms live trading immediately.</p>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
   );
 }

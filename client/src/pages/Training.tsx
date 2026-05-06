@@ -8,6 +8,8 @@ import { trpc } from "@/lib/trpc";
 import { Link } from "wouter";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/PageHeader";
+import { StatCard } from "@/components/widgets/StatCard";
+import { EmptyState } from "@/components/EmptyState";
 
 const RULE_KEYS: Record<string, { label: string; placeholder: string; keys: string[] }> = {
   market_filter: { label: "Market rule", placeholder: "politics, sports, crypto…", keys: ["category", "title"] },
@@ -73,8 +75,10 @@ export default function Training() {
   };
 
   const ruleTypeBadge: Record<string, string> = {
-    exclude: "bg-red-500/20 text-red-400", forbid: "bg-red-500/20 text-red-400",
-    include: "bg-cyan-500/20 text-cyan-400", require: "bg-cyan-500/20 text-cyan-400",
+    exclude: "bg-red-500/20 text-red-300 border-red-500/30",
+    forbid: "bg-red-500/20 text-red-300 border-red-500/30",
+    include: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
+    require: "bg-cyan-500/20 text-cyan-300 border-cyan-500/30",
   };
 
   if (isLoading) {
@@ -86,7 +90,7 @@ export default function Training() {
   }
 
   return (
-    <div className="space-y-8 max-w-5xl mx-auto">
+    <div className="space-y-8 max-w-5xl mx-auto animate-fade-in">
       <PageHeader
         icon={GraduationCap}
         title="Agent Training"
@@ -100,10 +104,17 @@ export default function Training() {
         }
       />
 
-      <Card className="laurenzo-card border-violet-500/30 bg-violet-500/5">
+      {/* Stats */}
+      <div className="grid grid-cols-3 gap-4 animate-fade-in" style={{ animationDelay: '100ms' }}>
+        <StatCard label="Active Instructions" value={instructions?.filter((i: any) => i.isActive).length ?? 0} color="#10b981" />
+        <StatCard label="Total Rules" value={instructions?.reduce((sum: number, i: any) => sum + (i.rules?.length ?? 0), 0) ?? 0} color="#8864ff" />
+        <StatCard label="Active Schedules" value={instructions?.reduce((sum: number, i: any) => sum + (i.schedules?.length ?? 0), 0) ?? 0} color="#06b6d4" />
+      </div>
+
+      <Card className="glass-card border-violet-500/30 animate-fade-in" style={{ animationDelay: '200ms' }}>
         <CardContent className="flex flex-col gap-4 pt-6 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <p className="font-semibold text-foreground">Training shapes behavior. Trading Autonomy decides execution authority.</p>
+            <p className="font-semibold text-foreground gradient-text">Training shapes behavior. Trading Autonomy decides execution authority.</p>
             <p className="mt-2 text-sm text-muted-foreground">
               Use this page to define what the agent should prefer or avoid. Then open Trading Autonomy to decide whether it should execute autonomously.
             </p>
@@ -116,9 +127,9 @@ export default function Training() {
 
       {/* New Instruction Form */}
       {showNewForm && (
-        <Card className="laurenzo-card">
+        <Card className="glass-card glow-primary animate-fade-in">
           <CardHeader>
-            <CardTitle>Create New Instruction</CardTitle>
+            <CardTitle className="gradient-text">Create New Instruction</CardTitle>
             <CardDescription>Define a rule set that your agent will follow. You can add specific rules after creating the instruction.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -157,8 +168,8 @@ export default function Training() {
       {/* Instructions List */}
       <div className="grid gap-4">
         {instructions && instructions.length > 0 ? (
-          instructions.map((instruction: any) => (
-            <Card key={instruction.id} className="laurenzo-card">
+          instructions.map((instruction: any, idx: number) => (
+            <Card key={instruction.id} className="glass-card laurenzo-card animate-fade-in" style={{ animationDelay: `${300 + idx * 50}ms` }}>
               <CardContent className="pt-6">
                 {/* Card Header Row */}
                 <div className="flex items-start justify-between gap-4">
@@ -166,10 +177,10 @@ export default function Training() {
                     <div className="flex items-center gap-3 mb-1 flex-wrap">
                       {getIcon(instruction.instructionType)}
                       <h3 className="text-lg font-bold gradient-text">{instruction.title}</h3>
-                      <Badge className={instruction.isActive ? "bg-cyan-500/20 text-cyan-400 border-0" : "bg-muted text-muted-foreground border-0"}>
+                      <Badge className={instruction.isActive ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/30" : "bg-muted text-muted-foreground border-0"}>
                         {instruction.isActive ? "Active" : "Inactive"}
                       </Badge>
-                      <Badge variant="outline" className="text-xs">{typeLabel[instruction.instructionType]}</Badge>
+                      <Badge variant="outline" className="text-xs border-violet-500/30 text-violet-300">{typeLabel[instruction.instructionType]}</Badge>
                     </div>
                     {instruction.description && (
                       <p className="text-sm text-muted-foreground mb-2">{instruction.description}</p>
@@ -232,7 +243,7 @@ export default function Training() {
 
                       {/* Add Rule Form */}
                       {addingRule === instruction.id && (
-                        <div className="mt-3 p-4 rounded-lg border border-border bg-slate-900/30 space-y-3">
+                        <div className="mt-3 p-4 rounded-lg border border-violet-500/30 bg-slate-900/30 space-y-3 animate-fade-in">
                           <p className="text-xs text-muted-foreground font-medium">New rule</p>
                           <div className="grid grid-cols-3 gap-3">
                             <div>
@@ -310,7 +321,7 @@ export default function Training() {
 
                       {/* Add Schedule Form */}
                       {addingSchedule === instruction.id && (
-                        <div className="mt-3 p-4 rounded-lg border border-border bg-slate-900/30 space-y-3">
+                        <div className="mt-3 p-4 rounded-lg border border-cyan-500/30 bg-slate-900/30 space-y-3 animate-fade-in">
                           <p className="text-xs text-muted-foreground font-medium">New schedule</p>
                           <div>
                             <label className="text-xs text-muted-foreground block mb-1">Schedule type</label>
@@ -364,23 +375,22 @@ export default function Training() {
             </Card>
           ))
         ) : (
-          <Card className="laurenzo-card">
-            <CardContent className="pt-6 text-center py-12">
-              <BookOpen className="w-12 h-12 text-muted-foreground mx-auto mb-4 opacity-50" />
-              <p className="text-muted-foreground mb-2">No training instructions yet.</p>
-              <p className="text-sm text-muted-foreground mb-6">
-                Create an instruction to tell your agent what markets to trade, what to avoid, or when to trade.
-              </p>
+          <EmptyState
+            icon={BookOpen}
+            title="No training instructions yet"
+            description="Create an instruction to tell your agent what markets to trade, what to avoid, or when to trade."
+            iconGradient="from-violet-500/20 to-indigo-500/20"
+            action={
               <Button onClick={() => setShowNewForm(true)} className="laurenzo-button">
                 Create Your First Instruction
               </Button>
-            </CardContent>
-          </Card>
+            }
+          />
         )}
       </div>
 
       {/* Reference */}
-      <Card className="laurenzo-card border-cyan-500/30 bg-cyan-500/5">
+      <Card className="glass-card border-cyan-500/30 animate-fade-in" style={{ animationDelay: '500ms' }}>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <AlertCircle className="w-4 h-4 text-cyan-400" />

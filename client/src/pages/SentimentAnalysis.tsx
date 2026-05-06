@@ -5,6 +5,9 @@ import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
 import { trpc } from "@/lib/trpc";
 import { Activity, Radar, TrendingDown, TrendingUp, Zap } from "lucide-react";
+import { StatCard } from "@/components/widgets/StatCard";
+import { DistributionChart } from "@/components/charts/DistributionChart";
+import { PageHeader } from "@/components/PageHeader";
 
 function formatSigned(value: number) {
   return `${value >= 0 ? "+" : ""}${value.toFixed(2)}`;
@@ -85,6 +88,12 @@ export default function SentimentAnalysis() {
   );
 
   const getSentimentColor = (value: number) => {
+    if (value > 0.3) return "emerald";
+    if (value < -0.3) return "rose";
+    return "slate";
+  };
+
+  const getSentimentGradient = (value: number) => {
     if (value > 0.3) return "from-emerald-400 to-cyan-400";
     if (value < -0.3) return "from-rose-400 to-orange-400";
     return "from-amber-400 to-yellow-300";
@@ -100,17 +109,12 @@ export default function SentimentAnalysis() {
 
   return (
     <div className="space-y-8 max-w-7xl mx-auto">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <h1 className="mb-2 bg-gradient-to-r from-violet-400 via-pink-400 to-cyan-400 bg-clip-text text-4xl font-bold text-transparent">
-              Sentiment Analysis
-            </h1>
-            <p className="text-slate-400 max-w-3xl">
-              Blend internal conviction with an external topic-tone feed so the trading stack reacts to real-world narrative pressure,
-              not only manual sliders.
-            </p>
-          </div>
-
+      <PageHeader
+        icon={Radar}
+        title="Sentiment Analysis"
+        description="Multi-source sentiment scoring with live feeds and attention momentum"
+        iconGradient="from-violet-500 to-pink-500"
+        actions={
           <div className="w-full max-w-xl rounded-2xl border border-slate-800 bg-slate-900/70 p-4 backdrop-blur-xl">
             <div className="flex flex-col gap-3 sm:flex-row">
               <Input
@@ -132,68 +136,76 @@ export default function SentimentAnalysis() {
               The score now blends live GNews headlines, Reddit crowd pulse, and Wikimedia attention momentum so the stack reacts to event flow, crowd chatter, and public attention.
             </p>
           </div>
+        }
+      />
+
+        {/* Summary Stats Row */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 animate-fade-in">
+          <div className="laurenzo-card glass-card">
+            <div className="flex items-start justify-between mb-4">
+              <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ backgroundColor: `${overallSentiment >= 0 ? '#10b981' : '#f43f5e'}20` }}>
+                {overallSentiment >= 0 ? <TrendingUp className="w-5 h-5 text-emerald-400" /> : <TrendingDown className="w-5 h-5 text-rose-400" />}
+              </div>
+            </div>
+            <div className="text-3xl font-bold tracking-tight mb-3">
+              <span className="gradient-text bg-gradient-to-r from-emerald-400 to-cyan-400">
+                {overallSentiment.toFixed(2)}
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-slate-400">Overall Score</span>
+            </div>
+          </div>
+          <StatCard 
+            label="Bullish Sources" 
+            value={sourceCards.filter(s => s.value > 0.1).length} 
+            color="#10b981" 
+          />
+          <StatCard 
+            label="Bearish Sources" 
+            value={sourceCards.filter(s => s.value < -0.1).length} 
+            color="#f43f5e" 
+          />
+          <div className="laurenzo-card glass-card">
+            <div className="flex items-start justify-between mb-4">
+              <div className="w-10 h-10 rounded-full flex items-center justify-between" style={{ backgroundColor: '#06b6d420' }}>
+                <Activity className="w-5 h-5 text-cyan-400" />
+              </div>
+              <div className="live-dot" />
+            </div>
+            <div className="text-3xl font-bold tracking-tight mb-3 text-slate-100">
+              {(liveNews?.articleCount ?? 0) + (liveSocial?.postCount ?? 0)}
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-slate-400">Live Feeds</span>
+            </div>
+          </div>
         </div>
 
-        <Card className="border border-slate-800 bg-gradient-to-br from-slate-900/90 to-slate-950/90 backdrop-blur-xl">
+        <Card className="laurenzo-card glass-card border border-slate-800 bg-gradient-to-br from-slate-900/90 to-slate-950/90 backdrop-blur-xl animate-fade-in">
           <CardHeader>
-            <CardTitle>Composite Sentiment Score</CardTitle>
+            <div className="flex items-center gap-2">
+              <TrendingUp className="w-5 h-5 text-violet-400" />
+              <CardTitle>Sentiment Distribution</CardTitle>
+            </div>
             <CardDescription>
-              Weighted view across news, social, market action, and external topic attention.
+              Breakdown of source contributions to the composite score.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
-              <div className="rounded-3xl border border-slate-800 bg-slate-950/70 p-6">
-                <div className="flex items-center justify-between gap-4">
-                  <div>
-                    <div className={`text-6xl font-bold bg-gradient-to-r ${getSentimentColor(overallSentiment)} bg-clip-text text-transparent`}>
-                      {overallSentiment.toFixed(2)}
-                    </div>
-                    <p className="mt-2 text-lg text-slate-300">{getSentimentLabel(overallSentiment)}</p>
-                    <p className="mt-1 text-sm text-slate-500">Current topic: {topic}</p>
-                  </div>
-                  <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
-                    {overallSentiment >= 0 ? (
-                      <TrendingUp className="h-12 w-12 text-emerald-400" />
-                    ) : (
-                      <TrendingDown className="h-12 w-12 text-rose-400" />
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
-                <div className="rounded-3xl border border-slate-800 bg-slate-950/70 p-6">
-                  <div className="flex items-center gap-3 text-slate-300">
-                    <Radar className="h-5 w-5 text-cyan-400" />
-                    Confidence
-                  </div>
-                  <div className="mt-3 text-4xl font-semibold text-cyan-300">{(confidence * 100).toFixed(0)}%</div>
-                  <p className="mt-2 text-sm text-slate-500">Higher when source agreement and external coverage depth improve.</p>
-                </div>
-                <div className="rounded-3xl border border-slate-800 bg-slate-950/70 p-6">
-                  <div className="flex items-center gap-3 text-slate-300">
-                    <Activity className="h-5 w-5 text-emerald-400" />
-                    Live Headline Count
-                  </div>
-                  <div className="mt-3 text-4xl font-semibold text-emerald-300">{liveNews?.articleCount ?? 0}</div>
-                  <p className="mt-2 text-sm text-slate-500">Recent GNews headlines blended into the news component for the selected topic.</p>
-                </div>
-                <div className="rounded-3xl border border-slate-800 bg-slate-950/70 p-6">
-                  <div className="flex items-center gap-3 text-slate-300">
-                    <Activity className="h-5 w-5 text-fuchsia-400" />
-                    Live Social Mentions
-                  </div>
-                  <div className="mt-3 text-4xl font-semibold text-fuchsia-300">{liveSocial?.mentions ?? 0}</div>
-                  <p className="mt-2 text-sm text-slate-500">Topic-matching Reddit posts currently influencing the crowd-pulse component.</p>
-                </div>
-              </div>
-            </div>
+            <DistributionChart
+              data={sourceCards.map((source) => ({
+                label: source.label,
+                value: Math.abs(source.contribution),
+                color: source.color.replace('text-', ''),
+              }))}
+              height={300}
+            />
           </CardContent>
         </Card>
 
-        <div className="grid gap-6 lg:grid-cols-3">
-          <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl lg:col-span-2">
+        <div className="grid gap-6 lg:grid-cols-3 animate-fade-in">
+          <Card className="laurenzo-card glass-card border border-slate-800 bg-slate-900/70 backdrop-blur-xl lg:col-span-2">
             <CardHeader>
               <CardTitle>Manual Source Controls</CardTitle>
               <CardDescription>Adjust the in-house view and compare it with the external topic signal.</CardDescription>
@@ -240,9 +252,12 @@ export default function SentimentAnalysis() {
             </CardContent>
           </Card>
 
-          <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
+          <Card className="laurenzo-card glass-card border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
             <CardHeader>
-              <CardTitle>External Signal Stack</CardTitle>
+              <div className="flex items-center gap-2">
+                <div className="live-dot" />
+                <CardTitle>External Signal Stack</CardTitle>
+              </div>
               <CardDescription>Independent attention momentum plus live news and crowd-pulse signals for the selected topic.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -251,18 +266,36 @@ export default function SentimentAnalysis() {
                 <div className="mt-2 text-lg font-medium text-slate-100">{topic}</div>
               </div>
               <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
-                <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Live News Sentiment</div>
-                <div className="mt-2 text-3xl font-semibold text-blue-300">{formatSigned(liveNews?.derivedSentiment ?? 0)}</div>
+                <div className="flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-slate-500">
+                  <div className="live-dot" />
+                  Live News Sentiment
+                </div>
+                <div className={`mt-2 text-3xl font-semibold gradient-text bg-gradient-to-r ${
+                  (liveNews?.derivedSentiment ?? 0) > 0 ? "from-emerald-400 to-teal-400" : 
+                  (liveNews?.derivedSentiment ?? 0) < 0 ? "from-rose-400 to-orange-400" : 
+                  "from-slate-400 to-slate-500"
+                }`}>{formatSigned(liveNews?.derivedSentiment ?? 0)}</div>
                 <p className="mt-2 text-xs text-slate-500">Headline-derived tone from the latest GNews articles for this topic.</p>
               </div>
               <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
-                <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Reddit Crowd Pulse</div>
-                <div className="mt-2 text-3xl font-semibold text-fuchsia-300">{formatSigned(composite?.inputs.social ?? socialSentiment)}</div>
+                <div className="flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-slate-500">
+                  <div className="live-dot" />
+                  Reddit Crowd Pulse
+                </div>
+                <div className={`mt-2 text-3xl font-semibold gradient-text bg-gradient-to-r ${
+                  (composite?.inputs.social ?? socialSentiment) > 0 ? "from-emerald-400 to-teal-400" : 
+                  (composite?.inputs.social ?? socialSentiment) < 0 ? "from-rose-400 to-orange-400" : 
+                  "from-slate-400 to-slate-500"
+                }`}>{formatSigned(composite?.inputs.social ?? socialSentiment)}</div>
                 <p className="mt-2 text-xs text-slate-500">Blended from manual crowd bias and live Reddit discussion in the most relevant public subreddit.</p>
               </div>
               <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
                 <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Attention Momentum</div>
-                <div className="mt-2 text-3xl font-semibold text-emerald-300">{formatSigned(composite?.inputs.external ?? 0)}</div>
+                <div className={`mt-2 text-3xl font-semibold ${
+                  (composite?.inputs.external ?? 0) > 0 ? "text-emerald-300" : 
+                  (composite?.inputs.external ?? 0) < 0 ? "text-rose-300" : 
+                  "text-slate-300"
+                }`}>{formatSigned(composite?.inputs.external ?? 0)}</div>
                 <p className="mt-2 text-xs text-slate-500">Derived from the change in recent Wikipedia attention for the selected topic.</p>
               </div>
 
@@ -327,15 +360,15 @@ export default function SentimentAnalysis() {
           </Card>
         </div>
 
-        <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
+        <Card className="laurenzo-card glass-card border border-slate-800 bg-slate-900/70 backdrop-blur-xl animate-fade-in">
           <CardHeader>
             <CardTitle>Weighted Contribution Breakdown</CardTitle>
             <CardDescription>See exactly how each source contributes to the final score.</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              {sourceCards.map((source) => (
-                <div key={source.key} className="rounded-2xl border border-slate-800 bg-slate-950/70 p-5">
+              {sourceCards.map((source, idx) => (
+                <div key={source.key} className="rounded-2xl border border-slate-800 bg-slate-950/70 p-5 animate-fade-in" style={{ animationDelay: `${idx * 100}ms` }}>
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <h3 className="text-base font-medium text-slate-100">{source.label}</h3>

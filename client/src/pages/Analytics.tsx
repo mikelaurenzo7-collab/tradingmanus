@@ -5,6 +5,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { trpc } from "@/lib/trpc";
 import { buildLiquidityRow, type FeedSnapshot, summarizeLiquidityRows } from "@/lib/liquidityAnalytics";
 import { PageHeader } from "@/components/PageHeader";
+import { StatCard } from "@/components/widgets/StatCard";
+import { Sparkline } from "@/components/charts/Sparkline";
+import { EmptyState } from "@/components/EmptyStates";
 
 type MarketView = "all" | "liquid" | "imbalanced";
 
@@ -94,82 +97,51 @@ export default function Analytics() {
         }
       />
 
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5 animate-fade-in" style={{ animationDelay: '100ms' }}>
+        <StatCard
+          label="Tracked Markets"
+          value={summary.tracked}
+          icon={<BarChart3 className="w-5 h-5" />}
+          color="#06b6d4"
+        />
 
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-          <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-base text-slate-100">
-                <BarChart3 className="h-5 w-5 text-cyan-400" />
-                Tracked Markets
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-semibold text-cyan-300">{summary.tracked}</div>
-              <p className="mt-2 text-sm text-slate-500">Feeds with usable live snapshots under the selected filter.</p>
-            </CardContent>
-          </Card>
+        <StatCard
+          label="Average Liquidity"
+          value={formatNumber(summary.avgLiquidity)}
+          icon={<Waves className="w-5 h-5" />}
+          color="#10b981"
+        />
 
-          <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-base text-slate-100">
-                <Waves className="h-5 w-5 text-emerald-400" />
-                Average Liquidity
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-semibold text-emerald-300">{formatNumber(summary.avgLiquidity)}</div>
-              <p className="mt-2 text-sm text-slate-500">Combined YES and NO depth proxy from live market volume snapshots.</p>
-            </CardContent>
-          </Card>
+        <StatCard
+          label="Spread Proxy"
+          value={formatPercent(summary.avgSpread)}
+          icon={<Activity className="w-5 h-5" />}
+          color="#d946ef"
+        />
 
-          <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-base text-slate-100">
-                <Activity className="h-5 w-5 text-fuchsia-400" />
-                Spread Proxy
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-semibold text-fuchsia-300">{formatPercent(summary.avgSpread)}</div>
-              <p className="mt-2 text-sm text-slate-500">Lower is better. Values near zero imply tighter pricing around the binary midpoint.</p>
-            </CardContent>
-          </Card>
+        <StatCard
+          label="Tradability Score"
+          value={formatPercent(summary.avgTradability)}
+          icon={<ShieldAlert className="w-5 h-5" />}
+          color="#f59e0b"
+        />
 
-          <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-base text-slate-100">
-                <ShieldAlert className="h-5 w-5 text-amber-400" />
-                Tradability Score
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-semibold text-amber-300">{formatPercent(summary.avgTradability)}</div>
-              <p className="mt-2 text-sm text-slate-500">Liquidity-adjusted execution score combining depth and spread quality.</p>
-            </CardContent>
-          </Card>
+        <StatCard
+          label="Pressure Score"
+          value={formatPercent(summary.avgPressure)}
+          icon={<Gauge className="w-5 h-5" />}
+          color="#ef4444"
+        />
+      </div>
 
-          <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-base text-slate-100">
-                <Gauge className="h-5 w-5 text-rose-400" />
-                Pressure Score
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-semibold text-rose-300">{formatPercent(summary.avgPressure)}</div>
-              <p className="mt-2 text-sm text-slate-500">Composite signal for imbalance, price momentum, and depth acceleration.</p>
-            </CardContent>
-          </Card>
-        </div>
-
-        <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
-          <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
-            <CardHeader>
-              <CardTitle>Order-Book and Liquidity Surface</CardTitle>
-              <CardDescription>
-                Use live YES/NO depth, implied probability, spread proxy, momentum, and pressure to decide which markets are actually executable.
-              </CardDescription>
-            </CardHeader>
+      <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr] animate-fade-in" style={{ animationDelay: '200ms' }}>
+        <Card className="glass-card border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
+          <CardHeader>
+            <CardTitle>Order-Book and Liquidity Surface</CardTitle>
+            <CardDescription>
+              Use live YES/NO depth, implied probability, spread proxy, momentum, and pressure to decide which markets are actually executable.
+            </CardDescription>
+          </CardHeader>
             <CardContent className="space-y-4">
               {rows.length ? (
                 rows.map((row) => {
@@ -248,15 +220,17 @@ export default function Analytics() {
                   );
                 })
               ) : (
-                <div className="rounded-2xl border border-dashed border-slate-800 bg-slate-950/50 p-6 text-sm text-slate-500">
-                  No live market feeds are available for the selected filter yet.
-                </div>
+                <EmptyState
+                  title="No Market Feeds"
+                  message="No live market feeds are available for the selected filter yet."
+                  icon={BarChart3}
+                />
               )}
-            </CardContent>
-          </Card>
+          </CardContent>
+        </Card>
 
-          <div className="space-y-6">
-            <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
+        <div className="space-y-6">
+          <Card className="glass-card border border-slate-800 bg-slate-900/70 backdrop-blur-xl animate-fade-in" style={{ animationDelay: '300ms' }}>
               <CardHeader>
                 <CardTitle>Liquidity-Adjusted Candidates</CardTitle>
                 <CardDescription>
@@ -268,21 +242,33 @@ export default function Analytics() {
                   topTradable.map((row, index) => (
                     <div key={`${row.marketId}-${index}`} className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
                       <div className="flex items-center justify-between gap-3">
-                        <div>
+                        <div className="flex-1">
                           <div className="text-sm font-medium text-slate-100">{row.marketId}</div>
                           <div className="mt-1 text-xs text-slate-500">Depth {formatNumber(row.totalVolume)} · Spread {formatPercent(row.spreadProxy)}</div>
                         </div>
-                        <div className="text-right text-sm font-semibold text-emerald-300">{formatPercent(row.tradabilityScore)}</div>
+                        <div className="flex items-center gap-3">
+                          <Sparkline
+                            data={[row.momentum, row.depthMomentum, row.tradabilityScore]}
+                            width={60}
+                            height={24}
+                            className="text-emerald-400"
+                          />
+                          <div className="text-right text-sm font-semibold text-emerald-300">{formatPercent(row.tradabilityScore)}</div>
+                        </div>
                       </div>
                     </div>
                   ))
                 ) : (
-                  <div className="text-sm text-slate-500">No markets qualify yet.</div>
+                  <EmptyState
+                    title="No Candidates"
+                    message="No markets qualify yet."
+                    icon={ShieldAlert}
+                  />
                 )}
               </CardContent>
             </Card>
 
-            <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
+            <Card className="glass-card border border-slate-800 bg-slate-900/70 backdrop-blur-xl animate-fade-in" style={{ animationDelay: '400ms' }}>
               <CardHeader>
                 <CardTitle>Volume Imbalance Watchlist</CardTitle>
                 <CardDescription>
@@ -294,21 +280,33 @@ export default function Analytics() {
                   topImbalanced.map((row, index) => (
                     <div key={`${row.marketId}-imbalance-${index}`} className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
                       <div className="flex items-center justify-between gap-3">
-                        <div>
+                        <div className="flex-1">
                           <div className="text-sm font-medium text-slate-100">{row.marketId}</div>
                           <div className="mt-1 text-xs text-slate-500">YES {formatNumber(row.yesVolume)} · NO {formatNumber(row.noVolume)}</div>
                         </div>
-                        <div className="text-right text-sm font-semibold text-amber-300">{formatPercent(row.imbalance)}</div>
+                        <div className="flex items-center gap-3">
+                          <Sparkline
+                            data={[row.yesVolume, row.noVolume, row.imbalance * 1000]}
+                            width={60}
+                            height={24}
+                            className="text-amber-400"
+                          />
+                          <div className="text-right text-sm font-semibold text-amber-300">{formatPercent(row.imbalance)}</div>
+                        </div>
                       </div>
                     </div>
                   ))
                 ) : (
-                  <div className="text-sm text-slate-500">No imbalanced markets are available yet.</div>
+                  <EmptyState
+                    title="No Imbalanced Markets"
+                    message="No imbalanced markets are available yet."
+                    icon={Waves}
+                  />
                 )}
               </CardContent>
             </Card>
 
-            <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
+            <Card className="glass-card border border-slate-800 bg-slate-900/70 backdrop-blur-xl animate-fade-in" style={{ animationDelay: '500ms' }}>
               <CardHeader>
                 <CardTitle>Pressure Watchlist</CardTitle>
                 <CardDescription>
@@ -320,21 +318,33 @@ export default function Analytics() {
                   topPressure.map((row, index) => (
                     <div key={`${row.marketId}-pressure-${index}`} className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
                       <div className="flex items-center justify-between gap-3">
-                        <div>
+                        <div className="flex-1">
                           <div className="text-sm font-medium text-slate-100">{row.marketId}</div>
                           <div className="mt-1 text-xs text-slate-500">Momentum {formatPercent(row.momentum)} · Depth {formatPercent(row.depthMomentum)}</div>
                         </div>
-                        <div className="text-right text-sm font-semibold text-rose-300">{formatPercent(row.microstructurePressure)}</div>
+                        <div className="flex items-center gap-3">
+                          <Sparkline
+                            data={[row.momentum, row.depthMomentum, row.microstructurePressure]}
+                            width={60}
+                            height={24}
+                            className="text-rose-400"
+                          />
+                          <div className="text-right text-sm font-semibold text-rose-300">{formatPercent(row.microstructurePressure)}</div>
+                        </div>
                       </div>
                     </div>
                   ))
                 ) : (
-                  <div className="text-sm text-slate-500">No pressure outliers are available yet.</div>
+                  <EmptyState
+                    title="No Pressure Outliers"
+                    message="No pressure outliers are available yet."
+                    icon={Gauge}
+                  />
                 )}
-              </CardContent>
-            </Card>
-          </div>
+            </CardContent>
+          </Card>
         </div>
+      </div>
     </div>
   );
 }

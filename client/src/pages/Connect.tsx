@@ -3,12 +3,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { AlertCircle, CheckCircle2, KeyRound, Laptop, Loader2, ShieldCheck, Link2, ToggleLeft, ToggleRight } from "lucide-react";
+import { AlertCircle, CheckCircle2, KeyRound, Laptop, Loader2, ShieldCheck, Link2, ToggleLeft, ToggleRight, WifiOff, Wifi, Zap } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { buildKalshiConnectionSuccessMessage, buildPolymarketConnectionSuccessMessage } from "@/lib/connectFlow";
 import { trpc } from "@/lib/trpc";
 import { PageHeader } from "@/components/PageHeader";
+import { StatCard } from "@/components/widgets/StatCard";
+import { EmptyState } from "@/components/EmptyStates";
 
 // ---------- Kalshi panel ----------
 function KalshiConnectPanel() {
@@ -75,14 +77,14 @@ function KalshiConnectPanel() {
   };
 
   return (
-    <Card className="laurenzo-card shadow-lg hover:shadow-xl transition-all duration-300">
+    <Card className={`glass-card animate-fade-in border-l-4 ${isAlreadyConnected ? 'glow-success border-l-indigo-500' : 'border-l-indigo-500/40'}`} style={{ animationDelay: '100ms' }}>
       <CardHeader className="pb-4">
         <div className="flex items-center justify-between">
           <CardTitle className="flex items-center gap-3 text-xl">
-            <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-500 shadow-md">
+            <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-500 shadow-md animate-float">
               <span className="text-2xl">📈</span>
             </div>
-            <span className="gradient-text">Kalshi</span>
+            <span className="gradient-text font-bold">Kalshi</span>
           </CardTitle>
           {isAlreadyConnected && (
             <Badge variant="outline" className="border-emerald-400/40 bg-emerald-500/10 text-emerald-300 gap-1.5 px-2.5 py-1">
@@ -126,16 +128,22 @@ function KalshiConnectPanel() {
           </Alert>
         ) : (
           <>
-            <Alert className="border-primary/30 bg-primary/5">
-              <Laptop className="h-4 w-4" />
-              <AlertTitle>Setup</AlertTitle>
-              <AlertDescription>
+            <EmptyState
+              icon={WifiOff}
+              title="Not connected"
+              message="Add your Kalshi API credentials to enable autonomous trading"
+            />
+
+            <Alert className="border-indigo-400/30 bg-indigo-500/10">
+              <Laptop className="h-4 w-4 text-indigo-400" />
+              <AlertTitle className="text-indigo-200">Setup</AlertTitle>
+              <AlertDescription className="text-indigo-100">
                 Generate credentials inside{" "}
                 <a
                   href="https://kalshi.com/account/profile"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-primary hover:underline"
+                  className="text-indigo-300 hover:text-indigo-200 underline font-semibold"
                 >
                   Kalshi account settings
                 </a>
@@ -143,31 +151,33 @@ function KalshiConnectPanel() {
               </AlertDescription>
             </Alert>
 
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Kalshi API Key ID</label>
-              <Input
-                placeholder="Example: a952bcbe-ec3b-4b5b-b8f9-11dae589608c"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                type="password"
-                className="font-mono text-xs"
-                disabled={connectMutation.isPending}
-              />
-            </div>
+            <div className="laurenzo-card space-y-4 p-4 bg-gradient-to-br from-indigo-500/5 to-violet-500/5">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Kalshi API Key ID</label>
+                <Input
+                  placeholder="Example: a952bcbe-ec3b-4b5b-b8f9-11dae589608c"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  type="password"
+                  className="font-mono text-xs"
+                  disabled={connectMutation.isPending}
+                />
+              </div>
 
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Kalshi private key (RSA PEM)</label>
-              <Textarea
-                placeholder={"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"}
-                value={privateKey}
-                onChange={(e) => setPrivateKey(e.target.value)}
-                className="min-h-32 font-mono text-xs"
-                disabled={connectMutation.isPending}
-              />
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Kalshi private key (RSA PEM)</label>
+                <Textarea
+                  placeholder={"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"}
+                  value={privateKey}
+                  onChange={(e) => setPrivateKey(e.target.value)}
+                  className="min-h-32 font-mono text-xs"
+                  disabled={connectMutation.isPending}
+                />
+              </div>
             </div>
 
             {trimmedPrivateKey.length > 0 && !privateKeyLooksComplete ? (
-              <Alert>
+              <Alert variant="destructive" className="glow-destructive">
                 <AlertCircle className="h-4 w-4" />
                 <AlertDescription>
                   The private key does not look complete. Make sure you copied the full PEM text
@@ -177,7 +187,7 @@ function KalshiConnectPanel() {
             ) : null}
 
             {connectionMessage && !connected ? (
-              <Alert variant={connectMutation.isError ? "destructive" : "default"}>
+              <Alert variant={connectMutation.isError ? "destructive" : "default"} className={connectMutation.isError ? "glow-destructive" : ""}>
                 <AlertCircle className="h-4 w-4" />
                 <AlertDescription>{connectionMessage}</AlertDescription>
               </Alert>
@@ -186,7 +196,7 @@ function KalshiConnectPanel() {
             <Button
               onClick={handleConnect}
               disabled={connectMutation.isPending || !trimmedApiKey || !trimmedPrivateKey}
-              className="w-full laurenzo-button"
+              className="w-full bg-gradient-to-br from-indigo-500 to-violet-500 hover:from-indigo-600 hover:to-violet-600 glow-primary"
               size="lg"
             >
               {connectMutation.isPending ? (
@@ -265,14 +275,14 @@ function PolymarketConnectPanel() {
   };
 
   return (
-    <Card className="laurenzo-card shadow-lg hover:shadow-xl transition-all duration-300">
+    <Card className={`glass-card animate-fade-in border-l-4 ${isAlreadyConnected ? 'glow-success border-l-emerald-500' : 'border-l-emerald-500/40'}`} style={{ animationDelay: '200ms' }}>
       <CardHeader className="pb-4">
         <div className="flex items-center justify-between">
           <CardTitle className="flex items-center gap-3 text-xl">
-            <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-500 shadow-md">
-              <span className="text-2xl">🟣</span>
+            <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-500 shadow-md animate-float">
+              <span className="text-2xl">🟬</span>
             </div>
-            <span className="gradient-text">Polymarket</span>
+            <span className="gradient-text font-bold">Polymarket</span>
           </CardTitle>
           {isAlreadyConnected && (
             <Badge variant="outline" className="border-emerald-400/40 bg-emerald-500/10 text-emerald-300 gap-1.5 px-2.5 py-1">
@@ -315,16 +325,22 @@ function PolymarketConnectPanel() {
           </Alert>
         ) : (
           <>
-            <Alert className="border-purple-400/30 bg-purple-500/5">
-              <Link2 className="h-4 w-4" />
-              <AlertTitle>Setup</AlertTitle>
-              <AlertDescription>
+            <EmptyState
+              icon={WifiOff}
+              title="Not connected"
+              message="Add your Polymarket API credentials to enable CLOB trading"
+            />
+
+            <Alert className="border-emerald-400/30 bg-emerald-500/10">
+              <Link2 className="h-4 w-4 text-emerald-400" />
+              <AlertTitle className="text-emerald-200">Setup</AlertTitle>
+              <AlertDescription className="text-emerald-100">
                 Go to{" "}
                 <a
                   href="https://polymarket.com/profile/api-keys"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-primary hover:underline"
+                  className="text-emerald-300 hover:text-emerald-200 underline font-semibold"
                 >
                   Polymarket Profile - API Keys
                 </a>
@@ -332,44 +348,46 @@ function PolymarketConnectPanel() {
               </AlertDescription>
             </Alert>
 
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Polymarket API Key</label>
-              <Input
-                placeholder="API key from Polymarket"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                type="password"
-                className="font-mono text-xs"
-                disabled={connectMutation.isPending}
-              />
-            </div>
+            <div className="laurenzo-card space-y-4 p-4 bg-gradient-to-br from-emerald-500/5 to-teal-500/5">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Polymarket API Key</label>
+                <Input
+                  placeholder="API key from Polymarket"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  type="password"
+                  className="font-mono text-xs"
+                  disabled={connectMutation.isPending}
+                />
+              </div>
 
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Polymarket API Secret</label>
-              <Input
-                placeholder="API secret from Polymarket"
-                value={apiSecret}
-                onChange={(e) => setApiSecret(e.target.value)}
-                type="password"
-                className="font-mono text-xs"
-                disabled={connectMutation.isPending}
-              />
-            </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Polymarket API Secret</label>
+                <Input
+                  placeholder="API secret from Polymarket"
+                  value={apiSecret}
+                  onChange={(e) => setApiSecret(e.target.value)}
+                  type="password"
+                  className="font-mono text-xs"
+                  disabled={connectMutation.isPending}
+                />
+              </div>
 
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Polymarket API Passphrase</label>
-              <Input
-                placeholder="Passphrase from Polymarket"
-                value={apiPassphrase}
-                onChange={(e) => setApiPassphrase(e.target.value)}
-                type="password"
-                className="font-mono text-xs"
-                disabled={connectMutation.isPending}
-              />
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Polymarket API Passphrase</label>
+                <Input
+                  placeholder="Passphrase from Polymarket"
+                  value={apiPassphrase}
+                  onChange={(e) => setApiPassphrase(e.target.value)}
+                  type="password"
+                  className="font-mono text-xs"
+                  disabled={connectMutation.isPending}
+                />
+              </div>
             </div>
 
             {connectionMessage && !connected ? (
-              <Alert variant={connectMutation.isError ? "destructive" : "default"}>
+              <Alert variant={connectMutation.isError ? "destructive" : "default"} className={connectMutation.isError ? "glow-destructive" : ""}>
                 <AlertCircle className="h-4 w-4" />
                 <AlertDescription>{connectionMessage}</AlertDescription>
               </Alert>
@@ -383,7 +401,7 @@ function PolymarketConnectPanel() {
                 !apiSecret.trim() ||
                 !apiPassphrase.trim()
               }
-              className="w-full laurenzo-button"
+              className="w-full bg-gradient-to-br from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 glow-primary"
               size="lg"
             >
               {connectMutation.isPending ? (
@@ -434,7 +452,7 @@ function PlatformSubscriptionCard() {
   ];
 
   return (
-    <Card className="laurenzo-card">
+    <Card className="glass-card animate-fade-in" style={{ animationDelay: '300ms' }}>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           {current === "both" ? (
@@ -479,15 +497,43 @@ function PlatformSubscriptionCard() {
 
 // ---------- Main page ----------
 export default function Connect() {
+  // Query connection status for both platforms
+  const kalshiStatus = trpc.kalshi.getKalshiAccountStatus.useQuery(undefined, { retry: false });
+  const polymarketStatus = trpc.polymarket.getPolymarketAccountStatus.useQuery(undefined, { retry: false });
+
+  const kalshiConnected = kalshiStatus.data?.connected === true;
+  const polymarketConnected = polymarketStatus.data?.connected === true;
+
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="max-w-5xl mx-auto space-y-6 animate-fade-in">
       <PageHeader
         icon={Link2}
-        title="Connect Platforms"
-        description="Encrypted API credentials for autonomous trading"
+        title="Exchange Connections"
+        description="API credentials and account validation for autonomous trading"
         iconGradient="from-violet-500 to-indigo-500"
       />
-      <Alert className="border-violet-400/30 bg-violet-500/10">
+
+      {/* Connection Status Hero */}
+      <div className="grid sm:grid-cols-2 gap-4 animate-fade-in" style={{ animationDelay: '50ms' }}>
+        <StatCard
+          label="Kalshi Connection"
+          value={kalshiConnected ? "Connected" : "Disconnected"}
+          icon={kalshiConnected ? <Wifi className="w-5 h-5" /> : <WifiOff className="w-5 h-5" />}
+          color={kalshiConnected ? "#10b981" : "#ef4444"}
+          className={`glass-card ${kalshiConnected ? 'glow-success border-indigo-500/30' : 'border-red-500/30'}`}
+          loading={kalshiStatus.isLoading}
+        />
+        <StatCard
+          label="Polymarket Connection"
+          value={polymarketConnected ? "Connected" : "Disconnected"}
+          icon={polymarketConnected ? <Wifi className="w-5 h-5" /> : <WifiOff className="w-5 h-5" />}
+          color={polymarketConnected ? "#10b981" : "#ef4444"}
+          className={`glass-card ${polymarketConnected ? 'glow-success border-emerald-500/30' : 'border-red-500/30'}`}
+          loading={polymarketStatus.isLoading}
+        />
+      </div>
+
+      <Alert className="border-violet-400/30 bg-violet-500/10 animate-fade-in" style={{ animationDelay: '100ms' }}>
         <ShieldCheck className="h-4 w-4 text-violet-400" />
         <AlertDescription className="text-violet-200 text-sm">
           Your credentials are validated live, then encrypted (AES-256-GCM) before storage. The bot trades on your behalf based on your autonomy settings.
@@ -502,9 +548,11 @@ export default function Connect() {
         </div>
 
         {/* Platform subscription */}
-        <PlatformSubscriptionCard />
+        <div className="animate-fade-in" style={{ animationDelay: '350ms' }}>
+          <PlatformSubscriptionCard />
+        </div>
 
-        <Alert>
+        <Alert className="animate-fade-in" style={{ animationDelay: '400ms' }}>
           <ShieldCheck className="h-4 w-4" />
           <AlertDescription>
             <strong>Security:</strong> All credentials are AES-256-GCM encrypted before storage

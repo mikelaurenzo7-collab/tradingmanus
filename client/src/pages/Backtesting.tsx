@@ -4,7 +4,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { trpc } from "@/lib/trpc";
 import { chooseBacktestMode, buildScenarioTrades, mapClosedPositionsToBacktestTrades } from "@/lib/backtesting";
-import { BarChart3, Gauge, History, Loader2, Shield, TrendingUp } from "lucide-react";
+import { BarChart3, History, Loader2, ActivitySquare } from "lucide-react";
+import { PageHeader } from "@/components/PageHeader";
+import { StatCard } from "@/components/widgets/StatCard";
+import { PerformanceChart } from "@/components/charts/PerformanceChart";
+import { DistributionChart } from "@/components/charts/DistributionChart";
+import { EnhancedTable, Column } from "@/components/enhanced/Table";
+import { EmptyState } from "@/components/EmptyStates";
+import { chartColors } from "@/lib/chartTheme";
 
 type AnalysisMode = "live" | "scenario";
 
@@ -143,19 +150,63 @@ export default function Backtesting() {
 
   const isLoadingAny = tradeHistoryQuery.isLoading || capitalQuery.isLoading || runAnalysisMutation.isPending;
 
-  return (
-    <div className="space-y-8 max-w-7xl mx-auto">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <h1 className="mb-2 bg-gradient-to-r from-violet-400 via-pink-400 to-cyan-400 bg-clip-text text-4xl font-bold text-transparent">
-              Backtesting
-            </h1>
-            <p className="max-w-3xl text-slate-400">
-              Validate the trading stack with procedure-driven performance statistics, Monte Carlo robustness, and
-              walk-forward analysis using either real closed trades or a scenario sandbox.
-            </p>
-          </div>
+  // Build trade-by-trade table data
+  const tradeTableData = useMemo(() => {
+    if (!trades?.length) return [];
+    return trades.map((trade, index) => ({
+      id: index + 1,
+      marketId: trade.marketId || `trade-${index}`,
+      side: trade.side,
+      pnl: trade.pnl,
+      profit: trade.pnl > 0,
+      pnlFormatted: formatCurrency(trade.pnl),
+    }));
+  }, [trades]);
 
+  const tradeTableColumns: Column<typeof tradeTableData[number]>[] = [
+    { key: 'id', header: '#', width: 60 },
+    { key: 'marketId', header: 'Market', sortable: true },
+    { key: 'side', header: 'Side', width: 80, render: (val) => String(val).toUpperCase() },
+    {
+      key: 'pnl',
+      header: 'P&L',
+      sortable: true,
+      render: (_, row) => (
+        <span className={row.profit ? 'text-emerald-400 font-semibold' : 'text-rose-400 font-semibold'}>
+          {row.pnlFormatted}
+        </span>
+      ),
+    },
+  ];
+
+  // Build distribution data for wins/losses
+  const distributionData = useMemo(() => {
+    if (!stats) return [];
+    const wins = stats.totalTrades * stats.winRate;
+    const losses = stats.totalTrades * (1 - stats.winRate);
+    return [
+      { label: 'Wins', value: wins, color: chartColors[0] },
+      { label: 'Losses', value: losses, color: chartColors[3] },
+    ];
+  }, [stats]);
+
+  // Build performance chart data from equity curve
+  const performanceData = useMemo(() => {
+    return equityCurve.map((value, index) => ({
+      index,
+      equity: value,
+    }));
+  }, [equityCurve]);
+
+  return (
+    <div className="space-y-8 max-w-7xl mx-auto animate-fade-in">
+      <PageHeader
+        icon={ActivitySquare}
+        iconGradient="from-violet-500 via-fuchsia-500 to-cyan-500"
+        title="Backtesting"
+        description="Validate the trading stack with procedure-driven performance statistics, Monte Carlo robustness, and walk-forward analysis using either real closed trades or a scenario sandbox."
+
+        actions={
           <div className="flex flex-wrap gap-2">
             <Button
               type="button"
@@ -189,9 +240,10 @@ export default function Backtesting() {
               </p>
             ) : null}
           </div>
-        </div>
+        }
+      />
 
-        <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
+        <Card className="glass-card animate-fade-in" style={{ animationDelay: '0.1s' }}>
           <CardHeader>
             <CardTitle>Analysis Source</CardTitle>
             <CardDescription>{sourceDescription}</CardDescription>
@@ -276,70 +328,55 @@ export default function Backtesting() {
           </CardContent>
         </Card>
 
-        {isLoadingAny ? (
-          <div className="flex min-h-[18rem] items-center justify-center rounded-3xl border border-slate-800 bg-slate-900/50">
-            <Loader2 className="h-8 w-8 animate-spin text-cyan-400" />
+        {trades.length === 0 && !isLoadingAny ? (
+          <Card className="glass-card">
+            <CardContent className="pt-6">
+              <EmptyState
+                icon={BarChart3}
+                title="No backtest run yet"
+                message={"Configure your analysis source and parameters above to begin backtesting."}
+              />
+            </CardContent>
+          </Card>
+        ) : isLoadingAny ? (
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4 animate-fade-in" style={{ animationDelay: '0.2s' }}>
+            <StatCard label="Total Trades" value="0" loading />
+            <StatCard label="Win Rate" value="0%" loading />
+            <StatCard label="Sharpe Ratio" value="0.00" loading />
+            <StatCard label="Max Drawdown" value="0%" loading />
           </div>
         ) : (
           <>
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
-                <CardHeader className="pb-3">
-                  <CardTitle className="flex items-center gap-2 text-base text-slate-100">
-                    <BarChart3 className="h-5 w-5 text-cyan-400" />
-                    Total Trades
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-semibold text-cyan-300">{stats?.totalTrades ?? 0}</div>
-                  <p className="mt-2 text-sm text-slate-500">
-                    {effectiveMode === "live" ? "Closed trades pulled from your saved Kalshi history." : "Scenario-generated trades from the selected date range."}
-                  </p>
-                </CardContent>
-              </Card>
-
-              <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
-                <CardHeader className="pb-3">
-                  <CardTitle className="flex items-center gap-2 text-base text-slate-100">
-                    <TrendingUp className="h-5 w-5 text-emerald-400" />
-                    Win Rate
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-semibold text-emerald-300">{formatPercent(stats?.winRate ?? 0)}</div>
-                  <p className="mt-2 text-sm text-slate-500">Share of analyzed trades that closed with positive P&amp;L.</p>
-                </CardContent>
-              </Card>
-
-              <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
-                <CardHeader className="pb-3">
-                  <CardTitle className="flex items-center gap-2 text-base text-slate-100">
-                    <Gauge className="h-5 w-5 text-fuchsia-400" />
-                    Sharpe Ratio
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-semibold text-fuchsia-300">{(stats?.sharpeRatio ?? 0).toFixed(2)}</div>
-                  <p className="mt-2 text-sm text-slate-500">Annualized return efficiency based on the selected trade-return stream.</p>
-                </CardContent>
-              </Card>
-
-              <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
-                <CardHeader className="pb-3">
-                  <CardTitle className="flex items-center gap-2 text-base text-slate-100">
-                    <Shield className="h-5 w-5 text-amber-400" />
-                    Max Drawdown
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-semibold text-amber-300">{formatPercent(stats?.maxDrawdown ?? 0)}</div>
-                  <p className="mt-2 text-sm text-slate-500">Worst peak-to-trough capital decline along the equity curve.</p>
-                </CardContent>
-              </Card>
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4 animate-fade-in" style={{ animationDelay: '0.2s' }}>
+              <StatCard
+                label="Total Return"
+                value={formatPercent(stats?.totalReturn ?? 0)}
+                icon={<BarChart3 className="h-5 w-5" />}
+                color="#06b6d4"
+              />
+              <StatCard
+                label="Win Rate"
+                value={formatPercent(stats?.winRate ?? 0)}
+                change={stats ? (stats.winRate - 0.5) * 100 : undefined}
+                icon={<History className="h-5 w-5" />}
+                color="#10b981"
+              />
+              <StatCard
+                label="Sharpe Ratio"
+                value={(stats?.sharpeRatio ?? 0).toFixed(2)}
+                icon={<ActivitySquare className="h-5 w-5" />}
+                color="#d946ef"
+              />
+              <StatCard
+                label="Max Drawdown"
+                value={formatPercent(stats?.maxDrawdown ?? 0)}
+                icon={<Loader2 className="h-5 w-5" />}
+                color="#f59e0b"
+              />
             </div>
 
-            <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-              <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
+            <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr] animate-fade-in" style={{ animationDelay: '0.3s' }}>
+              <Card className="glass-card">
                 <CardHeader>
                   <CardTitle>Backtest Summary</CardTitle>
                   <CardDescription>
@@ -368,7 +405,7 @@ export default function Backtesting() {
                 </CardContent>
               </Card>
 
-              <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
+              <Card className="glass-card">
                 <CardHeader>
                   <CardTitle>Monte Carlo Robustness</CardTitle>
                   <CardDescription>
@@ -399,8 +436,8 @@ export default function Backtesting() {
               </Card>
             </div>
 
-            <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
-              <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
+            <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr] animate-fade-in" style={{ animationDelay: '0.4s' }}>
+              <Card className="glass-card">
                 <CardHeader>
                   <CardTitle>Equity Curve</CardTitle>
                   <CardDescription>
@@ -408,25 +445,17 @@ export default function Backtesting() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="grid h-72 grid-cols-12 items-end gap-2 rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
-                    {equityCurve.slice(1).map((value, index) => {
-                      const span = Math.max(1, equityRange.max - equityRange.min);
-                      const height = 18 + ((value - equityRange.min) / span) * 82;
-                      return (
-                        <div key={`${value}-${index}`} className="flex h-full items-end">
-                          <div
-                            className="w-full rounded-t-lg bg-gradient-to-t from-cyan-500 via-violet-500 to-fuchsia-500"
-                            style={{ height: `${height}%` }}
-                            title={`Trade ${index + 1}: ${formatCurrency(value)}`}
-                          />
-                        </div>
-                      );
-                    })}
-                  </div>
+                  <PerformanceChart
+                    data={performanceData}
+                    series={[{ key: 'equity', name: 'Portfolio Value', color: '#06b6d4' }]}
+                    height={300}
+                    areaShading
+                    formatY={(val) => formatCurrency(val)}
+                  />
                 </CardContent>
               </Card>
 
-              <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
+              <Card className="glass-card">
                 <CardHeader>
                   <CardTitle>Walk-Forward Validation</CardTitle>
                   <CardDescription>
@@ -467,11 +496,45 @@ export default function Backtesting() {
                 </CardContent>
               </Card>
             </div>
+
+            {distributionData.length > 0 && (
+              <Card className="glass-card animate-fade-in" style={{ animationDelay: '0.5s' }}>
+                <CardHeader>
+                  <CardTitle>Trade Outcome Distribution</CardTitle>
+                  <CardDescription>Win/loss breakdown across the analyzed trade sequence.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <DistributionChart
+                    data={distributionData}
+                    height={200}
+                    formatValue={(val) => val.toFixed(0)}
+                  />
+                </CardContent>
+              </Card>
+            )}
+
+            {tradeTableData.length > 0 && (
+              <Card className="glass-card animate-fade-in" style={{ animationDelay: '0.6s' }}>
+                <CardHeader>
+                  <CardTitle>Trade-by-Trade Results</CardTitle>
+                  <CardDescription>Detailed breakdown of each trade in the backtest sequence.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <EnhancedTable
+                    columns={tradeTableColumns}
+                    data={tradeTableData}
+                    stickyHeader
+                    zebraStriping
+                    hoverGlow
+                  />
+                </CardContent>
+              </Card>
+            )}
           </>
         )}
 
         {(tradeHistoryQuery.error || capitalQuery.error || runAnalysisMutation.error) && (
-          <Card className="border border-rose-900/60 bg-rose-950/30 backdrop-blur-xl">
+          <Card className="glass-card border-rose-900/60 bg-rose-950/30">
             <CardHeader>
               <CardTitle className="text-rose-300">Backtesting Pipeline Unavailable</CardTitle>
               <CardDescription className="text-rose-200/80">

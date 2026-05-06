@@ -1,3 +1,4 @@
+import { useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import {
   formatAutonomyActivityTime,
@@ -6,11 +7,16 @@ import {
 } from "@/lib/tradingAutonomy";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { AlertCircle, ScrollText, Activity } from "lucide-react";
+import { AlertCircle, ScrollText, Activity, Clock, AlertTriangle } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
-import { EmptyState } from "@/components/EmptyState";
+import { EmptyState } from "@/components/EmptyStates";
+import { StatCard } from "@/components/widgets/StatCard";
+import { Table, Column } from "@/components/enhanced/Table";
+import { TableSkeleton } from "@/components/enhanced/Skeletons";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 export default function AuditLog() {
+  const [eventTypeFilter, setEventTypeFilter] = useState<string>("all");
   const auditLog = trpc.kalshi.getAuditLog.useQuery();
   const autonomyActivity = trpc.kalshi.getAutonomyActivity.useQuery();
 
@@ -22,6 +28,14 @@ export default function AuditLog() {
           title="Audit Log"
           description="Loading audit activity…"
         />
+        <div className="grid gap-4 md:grid-cols-3">
+          <StatCard label="Total Events" value="-" loading />
+          <StatCard label="Critical (24h)" value="-" loading />
+          <StatCard label="Last Event" value="-" loading />
+        </div>
+        <div className="glass-card">
+          <TableSkeleton rows={10} />
+        </div>
       </div>
     );
   }
@@ -33,8 +47,7 @@ export default function AuditLog() {
         <EmptyState
           icon={AlertCircle}
           title="Error loading audit activity"
-          description="Please refresh the page or try again in a moment."
-          iconGradient="from-rose-500/20 to-pink-500/20"
+          message="Please refresh the page or try again in a moment."
         />
       </div>
     );
@@ -54,15 +67,124 @@ export default function AuditLog() {
     return "border-white/10 bg-white/5 text-slate-300";
   };
 
+  const getEventBadgeVariant = (eventType: string): "destructive" | "default" | "secondary" | "outline" => {
+    if (eventType.includes("kill_switch")) return "destructive";
+    if (eventType.includes("blocked") || eventType.includes("risk")) return "outline";
+    if (eventType.includes("order_placed") || eventType.includes("trading")) return "default";
+    return "secondary";
+  };
+
+  const getEventBadgeColor = (eventType: string): string => {
+    // Order events → cyan
+    if (eventType.includes("order_placed") || eventType.includes("position")) return "border-cyan-400/40 bg-cyan-500/10 text-cyan-300";
+    // Risk/blocked → amber
+    if (eventType.includes("blocked") || eventType.includes("risk")) return "border-amber-400/40 bg-amber-500/10 text-amber-300";
+    // Kill switch/errors → red
+    if (eventType.includes("kill_switch") || eventType.includes("error")) return "border-rose-400/40 bg-rose-500/10 text-rose-300";
+    // Auth → violet
+    if (eventType.includes("auth") || eventType.includes("login")) return "border-violet-400/40 bg-violet-500/10 text-violet-300";
+    return "border-slate-400/30 bg-slate-500/10 text-slate-300";
+  };
+
+  // Calculate summary metrics
+  const totalEvents = auditLog.data?.length ?? 0;
+  const now = new Date();
+  const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const criticalEvents24h = auditLog.data?.filter(
+    (e: any) => 
+      new Date(e.createdAt) > last24h && 
+      (e.eventType.includes("kill_switch") || e.eventType.includes("blocked") || e.eventType.includes("risk"))
+  ).length ?? 0;
+  const lastEventTime = auditLog.data?.[0]?.createdAt 
+    ? new Date(auditLog.data[0].createdAt).toLocaleString()
+    : "No events yet";
+
+  // Filter events
+  const filteredEvents = useMemo(() => {
+    if (!auditLog.data) return [];
+    if (eventTypeFilter === "all") return auditLog.data;
+    return auditLog.data.filter((e: any) => e.eventType.includes(eventTypeFilter));
+  }, [auditLog.data, eventTypeFilter]);
+
+  // Define table columns
+  const columns: Column<any>[] = [
+    {
+      key: "eventType",
+      header: "Event Type",
+      sortable: true,
+      render: (value: any, row: any) => (
+        <Badge 
+          variant={getEventBadgeVariant(row.eventType)} 
+          className={`text-[10px] tracking-wide font-semibold ${getEventBadgeColor(row.eventType)}`}
+        >
+          {getAutonomyEventLabel(row.eventType).toUpperCase()}
+        </Badge>
+      ),
+    },
+    {
+      key: "createdAt",
+      header: "Time",
+      sortable: true,
+      render: (value: any) => (
+        <span className="text-xs text-muted-foreground">
+          {new Date(value).toLocaleString()}
+        </span>
+      ),
+    },
+    {
+      key: "details",
+      header: "Details",
+      render: (value: any) => (
+        <div className="text-xs text-slate-300 max-w-md truncate">
+          {typeof value === "string" ? value : JSON.stringify(value)}
+        </div>
+      ),
+    },
+    {
+      key: "triggeredByOpenId",
+      header: "User",
+      render: (value: any) => (
+        value ? (
+          <span className="font-mono text-xs text-muted-foreground">
+            {value.substring(0, 8)}…
+          </span>
+        ) : null
+      ),
+    },
+  ];
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 animate-fade-in">
       <PageHeader
         icon={ScrollText}
         title="Audit Log"
-        description="Immutable record of all system decisions, overrides, and away-from-chat trading events"
+        description="Immutable event log — every trade decision, risk block, and reviewer call"
+        iconGradient="from-violet-500 to-purple-500"
       />
 
-      <Card className="border-emerald-400/20 bg-gradient-to-br from-emerald-500/[0.07] to-cyan-500/[0.04] backdrop-blur-sm">
+      {/* Summary metrics */}
+      <div className="grid gap-4 md:grid-cols-3 animate-fade-in" style={{ animationDelay: '100ms' }}>
+        <StatCard
+          label="Total Events"
+          value={totalEvents}
+          icon={<ScrollText className="w-5 h-5" />}
+          color="#8b5cf6"
+        />
+        <StatCard
+          label="Critical (24h)"
+          value={criticalEvents24h}
+          icon={<AlertTriangle className="w-5 h-5" />}
+          color={criticalEvents24h > 0 ? "#ef4444" : "#10b981"}
+        />
+        <StatCard
+          label="Last Event"
+          value={lastEventTime}
+          icon={<Clock className="w-5 h-5" />}
+          color="#06b6d4"
+        />
+      </div>
+
+      <Card className="glass-card border-emerald-400/20 bg-gradient-to-br from-emerald-500/[0.07] to-cyan-500/[0.04] backdrop-blur-sm animate-fade-in" style={{ animationDelay: '200ms' }}>
         <CardHeader className="pb-3">
           <div className="flex items-center gap-3">
             <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-500 shadow-md">
@@ -112,50 +234,43 @@ export default function AuditLog() {
         </CardContent>
       </Card>
 
-      <div className="space-y-2">
-        {auditLog.data?.map((event: any) => (
-          <Card
-            key={event.id}
-            className="border-white/10 bg-white/[0.02] backdrop-blur-sm hover:border-white/20 transition-colors"
-          >
-            <CardContent className="pt-4">
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex-1 space-y-2 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <Badge variant="outline" className={`${getEventColor(event.eventType)} text-[10px] tracking-wide`}>
-                      {getAutonomyEventLabel(event.eventType).toUpperCase()}
-                    </Badge>
-                    <span className="text-xs text-muted-foreground">
-                      {new Date(event.createdAt).toLocaleString()}
-                    </span>
-                  </div>
-                  <div className="text-sm text-slate-300">{getAutonomyEventLabel(event.eventType)}</div>
-                  {event.details && (
-                    <div className="mt-2 rounded-lg bg-black/30 border border-white/5 p-2.5 font-mono text-xs text-muted-foreground overflow-x-auto">
-                      {typeof event.details === "string"
-                        ? event.details
-                        : JSON.stringify(event.details, null, 2)}
-                    </div>
-                  )}
-                </div>
-                {event.triggeredByOpenId && (
-                  <div className="text-right text-xs text-muted-foreground shrink-0">
-                    <div className="uppercase tracking-wider font-semibold">User</div>
-                    <div className="font-mono mt-0.5">{event.triggeredByOpenId.substring(0, 8)}…</div>
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        ))}
+      {/* Filter bar */}
+      <div className="glass-card p-4 animate-fade-in" style={{ animationDelay: '300ms' }}>
+        <div className="flex items-center gap-4">
+          <label className="text-sm font-medium text-muted-foreground">Filter by event type:</label>
+          <Select value={eventTypeFilter} onValueChange={setEventTypeFilter}>
+            <SelectTrigger className="w-[200px]">
+              <SelectValue placeholder="All events" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All events</SelectItem>
+              <SelectItem value="order_placed">Orders placed</SelectItem>
+              <SelectItem value="kill_switch">Kill switch</SelectItem>
+              <SelectItem value="blocked">Blocked runs</SelectItem>
+              <SelectItem value="risk">Risk events</SelectItem>
+              <SelectItem value="position_close">Position closes</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
 
-        {!auditLog.data || auditLog.data.length === 0 ? (
+      {/* Audit log table */}
+      <div className="glass-card p-6 animate-fade-in" style={{ animationDelay: '400ms' }}>
+        {filteredEvents.length === 0 ? (
           <EmptyState
             icon={ScrollText}
             title="No audit events recorded"
-            description="System decisions and trading events will appear here as they happen."
+            message="System decisions and trading events will appear here as they happen."
           />
-        ) : null}
+        ) : (
+          <Table
+            columns={columns}
+            data={filteredEvents}
+            stickyHeader
+            zebraStriping
+            hoverGlow
+          />
+        )}
       </div>
     </div>
   );

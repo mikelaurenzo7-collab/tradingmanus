@@ -9,7 +9,13 @@ import {
   splitSignalsBySelection,
   summarizePortfolioDeployment,
 } from "@/lib/portfolioDiagnostics";
-import { Shield, Target, TrendingUp, Layers3, Wallet, Filter, Radar } from "lucide-react";
+import { Target, Layers3, TrendingUp, Shield } from "lucide-react";
+import { PageHeader } from "@/components/PageHeader";
+import { StatCard } from "@/components/widgets/StatCard";
+import { DistributionChart } from "@/components/charts/DistributionChart";
+import { EnhancedTable, Column } from "@/components/enhanced/Table";
+import { EmptyState } from "@/components/EmptyStates";
+import { chartColors } from "@/lib/chartTheme";
 
 type EditableSignal = {
   marketId: string;
@@ -132,7 +138,7 @@ export default function PortfolioOptimization() {
     },
     {
       enabled: Boolean(leadSignal),
-    },
+ },
   );
 
   const portfolio = portfolioQuery.data;
@@ -140,6 +146,50 @@ export default function PortfolioOptimization() {
   const deployment = summarizePortfolioDeployment(equity, portfolio);
   const selectedSignals = splitSignalsBySelection(signals, portfolio);
   const selectedPositionMap = buildSelectedPositionMap(portfolio);
+
+  // Build allocation distribution data
+  const allocationData = useMemo(() => {
+    if (!portfolio?.positions?.length) return [];
+    return portfolio.positions.map((pos, idx) => ({
+      label: pos.marketId,
+      value: pos.size,
+      color: chartColors[idx % chartColors.length],
+    }));
+  }, [portfolio]);
+
+  // Build position recommendation table data
+  const positionTableData = useMemo(() => {
+    if (!portfolio?.positions?.length) return [];
+    return portfolio.positions.map((pos, index) => ({
+      id: index + 1,
+      marketId: pos.marketId,
+      side: pos.side,
+      size: pos.size,
+      sizeFormatted: formatCurrency(pos.size),
+      expectedReturn: pos.expectedReturn,
+      expectedReturnFormatted: formatSignedPercent(pos.expectedReturn),
+      risk: pos.risk,
+      riskFormatted: formatPercent(pos.risk),
+    }));
+  }, [portfolio]);
+
+  const positionTableColumns: Column<typeof positionTableData[number]>[] = [
+    { key: 'id', header: '#', width: 60 },
+    { key: 'marketId', header: 'Market', sortable: true },
+    { key: 'side', header: 'Side', width: 80, render: (val) => String(val).toUpperCase() },
+    {
+      key: 'size',
+      header: 'Size',
+      sortable: true,
+      render: (_, row) => (
+        <span className="font-semibold text-cyan-400 glow-primary">
+          {row.sizeFormatted}
+        </span>
+      ),
+    },
+    { key: 'expectedReturn', header: 'Exp. Return', sortable: true, render: (_, row) => row.expectedReturnFormatted },
+    { key: 'risk', header: 'Risk', sortable: true, render: (_, row) => row.riskFormatted },
+  ];
 
   const updateSignal = (index: number, field: keyof EditableSignal, rawValue: string) => {
     setSignals((current) =>
@@ -170,18 +220,13 @@ export default function PortfolioOptimization() {
   };
 
   return (
-    <div className="space-y-8 max-w-7xl mx-auto">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <h1 className="mb-2 bg-gradient-to-r from-violet-400 via-pink-400 to-cyan-400 bg-clip-text text-4xl font-bold text-transparent">
-              Portfolio Optimization
-            </h1>
-            <p className="max-w-3xl text-slate-400">
-              Turn candidate market edges into a diversified allocation plan with Kelly sizing, correlation-aware filtering,
-              and explicit capital constraints.
-            </p>
-          </div>
-
+    <div className="space-y-8 max-w-7xl mx-auto animate-fade-in">
+      <PageHeader
+        icon={Target}
+        iconGradient="from-violet-500 via-fuchsia-500 to-cyan-500"
+        title="Portfolio Optimization"
+        description="Turn candidate market edges into a diversified allocation plan with Kelly sizing, correlation-aware filtering, and explicit capital constraints."
+        actions={
           <div className="flex flex-wrap gap-3 rounded-2xl border border-slate-800 bg-slate-900/70 p-4 backdrop-blur-xl">
             <div>
               <div className="mb-2 text-xs uppercase tracking-[0.2em] text-slate-500">Account Equity</div>
@@ -221,7 +266,8 @@ export default function PortfolioOptimization() {
               </Button>
             </div>
           </div>
-        </div>
+        }
+      />
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
@@ -279,13 +325,10 @@ export default function PortfolioOptimization() {
           </Card>
         </div>
 
-        <div className="grid gap-4 xl:grid-cols-3">
-          <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base text-slate-100">
-                <Wallet className="h-5 w-5 text-cyan-400" />
-                Deployment Summary
-              </CardTitle>
+            <div className="grid gap-4 xl:grid-cols-3 animate-fade-in" style={{ animationDelay: '0.2s' }}>
+              <Card className="glass-card">
+                <CardHeader>
+                  <CardTitle>Deployment Summary</CardTitle>
               <CardDescription>Cash deployment and remaining buying power after optimization.</CardDescription>
             </CardHeader>
             <CardContent className="grid gap-3 sm:grid-cols-3 xl:grid-cols-1">
@@ -304,12 +347,9 @@ export default function PortfolioOptimization() {
             </CardContent>
           </Card>
 
-          <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base text-slate-100">
-                <Filter className="h-5 w-5 text-fuchsia-400" />
-                Selection Filter
-              </CardTitle>
+              <Card className="glass-card">
+                <CardHeader>
+                  <CardTitle>Selection Filter</CardTitle>
               <CardDescription>Signals retained versus excluded after diversification and max-position limits.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -327,12 +367,9 @@ export default function PortfolioOptimization() {
             </CardContent>
           </Card>
 
-          <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base text-slate-100">
-                <Radar className="h-5 w-5 text-emerald-400" />
-                Risk Envelope
-              </CardTitle>
+              <Card className="glass-card">
+                <CardHeader>
+                  <CardTitle>Risk Envelope</CardTitle>
               <CardDescription>Portfolio-level risk, diversification, and Kelly intensity in one view.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -351,10 +388,44 @@ export default function PortfolioOptimization() {
               </div>
             </CardContent>
           </Card>
-        </div>
+            </div>
 
-        <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-          <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
+            {allocationData.length > 0 && (
+              <Card className="glass-card animate-fade-in" style={{ animationDelay: '0.3s' }}>
+                <CardHeader>
+                  <CardTitle>Allocation Breakdown</CardTitle>
+                  <CardDescription>Visual distribution of capital across selected positions.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <DistributionChart
+                    data={allocationData}
+                    height={250}
+                    formatValue={(val) => formatCurrency(val)}
+                  />
+                </CardContent>
+              </Card>
+            )}
+
+            {positionTableData.length > 0 && (
+              <Card className="glass-card animate-fade-in" style={{ animationDelay: '0.4s' }}>
+                <CardHeader>
+                  <CardTitle>Position Recommendations</CardTitle>
+                  <CardDescription>Detailed breakdown of each position in the optimized portfolio.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <EnhancedTable
+                    columns={positionTableColumns}
+                    data={positionTableData}
+                    stickyHeader
+                    zebraStriping
+                    hoverGlow
+                  />
+                </CardContent>
+              </Card>
+            )}
+
+            <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr] animate-fade-in" style={{ animationDelay: '0.5s' }}>
+              <Card className="glass-card">
             <CardHeader>
               <CardTitle>Signal Universe</CardTitle>
               <CardDescription>
@@ -406,15 +477,14 @@ export default function PortfolioOptimization() {
             </CardContent>
           </Card>
 
-          <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
-            <CardHeader>
-              <CardTitle>Recommended Allocation</CardTitle>
-              <CardDescription>
-                The optimizer keeps the strongest signals that still satisfy its diversification constraints.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {portfolio?.positions?.length ? (
+              <Card className="glass-card">
+                <CardHeader>
+                  <CardTitle>Recommended Allocation</CardTitle>
+                  <CardDescription>
+                    The optimizer keeps the strongest signals that still satisfy its diversification constraints.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">{portfolio?.positions?.length ? (
                 portfolio.positions.map((position) => {
                   const capitalShare = equity > 0 ? position.size / equity : 0;
                   return (
@@ -425,7 +495,7 @@ export default function PortfolioOptimization() {
                           <div className="mt-1 text-xs uppercase tracking-[0.2em] text-slate-500">{position.side} position</div>
                         </div>
                         <div className="text-right">
-                          <div className="text-lg font-semibold text-emerald-300">{formatCurrency(position.size)}</div>
+                          <div className="text-lg font-semibold text-emerald-300 glow-primary">{formatCurrency(position.size)}</div>
                           <div className="text-xs text-slate-500">{formatPercent(capitalShare)} of equity</div>
                         </div>
                       </div>
@@ -458,7 +528,7 @@ export default function PortfolioOptimization() {
         </div>
 
         {portfolioQuery.error && (
-          <Card className="border border-rose-900/60 bg-rose-950/30 backdrop-blur-xl">
+          <Card className="glass-card border-rose-900/60 bg-rose-950/30">
             <CardHeader>
               <CardTitle className="text-rose-300">Portfolio Optimization Unavailable</CardTitle>
               <CardDescription className="text-rose-200/80">

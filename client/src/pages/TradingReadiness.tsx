@@ -1,4 +1,4 @@
-import { Loader2, ClipboardCheck } from "lucide-react";
+import { Loader2, ClipboardCheck, CheckCircle2, XCircle, AlertCircle, TrendingUp, TrendingDown } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import PaperTradingStatus from "@/components/PaperTradingStatus";
 import DeskMemoryTape from "@/components/DeskMemoryTape";
@@ -6,6 +6,7 @@ import AutonomyMetrics from "@/components/AutonomyMetrics";
 import PreLiveChecklist from "@/components/PreLiveChecklist";
 import { PageHeader } from "@/components/PageHeader";
 import { EmptyState } from "@/components/EmptyState";
+import { StatCard } from "@/components/widgets/StatCard";
 
 export default function TradingReadiness() {
   const readinessQuery = trpc.trading.getTradingReadinessStatus.useQuery(
@@ -49,14 +50,108 @@ export default function TradingReadiness() {
     );
   }
 
+  // Determine overall readiness status
+  const allItemsPassed = checklistData.checklist.every((item) => item.completed);
+  const hasBlockers = checklistData.checklist.some((item) => !item.completed && item.score < 50);
+  const isReady = allItemsPassed && !hasBlockers;
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 animate-fade-in">
       <PageHeader
         icon={ClipboardCheck}
         title="Trading Readiness"
         description="Monitor your preparation for live trading"
         iconGradient="from-cyan-500 to-blue-500"
       />
+
+      {/* Hero Status Indicator */}
+      <div className={`glass-card p-8 text-center relative overflow-hidden ${isReady ? 'glow-success' : 'glow-destructive'}`}>
+        <div className="absolute inset-0 bg-gradient-to-br from-transparent via-transparent to-white/5" />
+        <div className="relative z-10">
+          {isReady ? (
+            <>
+              <CheckCircle2 className="w-16 h-16 mx-auto mb-4 text-emerald-400 animate-float" />
+              <h2 className="text-5xl font-bold gradient-text mb-2">READY TO TRADE</h2>
+              <p className="text-slate-300 text-lg">All systems operational. You're cleared for live trading.</p>
+            </>
+          ) : (
+            <>
+              <XCircle className="w-16 h-16 mx-auto mb-4 text-red-400 animate-pulse" />
+              <h2 className="text-5xl font-bold gradient-text mb-2">BLOCKED</h2>
+              <p className="text-slate-300 text-lg">
+                {hasBlockers ? 'Critical issues detected. Address them before going live.' : 'Complete all checklist items to proceed.'}
+              </p>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Readiness Metrics Grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="animate-fade-in" style={{ animationDelay: '100ms' }}>
+          <StatCard
+            label="Paper Trades"
+            value={metricsData.paperTotalTrades}
+            icon={<TrendingUp className="w-5 h-5" />}
+            color="#8864ff"
+          />
+        </div>
+        <div className="animate-fade-in" style={{ animationDelay: '150ms' }}>
+          <StatCard
+            label="Paper Win Rate"
+            value={`${metricsData.paperWinRate}%`}
+            change={metricsData.paperWinRate - 50}
+            icon={<TrendingUp className="w-5 h-5" />}
+            color={metricsData.paperWinRate > 60 ? "#22c55e" : metricsData.paperWinRate > 50 ? "#eab308" : "#f43f5e"}
+          />
+        </div>
+        <div className="animate-fade-in" style={{ animationDelay: '200ms' }}>
+          <StatCard
+            label="Paper P&L"
+            value={`$${metricsData.paperTotalPnL.toFixed(2)}`}
+            change={metricsData.paperTotalPnL}
+            icon={metricsData.paperTotalPnL >= 0 ? <TrendingUp className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />}
+            color={metricsData.paperTotalPnL >= 0 ? "#22c55e" : "#f43f5e"}
+          />
+        </div>
+        <div className="animate-fade-in" style={{ animationDelay: '250ms' }}>
+          <StatCard
+            label="Checklist Progress"
+            value={`${checklistData.checklist.filter((item) => item.completed).length}/${checklistData.checklist.length}`}
+            icon={<CheckCircle2 className="w-5 h-5" />}
+            color={isReady ? "#22c55e" : "#8864ff"}
+          />
+        </div>
+      </div>
+
+      {/* Animated Checklist */}
+      <div className={`glass-card p-6 ${isReady ? 'glow-success border-emerald-500/30' : ''}`}>
+        <h2 className="text-xl font-semibold mb-6 flex items-center gap-2">
+          <ClipboardCheck className="w-6 h-6 text-cyan-400" />
+          <span className="gradient-text">Pre-Live Checklist</span>
+        </h2>
+        <div className="space-y-3">
+          {checklistData.checklist.map((item, index) => {
+            const Icon = item.completed ? CheckCircle2 : item.score < 50 ? XCircle : AlertCircle;
+            const iconColor = item.completed ? 'text-emerald-400' : item.score < 50 ? 'text-red-400' : 'text-yellow-400';
+            const glowClass = item.completed ? 'glow-success' : item.score < 50 ? 'glow-destructive' : '';
+            
+            return (
+              <div
+                key={item.id}
+                className={`laurenzo-card flex items-start gap-4 p-4 animate-fade-in transition-all duration-300 ${glowClass}`}
+                style={{ animationDelay: `${300 + index * 80}ms` }}
+              >
+                <Icon className={`w-6 h-6 ${iconColor} flex-shrink-0 mt-0.5`} />
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-semibold text-slate-100">{item.label}</h3>
+                  <p className="text-sm text-slate-400 mt-1">{item.description}</p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
 
       {/* Paper Trading Status */}
       <PaperTradingStatus data={readinessData} />
@@ -65,24 +160,24 @@ export default function TradingReadiness() {
       <DeskMemoryTape deskMemoryStats={readinessData.deskMemoryStats} />
 
       {/* Paper vs Real Performance */}
-      <div className="laurenzo-card space-y-4">
-        <h2 className="text-xl font-semibold">📈 Paper vs Real Performance</h2>
+      <div className="glass-card p-6 space-y-4">
+        <h2 className="text-xl font-semibold"><span className="gradient-text">📈 Paper vs Real Performance</span></h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="border border-border rounded p-4">
+          <div className="border border-border rounded-lg p-4 bg-white/5">
             <h3 className="font-semibold text-sm text-muted-foreground mb-3">
               Paper Trading
             </h3>
             <div className="space-y-2">
               <div>
                 <span className="text-muted-foreground text-sm">Trades:</span>{" "}
-                <span className="font-mono font-bold text-lg">
+                <span className="font-mono tabular-nums font-bold text-lg">
                   {metricsData.paperTotalTrades}
                 </span>
               </div>
               <div>
                 <span className="text-muted-foreground text-sm">Win Rate:</span>{" "}
                 <span
-                  className={`font-mono font-bold text-lg ${
+                  className={`font-mono tabular-nums font-bold text-lg ${
                     metricsData.paperWinRate > 60
                       ? "text-emerald-400"
                       : metricsData.paperWinRate > 50
@@ -96,7 +191,7 @@ export default function TradingReadiness() {
               <div>
                 <span className="text-muted-foreground text-sm">Total P&L:</span>{" "}
                 <span
-                  className={`font-mono font-bold ${
+                  className={`font-mono tabular-nums font-bold ${
                     metricsData.paperTotalPnL > 0
                       ? "text-emerald-400"
                       : metricsData.paperTotalPnL < 0
@@ -111,27 +206,27 @@ export default function TradingReadiness() {
             </div>
           </div>
 
-          <div className="border border-border rounded p-4">
+          <div className="border border-border rounded-lg p-4 bg-white/5">
             <h3 className="font-semibold text-sm text-muted-foreground mb-3">
               Real Trading {metricsData.realTotalTrades === 0 ? "(not started)" : ""}
             </h3>
             <div className="space-y-2">
               <div>
                 <span className="text-muted-foreground text-sm">Trades:</span>{" "}
-                <span className="font-mono font-bold text-lg">
+                <span className="font-mono tabular-nums font-bold text-lg">
                   {metricsData.realTotalTrades}
                 </span>
               </div>
               <div>
                 <span className="text-muted-foreground text-sm">Win Rate:</span>{" "}
-                <span className="font-mono font-bold text-lg text-muted-foreground">
+                <span className="font-mono tabular-nums font-bold text-lg text-muted-foreground">
                   {metricsData.realTotalTrades > 0 ? `${metricsData.realWinRate}%` : "—"}
                 </span>
               </div>
               <div>
                 <span className="text-muted-foreground text-sm">Total P&L:</span>{" "}
                 <span
-                  className={`font-mono font-bold ${
+                  className={`font-mono tabular-nums font-bold ${
                     metricsData.realTotalPnL > 0
                       ? "text-emerald-400"
                       : metricsData.realTotalPnL < 0
@@ -148,13 +243,13 @@ export default function TradingReadiness() {
         </div>
 
         {metricsData.comparison.alertMessage && (
-          <div className="bg-amber-500/10 border border-amber-500/30 text-amber-100 p-3 rounded text-sm">
+          <div className="bg-amber-500/10 border border-amber-500/30 text-amber-100 p-3 rounded-lg text-sm">
             <strong>⚠️ Alert:</strong> {metricsData.comparison.alertMessage}
           </div>
         )}
 
         {metricsData.comparison.recommendation && (
-          <div className="bg-blue-500/10 border border-blue-500/30 text-blue-100 p-3 rounded text-sm">
+          <div className="bg-blue-500/10 border border-blue-500/30 text-blue-100 p-3 rounded-lg text-sm">
             <strong>💡 Recommendation:</strong> {metricsData.comparison.recommendation}
           </div>
         )}
@@ -162,9 +257,6 @@ export default function TradingReadiness() {
 
       {/* Autonomy Metrics */}
       <AutonomyMetrics recentRuns={readinessData.recentAutonomyRuns} />
-
-      {/* Pre-Live Checklist */}
-      <PreLiveChecklist checklist={checklistData} />
     </div>
   );
 }

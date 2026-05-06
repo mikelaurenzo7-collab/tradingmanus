@@ -1,14 +1,19 @@
-import { AlertCircle, CheckCircle2, ArrowRight, DollarSign, Zap, Wallet, Loader2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, ArrowRight, DollarSign, Zap, Wallet, Loader2, TrendingUp, BarChart3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 import { trpc } from "@/lib/trpc";
 import { Link } from "wouter";
 import { PageHeader } from "@/components/PageHeader";
+import { StatCard } from "@/components/widgets/StatCard";
+import { EmptyState } from "@/components/EmptyStates";
 
 export default function Funding() {
   const { data: accountStatus, isLoading } = trpc.kalshi.getKalshiAccountStatus.useQuery();
+  const { data: capital } = trpc.kalshi.getCapital.useQuery();
+  const { data: positions } = trpc.kalshi.getPositions.useQuery();
 
   if (isLoading) {
     return (
@@ -20,17 +25,25 @@ export default function Funding() {
 
   const equity = accountStatus?.equity || 0;
   const isFunded = equity > 0;
+  const currentBalance = capital?.currentBalance || equity;
+  const totalPnl = capital?.totalPnl || 0;
+  
+  // Calculate buying power: equity minus locked capital in positions
+  const lockedCapital = positions?.reduce((sum: number, pos: any) => {
+    const positionValue = Math.abs(pos.quantity * (pos.entryPrice || 0));
+    return sum + positionValue;
+  }, 0) || 0;
+  const buyingPower = Math.max(0, equity - lockedCapital);
+  
+  // Calculate capital utilization percentage
+  const utilizationPercent = equity > 0 ? Math.min(100, (lockedCapital / equity) * 100) : 0;
 
   return (
     <div className="space-y-8 max-w-5xl mx-auto">
       <PageHeader
         icon={Wallet}
         title="Account Funding"
-        description={
-          isFunded
-            ? "Your account is funded and ready to trade"
-            : "Fund your Kalshi account to start trading"
-        }
+        description="Balance and capital management for live trading"
         iconGradient={isFunded ? "from-emerald-500 to-teal-500" : "from-amber-500 to-rose-500"}
         badge={
           <Badge
@@ -43,41 +56,135 @@ export default function Funding() {
         }
       />
 
-      {/* Current Status */}
-      <Card
-        className={`laurenzo-card overflow-hidden border-2 ${isFunded ? "border-emerald-400/30 bg-gradient-to-br from-emerald-500/[0.07] to-teal-500/[0.04]" : "border-rose-400/30 bg-gradient-to-br from-rose-500/[0.07] to-pink-500/[0.04]"}`}
-      >
-        <CardContent className="pt-6">
-          <div className="flex items-center justify-between flex-wrap gap-6">
-            <div className="flex items-center gap-5">
-              <div className={`flex items-center justify-center w-16 h-16 rounded-2xl shadow-lg ${isFunded ? "bg-gradient-to-br from-emerald-500 to-teal-500 shadow-emerald-500/30" : "bg-gradient-to-br from-rose-500 to-pink-500 shadow-rose-500/30"}`}>
-                {isFunded ? (
-                  <CheckCircle2 className="w-8 h-8 text-white" />
-                ) : (
-                  <AlertCircle className="w-8 h-8 text-white" />
-                )}
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground mb-1 uppercase tracking-wider font-semibold">Current Balance</p>
-                <p className={`text-4xl font-bold tabular-nums ${isFunded ? "text-emerald-400" : "text-rose-400"}`}>
-                  ${equity.toFixed(2)}
-                </p>
-              </div>
-            </div>
-            <div className="text-right">
-              <p className="text-sm text-muted-foreground mb-2 uppercase tracking-wider font-semibold">Status</p>
-              <p className={`text-lg font-bold ${isFunded ? "text-emerald-400" : "text-rose-400"}`}>
-                {isFunded ? "Ready to Trade" : "Funding Required"}
-              </p>
-            </div>
+      {/* Hero Stat Cards */}
+      {isFunded && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="animate-fade-in" style={{ animationDelay: '0ms' }}>
+            <StatCard
+              label="Total Balance"
+              value={`$${currentBalance.toFixed(2)}`}
+              icon={<Wallet className="w-5 h-5" />}
+              color="#10b981"
+              className="glass-card"
+            />
           </div>
-        </CardContent>
-      </Card>
+          <div className="animate-fade-in" style={{ animationDelay: '100ms' }}>
+            <StatCard
+              label="Available to Trade"
+              value={`$${buyingPower.toFixed(2)}`}
+              icon={<Zap className="w-5 h-5" />}
+              color="#f59e0b"
+              className="glass-card"
+            />
+          </div>
+          <div className="animate-fade-in" style={{ animationDelay: '200ms' }}>
+            <StatCard
+              label="Reserved"
+              value={`$${lockedCapital.toFixed(2)}`}
+              icon={<BarChart3 className="w-5 h-5" />}
+              color="#8864ff"
+              className="glass-card"
+            />
+          </div>
+          <div className="animate-fade-in" style={{ animationDelay: '300ms' }}>
+            <StatCard
+              label="Total P&L"
+              value={`${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}`}
+              change={totalPnl}
+              icon={<TrendingUp className="w-5 h-5" />}
+              color={totalPnl >= 0 ? "#10b981" : "#ef4444"}
+              className="glass-card"
+            />
+          </div>
+        </div>
+      )}
 
+      {/* Capital Utilization */}
+      {isFunded && (
+        <div className="animate-fade-in glass-card p-6" style={{ animationDelay: '400ms' }}>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-muted-foreground">Capital Utilization</h3>
+            <span className="font-mono tabular-nums text-sm font-bold">{utilizationPercent.toFixed(1)}%</span>
+          </div>
+          <Progress value={utilizationPercent} className="h-2" />
+          <div className="flex justify-between mt-2 text-xs text-muted-foreground">
+            <span className="font-mono tabular-nums">Reserved: ${lockedCapital.toFixed(2)}</span>
+            <span className="font-mono tabular-nums">Total: ${equity.toFixed(2)}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Current Status */}
       {!isFunded && (
-        <>
-          {/* Deposit Instructions */}
-          <Card className="laurenzo-card">
+        <div className="animate-fade-in">
+          <Card className="glass-card border-amber-400/30 bg-gradient-to-br from-amber-500/[0.07] to-rose-500/[0.04]">
+            <CardContent className="pt-6">
+              <EmptyState
+                icon={AlertCircle}
+                title="No Funds Available"
+                message="Your Kalshi account needs funds before you can start trading. Deposit to get started."
+                action={
+                  <Button
+                    onClick={() => window.open("https://kalshi.com/account/deposit", "_blank")}
+                    className="mt-4 gap-2 bg-gradient-to-br from-amber-500 to-rose-500 hover:from-amber-600 hover:to-rose-600 shadow-md hover:shadow-lg transition-all glow-primary"
+                    size="lg"
+                  >
+                    <DollarSign className="w-5 h-5" />
+                    Deposit Funds
+                    <ArrowRight className="w-4 h-4" />
+                  </Button>
+                }
+              />
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {isFunded && (
+        <div className="animate-fade-in" style={{ animationDelay: '500ms' }}>
+          <Card className="glass-card border-emerald-400/30 bg-gradient-to-br from-emerald-500/[0.07] to-teal-500/[0.04] glow-success">
+            <CardHeader>
+              <div className="flex items-center gap-3">
+                <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-500 shadow-md">
+                  <Zap className="w-4 h-4 text-white" />
+                </div>
+                <CardTitle className="text-lg"><span className="gradient-text">Ready to Start Trading</span></CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-muted-foreground">
+                Your account is funded and ready. Here's what to do next:
+              </p>
+              <ol className="space-y-2.5 text-sm">
+                {[
+                  <>Review your trading instructions in the <strong className="text-white">Training</strong> tab</>,
+                  <>Understand the risk controls and capital limits</>,
+                  <>Go to <strong className="text-white">Signals</strong> to generate trading recommendations</>,
+                  <>Click <strong className="text-white">Start Trading</strong> to begin executing signals</>,
+                ].map((line, i) => (
+                  <li key={i} className="flex gap-3 items-start">
+                    <span className="flex items-center justify-center w-6 h-6 rounded-full bg-emerald-500/20 border border-emerald-400/30 text-emerald-300 font-bold text-xs shrink-0">
+                      {i + 1}
+                    </span>
+                    <span className="text-slate-300">{line}</span>
+                  </li>
+                ))}
+              </ol>
+              <Link href="/signals">
+                <Button className="w-full mt-2 gap-2 bg-gradient-to-br from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 shadow-md hover:shadow-lg transition-all glow-primary" size="lg">
+                  <Zap className="w-5 h-5" />
+                  Go to Signals
+                </Button>
+              </Link>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Deposit Instructions */}
+      {!isFunded && (
+        <div className="space-y-6 animate-fade-in" style={{ animationDelay: '100ms' }}>
+          <Card className="glass-card">
             <CardHeader>
               <div className="flex items-center gap-3">
                 <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-500 shadow-md">
@@ -129,7 +236,7 @@ export default function Funding() {
           </Card>
 
           {/* Recommended Amounts */}
-          <Card className="laurenzo-card">
+          <Card className="glass-card">
             <CardHeader>
               <CardTitle className="text-lg">Recommended Starting Amounts</CardTitle>
               <CardDescription>Choose based on your risk tolerance and trading experience</CardDescription>
@@ -142,9 +249,9 @@ export default function Funding() {
               ].map((tier) => (
                 <div
                   key={tier.label}
-                  className={`p-5 rounded-xl border ${tier.border} bg-gradient-to-br ${tier.gradient} hover:scale-[1.02] transition-transform duration-200`}
+                  className={`laurenzo-card p-5 ${tier.border} bg-gradient-to-br ${tier.gradient} hover:scale-[1.02] transition-transform duration-200`}
                 >
-                  <p className="text-2xl font-bold gradient-text mb-1 tabular-nums">{tier.amount}</p>
+                  <p className="text-2xl font-bold gradient-text mb-1 font-mono tabular-nums">{tier.amount}</p>
                   <p className="font-semibold text-sm mb-1.5 text-white/90">{tier.label}</p>
                   <p className="text-xs text-muted-foreground leading-relaxed">{tier.desc}</p>
                 </div>
@@ -158,46 +265,49 @@ export default function Funding() {
               <strong className="text-white">Kalshi risk controls:</strong> Risk limits are enforced against your live connected Kalshi balance, including per-trade and daily loss caps. Your dashboard will only size trades from confirmed account equity.
             </AlertDescription>
           </Alert>
-        </>
+        </div>
       )}
 
+      {/* Withdrawal Options */}
       {isFunded && (
-        <Card className="laurenzo-card border-emerald-400/30 bg-gradient-to-br from-emerald-500/[0.07] to-teal-500/[0.04]">
-          <CardHeader>
-            <div className="flex items-center gap-3">
-              <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-500 shadow-md">
-                <Zap className="w-4 h-4 text-white" />
+        <div className="animate-fade-in" style={{ animationDelay: '600ms' }}>
+          <Card className="glass-card">
+            <CardHeader>
+              <div className="flex items-center gap-3">
+                <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-500 shadow-md">
+                  <Wallet className="w-4 h-4 text-white" />
+                </div>
+                <div>
+                  <CardTitle className="text-lg"><span className="gradient-text">Manage Your Funds</span></CardTitle>
+                  <CardDescription>Deposit more or withdraw available balance</CardDescription>
+                </div>
               </div>
-              <CardTitle className="text-lg">Ready to Start Trading</CardTitle>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-muted-foreground">
-              Your account is funded and ready. Here's what to do next:
-            </p>
-            <ol className="space-y-2.5 text-sm">
-              {[
-                <>Review your trading instructions in the <strong className="text-white">Training</strong> tab</>,
-                <>Understand the risk controls and capital limits</>,
-                <>Go to <strong className="text-white">Signals</strong> to generate trading recommendations</>,
-                <>Click <strong className="text-white">Start Trading</strong> to begin executing signals</>,
-              ].map((line, i) => (
-                <li key={i} className="flex gap-3 items-start">
-                  <span className="flex items-center justify-center w-6 h-6 rounded-full bg-emerald-500/20 border border-emerald-400/30 text-emerald-300 font-bold text-xs shrink-0">
-                    {i + 1}
-                  </span>
-                  <span className="text-slate-300">{line}</span>
-                </li>
-              ))}
-            </ol>
-            <Link href="/signals">
-              <Button className="w-full mt-2 gap-2 bg-gradient-to-br from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 shadow-md hover:shadow-lg transition-all" size="lg">
-                <Zap className="w-5 h-5" />
-                Go to Signals
-              </Button>
-            </Link>
-          </CardContent>
-        </Card>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex flex-col sm:flex-row gap-3">
+                <Button
+                  onClick={() => window.open("https://kalshi.com/account/deposit", "_blank")}
+                  variant="outline"
+                  className="flex-1 gap-2 border-emerald-400/30 hover:bg-emerald-500/10"
+                >
+                  <DollarSign className="w-4 h-4" />
+                  Deposit More Funds
+                </Button>
+                <Button
+                  onClick={() => window.open("https://kalshi.com/account/withdraw", "_blank")}
+                  variant="outline"
+                  className="flex-1 gap-2 border-violet-400/30 hover:bg-violet-500/10"
+                >
+                  <ArrowRight className="w-4 h-4" />
+                  Withdraw Funds
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground text-center">
+                Changes reflect automatically after processing on Kalshi
+              </p>
+            </CardContent>
+          </Card>
+        </div>
       )}
     </div>
   );

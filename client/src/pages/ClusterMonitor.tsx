@@ -18,6 +18,9 @@ import {
 import { useState } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/PageHeader";
+import { StatCard } from "@/components/widgets/StatCard";
+import { Table, Column } from "@/components/enhanced/Table";
+import { EmptyState } from "@/components/EmptyState";
 
 const CLUSTER_COLORS: Record<number, string> = {
   1: "from-orange-500/20 to-red-500/20 border-orange-400/40",
@@ -91,23 +94,25 @@ export default function ClusterMonitor() {
       <PageHeader
         icon={Network}
         title="Cluster Monitor"
-        description={
-          <>
-            Wash-trading cluster detection · Fade strategies · Combinatorial arbitrage
-            <br />
-            <span className="text-xs text-muted-foreground">
-              Based on Columbia University "Network-Based Detection of Wash Trading" (SSRN, Nov 2025)
-            </span>
-          </>
-        }
+        description="Wash-trading detection and cluster analysis · Fade strategies · Combinatorial arbitrage"
         iconGradient="from-rose-500 to-orange-500"
         actions={
-          <Button onClick={handleRefreshActivity} variant="outline" size="sm" className="gap-2">
-            <RefreshCw className={`w-4 h-4 ${activityQuery.isFetching ? "animate-spin" : ""}`} />
-            Refresh
-          </Button>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 text-sm text-slate-400">
+              <div className="live-dot" />
+              <span>Real-time monitoring</span>
+            </div>
+            <Button onClick={handleRefreshActivity} variant="outline" size="sm" className="gap-2">
+              <RefreshCw className={`w-4 h-4 ${activityQuery.isFetching ? "animate-spin" : ""}`} />
+              Refresh
+            </Button>
+          </div>
         }
       />
+
+      <p className="text-xs text-muted-foreground -mt-4 animate-fade-in">
+        Based on Columbia University "Network-Based Detection of Wash Trading" (SSRN, Nov 2025)
+      </p>
 
       {/* Tab navigation */}
       <div className="flex gap-2 border-b border-slate-700/50 pb-2">
@@ -144,7 +149,36 @@ export default function ClusterMonitor() {
 
       {/* ── CLUSTERS TAB ── */}
       {activeTab === "clusters" && (
-        <div className="space-y-4">
+        <div className="space-y-6 animate-fade-in">
+          {/* Summary Stats */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <StatCard label="Total Clusters" value={clusters.length} color="#64748b" />
+            <StatCard 
+              label="High Risk" 
+              value={clusters.filter((c: any) => c.strategy === 'fade' || c.strategy === 'warning').length} 
+              color="#ef4444" 
+            />
+            <StatCard 
+              label="Flagged Markets" 
+              value={clusters.reduce((sum: number, c: any) => sum + (c.marketCategories?.length ?? 0), 0)} 
+              color="#fbbf24" 
+            />
+            <div className="laurenzo-card glass-card">
+              <div className="flex items-start justify-between mb-4">
+                <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ backgroundColor: '#10b98120' }}>
+                  <Eye className="w-5 h-5 text-emerald-400" />
+                </div>
+                <div className="live-dot" />
+              </div>
+              <div className="text-3xl font-bold tracking-tight mb-3 text-slate-100">
+                {clustersQuery.isFetching ? "..." : "Active"}
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-slate-400">Last Scan</span>
+              </div>
+            </div>
+          </div>
+
           <p className="text-slate-400 text-sm">
             Seven documented wash-trading clusters on Polymarket. Cluster strategies: <strong className="text-red-400">Fade</strong> (pump then retrace), <strong className="text-emerald-400">Copy</strong> (mirror entries), <strong className="text-pink-400">Warning</strong> (skip market), <strong className="text-slate-400">Skip</strong> (legitimate actors).
           </p>
@@ -152,8 +186,9 @@ export default function ClusterMonitor() {
             {visibleClusters.map((c: any) => {
               const badge = STRATEGY_BADGE[c.strategy] ?? STRATEGY_BADGE.skip!;
               const colors = CLUSTER_COLORS[c.id] ?? CLUSTER_COLORS[7]!;
+              const isHighSeverity = c.strategy === 'fade' || c.strategy === 'warning';
               return (
-                <Card key={c.id} className={`border bg-gradient-to-br ${colors} backdrop-blur-xl`}>
+                <Card key={c.id} className={`laurenzo-card glass-card border bg-gradient-to-br ${colors} backdrop-blur-xl ${isHighSeverity ? 'glow-destructive' : ''} animate-fade-in`} style={{ animationDelay: `${visibleClusters.indexOf(c) * 50}ms` }}>
                   <CardHeader className="pb-2">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
@@ -217,22 +252,13 @@ export default function ClusterMonitor() {
 
       {/* ── ACTIVITY TAB ── */}
       {activeTab === "activity" && (
-        <div className="space-y-6">
+        <div className="space-y-6 animate-fade-in">
           {/* Summary stats */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {[
-              { label: "Markets scanned", value: activity?.marketsScanned ?? 0, cls: "text-cyan-300" },
-              { label: "Cluster signals", value: clusterSignals.length, cls: "text-yellow-300" },
-              { label: "Actionable trades", value: actionableRecs.length, cls: "text-emerald-300" },
-              { label: "Volume warnings", value: warnings.length, cls: "text-pink-300" },
-            ].map((stat) => (
-              <Card key={stat.label} className="border-0 bg-gradient-to-br from-slate-800/40 to-slate-900/40 backdrop-blur-xl border border-slate-700/50">
-                <CardContent className="pt-4 pb-3">
-                  <p className="text-xs text-slate-400 font-semibold tracking-wide uppercase mb-1">{stat.label}</p>
-                  <p className={`text-3xl font-bold ${stat.cls}`}>{stat.value}</p>
-                </CardContent>
-              </Card>
-            ))}
+            <StatCard label="Markets Scanned" value={activity?.marketsScanned ?? 0} color="#06b6d4" />
+            <StatCard label="Cluster Signals" value={clusterSignals.length} color="#fbbf24" />
+            <StatCard label="Actionable Trades" value={actionableRecs.length} color="#10b981" />
+            <StatCard label="Volume Warnings" value={warnings.length} color="#ec4899" />
           </div>
 
           {/* Actionable recommendations */}
@@ -243,7 +269,7 @@ export default function ClusterMonitor() {
                 <h2 className="text-xl font-bold gradient-text">ACTIONABLE SIGNALS</h2>
               </div>
               {actionableRecs.map((rec: any, idx: number) => (
-                <Card key={`${rec.marketId}-${idx}`} className="border-0 bg-gradient-to-br from-slate-800/40 to-slate-900/40 backdrop-blur-xl border border-slate-700/50">
+                <Card key={`${rec.marketId}-${idx}`} className="laurenzo-card glass-card glow-primary border-slate-700/50 animate-fade-in" style={{ animationDelay: `${idx * 75}ms` }}>
                   <CardContent className="pt-4">
                     <div className="flex items-start justify-between gap-4 flex-wrap">
                       <div className="flex items-center gap-3">
@@ -284,7 +310,7 @@ export default function ClusterMonitor() {
                 <h2 className="text-xl font-bold text-pink-300">VOLUME WARNINGS</h2>
               </div>
               {warnings.map((rec: any, idx: number) => (
-                <Card key={`warn-${rec.marketId}-${idx}`} className="border-0 bg-gradient-to-br from-pink-500/10 to-rose-500/10 backdrop-blur-xl border border-pink-400/30">
+                <Card key={`warn-${rec.marketId}-${idx}`} className="laurenzo-card glass-card glow-destructive border-pink-400/30 animate-fade-in" style={{ animationDelay: `${idx * 75}ms` }}>
                   <CardContent className="pt-4">
                     <div className="flex items-start gap-3">
                       <AlertTriangle className="w-5 h-5 text-pink-400 flex-shrink-0 mt-0.5" />
@@ -302,22 +328,19 @@ export default function ClusterMonitor() {
 
           {/* No activity */}
           {clusterSignals.length === 0 && !activityQuery.isFetching && (
-            <Card className="border-0 bg-gradient-to-br from-slate-800/40 to-slate-900/40 backdrop-blur-xl border border-slate-700/50">
-              <CardContent className="pt-12 pb-12 flex flex-col items-center justify-center">
-                <Eye className="w-12 h-12 text-slate-500 mb-4" />
-                <p className="text-lg font-semibold text-foreground mb-2">No cluster activity detected</p>
-                <p className="text-muted-foreground text-center text-sm max-w-md">
-                  No wash-trading cluster patterns matched current market conditions. The monitor refreshes every 60 seconds.
-                </p>
-              </CardContent>
-            </Card>
+            <EmptyState
+              icon={Eye}
+              title="No cluster activity detected"
+              description="No wash-trading cluster patterns matched current market conditions. The monitor refreshes every 60 seconds."
+              iconGradient="from-slate-500/20 to-slate-600/20"
+            />
           )}
         </div>
       )}
 
       {/* ── ARBITRAGE TAB ── */}
       {activeTab === "arbitrage" && (
-        <div className="space-y-6">
+        <div className="space-y-6 animate-fade-in">
           <div className="space-y-2">
             <p className="text-slate-400 text-sm">
               Cross-market combinatorial arbitrage. Detects when related YES/NO markets violate logical constraints (sum ≠ $1) or implication rules.
@@ -326,21 +349,18 @@ export default function ClusterMonitor() {
           </div>
 
           {allArb.length === 0 && !polyArbQuery.isFetching && !kalshiArbQuery.isFetching && (
-            <Card className="border-0 bg-gradient-to-br from-slate-800/40 to-slate-900/40 backdrop-blur-xl border border-slate-700/50">
-              <CardContent className="pt-12 pb-12 flex flex-col items-center justify-center">
-                <Network className="w-12 h-12 text-slate-500 mb-4" />
-                <p className="text-lg font-semibold text-foreground mb-2">No combinatorial arbitrage found</p>
-                <p className="text-muted-foreground text-center text-sm max-w-md">
-                  Markets appear to be correctly priced relative to each other. The scanner refreshes every 2 minutes.
-                </p>
-              </CardContent>
-            </Card>
+            <EmptyState
+              icon={Network}
+              title="No combinatorial arbitrage found"
+              description="Markets appear to be correctly priced relative to each other. The scanner refreshes every 2 minutes."
+              iconGradient="from-emerald-500/20 to-teal-500/20"
+            />
           )}
 
           {allArb.map((opp: any, idx: number) => {
             const typeBadge = ARB_TYPE_BADGE[opp.type] ?? ARB_TYPE_BADGE.sum_exceeds_one!;
             return (
-              <Card key={idx} className="border-0 bg-gradient-to-br from-emerald-500/10 to-teal-500/10 backdrop-blur-xl border border-emerald-400/30">
+              <Card key={idx} className="laurenzo-card glass-card glow-primary border-emerald-400/30 animate-fade-in" style={{ animationDelay: `${idx * 100}ms` }}>
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between flex-wrap gap-3">
                     <div className="flex items-center gap-3">
