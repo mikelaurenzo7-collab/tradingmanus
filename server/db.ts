@@ -16,6 +16,7 @@ import {
   signalBayesianUpdates,
   portfolioVolatilityHistory,
   positionExits,
+  mlEnsembleModels,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 import { eq, and, desc, gte, inArray, ne, sql } from "drizzle-orm";
@@ -1288,5 +1289,39 @@ export async function savePositionExit(data: {
     pnlPct,
     stopLevel: data.stopLevel ?? null,
     profitTargetHit: data.profitTargetHit ?? null,
+  });
+}
+
+// ── ML Ensemble Model Persistence ─────────────────────────────────────────────
+
+/**
+ * Persist a trained ensemble model to the database.
+ * Deactivates all previous models for the same platform before inserting the new one.
+ */
+export async function saveEnsembleModel(data: {
+  version: number;
+  platform?: string;
+  modelJson: string;
+  trainingSamples: number;
+  accuracy?: number;
+}): Promise<void> {
+  const database = await getDb();
+  if (!database) return;
+
+  const platform = data.platform ?? "kalshi";
+
+  // Deactivate previous active models for this platform
+  await database
+    .update(mlEnsembleModels)
+    .set({ isActive: 0 })
+    .where(eq(mlEnsembleModels.platform, platform));
+
+  await database.insert(mlEnsembleModels).values({
+    version: data.version,
+    platform,
+    modelJson: data.modelJson,
+    trainingSamples: data.trainingSamples,
+    accuracy: data.accuracy ?? null,
+    isActive: 1,
   });
 }

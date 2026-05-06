@@ -548,6 +548,22 @@ export const positionExits = pgTable("position_exits", {
   positionExitsIdx: index("position_exits_idx").on(t.userId, t.exitedAt),
 }));
 
+// ── ML Ensemble Models ────────────────────────────────────────────────────────
+
+export const mlEnsembleModels = pgTable("ml_ensemble_models", {
+  id: serial("id").primaryKey(),
+  version: integer("version").notNull(),
+  platform: varchar("platform", { length: 32 }).notNull().default("kalshi"),
+  modelJson: text("modelJson").notNull(),        // serialized EnsembleModel
+  trainingSamples: integer("trainingSamples").notNull(),
+  accuracy: doublePrecision("accuracy"),          // hold-out accuracy if available
+  isActive: integer("isActive").default(0).notNull(),  // 0 or 1
+  trainedAt: timestamp("trainedAt", { withTimezone: true }).defaultNow().notNull(),
+  createdAt: createdAt(),
+});
+
+export type MlEnsembleModel = typeof mlEnsembleModels.$inferSelect;
+
 export type User = typeof users.$inferSelect;
 export type BotConfig = typeof botConfigs.$inferSelect;
 export type ChatMessage = typeof chatMessages.$inferSelect;

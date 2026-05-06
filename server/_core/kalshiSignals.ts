@@ -19,6 +19,7 @@ import {
 } from "./multiTimeframeAnalysis";
 import { analyzeMicrostructure, applyMicrostructureToSignal, type MicrostructureResult } from "./marketMicrostructure";
 import { initializeBayesianProbability } from "./bayesianUpdater";
+import { extractFeatures, predictEnsemble, blendProbabilities, type EnsembleModel } from "./mlSignalEnsemble";
 import * as db from "../db";
 import { assertPositiveIntegerUserId } from "./userScope";
 import { logger } from "./logger";
@@ -31,6 +32,8 @@ export interface KalshiSignal {
   side: "yes" | "no";
   confidence: number; // 0-1
   bayesianProbability?: number; // Bayesian posterior probability (separate from confidence)
+  /** Blended ML+rule-based win probability, populated when an ensemble model is provided. */
+  mlEnsembleProbability?: number;
   reasoning: string;
   impliedProbability: number;
   marketPrice: number;
@@ -709,7 +712,8 @@ export async function generateSignalsForMarkets(
   feeds?: Map<string, MarketFeed>,
   fundamentalProbabilities?: Map<string, number>,
   sentimentContexts?: Map<string, MarketSentimentContext>,
-  userId?: number
+  userId?: number,
+  ensembleModel?: EnsembleModel
 ): Promise<KalshiSignal[]> {
   const allSignals: KalshiSignal[] = [];
 
@@ -718,6 +722,16 @@ export async function generateSignalsForMarkets(
     const fundamentalProb = fundamentalProbabilities?.get(market.id);
     const sentimentContext = sentimentContexts?.get(market.id);
     const signals = await generateSignalsForMarket(market, feed, fundamentalProb, sentimentContext, userId);
+
+    if (ensembleModel) {
+      for (const signal of signals) {
+        const features = extractFeatures(signal);
+        const mlProb = predictEnsemble(ensembleModel, features);
+        const ruleProbability = signal.bayesianProbability ?? signal.confidence;
+        signal.mlEnsembleProbability = blendProbabilities(mlProb, ruleProbability);
+      }
+    }
+
     allSignals.push(...signals);
   }
 
