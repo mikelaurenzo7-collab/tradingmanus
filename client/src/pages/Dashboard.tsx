@@ -109,6 +109,50 @@ export default function Dashboard() {
     },
   });
 
+  // NOTE: All hooks must be called unconditionally before any early return to
+  // satisfy React's Rules of Hooks. Derive the values these hooks depend on
+  // from the (possibly undefined) query data here.
+  const accountStatusForMemo = accountStatusQuery.data;
+  const performanceOverviewForMemo = performanceOverviewQuery.data;
+  const equityForMemo = (accountStatusForMemo?.connected ? accountStatusForMemo?.equity : 0) || 0;
+  const realizedPnlForMemo = performanceOverviewForMemo?.metrics?.realizedPnL ?? 0;
+
+  // Generate placeholder performance data for chart (7 days)
+  const performanceChartData = useMemo(() => {
+    const days = 7;
+    const data = [];
+    const balance = equityForMemo - realizedPnlForMemo; // approximate starting balance
+
+    for (let i = days - 1; i >= 0; i--) {
+      const date = new Date();
+      date.setDate(date.getDate() - i);
+      const dayLabel = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+      // Simple linear interpolation for now
+      const progress = i === 0 ? 1 : (days - i) / days;
+      const currentBalance = balance + (realizedPnlForMemo * progress);
+
+      data.push({
+        date: dayLabel,
+        equity: Math.max(0, currentBalance),
+        pnl: realizedPnlForMemo * progress,
+      });
+    }
+
+    return data;
+  }, [equityForMemo, realizedPnlForMemo]);
+
+  // Generate trend data for sparklines (last 7 data points)
+  const pnlTrend = useMemo(
+    () => performanceChartData.map((d) => d.pnl),
+    [performanceChartData],
+  );
+
+  const equityTrend = useMemo(
+    () => performanceChartData.map((d) => d.equity),
+    [performanceChartData],
+  );
+
   if (
     performanceOverviewQuery.isLoading ||
     accountStatusQuery.isLoading ||
@@ -366,40 +410,6 @@ export default function Dashboard() {
   }
 
   // Funded account - show full dashboard
-  
-  // Generate placeholder performance data for chart (7 days)
-  const performanceChartData = useMemo(() => {
-    const days = 7;
-    const data = [];
-    let balance = displayEquity - realizedPnl; // approximate starting balance
-    
-    for (let i = days - 1; i >= 0; i--) {
-      const date = new Date();
-      date.setDate(date.getDate() - i);
-      const dayLabel = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      
-      // Simple linear interpolation for now
-      const progress = i === 0 ? 1 : (days - i) / days;
-      const currentBalance = balance + (realizedPnl * progress);
-      
-      data.push({
-        date: dayLabel,
-        equity: Math.max(0, currentBalance),
-        pnl: realizedPnl * progress,
-      });
-    }
-    
-    return data;
-  }, [displayEquity, realizedPnl]);
-
-  // Generate trend data for sparklines (last 7 data points)
-  const pnlTrend = useMemo(() => {
-    return performanceChartData.map(d => d.pnl);
-  }, [performanceChartData]);
-
-  const equityTrend = useMemo(() => {
-    return performanceChartData.map(d => d.equity);
-  }, [performanceChartData]);
 
   return (
     <div className="space-y-6">
