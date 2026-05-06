@@ -21,7 +21,7 @@ export const kalshiSideEnum = pgEnum("kalshi_side", ["yes", "no"]);
 export const kalshiOrderActionEnum = pgEnum("kalshi_order_action", ["buy", "sell"]);
 export const kalshiOrderStatusEnum = pgEnum("kalshi_order_status", ["pending", "filled", "cancelled", "rejected"]);
 export const kalshiPositionStatusEnum = pgEnum("kalshi_position_status", ["open", "closing", "closed"]);
-export const kalshiSignalTypeEnum = pgEnum("kalshi_signal_type", ["value_play", "momentum", "contrarian", "arbitrage", "sentiment", "multi_timeframe"]);
+export const kalshiSignalTypeEnum = pgEnum("kalshi_signal_type", ["value_play", "momentum", "contrarian", "arbitrage", "sentiment", "multi_timeframe", "order_flow"]);
 export const kalshiOutcomeEnum = pgEnum("kalshi_outcome", ["win", "loss", "partial"]);
 export const evidenceTypeEnum = pgEnum("evidence_type", ["price_move", "volume_spike", "sentiment_shift", "news_item", "market_close", "fundamental"]);
 export const evidenceDirectionEnum = pgEnum("evidence_direction", ["bullish", "bearish", "neutral"]);
@@ -425,6 +425,27 @@ export const marketTimeframeAnalysis = pgTable("market_timeframe_analysis", {
   analyzedAt: timestamp("analyzed_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => ({
   marketLookupIdx: index("market_tf_lookup_idx").on(table.marketId, table.platform, table.analyzedAt),
+}));
+
+// ── Market Microstructure ────────────────────────────────────────────────────
+
+/**
+ * Per-market microstructure snapshot: spread, order-book imbalance, and VPIN
+ * proxy.  One row per analyzeMicrostructure() call; append-only.
+ */
+export const marketMicrostructure = pgTable("market_microstructure", {
+  id: serial("id").primaryKey(),
+  marketId: varchar("marketId", { length: 128 }).notNull(),
+  platform: varchar("platform", { length: 32 }).notNull().default("kalshi"),
+  analyzedAt: timestamp("analyzedAt", { withTimezone: true }).defaultNow().notNull(),
+  spread: doublePrecision("spread").notNull(),
+  spreadPct: doublePrecision("spreadPct").notNull(),
+  spreadScore: doublePrecision("spreadScore").notNull(),
+  imbalance: doublePrecision("imbalance").notNull(),
+  vpin: doublePrecision("vpin").notNull(),
+  microstructureScore: doublePrecision("microstructureScore").notNull(),
+}, (t) => ({
+  microLookupIdx: index("market_micro_lookup_idx").on(t.marketId, t.platform, t.analyzedAt),
 }));
 
 // ── Chatbot ────────────────────────────────────────────────────────────────────

@@ -17,12 +17,13 @@ import {
   Timeframe,
   type MultiTimeframeAnalysis,
 } from "./multiTimeframeAnalysis";
+import { analyzeMicrostructure, applyMicrostructureToSignal, type MicrostructureResult } from "./marketMicrostructure";
 import { initializeBayesianProbability } from "./bayesianUpdater";
 import * as db from "../db";
 import { assertPositiveIntegerUserId } from "./userScope";
 import { logger } from "./logger";
 
-export type SignalType = "value_play" | "momentum" | "contrarian" | "arbitrage" | "sentiment" | "confluence" | "multi_timeframe";
+export type SignalType = "value_play" | "momentum" | "contrarian" | "arbitrage" | "sentiment" | "confluence" | "multi_timeframe" | "order_flow";
 
 export interface KalshiSignal {
   marketId: string;
@@ -69,6 +70,9 @@ export interface KalshiSignal {
     timeframeAlignment?: number[];      // Array of timeframe values (in ms) that agree
     confluenceScore?: number;            // 0-1 score of how well timeframes align
     trendStrengthPerTimeframe?: Record<string, number>; // TSI values for each timeframe
+    /** Microstructure fields */
+    microstructureScore?: number;        // 0-1 composite microstructure quality
+    spreadPct?: number;                  // bid-ask spread as fraction of bid price
   };
 }
 
@@ -389,6 +393,23 @@ export async function generateSignalsForMarket(
     }
   }
 
+  // Market microstructure analysis
+  const microInput = {
+    marketId: market.id,
+    yesBid: market.yesPrice,
+    yesAsk: 1 - market.noPrice,
+    volume: (market.yesVolume ?? 0) + (market.noVolume ?? 0),
+    volume24h: 0,
+    openInterest: 0,
+    liquidity: 0,
+  };
+  const microResult = analyzeMicrostructure(microInput);
+
+  // Persist microstructure non-blocking
+  db.saveMicrostructure(microResult)?.catch((err: unknown) => {
+    logger.debug({ marketId: market.id, err }, "microstructure save failed");
+  });
+
   // Value play: detect mispriced markets.
   // Use category-aware prior instead of universal 0.5 fallback so value
   // signals reflect genuine mispricing rather than arbitrary baseline noise.
@@ -653,10 +674,32 @@ export async function generateSignalsForMarket(
     }))
     .map((signal) => attachLiquidityMetadata(signal, feed));
 
+  // Apply microstructure quality adjustments
+  const withMicrostructure = withLiquidity.map((s) => applyMicrostructureToSignal(s, microResult));
+
+  // Generate order_flow signal when strong imbalance detected
+  if (microResult.hasStrongImbalance) {
+    const side = microResult.imbalanceDirection === "bullish" ? "yes" : "no";
+    withMicrostructure.push({
+      marketId: market.id,
+      signalType: "order_flow",
+      side,
+      confidence: Math.min(0.5 + Math.abs(microResult.imbalance) * 0.3, 0.85),
+      reasoning: `Order flow imbalance ${microResult.imbalance.toFixed(2)} suggests ${microResult.imbalanceDirection} pressure. VPIN=${microResult.vpin.toFixed(2)}.`,
+      impliedProbability: market.impliedProbability,
+      marketPrice: market.yesPrice,
+      expectedValue: side === "yes" ? market.yesPrice * 0.1 : (1 - market.yesPrice) * 0.1,
+      metadata: {
+        microstructureScore: microResult.microstructureScore,
+        spreadPct: microResult.spreadPct,
+      },
+    });
+  }
+
   // Apply confluence combining: when multiple independent signal types agree on
   // direction, merge them into a single higher-conviction signal so the execution
   // scorer can concentrate capital on the strongest opportunities.
-  return consolidateSignalsForMarket(withLiquidity);
+  return consolidateSignalsForMarket(withMicrostructure);
 }
 
 /**

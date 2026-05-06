@@ -12,6 +12,7 @@ import {
   kalshiCredentials,
   tradingPreferences,
   marketTimeframeAnalysis,
+  marketMicrostructure,
   signalBayesianUpdates,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
@@ -703,6 +704,31 @@ export async function saveTimeframeAnalysis(payload: {
       logger.error({ error, marketId: payload.marketId, timeframe: analysis.timeframe }, "Failed to save timeframe analysis");
     }
   }
+}
+
+// Market Microstructure
+export async function saveMicrostructure(data: {
+  marketId: string;
+  spread: number;
+  spreadPct: number;
+  spreadScore: number;
+  imbalance: number;
+  vpin: number;
+  microstructureScore: number;
+  platform?: string;
+}): Promise<void> {
+  const database = await getDb();
+  if (!database) return;
+  await database.insert(marketMicrostructure).values({
+    marketId: data.marketId,
+    platform: data.platform ?? "kalshi",
+    spread: data.spread,
+    spreadPct: data.spreadPct,
+    spreadScore: data.spreadScore,
+    imbalance: data.imbalance,
+    vpin: data.vpin,
+    microstructureScore: data.microstructureScore,
+  });
 }
 
 // Bayesian Signal Updates
