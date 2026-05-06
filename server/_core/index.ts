@@ -305,34 +305,37 @@ async function runRealtimeCrossPlatformArbScan() {
 startServer()
   .then(async () => {
     // Pre-flight: surface mis-configurations LOUDLY before any autonomy
-    // cycle places real orders.  In production we crash on FAIL so Railway
-    // restarts (and the operator gets paged via the alerting webhook).
-    // In dev we log + continue so a missing optional setup doesn't block
-    // the dev loop.
+    // cycle places real orders.  In production, FAILs prevent the
+    // schedulers from arming but the HTTP server keeps serving — this
+    // way the dashboard stays reachable so the operator can see the
+    // problem and fix it (Railway env var, db:push, etc.) without a
+    // crash-loop hiding the diagnostic in restart noise.
     const selfTest = await runStartupSelfTest();
-    if (!selfTest.passed && process.env.NODE_ENV === "production") {
-      logger.fatal(
-        { failed: selfTest.checks.filter((c) => c.status === "fail").map((c) => c.name) },
-        "[Startup] Self-test failed in production; refusing to arm schedulers.  See [SelfTest] log lines above for fix steps.",
-      );
-      process.exit(1);
-    }
+    const failedChecks = selfTest.checks.filter((c) => c.status === "fail");
+    const schedulersArmed = selfTest.passed || process.env.NODE_ENV !== "production";
 
-    setInterval(runAutonomousScheduler, AUTONOMOUS_TRADING_INTERVAL_MS);
-    setInterval(runPolymarketAutonomousScheduler, AUTONOMOUS_TRADING_INTERVAL_MS);
-    setInterval(runOrderSync, ORDER_SYNC_INTERVAL_MS);
-    setInterval(runRealtimeCrossPlatformArbScan, CROSS_PLATFORM_ARB_INTERVAL_MS);
-    // Kick off the first Kalshi + Polymarket runs ~30s after boot so they
-    // don't both hit the AI reviewer simultaneously on startup.
-    setTimeout(runAutonomousScheduler, 30 * 1000);
-    setTimeout(runPolymarketAutonomousScheduler, 60 * 1000);
-    const autonomyMin = (AUTONOMOUS_TRADING_INTERVAL_MS / 60_000).toFixed(1);
-    const orderSyncSec = (ORDER_SYNC_INTERVAL_MS / 1_000).toFixed(0);
-    const crossArbSec = (CROSS_PLATFORM_ARB_INTERVAL_MS / 1_000).toFixed(0);
-    logger.info("[Scheduler] Kalshi autonomy started (%s-min interval)", autonomyMin);
-    logger.info("[PolymarketScheduler] Polymarket autonomy started (%s-min interval)", autonomyMin);
-    logger.info("[OrderSync] Order sync started (%s-sec interval)", orderSyncSec);
-    logger.info("[CrossArb] Realtime scanner started (%s-sec interval)", crossArbSec);
+    if (!schedulersArmed) {
+      logger.error(
+        { failed: failedChecks.map((c) => c.name) },
+        "[Startup] Self-test FAILED in production — schedulers will NOT arm.  HTTP server stays up so /api/health/* and the dashboard remain reachable.  Fix the failures above (most commonly: set OPENROUTER_API_KEY, run `pnpm db:push`, set DATABASE_URL) and redeploy.",
+      );
+    } else {
+      setInterval(runAutonomousScheduler, AUTONOMOUS_TRADING_INTERVAL_MS);
+      setInterval(runPolymarketAutonomousScheduler, AUTONOMOUS_TRADING_INTERVAL_MS);
+      setInterval(runOrderSync, ORDER_SYNC_INTERVAL_MS);
+      setInterval(runRealtimeCrossPlatformArbScan, CROSS_PLATFORM_ARB_INTERVAL_MS);
+      // Kick off the first Kalshi + Polymarket runs ~30s after boot so they
+      // don't both hit the AI reviewer simultaneously on startup.
+      setTimeout(runAutonomousScheduler, 30 * 1000);
+      setTimeout(runPolymarketAutonomousScheduler, 60 * 1000);
+      const autonomyMin = (AUTONOMOUS_TRADING_INTERVAL_MS / 60_000).toFixed(1);
+      const orderSyncSec = (ORDER_SYNC_INTERVAL_MS / 1_000).toFixed(0);
+      const crossArbSec = (CROSS_PLATFORM_ARB_INTERVAL_MS / 1_000).toFixed(0);
+      logger.info("[Scheduler] Kalshi autonomy started (%s-min interval)", autonomyMin);
+      logger.info("[PolymarketScheduler] Polymarket autonomy started (%s-min interval)", autonomyMin);
+      logger.info("[OrderSync] Order sync started (%s-sec interval)", orderSyncSec);
+      logger.info("[CrossArb] Realtime scanner started (%s-sec interval)", crossArbSec);
+    }
   })
   .catch((error) => {
     // Crash hard so the platform's restart policy kicks in. Logging only and

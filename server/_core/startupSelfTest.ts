@@ -69,10 +69,16 @@ async function checkExitStateColumn(table: string): Promise<SelfTestCheck> {
       ? rows.length > 0
       : Array.isArray(rows.rows) && rows.rows.length > 0;
     if (!found) {
+      // WARN, not FAIL.  The exit monitor's writes are already wrapped in
+      // try/catch and reads tolerate missing data (treated as fresh state),
+      // so a missing exitState column means "trailing stops won't persist
+      // across ticks" rather than "the bot crashes".  Crashing the deploy
+      // for a column that's only consulted by the exit monitor would block
+      // the operator from ever shipping a release that adds the column.
       return {
         name,
-        status: "fail",
-        detail: `${table}.exitState column missing.  Run \`corepack pnpm db:push\` against your production DATABASE_URL to apply the migration before starting the autonomy.`,
+        status: "warn",
+        detail: `${table}.exitState column missing.  The exit monitor will fall back to re-initialising state every tick (trailing stops won't ratchet).  Run \`corepack pnpm db:push\` against your production DATABASE_URL to apply the migration.`,
       };
     }
     return { name, status: "ok", detail: "exitState column present." };

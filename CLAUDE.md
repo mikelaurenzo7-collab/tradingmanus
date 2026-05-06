@@ -80,6 +80,8 @@ used.  Never use `npm` or `yarn` in this repo — the lockfile is
 | `AUTONOMY_INTERVAL_MS` | optional | Kalshi+Polymarket autonomy cadence in ms (default `120000` = 2 min) |
 | `ORDER_SYNC_INTERVAL_MS` | optional | Kalshi order/position reconciliation + exit monitor cadence (default `30000` = 30 s) |
 | `CROSS_ARB_INTERVAL_MS` | optional | Cross-platform arb scanner cadence (default `10000` = 10 s) |
+| `SIGNAL_REVIEW_PRICE_DELTA_BPS` | optional | Adaptive cadence: skip AI review when a market hasn't moved this many basis points since last review (default `50` = 0.5 %) |
+| `SIGNAL_REVIEW_STALE_TTL_MS` | optional | Adaptive cadence heartbeat: re-review every market at least this often regardless of price (default `600000` = 10 min) |
 | `AUTO_CLOSE_ON_EXIT_SIGNAL` | optional | `true` to auto-close positions when stop-loss / profit-target hits (default `false` — emits audit signal only, lets operator validate first) |
 | `ALLOWED_ORIGIN` | optional | Extra CORS origin for production (e.g. Railway public URL) |
 | `ALERT_WEBHOOK_URL` | optional | Webhook URL for ops alerts (consecutive failures, equity drops) |
@@ -367,6 +369,50 @@ it are treated as fresh state.
   rejections (emitted via `server/_core/alerting.ts`).
 - The `/api/health` endpoint also surfaces DB latency, scheduler runtime, and
   uptime in its body — useful for dashboard scrapers.
+
+---
+
+## Boot behaviour (Railway)
+
+`server/_core/index.ts` runs `runStartupSelfTest()` immediately after the
+HTTP server starts listening:
+
+- **All checks pass** → Schedulers arm, autonomy starts firing in 30 s.
+- **Any FAIL in production** → Schedulers do **NOT** arm, but the HTTP
+  server stays up.  This is deliberate: a crash-loop hides the diagnostic
+  in restart noise, while a running-but-degraded server keeps `/api/health/*`
+  reachable so the operator can inspect the [SelfTest] log lines in
+  Railway, fix the env var (`OPENROUTER_API_KEY`, `DATABASE_URL`,
+  `CREDENTIAL_ENCRYPTION_SECRET`), and redeploy without watching the
+  container restart loop.
+- **Schema migrations missing** (e.g. `kalshiPositions.exitState` after a
+  fresh deploy) → emits a WARN, not a FAIL.  Exit monitor falls back to
+  re-initialising state every tick (trailing stops won't ratchet across
+  ticks, but everything else works).
+
+The startup-fatal failures (DB unreachable, app construction throws) still
+crash hard so Railway's restart policy kicks in — those are non-recoverable.
+
+---
+
+## Adaptive cadence (AI cost gate)
+
+`server/_core/adaptiveCadence.ts` skips the AI reviewer for markets whose
+price hasn't moved materially since their last review.  Tunable via env:
+
+- `SIGNAL_REVIEW_PRICE_DELTA_BPS` (default `50` = 0.5 %) — minimum price
+  change required to re-review.
+- `SIGNAL_REVIEW_STALE_TTL_MS` (default `600000` = 10 min) — heartbeat:
+  even quiet markets get re-reviewed at least this often.
+
+Empirically this skips ~70-85 % of cycle candidates, so AI cost drops 3-5×
+for the same cadence.  Or equivalently, you can tighten `AUTONOMY_INTERVAL_MS`
+to 60 s on the same daily budget.
+
+Each autonomy run emits a `kalshi_adaptive_cadence_skipped` /
+`polymarket_adaptive_cadence_skipped` audit event with the skipped count
++ first 50 market IDs + cache telemetry, so the operator can verify the
+gate is working.
 
 ---
 

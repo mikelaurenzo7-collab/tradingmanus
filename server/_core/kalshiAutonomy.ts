@@ -36,6 +36,11 @@ import { getCacheHitRatio, newReviewerTelemetry } from "./aiToolbelt";
 import { createOrderSyncLock } from "./distributedLock";
 import { getEffectivePaperTradeMode } from "./effectivePaperMode";
 import {
+  shouldReviewMarketAt,
+  recordMarketReview,
+  getAdaptiveCadenceTelemetry,
+} from "./adaptiveCadence";
+import {
   alertIfConsecutiveFailures,
   alertEquityDrop,
   alertExchangeRejection,
@@ -614,6 +619,39 @@ async function generateScheduledSignals(userId: number, minConfidence: number, a
     );
   }
 
+  // Adaptive cadence: skip the AI reviewer for markets whose price hasn't
+  // moved materially since their last review.  Caps AI cost so the operator
+  // can run AUTONOMY_INTERVAL_MS at 60 s on a paid model without burning
+  // through quota.  Markets that pass the gate are recorded *before* the
+  // call so a thrown reviewer error doesn't leave them re-reviewable on
+  // the next tick (the staleness TTL still guarantees a heartbeat).
+  const cadencePassed: typeof instructionFilteredSignals = [];
+  const cadenceSkippedMarketIds: string[] = [];
+  for (const signal of instructionFilteredSignals) {
+    const market = actionableMarkets.find((m) => m.id === signal.marketId);
+    const sidePrice = market
+      ? Number(signal.side === "yes" ? market.yesPrice : market.noPrice)
+      : NaN;
+    if (shouldReviewMarketAt(signal.marketId, sidePrice)) {
+      cadencePassed.push(signal);
+      if (Number.isFinite(sidePrice)) recordMarketReview(signal.marketId, sidePrice);
+    } else {
+      cadenceSkippedMarketIds.push(signal.marketId);
+    }
+  }
+  if (cadenceSkippedMarketIds.length > 0) {
+    await db.logAuditEvent(
+      "kalshi_adaptive_cadence_skipped",
+      JSON.stringify({
+        skippedCount: cadenceSkippedMarketIds.length,
+        passedCount: cadencePassed.length,
+        markets: cadenceSkippedMarketIds.slice(0, 50),
+        telemetry: getAdaptiveCadenceTelemetry(),
+      }),
+      `user:${userId}`,
+    );
+  }
+
   // Claude is the sole reviewer. Passing userId enables per-desk memory
   // injection — each desk loads its prior win/loss tape from the deskMemory
   // table before this call.  Telemetry captures cache hit rate, web_search
@@ -622,7 +660,7 @@ async function generateScheduledSignals(userId: number, minConfidence: number, a
   const savedSignals = await reviewSignalsWithTrader(
     {
       markets: actionableMarkets,
-      signals: instructionFilteredSignals,
+      signals: cadencePassed,
       maxSignals: 12,
     },
     { userId, telemetry },

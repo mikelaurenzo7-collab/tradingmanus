@@ -83,6 +83,19 @@ vi.mock("./_core/effectivePaperMode", () => ({
   getEffectivePaperTradeMode: vi.fn(async () => false),
 }));
 
+// Bypass the adaptive-cadence gate so every signal reaches the reviewer
+// regardless of the in-memory cache state from prior test cases.
+vi.mock("./_core/adaptiveCadence", () => ({
+  shouldReviewMarketAt: vi.fn(() => true),
+  recordMarketReview: vi.fn(),
+  getAdaptiveCadenceTelemetry: vi.fn(() => ({
+    cachedMarketCount: 0,
+    medianAgeMs: 0,
+    priceDeltaBps: 50,
+    staleTtlMs: 600_000,
+  })),
+}));
+
 vi.mock("./_core/aiToolbelt", () => ({
   newReviewerTelemetry: () => ({
     desks: [],
