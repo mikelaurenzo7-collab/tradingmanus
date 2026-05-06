@@ -19,6 +19,11 @@ export default function DashboardLayout({
   const [location] = useLocation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [name, setName] = useState("");
+  const [authMode, setAuthMode] = useState<"login" | "signup">("login");
+  const [selectedTier, setSelectedTier] = useState<"starter" | "pro" | "fund">(
+    "pro"
+  );
   const [loginError, setLoginError] = useState<string | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [collapsed, setCollapsed] = useState<boolean>(() => {
@@ -44,27 +49,65 @@ export default function DashboardLayout({
 
   const loginMutation = trpc.auth.login.useMutation({
     onSuccess: async (data: any) => {
-      if (data && typeof data === "object" && "requiresTwoFactor" in data && data.requiresTwoFactor) {
+      if (
+        data &&
+        typeof data === "object" &&
+        "requiresSubscription" in data &&
+        data.requiresSubscription
+      ) {
+        const checkoutUrl = "checkoutUrl" in data ? data.checkoutUrl : null;
+        setLoginError(data.message || "Subscription required.");
+        if (checkoutUrl)
+          window.open(String(checkoutUrl), "_blank", "noopener,noreferrer");
+        return;
+      }
+      if (
+        data &&
+        typeof data === "object" &&
+        "requiresTwoFactor" in data &&
+        data.requiresTwoFactor
+      ) {
         setLoginError(data.message || "Two-factor authentication required");
         return;
       }
-      const loggedInUser = data && typeof data === "object" && "user" in data ? data.user : data;
+      const loggedInUser =
+        data && typeof data === "object" && "user" in data ? data.user : data;
       utils.auth.me.setData(undefined, loggedInUser);
       setPassword("");
       setLoginError(null);
       await utils.auth.me.invalidate();
     },
-    onError: (error) => setLoginError(error.message || "Unable to sign in."),
+    onError: error => setLoginError(error.message || "Unable to sign in."),
   });
 
-  const tradingPreferencesQuery = trpc.kalshi.getTradingPreferences.useQuery(undefined, {
-    enabled: Boolean(user),
+  const registerMutation = trpc.auth.register.useMutation({
+    onSuccess: async data => {
+      utils.auth.me.setData(undefined, data.user);
+      setPassword("");
+      setLoginError(null);
+      if (data.checkoutUrl) {
+        window.open(data.checkoutUrl, "_blank", "noopener,noreferrer");
+      }
+      await utils.auth.me.invalidate();
+    },
+    onError: error =>
+      setLoginError(error.message || "Unable to create account."),
   });
 
-  const accountStatusQuery = trpc.kalshi.getKalshiAccountStatus.useQuery(undefined, {
-    enabled: Boolean(user),
-    refetchInterval: 30000,
-  });
+  const tradingPreferencesQuery = trpc.kalshi.getTradingPreferences.useQuery(
+    undefined,
+    {
+      enabled: Boolean(user),
+    }
+  );
+
+  const accountStatusQuery = trpc.kalshi.getKalshiAccountStatus.useQuery(
+    undefined,
+    {
+      enabled: Boolean(user),
+      refetchInterval: 30000,
+    }
+  );
 
   const killSwitchMutation = trpc.kalshi.killSwitch.useMutation({
     onSuccess: async () => {
@@ -77,19 +120,30 @@ export default function DashboardLayout({
     },
   });
 
-  const liveTradingArmed = tradingPreferencesQuery.data?.liveTradingEnabled ?? false;
+  const liveTradingArmed =
+    tradingPreferencesQuery.data?.liveTradingEnabled ?? false;
   const accountStatus = accountStatusQuery.data;
   const equity = accountStatus?.equity ?? null;
 
   const handleLogin = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setLoginError(null);
+    if (authMode === "signup") {
+      registerMutation.mutate({
+        name: name.trim(),
+        email: email.trim(),
+        password,
+        subscriptionTier: selectedTier,
+      });
+      return;
+    }
+
     loginMutation.mutate({ email: email.trim(), password });
   };
 
   const handleKillSwitch = () => {
     const confirmed = window.confirm(
-      "Activate kill switch? This will disarm live trading and submit close orders for all positions.",
+      "Activate kill switch? This will disarm live trading and submit close orders for all positions."
     );
     if (confirmed) killSwitchMutation.mutate();
   };
@@ -104,9 +158,18 @@ export default function DashboardLayout({
         email={email}
         password={password}
         loginError={loginError}
-        isPending={loginMutation.isPending}
+        isPending={loginMutation.isPending || registerMutation.isPending}
+        mode={authMode}
+        name={name}
+        selectedTier={selectedTier}
         onEmailChange={setEmail}
         onPasswordChange={setPassword}
+        onNameChange={setName}
+        onTierChange={setSelectedTier}
+        onModeChange={mode => {
+          setAuthMode(mode);
+          setLoginError(null);
+        }}
         onSubmit={handleLogin}
       />
     );
@@ -128,7 +191,7 @@ export default function DashboardLayout({
       <div
         className={cn(
           "min-h-screen flex flex-col transition-[padding] duration-200 ease-out",
-          collapsed ? "lg:pl-[68px]" : "lg:pl-[248px]",
+          collapsed ? "lg:pl-[68px]" : "lg:pl-[248px]"
         )}
       >
         <Topbar

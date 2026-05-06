@@ -3,12 +3,17 @@ import { publicProcedure, router, protectedProcedure } from "./_core/trpc";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import * as db from "./db";
-import { 
-  createOwnerSessionToken, 
+import {
+  createOwnerSessionToken,
   createOwnerRefreshToken,
+  createSessionTokenForUser,
+  getCheckoutUrlForTier,
+  hashAccountPassword,
+  isSubscriptionEntitled,
   refreshAccessToken,
-  ensureOwnerUser, 
-  validateOwnerCredentials 
+  ensureOwnerUser,
+  validateOwnerCredentials,
+  verifyAccountPassword,
 } from "./_core/auth";
 import {
   generateTwoFactorSecret,
@@ -18,6 +23,8 @@ import {
   verifyBackupCode,
 } from "./_core/twoFactor";
 import { logger, logAudit } from "./_core/logger";
+import { ENV } from "./_core/env";
+import crypto from "crypto";
 import {
   fetchKalshiMarkets,
   fetchKalshiMarketDetails,
@@ -105,7 +112,12 @@ import {
 } from "./_core/crossBotStrategies";
 import { alertKillSwitchPartialFailure } from "./_core/alerting";
 
-import { COOKIE_NAME, REFRESH_COOKIE_NAME, ONE_DAY_MS, SEVEN_DAYS_MS } from "../shared/const";
+import {
+  COOKIE_NAME,
+  REFRESH_COOKIE_NAME,
+  ONE_DAY_MS,
+  SEVEN_DAYS_MS,
+} from "../shared/const";
 
 // How many Polymarket markets to pull when generating signals.
 // More markets = more signal candidates; keep bounded to avoid timeouts.
@@ -120,7 +132,10 @@ const BASE_RISK_LIMITS = {
 };
 
 function clampRiskLimit(value: number, minimum: number, maximum: number) {
-  return Math.max(minimum, Math.min(maximum, Number.isFinite(value) ? value : minimum));
+  return Math.max(
+    minimum,
+    Math.min(maximum, Number.isFinite(value) ? value : minimum)
+  );
 }
 
 function getRequiredUserId(ctx: { user: { id?: number | null } }) {
@@ -188,8 +203,10 @@ function parseDecisionDetails(details: Record<string, unknown> | null): {
   }
 
   const raw = decision as Record<string, unknown>;
-  const readNumber = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : null);
-  const readText = (value: unknown) => (typeof value === "string" ? value : null);
+  const readNumber = (value: unknown) =>
+    typeof value === "number" && Number.isFinite(value) ? value : null;
+  const readText = (value: unknown) =>
+    typeof value === "string" ? value : null;
   const side = raw.side === "yes" || raw.side === "no" ? raw.side : null;
 
   return {
@@ -218,7 +235,9 @@ function buildAutonomyActivitySummary(runs: Array<any>) {
   const lastRun = recentRuns[0] ?? null;
   const lastRunDecisionPayload = parseAuditDetails(lastRun?.decision);
   const candidateSetPayload = parseAuditDetails(lastRun?.candidateSet);
-  const rejectedCandidatesPayload = parseAuditDetails(lastRun?.rejectedCandidates);
+  const rejectedCandidatesPayload = parseAuditDetails(
+    lastRun?.rejectedCandidates
+  );
   const lastRunDecision = parseDecisionDetails(
     lastRunDecisionPayload ? { decision: lastRunDecisionPayload } : null
   );
@@ -235,15 +254,25 @@ function buildAutonomyActivitySummary(runs: Array<any>) {
           signalsGenerated: Number(lastRun.signalsGenerated ?? 0),
           executionCandidates: Number(lastRun.executionCandidates ?? 0),
           candidateMarketId:
-            typeof lastRun.candidateMarketId === "string" ? lastRun.candidateMarketId : null,
+            typeof lastRun.candidateMarketId === "string"
+              ? lastRun.candidateMarketId
+              : null,
           executedMarketId:
-            typeof lastRun.executedMarketId === "string" ? lastRun.executedMarketId : null,
+            typeof lastRun.executedMarketId === "string"
+              ? lastRun.executedMarketId
+              : null,
           autonomyMode:
-            typeof lastRun.autonomyMode === "string" ? lastRun.autonomyMode : null,
+            typeof lastRun.autonomyMode === "string"
+              ? lastRun.autonomyMode
+              : null,
           executionCadence:
-            typeof lastRun.executionCadence === "string" ? lastRun.executionCadence : null,
+            typeof lastRun.executionCadence === "string"
+              ? lastRun.executionCadence
+              : null,
           triggerSource:
-            typeof lastRun.triggerSource === "string" ? lastRun.triggerSource : null,
+            typeof lastRun.triggerSource === "string"
+              ? lastRun.triggerSource
+              : null,
           reconciliationStatus:
             typeof lastRun.reconciliationStatus === "string"
               ? lastRun.reconciliationStatus
@@ -253,38 +282,43 @@ function buildAutonomyActivitySummary(runs: Array<any>) {
               ? lastRun.reconciliationReason
               : null,
           decision: lastRunDecision,
-          candidateSet: Array.isArray(candidateSetPayload) ? candidateSetPayload : [],
-          rejectedCandidates: Array.isArray(rejectedCandidatesPayload) ? rejectedCandidatesPayload : [],
+          candidateSet: Array.isArray(candidateSetPayload)
+            ? candidateSetPayload
+            : [],
+          rejectedCandidates: Array.isArray(rejectedCandidatesPayload)
+            ? rejectedCandidatesPayload
+            : [],
         }
       : null,
-    lastOrder: lastRun && isOrderPlacedFlag(lastRun.orderPlaced)
-      ? {
-          eventType:
-            String(lastRun.status) === "executed"
-              ? "scheduled_autonomy_order_placed"
-              : "scheduled_autonomy_order_blocked_or_failed",
-          createdAt: lastRun.completedAt ?? lastRun.startedAt,
-          marketId:
-            typeof lastRun.executedMarketId === "string"
-              ? lastRun.executedMarketId
-              : typeof lastRun.candidateMarketId === "string"
-                ? lastRun.candidateMarketId
-                : null,
-          side: lastRunDecision?.side ?? null,
-          quantity: lastRunDecision?.quantity ?? null,
-          limitPrice: lastRunDecision?.limitPrice ?? null,
-          confidence: lastRunDecision?.confidence ?? null,
-          executionScore: lastRunDecision?.executionScore ?? null,
-          reason: typeof lastRun.reason === "string" ? lastRun.reason : null,
-          expectedValue: lastRunDecision?.expectedValue ?? null,
-          reasoning: lastRunDecision?.reasoning ?? null,
-          availableCapital: lastRunDecision?.availableCapital ?? null,
-          maxBudget: lastRunDecision?.maxBudget ?? null,
-          orderExposure: lastRunDecision?.orderExposure ?? null,
-          maxLossOnTrade: lastRunDecision?.maxLossOnTrade ?? null,
-        }
-      : null,
-    recentActivity: recentRuns.map((run) => ({
+    lastOrder:
+      lastRun && isOrderPlacedFlag(lastRun.orderPlaced)
+        ? {
+            eventType:
+              String(lastRun.status) === "executed"
+                ? "scheduled_autonomy_order_placed"
+                : "scheduled_autonomy_order_blocked_or_failed",
+            createdAt: lastRun.completedAt ?? lastRun.startedAt,
+            marketId:
+              typeof lastRun.executedMarketId === "string"
+                ? lastRun.executedMarketId
+                : typeof lastRun.candidateMarketId === "string"
+                  ? lastRun.candidateMarketId
+                  : null,
+            side: lastRunDecision?.side ?? null,
+            quantity: lastRunDecision?.quantity ?? null,
+            limitPrice: lastRunDecision?.limitPrice ?? null,
+            confidence: lastRunDecision?.confidence ?? null,
+            executionScore: lastRunDecision?.executionScore ?? null,
+            reason: typeof lastRun.reason === "string" ? lastRun.reason : null,
+            expectedValue: lastRunDecision?.expectedValue ?? null,
+            reasoning: lastRunDecision?.reasoning ?? null,
+            availableCapital: lastRunDecision?.availableCapital ?? null,
+            maxBudget: lastRunDecision?.maxBudget ?? null,
+            orderExposure: lastRunDecision?.orderExposure ?? null,
+            maxLossOnTrade: lastRunDecision?.maxLossOnTrade ?? null,
+          }
+        : null,
+    recentActivity: recentRuns.map(run => ({
       id: run.id,
       eventType: `scheduled_autonomy_run_${run.status}`,
       createdAt: run.startedAt,
@@ -332,9 +366,21 @@ async function getDynamicRiskLimits(userId: number) {
 
   return {
     maxCapital,
-    maxLossPerTrade: clampRiskLimit(maxCapital * 0.05, 1, BASE_RISK_LIMITS.maxLossPerTrade),
-    maxLossPerDay: clampRiskLimit(maxCapital * 0.1, 2, BASE_RISK_LIMITS.maxLossPerDay),
-    maxPositionSize: clampRiskLimit(maxCapital * 0.2, 2, BASE_RISK_LIMITS.maxPositionSize),
+    maxLossPerTrade: clampRiskLimit(
+      maxCapital * 0.05,
+      1,
+      BASE_RISK_LIMITS.maxLossPerTrade
+    ),
+    maxLossPerDay: clampRiskLimit(
+      maxCapital * 0.1,
+      2,
+      BASE_RISK_LIMITS.maxLossPerDay
+    ),
+    maxPositionSize: clampRiskLimit(
+      maxCapital * 0.2,
+      2,
+      BASE_RISK_LIMITS.maxPositionSize
+    ),
     maxOpenPositions: BASE_RISK_LIMITS.maxOpenPositions,
   };
 }
@@ -343,39 +389,66 @@ export const appRouter = router({
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
     login: publicProcedure
-      .input(z.object({ 
-        email: z.string().min(1), 
-        password: z.string().min(1),
-        twoFactorToken: z.string().optional(),
-      }))
+      .input(
+        z.object({
+          email: z.string().min(1),
+          password: z.string().min(1),
+          twoFactorToken: z.string().optional(),
+        })
+      )
       .mutation(async ({ input, ctx }) => {
-        const valid = validateOwnerCredentials(input.email, input.password);
-        if (!valid) {
-          logAudit({
-            action: "login_failed",
-            resource: "auth",
-            details: { email: input.email, reason: "invalid_credentials" },
-            success: false,
-          });
-          throw new TRPCError({
-            code: "UNAUTHORIZED",
-            message: "Invalid email or password.",
-          });
-        }
+        const ownerCredentialsValid = validateOwnerCredentials(
+          input.email,
+          input.password
+        );
+        let user = ownerCredentialsValid
+          ? await ensureOwnerUser()
+          : await db.getUserByEmail(input.email);
 
-        const user = await ensureOwnerUser();
+        if (!ownerCredentialsValid) {
+          const accountCredentialsValid = verifyAccountPassword(
+            input.password,
+            user?.passwordHash
+          );
+          if (!user || !accountCredentialsValid) {
+            logAudit({
+              action: "login_failed",
+              resource: "auth",
+              details: { email: input.email, reason: "invalid_credentials" },
+              success: false,
+            });
+            throw new TRPCError({
+              code: "UNAUTHORIZED",
+              message: "Invalid email or password.",
+            });
+          }
+
+          if (!isSubscriptionEntitled(user)) {
+            return {
+              requiresSubscription: true as const,
+              message:
+                "Your subscription is not active. Choose a plan to unlock the trading desk.",
+              checkoutUrl: getCheckoutUrlForTier(user.subscriptionTier),
+              billingPortalUrl: ENV.billingPortalUrl || null,
+              user,
+            };
+          }
+
+          await db.updateUser(user.id, { lastSignedIn: new Date() });
+          user = (await db.getUserById(user.id)) ?? user;
+        }
 
         // Check if 2FA is enabled
         if (user.twoFactorEnabled === 1) {
           if (!input.twoFactorToken) {
-            return { 
+            return {
               requiresTwoFactor: true,
               message: "Two-factor authentication required",
             };
           }
 
           // Verify 2FA token
-          const isValid = user.twoFactorSecret 
+          const isValid = user.twoFactorSecret
             ? verifyTwoFactorToken(input.twoFactorToken, user.twoFactorSecret)
             : false;
 
@@ -384,7 +457,9 @@ export const appRouter = router({
             let backupCodeValid = false;
             if (user.backupCodesHash) {
               try {
-                const backupCodes = JSON.parse(user.backupCodesHash) as string[];
+                const backupCodes = JSON.parse(
+                  user.backupCodesHash
+                ) as string[];
                 for (let i = 0; i < backupCodes.length; i++) {
                   if (verifyBackupCode(input.twoFactorToken, backupCodes[i])) {
                     // Remove used backup code
@@ -393,7 +468,10 @@ export const appRouter = router({
                       backupCodesHash: JSON.stringify(backupCodes),
                     });
                     backupCodeValid = true;
-                    logger.info({ userId: user.id }, "Backup code used for authentication");
+                    logger.info(
+                      { userId: user.id },
+                      "Backup code used for authentication"
+                    );
                     break;
                   }
                 }
@@ -420,20 +498,24 @@ export const appRouter = router({
         }
 
         // Generate tokens
-        const sessionToken = await createOwnerSessionToken();
-        const refreshToken = await createOwnerRefreshToken();
+        const sessionToken = ownerCredentialsValid
+          ? await createOwnerSessionToken()
+          : await createSessionTokenForUser(user, "access");
+        const refreshToken = ownerCredentialsValid
+          ? await createOwnerRefreshToken()
+          : await createSessionTokenForUser(user, "refresh");
         const cookieOptions = getSessionCookieOptions(ctx.req);
-        
+
         // Set session cookie (24 hours)
-        ctx.res.cookie(COOKIE_NAME, sessionToken, { 
-          ...cookieOptions, 
-          maxAge: ONE_DAY_MS 
+        ctx.res.cookie(COOKIE_NAME, sessionToken, {
+          ...cookieOptions,
+          maxAge: ONE_DAY_MS,
         });
-        
+
         // Set refresh token cookie (7 days)
-        ctx.res.cookie(REFRESH_COOKIE_NAME, refreshToken, { 
-          ...cookieOptions, 
-          maxAge: SEVEN_DAYS_MS 
+        ctx.res.cookie(REFRESH_COOKIE_NAME, refreshToken, {
+          ...cookieOptions,
+          maxAge: SEVEN_DAYS_MS,
         });
 
         logAudit({
@@ -445,6 +527,84 @@ export const appRouter = router({
         });
 
         return { user, requiresTwoFactor: false };
+      }),
+
+    register: publicProcedure
+      .input(
+        z.object({
+          name: z.string().trim().min(1).max(120),
+          email: z.string().trim().email().max(320),
+          password: z.string().min(12).max(256),
+          subscriptionTier: z
+            .enum(["starter", "pro", "fund"])
+            .default("starter"),
+        })
+      )
+      .mutation(async ({ input, ctx }) => {
+        const normalizedEmail = input.email.trim().toLowerCase();
+        const existingUser = await db.getUserByEmail(normalizedEmail);
+        if (existingUser) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message:
+              "An account already exists for that email. Sign in or use the billing portal.",
+          });
+        }
+
+        const trialEndsAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+        const user = await db.createUserAccount({
+          openId: `user:${crypto.randomUUID()}`,
+          name: input.name.trim(),
+          email: normalizedEmail,
+          passwordHash: hashAccountPassword(input.password),
+          subscriptionTier: input.subscriptionTier,
+          subscriptionStatus: "trialing",
+          subscriptionCurrentPeriodEnd: trialEndsAt,
+        });
+
+        if (!user) {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Account could not be created.",
+          });
+        }
+
+        const cookieOptions = getSessionCookieOptions(ctx.req);
+        ctx.res.cookie(
+          COOKIE_NAME,
+          await createSessionTokenForUser(user, "access"),
+          {
+            ...cookieOptions,
+            maxAge: ONE_DAY_MS,
+          }
+        );
+        ctx.res.cookie(
+          REFRESH_COOKIE_NAME,
+          await createSessionTokenForUser(user, "refresh"),
+          {
+            ...cookieOptions,
+            maxAge: SEVEN_DAYS_MS,
+          }
+        );
+
+        logAudit({
+          action: "account_registered",
+          userId: user.id,
+          openId: user.openId,
+          resource: "auth",
+          details: {
+            subscriptionTier: input.subscriptionTier,
+            subscriptionStatus: "trialing",
+          },
+          success: true,
+        });
+
+        return {
+          user,
+          trialEndsAt,
+          checkoutUrl: getCheckoutUrlForTier(input.subscriptionTier) || null,
+          billingPortalUrl: ENV.billingPortalUrl || null,
+        };
       }),
 
     refreshToken: publicProcedure.mutation(async ({ ctx }) => {
@@ -476,8 +636,11 @@ export const appRouter = router({
     logout: publicProcedure.mutation(({ ctx }) => {
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
-      ctx.res.clearCookie(REFRESH_COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
-      
+      ctx.res.clearCookie(REFRESH_COOKIE_NAME, {
+        ...cookieOptions,
+        maxAge: -1,
+      });
+
       if (ctx.user) {
         logAudit({
           action: "logout",
@@ -487,7 +650,7 @@ export const appRouter = router({
           success: true,
         });
       }
-      
+
       return { success: true } as const;
     }),
 
@@ -495,7 +658,7 @@ export const appRouter = router({
     setup2FA: protectedProcedure.mutation(async ({ ctx }) => {
       const userId = getRequiredUserId(ctx);
       const user = await db.getUserById(userId);
-      
+
       if (!user) {
         throw new TRPCError({
           code: "NOT_FOUND",
@@ -511,7 +674,7 @@ export const appRouter = router({
       }
 
       const twoFactorData = await generateTwoFactorSecret(user.email || "");
-      
+
       // Store the secret temporarily (not enabled yet)
       await db.updateUser(userId, {
         twoFactorSecret: twoFactorData.secret,
@@ -537,7 +700,7 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         const userId = getRequiredUserId(ctx);
         const user = await db.getUserById(userId);
-        
+
         if (!user || !user.twoFactorSecret) {
           throw new TRPCError({
             code: "BAD_REQUEST",
@@ -546,7 +709,7 @@ export const appRouter = router({
         }
 
         const isValid = verifyTwoFactorToken(input.token, user.twoFactorSecret);
-        
+
         if (!isValid) {
           throw new TRPCError({
             code: "UNAUTHORIZED",
@@ -583,7 +746,7 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         const userId = getRequiredUserId(ctx);
         const user = await db.getUserById(userId);
-        
+
         if (!user || user.twoFactorEnabled !== 1 || !user.twoFactorSecret) {
           throw new TRPCError({
             code: "BAD_REQUEST",
@@ -592,7 +755,7 @@ export const appRouter = router({
         }
 
         const isValid = verifyTwoFactorToken(input.token, user.twoFactorSecret);
-        
+
         if (!isValid) {
           throw new TRPCError({
             code: "UNAUTHORIZED",
@@ -621,7 +784,7 @@ export const appRouter = router({
     get2FAStatus: protectedProcedure.query(async ({ ctx }) => {
       const userId = getRequiredUserId(ctx);
       const user = await db.getUserById(userId);
-      
+
       if (!user) {
         throw new TRPCError({
           code: "NOT_FOUND",
@@ -695,177 +858,190 @@ export const appRouter = router({
           // requests can't both pass risk checks against stale state and then
           // both submit orders (TOCTOU race).
           return await withUserLock(userId, async () => {
-          const [capital, openPositions, todayRealizedLoss, riskLimits, preferences, todayOrderCount] = await Promise.all([
-            db.getKalshiCapital(userId),
-            db.getOpenKalshiPositions(userId),
-            db.getTodayRealizedLoss(userId),
-            getDynamicRiskLimits(userId),
-            tradingPreferencesDb.getTradingPreferences(userId),
-            db.getTodayKalshiOrderCount(userId),
-          ]);
-          let marketDetails: Awaited<ReturnType<typeof fetchKalshiMarketDetails>> = null;
-          try {
-            marketDetails = await fetchKalshiMarketDetails(input.marketId);
-          } catch (marketErr) {
-            logger.warn(
-              { err: marketErr, marketId: input.marketId },
-              "[Kalshi] market detail lookup failed for market-impact sizing; proceeding with default liquidity assumptions"
+            const [
+              capital,
+              openPositions,
+              todayRealizedLoss,
+              riskLimits,
+              preferences,
+              todayOrderCount,
+            ] = await Promise.all([
+              db.getKalshiCapital(userId),
+              db.getOpenKalshiPositions(userId),
+              db.getTodayRealizedLoss(userId),
+              getDynamicRiskLimits(userId),
+              tradingPreferencesDb.getTradingPreferences(userId),
+              db.getTodayKalshiOrderCount(userId),
+            ]);
+            let marketDetails: Awaited<
+              ReturnType<typeof fetchKalshiMarketDetails>
+            > = null;
+            try {
+              marketDetails = await fetchKalshiMarketDetails(input.marketId);
+            } catch (marketErr) {
+              logger.warn(
+                { err: marketErr, marketId: input.marketId },
+                "[Kalshi] market detail lookup failed for market-impact sizing; proceeding with default liquidity assumptions"
+              );
+            }
+
+            const totalVolumeContracts = Math.max(
+              0,
+              Number(marketDetails?.yesVolume ?? 0) +
+                Number(marketDetails?.noVolume ?? 0)
             );
-          }
+            const liquidityUnavailable = totalVolumeContracts <= 0;
+            const dailyVolumeUsd = liquidityUnavailable
+              ? Math.max(input.limitPrice * 50, 1)
+              : totalVolumeContracts * input.limitPrice;
+            const marketImpact = applyMarketImpactGuardrails({
+              quantity: input.quantity,
+              limitPrice: input.limitPrice,
+              side: input.side,
+              dailyVolumeUsd,
+              expectedValue: 0,
+            });
+            const impactAdjustedQuantity = marketImpact.shouldBlockOrder
+              ? 0
+              : marketImpact.recommendedQuantity;
 
-          const totalVolumeContracts = Math.max(
-            0,
-            Number(marketDetails?.yesVolume ?? 0) + Number(marketDetails?.noVolume ?? 0),
-          );
-          const liquidityUnavailable = totalVolumeContracts <= 0;
-          const dailyVolumeUsd = liquidityUnavailable
-            ? Math.max(input.limitPrice * 50, 1)
-            : totalVolumeContracts * input.limitPrice;
-          const marketImpact = applyMarketImpactGuardrails({
-            quantity: input.quantity,
-            limitPrice: input.limitPrice,
-            side: input.side,
-            dailyVolumeUsd,
-            expectedValue: 0,
-          });
-          const impactAdjustedQuantity = marketImpact.shouldBlockOrder
-            ? 0
-            : marketImpact.recommendedQuantity;
+            if (impactAdjustedQuantity < 1) {
+              await db.logAuditEvent(
+                "kalshi_order_blocked_market_impact",
+                JSON.stringify({
+                  ...input,
+                  impactAdjustedQuantity,
+                  estimatedMarketImpact: marketImpact.estimatedMarketImpact,
+                  impactBps: marketImpact.impactBps,
+                  expectedSlippageUsd: marketImpact.expectedSlippageUsd,
+                  simulated: ctx.paperTradeMode,
+                }),
+                ctx.user!.openId
+              );
 
-          if (impactAdjustedQuantity < 1) {
-            await db.logAuditEvent(
-              "kalshi_order_blocked_market_impact",
-              JSON.stringify({
-                ...input,
-                impactAdjustedQuantity,
-                estimatedMarketImpact: marketImpact.estimatedMarketImpact,
-                impactBps: marketImpact.impactBps,
-                expectedSlippageUsd: marketImpact.expectedSlippageUsd,
-                simulated: ctx.paperTradeMode,
-              }),
-              ctx.user!.openId
+              return {
+                success: false,
+                error: "Order blocked by market-impact guardrail",
+              };
+            }
+
+            if (impactAdjustedQuantity < input.quantity) {
+              await db.logAuditEvent(
+                "kalshi_order_sized_by_market_impact",
+                JSON.stringify({
+                  ...input,
+                  liquidityUnavailable,
+                  impactAdjustedQuantity,
+                  estimatedMarketImpact: marketImpact.estimatedMarketImpact,
+                  impactBps: marketImpact.impactBps,
+                  expectedSlippageUsd: marketImpact.expectedSlippageUsd,
+                  simulated: ctx.paperTradeMode,
+                }),
+                ctx.user!.openId
+              );
+            }
+
+            const orderRisk = calculateKalshiBuyOrderRisk({
+              ...input,
+              quantity: impactAdjustedQuantity,
+            });
+            const orderExposure = orderRisk.orderExposure;
+            const maxLossOnTrade = orderRisk.maxLossOnTrade;
+
+            if (todayOrderCount >= preferences.maxDailyOrders) {
+              return {
+                success: false,
+                error: `Daily order cap reached (${preferences.maxDailyOrders})`,
+              };
+            }
+
+            if (orderExposure > preferences.maxOrderNotional) {
+              return {
+                success: false,
+                error: `Order exposure of $${orderExposure.toFixed(2)} exceeds your configured max order notional of $${preferences.maxOrderNotional}`,
+              };
+            }
+
+            if (openPositions.length >= riskLimits.maxOpenPositions) {
+              return {
+                success: false,
+                error: `Open position limit reached (${riskLimits.maxOpenPositions})`,
+              };
+            }
+
+            // Position size check: total capital at risk
+            if (orderExposure > riskLimits.maxPositionSize) {
+              return {
+                success: false,
+                error: `Order exposure exceeds max position size of $${riskLimits.maxPositionSize}`,
+              };
+            }
+
+            // Max loss check: worst-case loss on this trade
+            if (maxLossOnTrade > riskLimits.maxLossPerTrade) {
+              return {
+                success: false,
+                error: `Order max loss of $${maxLossOnTrade.toFixed(2)} exceeds max per-trade risk of $${riskLimits.maxLossPerTrade}`,
+              };
+            }
+
+            if (todayRealizedLoss >= riskLimits.maxLossPerDay) {
+              return {
+                success: false,
+                error: `Daily loss limit reached ($${riskLimits.maxLossPerDay})`,
+              };
+            }
+
+            if (
+              capital &&
+              orderExposure > Number(capital.currentBalance ?? 0)
+            ) {
+              return {
+                success: false,
+                error: "Order exceeds available capital",
+              };
+            }
+
+            const result = await placeKalshiOrder(
+              userId,
+              input.marketId,
+              input.side,
+              orderRisk.quantity,
+              orderRisk.limitPrice
             );
 
-            return {
-              success: false,
-              error: "Order blocked by market-impact guardrail",
-            };
-          }
+            if (result.success) {
+              await db.logAuditEvent(
+                "kalshi_order_placed",
+                JSON.stringify({
+                  marketId: input.marketId,
+                  side: input.side,
+                  quantity: orderRisk.quantity,
+                  limitPrice: orderRisk.limitPrice,
+                  orderExposure,
+                  maxLossOnTrade,
+                  simulated: ctx.paperTradeMode,
+                }),
+                ctx.user!.openId
+              );
+            } else {
+              await db.logAuditEvent(
+                "kalshi_order_blocked_or_failed",
+                JSON.stringify({
+                  marketId: input.marketId,
+                  side: input.side,
+                  quantity: orderRisk.quantity,
+                  limitPrice: orderRisk.limitPrice,
+                  orderExposure,
+                  maxLossOnTrade,
+                  reason: result.error ?? "unknown",
+                  simulated: ctx.paperTradeMode,
+                }),
+                ctx.user!.openId
+              );
+            }
 
-          if (impactAdjustedQuantity < input.quantity) {
-            await db.logAuditEvent(
-              "kalshi_order_sized_by_market_impact",
-              JSON.stringify({
-                ...input,
-                liquidityUnavailable,
-                impactAdjustedQuantity,
-                estimatedMarketImpact: marketImpact.estimatedMarketImpact,
-                impactBps: marketImpact.impactBps,
-                expectedSlippageUsd: marketImpact.expectedSlippageUsd,
-                simulated: ctx.paperTradeMode,
-              }),
-              ctx.user!.openId
-            );
-          }
-
-          const orderRisk = calculateKalshiBuyOrderRisk({
-            ...input,
-            quantity: impactAdjustedQuantity,
-          });
-          const orderExposure = orderRisk.orderExposure;
-          const maxLossOnTrade = orderRisk.maxLossOnTrade;
-
-          if (todayOrderCount >= preferences.maxDailyOrders) {
-            return {
-              success: false,
-              error: `Daily order cap reached (${preferences.maxDailyOrders})`,
-            };
-          }
-
-          if (orderExposure > preferences.maxOrderNotional) {
-            return {
-              success: false,
-              error: `Order exposure of $${orderExposure.toFixed(2)} exceeds your configured max order notional of $${preferences.maxOrderNotional}`,
-            };
-          }
-
-          if (openPositions.length >= riskLimits.maxOpenPositions) {
-            return {
-              success: false,
-              error: `Open position limit reached (${riskLimits.maxOpenPositions})`,
-            };
-          }
-
-          // Position size check: total capital at risk
-          if (orderExposure > riskLimits.maxPositionSize) {
-            return {
-              success: false,
-              error: `Order exposure exceeds max position size of $${riskLimits.maxPositionSize}`,
-            };
-          }
-
-          // Max loss check: worst-case loss on this trade
-          if (maxLossOnTrade > riskLimits.maxLossPerTrade) {
-            return {
-              success: false,
-              error: `Order max loss of $${maxLossOnTrade.toFixed(2)} exceeds max per-trade risk of $${riskLimits.maxLossPerTrade}`,
-            };
-          }
-
-          if (todayRealizedLoss >= riskLimits.maxLossPerDay) {
-            return {
-              success: false,
-              error: `Daily loss limit reached ($${riskLimits.maxLossPerDay})`,
-            };
-          }
-
-          if (capital && orderExposure > Number(capital.currentBalance ?? 0)) {
-            return {
-              success: false,
-              error: "Order exceeds available capital",
-            };
-          }
-
-          const result = await placeKalshiOrder(
-            userId,
-            input.marketId,
-            input.side,
-            orderRisk.quantity,
-            orderRisk.limitPrice
-          );
-
-          if (result.success) {
-            await db.logAuditEvent(
-              "kalshi_order_placed",
-              JSON.stringify({
-                marketId: input.marketId,
-                side: input.side,
-                quantity: orderRisk.quantity,
-                limitPrice: orderRisk.limitPrice,
-                orderExposure,
-                maxLossOnTrade,
-                simulated: ctx.paperTradeMode,
-              }),
-              ctx.user!.openId
-            );
-          } else {
-            await db.logAuditEvent(
-              "kalshi_order_blocked_or_failed",
-              JSON.stringify({
-                marketId: input.marketId,
-                side: input.side,
-                quantity: orderRisk.quantity,
-                limitPrice: orderRisk.limitPrice,
-                orderExposure,
-                maxLossOnTrade,
-                reason: result.error ?? "unknown",
-                simulated: ctx.paperTradeMode,
-              }),
-              ctx.user!.openId
-            );
-          }
-
-          return result;
+            return result;
           }); // end withUserLock
         } catch (error) {
           logger.error({ err: error }, "[Kalshi] Place order error");
@@ -924,7 +1100,10 @@ export const appRouter = router({
       )
       .query(async ({ input, ctx }) => {
         try {
-          return await db.getKalshiTradeHistory(input?.limit ?? 50, getRequiredUserId(ctx));
+          return await db.getKalshiTradeHistory(
+            input?.limit ?? 50,
+            getRequiredUserId(ctx)
+          );
         } catch (error) {
           logger.error({ err: error }, "[Kalshi] Get trade history error");
           return [];
@@ -971,7 +1150,10 @@ export const appRouter = router({
           return null;
         }
 
-        const equityResult = await fetchKalshiAccountEquity(creds.apiKey, creds.privateKey);
+        const equityResult = await fetchKalshiAccountEquity(
+          creds.apiKey,
+          creds.privateKey
+        );
         if (equityResult.error) {
           return null;
         }
@@ -992,7 +1174,10 @@ export const appRouter = router({
       .input(z.object({ amount: z.number().default(0) }))
       .mutation(async ({ input, ctx }) => {
         try {
-          await db.initializeKalshiCapital(input.amount, getRequiredUserId(ctx));
+          await db.initializeKalshiCapital(
+            input.amount,
+            getRequiredUserId(ctx)
+          );
           await db.logAuditEvent(
             "kalshi_capital_initialized",
             `$${input.amount}`,
@@ -1012,7 +1197,8 @@ export const appRouter = router({
         if (ctx.paperTradeMode) {
           throw new TRPCError({
             code: "FORBIDDEN",
-            message: "Cannot withdraw during paper trading mode. Switch to real mode first.",
+            message:
+              "Cannot withdraw during paper trading mode. Switch to real mode first.",
           });
         }
 
@@ -1060,13 +1246,23 @@ export const appRouter = router({
 
     getRecentAutonomyRuns: protectedProcedure
       .input(
-        z.object({ limit: z.number().int().min(1).max(50).optional().default(20) }).optional()
+        z
+          .object({
+            limit: z.number().int().min(1).max(50).optional().default(20),
+          })
+          .optional()
       )
       .query(async ({ input, ctx }) => {
         try {
-          return await db.getRecentAutonomyRuns(getRequiredUserId(ctx), input?.limit ?? 20);
+          return await db.getRecentAutonomyRuns(
+            getRequiredUserId(ctx),
+            input?.limit ?? 20
+          );
         } catch (error) {
-          logger.error({ err: error }, "[Kalshi] Get recent autonomy runs error");
+          logger.error(
+            { err: error },
+            "[Kalshi] Get recent autonomy runs error"
+          );
           return [];
         }
       }),
@@ -1075,12 +1271,19 @@ export const appRouter = router({
       .input(z.object({ runId: z.string().min(1).max(64) }))
       .query(async ({ input, ctx }) => {
         try {
-          const run = await db.getAutonomyRunDetail(input.runId, getRequiredUserId(ctx));
+          const run = await db.getAutonomyRunDetail(
+            input.runId,
+            getRequiredUserId(ctx)
+          );
           if (!run) return null;
 
           const auditDetails = parseAuditDetails(run.decision as string | null);
-          const candidateSetPayload = parseAuditDetails(run.candidateSet as string | null);
-          const rejectedCandidatesPayload = parseAuditDetails(run.rejectedCandidates as string | null);
+          const candidateSetPayload = parseAuditDetails(
+            run.candidateSet as string | null
+          );
+          const rejectedCandidatesPayload = parseAuditDetails(
+            run.rejectedCandidates as string | null
+          );
           const decision = parseDecisionDetails(
             auditDetails ? { decision: auditDetails } : null
           );
@@ -1098,17 +1301,38 @@ export const appRouter = router({
             executionCandidates: Number(run.executionCandidates ?? 0),
             orderPlaced: isOrderPlacedFlag(run.orderPlaced),
             orderId: typeof run.orderId === "string" ? run.orderId : null,
-            executedMarketId: typeof run.executedMarketId === "string" ? run.executedMarketId : null,
-            candidateMarketId: typeof run.candidateMarketId === "string" ? run.candidateMarketId : null,
-            reconciliationStatus: typeof run.reconciliationStatus === "string" ? run.reconciliationStatus : null,
-            reconciliationReason: typeof run.reconciliationReason === "string" ? run.reconciliationReason : null,
-            appliedGuardrails: parseAuditDetails(run.appliedGuardrails as string | null),
+            executedMarketId:
+              typeof run.executedMarketId === "string"
+                ? run.executedMarketId
+                : null,
+            candidateMarketId:
+              typeof run.candidateMarketId === "string"
+                ? run.candidateMarketId
+                : null,
+            reconciliationStatus:
+              typeof run.reconciliationStatus === "string"
+                ? run.reconciliationStatus
+                : null,
+            reconciliationReason:
+              typeof run.reconciliationReason === "string"
+                ? run.reconciliationReason
+                : null,
+            appliedGuardrails: parseAuditDetails(
+              run.appliedGuardrails as string | null
+            ),
             decision,
-            candidateSet: Array.isArray(candidateSetPayload) ? candidateSetPayload : [],
-            rejectedCandidates: Array.isArray(rejectedCandidatesPayload) ? rejectedCandidatesPayload : [],
+            candidateSet: Array.isArray(candidateSetPayload)
+              ? candidateSetPayload
+              : [],
+            rejectedCandidates: Array.isArray(rejectedCandidatesPayload)
+              ? rejectedCandidatesPayload
+              : [],
           };
         } catch (error) {
-          logger.error({ err: error }, "[Kalshi] Get autonomy run detail error");
+          logger.error(
+            { err: error },
+            "[Kalshi] Get autonomy run detail error"
+          );
           return null;
         }
       }),
@@ -1117,7 +1341,8 @@ export const appRouter = router({
     killSwitch: protectedProcedure.mutation(async ({ ctx }) => {
       try {
         const userId = getRequiredUserId(ctx);
-        const preferences = await tradingPreferencesDb.getTradingPreferences(userId);
+        const preferences =
+          await tradingPreferencesDb.getTradingPreferences(userId);
         await tradingPreferencesDb.saveTradingPreferences(userId, {
           ...preferences,
           liveTradingEnabled: false,
@@ -1134,8 +1359,8 @@ export const appRouter = router({
         );
         if (result.failedPositions > 0) {
           const failedMarketIds = result.results
-            .filter((r) => !r.success)
-            .map((r) => r.marketId);
+            .filter(r => !r.success)
+            .map(r => r.marketId);
           void alertKillSwitchPartialFailure(userId, {
             totalPositions: result.totalPositions,
             closedPositions: result.closedPositions,
@@ -1157,7 +1382,9 @@ export const appRouter = router({
       }
     }),
 
-    getRiskLimits: protectedProcedure.query(async ({ ctx }) => getDynamicRiskLimits(getRequiredUserId(ctx))),
+    getRiskLimits: protectedProcedure.query(async ({ ctx }) =>
+      getDynamicRiskLimits(getRequiredUserId(ctx))
+    ),
 
     // Phase 2: Market Feed Subscriptions
     subscribeMarketFeed: protectedProcedure
@@ -1195,7 +1422,10 @@ export const appRouter = router({
           );
           return { success: true };
         } catch (error) {
-          logger.error({ err: error }, "[Kalshi] Unsubscribe market feed error");
+          logger.error(
+            { err: error },
+            "[Kalshi] Unsubscribe market feed error"
+          );
           return { success: false, error: String(error) };
         }
       }),
@@ -1273,11 +1503,14 @@ export const appRouter = router({
             ? new Map(Object.entries(input.fundamentalProbabilities))
             : undefined;
           const sentimentContexts = new Map(
-            validMarkets.map((market) => [
+            validMarkets.map(market => [
               market.id,
               {
                 topic: market.title,
-                marketSentiment: Math.max(-1, Math.min(1, (market.impliedProbability - 0.5) * 2)),
+                marketSentiment: Math.max(
+                  -1,
+                  Math.min(1, (market.impliedProbability - 0.5) * 2)
+                ),
               },
             ])
           );
@@ -1332,7 +1565,10 @@ export const appRouter = router({
       )
       .query(async ({ input, ctx }) => {
         try {
-          const recentSignals = await db.getRecentSignals(50, getRequiredUserId(ctx));
+          const recentSignals = await db.getRecentSignals(
+            50,
+            getRequiredUserId(ctx)
+          );
           return getTopSignalsForExecution(
             recentSignals,
             input.topN,
@@ -1371,7 +1607,13 @@ export const appRouter = router({
     }),
 
     getAttributionAnalysis: protectedProcedure
-      .input(z.object({ limit: z.number().min(10).max(1000).optional().default(250) }).optional())
+      .input(
+        z
+          .object({
+            limit: z.number().min(10).max(1000).optional().default(250),
+          })
+          .optional()
+      )
       .query(async ({ input, ctx }) => {
         try {
           const rows = await db.getPerformanceAttributionHistory(
@@ -1395,13 +1637,22 @@ export const appRouter = router({
           return {
             count: normalized.length,
             totals: normalized.reduce(
-              (acc: { totalPnl: number; signalAlpha: number; execution: number; timing: number; luck: number }, row: {
-                totalPnl: number;
-                signalAlpha: number;
-                execution: number;
-                timing: number;
-                luck: number;
-              }) => {
+              (
+                acc: {
+                  totalPnl: number;
+                  signalAlpha: number;
+                  execution: number;
+                  timing: number;
+                  luck: number;
+                },
+                row: {
+                  totalPnl: number;
+                  signalAlpha: number;
+                  execution: number;
+                  timing: number;
+                  luck: number;
+                }
+              ) => {
                 acc.totalPnl += row.totalPnl;
                 acc.signalAlpha += row.signalAlpha;
                 acc.execution += row.execution;
@@ -1416,7 +1667,10 @@ export const appRouter = router({
             rows: normalized,
           };
         } catch (error) {
-          logger.error({ err: error }, "[Kalshi] Get attribution analysis error");
+          logger.error(
+            { err: error },
+            "[Kalshi] Get attribution analysis error"
+          );
           throw new TRPCError({
             code: "INTERNAL_SERVER_ERROR",
             message: "Unable to load attribution analysis",
@@ -1426,7 +1680,13 @@ export const appRouter = router({
       }),
 
     getEquityCurve: protectedProcedure
-      .input(z.object({ days: z.number().int().min(7).max(365).optional().default(30) }).optional())
+      .input(
+        z
+          .object({
+            days: z.number().int().min(7).max(365).optional().default(30),
+          })
+          .optional()
+      )
       .query(async ({ input, ctx }) => {
         try {
           const userId = getRequiredUserId(ctx);
@@ -1442,11 +1702,15 @@ export const appRouter = router({
           // Build cumulative-equity series: starting balance → cumulative
           // realized PnL by day → final point at currentBalance (today).
           const today = new Date();
-          const todayKey = new Date(Date.UTC(
-            today.getUTCFullYear(),
-            today.getUTCMonth(),
-            today.getUTCDate(),
-          )).toISOString().split("T")[0];
+          const todayKey = new Date(
+            Date.UTC(
+              today.getUTCFullYear(),
+              today.getUTCMonth(),
+              today.getUTCDate()
+            )
+          )
+            .toISOString()
+            .split("T")[0];
 
           const points: Array<{ date: string; equity: number }> = [];
           if (dailyPnl.length === 0) {
@@ -1457,7 +1721,12 @@ export const appRouter = router({
               .split("T")[0];
             points.push({ date: startDate, equity: startingBalance });
             points.push({ date: todayKey, equity: currentBalance });
-            return { points, startingBalance, currentBalance, hasHistory: false };
+            return {
+              points,
+              startingBalance,
+              currentBalance,
+              hasHistory: false,
+            };
           }
 
           // Anchor the curve at the day before the first close so the
@@ -1479,7 +1748,10 @@ export const appRouter = router({
           if (points[points.length - 1].date !== todayKey) {
             points.push({ date: todayKey, equity: currentBalance });
           } else {
-            points[points.length - 1] = { date: todayKey, equity: currentBalance };
+            points[points.length - 1] = {
+              date: todayKey,
+              equity: currentBalance,
+            };
           }
 
           return { points, startingBalance, currentBalance, hasHistory: true };
@@ -1494,11 +1766,20 @@ export const appRouter = router({
       }),
 
     getActivityHeatmap: protectedProcedure
-      .input(z.object({ days: z.number().int().min(7).max(365).optional().default(90) }).optional())
+      .input(
+        z
+          .object({
+            days: z.number().int().min(7).max(365).optional().default(90),
+          })
+          .optional()
+      )
       .query(async ({ input, ctx }) => {
         try {
           const userId = getRequiredUserId(ctx);
-          const buckets = await db.getKalshiActivityHeatmap(userId, input?.days ?? 90);
+          const buckets = await db.getKalshiActivityHeatmap(
+            userId,
+            input?.days ?? 90
+          );
           return { buckets };
         } catch (error) {
           logger.error({ err: error }, "[Kalshi] Get activity heatmap error");
@@ -1548,14 +1829,20 @@ export const appRouter = router({
               input.privateKey,
               equityResult.equity
             );
-            await db.syncKalshiCapitalWithLiveEquity(equityResult.equity, userId);
+            await db.syncKalshiCapitalWithLiveEquity(
+              equityResult.equity,
+              userId
+            );
             await db.logAuditEvent(
               "kalshi_account_connected",
               `Equity: $${equityResult.equity}`,
               ctx.user!.openId
             );
           } catch (storageError) {
-            logger.error({ err: storageError }, "[Kalshi] Failed to persist validated credentials");
+            logger.error(
+              { err: storageError },
+              "[Kalshi] Failed to persist validated credentials"
+            );
             return {
               success: false,
               error:
@@ -1620,7 +1907,10 @@ export const appRouter = router({
           };
         }
 
-        const equityResult = await fetchKalshiAccountEquity(creds.apiKey, creds.privateKey);
+        const equityResult = await fetchKalshiAccountEquity(
+          creds.apiKey,
+          creds.privateKey
+        );
         if (equityResult.error) {
           return {
             connected: true,
@@ -1675,23 +1965,29 @@ export const appRouter = router({
       .mutation(async ({ ctx, input }) => {
         try {
           const userId = getRequiredUserId(ctx);
-          const currentPreferences = await tradingPreferencesDb.getTradingPreferences(userId);
+          const currentPreferences =
+            await tradingPreferencesDb.getTradingPreferences(userId);
 
           if (currentPreferences.liveTradingEnabled) {
             throw new TRPCError({
               code: "BAD_REQUEST",
-              message: "Disarm live trading before changing autonomy policy settings.",
+              message:
+                "Disarm live trading before changing autonomy policy settings.",
             });
           }
 
           if (input.liveTradingEnabled) {
             throw new TRPCError({
               code: "BAD_REQUEST",
-              message: "Save policy changes while disarmed, then use the arm live trading action.",
+              message:
+                "Save policy changes while disarmed, then use the arm live trading action.",
             });
           }
 
-          const saved = await tradingPreferencesDb.saveTradingPreferences(userId, input);
+          const saved = await tradingPreferencesDb.saveTradingPreferences(
+            userId,
+            input
+          );
           await db.logAuditEvent(
             "trading_preferences_updated",
             JSON.stringify({
@@ -1711,7 +2007,10 @@ export const appRouter = router({
           if (error instanceof TRPCError) {
             throw error;
           }
-          logger.error({ err: error }, "[Kalshi] Update trading preferences error");
+          logger.error(
+            { err: error },
+            "[Kalshi] Update trading preferences error"
+          );
           throw new TRPCError({
             code: "INTERNAL_SERVER_ERROR",
             message: "Unable to save trading preferences",
@@ -1731,10 +2030,13 @@ export const appRouter = router({
           ]);
 
           if (!input.enabled) {
-            const saved = await tradingPreferencesDb.saveTradingPreferences(userId, {
-              ...preferences,
-              liveTradingEnabled: false,
-            });
+            const saved = await tradingPreferencesDb.saveTradingPreferences(
+              userId,
+              {
+                ...preferences,
+                liveTradingEnabled: false,
+              }
+            );
             await db.logAuditEvent(
               "live_trading_disarmed",
               `Mode: ${saved.autonomyMode}`,
@@ -1743,29 +2045,34 @@ export const appRouter = router({
             return { success: true, preferences: saved };
           }
 
-          if (!creds || ("needsReauth" in creds && creds.needsReauth) || creds.accountStatus !== "connected") {
+          if (
+            !creds ||
+            ("needsReauth" in creds && creds.needsReauth) ||
+            creds.accountStatus !== "connected"
+          ) {
             throw new TRPCError({
               code: "BAD_REQUEST",
-              message:
-                !creds
-                  ? "Connect a live Kalshi account before arming live trading."
-                  : "needsReauth" in creds && creds.needsReauth
-                    ? "Your Kalshi credentials need to be re-entered before arming live trading. Please reconnect your Kalshi account."
-                    : "Connect a live Kalshi account before arming live trading.",
+              message: !creds
+                ? "Connect a live Kalshi account before arming live trading."
+                : "needsReauth" in creds && creds.needsReauth
+                  ? "Your Kalshi credentials need to be re-entered before arming live trading. Please reconnect your Kalshi account."
+                  : "Connect a live Kalshi account before arming live trading.",
             });
           }
 
           if (Number(creds.accountEquity ?? 0) <= 0) {
             throw new TRPCError({
               code: "BAD_REQUEST",
-              message: "Fund the connected Kalshi account before arming live trading.",
+              message:
+                "Fund the connected Kalshi account before arming live trading.",
             });
           }
 
           if (preferences.autonomyMode === "manual") {
             throw new TRPCError({
               code: "BAD_REQUEST",
-              message: "Manual mode keeps live trading disarmed. Choose another autonomy mode first.",
+              message:
+                "Manual mode keeps live trading disarmed. Choose another autonomy mode first.",
             });
           }
 
@@ -1781,10 +2088,13 @@ export const appRouter = router({
             });
           }
 
-          const saved = await tradingPreferencesDb.saveTradingPreferences(userId, {
-            ...preferences,
-            liveTradingEnabled: true,
-          });
+          const saved = await tradingPreferencesDb.saveTradingPreferences(
+            userId,
+            {
+              ...preferences,
+              liveTradingEnabled: true,
+            }
+          );
           await db.logAuditEvent(
             "live_trading_armed",
             `Mode: ${saved.autonomyMode}`,
@@ -1826,7 +2136,8 @@ export const appRouter = router({
       try {
         const userId = getRequiredUserId(ctx);
         const history = await getRiskParameterHistory(userId, 1);
-        const currentParams = history.length > 0 ? history[0].params : DEFAULT_RISK_PARAMETERS;
+        const currentParams =
+          history.length > 0 ? history[0].params : DEFAULT_RISK_PARAMETERS;
         return {
           current: currentParams,
           defaults: DEFAULT_RISK_PARAMETERS,
@@ -1857,15 +2168,20 @@ export const appRouter = router({
           const validation = await validateRiskParameters(input);
 
           // Estimate impact on recent runs
-          const impactEstimate = await estimateImpactOnRecentRuns(
-            userId,
-            {
-              maxPositionSizePercent: input.maxPositionSizePercent ?? DEFAULT_RISK_PARAMETERS.maxPositionSizePercent,
-              maxDailyLossPercent: input.maxDailyLossPercent ?? DEFAULT_RISK_PARAMETERS.maxDailyLossPercent,
-              maxOpenPositions: input.maxOpenPositions ?? DEFAULT_RISK_PARAMETERS.maxOpenPositions,
-              minCapitalReservePercent: input.minCapitalReservePercent ?? DEFAULT_RISK_PARAMETERS.minCapitalReservePercent,
-            }
-          );
+          const impactEstimate = await estimateImpactOnRecentRuns(userId, {
+            maxPositionSizePercent:
+              input.maxPositionSizePercent ??
+              DEFAULT_RISK_PARAMETERS.maxPositionSizePercent,
+            maxDailyLossPercent:
+              input.maxDailyLossPercent ??
+              DEFAULT_RISK_PARAMETERS.maxDailyLossPercent,
+            maxOpenPositions:
+              input.maxOpenPositions ??
+              DEFAULT_RISK_PARAMETERS.maxOpenPositions,
+            minCapitalReservePercent:
+              input.minCapitalReservePercent ??
+              DEFAULT_RISK_PARAMETERS.minCapitalReservePercent,
+          });
 
           return {
             valid: validation.valid,
@@ -1874,7 +2190,10 @@ export const appRouter = router({
             impact: impactEstimate,
           };
         } catch (error) {
-          logger.error({ err: error }, "[Kalshi] Validate risk parameters error");
+          logger.error(
+            { err: error },
+            "[Kalshi] Validate risk parameters error"
+          );
           return {
             valid: false,
             warnings: [],
@@ -1955,7 +2274,10 @@ export const appRouter = router({
           const history = await getRiskParameterHistory(userId, input.limit);
           return { history, count: history.length };
         } catch (error) {
-          logger.error({ err: error }, "[Kalshi] Get risk tuning history error");
+          logger.error(
+            { err: error },
+            "[Kalshi] Get risk tuning history error"
+          );
           return { history: [], count: 0 };
         }
       }),
@@ -1996,10 +2318,16 @@ export const appRouter = router({
             });
           }
 
-          const updated = await db.setBetaAccessLevel(input.targetUserId, input.level);
+          const updated = await db.setBetaAccessLevel(
+            input.targetUserId,
+            input.level
+          );
           await db.logAuditEvent(
             "beta_access_updated",
-            JSON.stringify({ targetUserId: input.targetUserId, level: input.level }),
+            JSON.stringify({
+              targetUserId: input.targetUserId,
+              level: input.level,
+            }),
             requestingUser.openId
           );
 
@@ -2031,7 +2359,7 @@ export const appRouter = router({
           const validation = await validatePolymarketCredentials(
             input.apiKey,
             input.apiSecret,
-            input.apiPassphrase,
+            input.apiPassphrase
           );
 
           if (!validation.valid) {
@@ -2050,7 +2378,7 @@ export const appRouter = router({
               userId,
               input.apiKey,
               input.apiSecret,
-              input.apiPassphrase,
+              input.apiPassphrase
             );
             await db.logAuditEvent(
               "polymarket_account_connected",
@@ -2058,7 +2386,10 @@ export const appRouter = router({
               ctx.user!.openId
             );
           } catch (storageError) {
-            logger.error({ err: storageError }, "[Polymarket] Failed to persist validated credentials");
+            logger.error(
+              { err: storageError },
+              "[Polymarket] Failed to persist validated credentials"
+            );
             return {
               success: false,
               error:
@@ -2100,7 +2431,7 @@ export const appRouter = router({
         const validation = await validatePolymarketCredentials(
           creds.apiKey,
           creds.apiSecret,
-          creds.apiPassphrase,
+          creds.apiPassphrase
         );
 
         if (!validation.valid) {
@@ -2120,25 +2451,31 @@ export const appRouter = router({
         };
       } catch (error) {
         logger.error({ err: error }, "[Polymarket] Get account status error");
-        return { connected: false, status: "error" as const, error: String(error) };
+        return {
+          connected: false,
+          status: "error" as const,
+          error: String(error),
+        };
       }
     }),
 
-    disconnectPolymarketAccount: protectedProcedure.mutation(async ({ ctx }) => {
-      try {
-        const userId = getRequiredUserId(ctx);
-        await polymarketCredDb.deletePolymarketCredentials(userId);
-        await db.logAuditEvent(
-          "polymarket_account_disconnected",
-          "",
-          ctx.user!.openId
-        );
-        return { success: true };
-      } catch (error) {
-        logger.error({ err: error }, "[Polymarket] Disconnect account error");
-        return { success: false, error: String(error) };
+    disconnectPolymarketAccount: protectedProcedure.mutation(
+      async ({ ctx }) => {
+        try {
+          const userId = getRequiredUserId(ctx);
+          await polymarketCredDb.deletePolymarketCredentials(userId);
+          await db.logAuditEvent(
+            "polymarket_account_disconnected",
+            "",
+            ctx.user!.openId
+          );
+          return { success: true };
+        } catch (error) {
+          logger.error({ err: error }, "[Polymarket] Disconnect account error");
+          return { success: false, error: String(error) };
+        }
       }
-    }),
+    ),
 
     // --- Platform subscriptions ---
     getPlatformSubscriptions: protectedProcedure.query(async ({ ctx }) => {
@@ -2146,7 +2483,10 @@ export const appRouter = router({
         const userId = getRequiredUserId(ctx);
         return await polymarketCredDb.getPlatformSubscriptions(userId);
       } catch (error) {
-        logger.error({ err: error }, "[Polymarket] Get platform subscriptions error");
+        logger.error(
+          { err: error },
+          "[Polymarket] Get platform subscriptions error"
+        );
         return { subscribedPlatforms: "kalshi" as const };
       }
     }),
@@ -2162,7 +2502,7 @@ export const appRouter = router({
           const userId = getRequiredUserId(ctx);
           const result = await polymarketCredDb.savePlatformSubscriptions(
             userId,
-            input.subscribedPlatforms,
+            input.subscribedPlatforms
           );
           await db.logAuditEvent(
             "platform_subscriptions_updated",
@@ -2171,7 +2511,10 @@ export const appRouter = router({
           );
           return result;
         } catch (error) {
-          logger.error({ err: error }, "[Polymarket] Save platform subscriptions error");
+          logger.error(
+            { err: error },
+            "[Polymarket] Save platform subscriptions error"
+          );
           return { success: false, subscribedPlatforms: "kalshi" as const };
         }
       }),
@@ -2189,7 +2532,10 @@ export const appRouter = router({
       .query(async ({ input, ctx }) => {
         const userId = getRequiredUserId(ctx);
         if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
-          throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Not subscribed to Polymarket",
+          });
         }
         try {
           return await fetchPolymarketMarkets({
@@ -2215,10 +2561,15 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         const userId = getRequiredUserId(ctx);
         if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
-          throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Not subscribed to Polymarket",
+          });
         }
         try {
-          const markets = await fetchPolymarketMarkets({ limit: POLYMARKET_SIGNAL_GENERATION_MARKET_LIMIT });
+          const markets = await fetchPolymarketMarkets({
+            limit: POLYMARKET_SIGNAL_GENERATION_MARKET_LIMIT,
+          });
           const signals = generatePolymarketSignals(markets, {
             minConfidence: input?.minConfidence ?? 0.55,
             minLiquidity: input?.minLiquidity ?? 100,
@@ -2252,72 +2603,100 @@ export const appRouter = router({
         try {
           const userId = getRequiredUserId(ctx);
           if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
-            throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+            throw new TRPCError({
+              code: "FORBIDDEN",
+              message: "Not subscribed to Polymarket",
+            });
           }
           // Serialise the check-and-execute block per user so two concurrent
           // requests can't both pass credential/risk checks against stale state
           // and then both submit orders (TOCTOU race).
           return await withUserLock(userId, async () => {
-          const creds = await polymarketCredDb.getPolymarketCredentials(userId);
+            const creds =
+              await polymarketCredDb.getPolymarketCredentials(userId);
 
-          if (!creds || creds.accountStatus !== "connected") {
-            return {
-              success: false,
-              error: "Connect a Polymarket account before placing orders.",
-            };
-          }
+            if (!creds || creds.accountStatus !== "connected") {
+              return {
+                success: false,
+                error: "Connect a Polymarket account before placing orders.",
+              };
+            }
 
-          const [preferences, capital] = await Promise.all([
-            tradingPreferencesDb.getTradingPreferences(userId),
-            db.getKalshiCapital(userId),
-          ]);
+            const [preferences, capital] = await Promise.all([
+              tradingPreferencesDb.getTradingPreferences(userId),
+              db.getKalshiCapital(userId),
+            ]);
 
-          if (!preferences.liveTradingEnabled) {
-            return {
-              success: false,
-              error: "Arm live trading before placing Polymarket orders.",
-            };
-          }
+            if (!preferences.liveTradingEnabled) {
+              return {
+                success: false,
+                error: "Arm live trading before placing Polymarket orders.",
+              };
+            }
 
-          const riskValidation = validatePolymarketOrderRisk(
-            {
-              price: input.price,
-              size: input.size,
-            },
-            {
-              maxOrderUsdc: Math.max(1, Math.min(500, preferences.maxOrderNotional)),
-              maxExposurePercent: 0.05,
-              bankroll: Math.max(0, Number(capital?.currentBalance ?? 0)),
-            },
-          );
-
-          if (!riskValidation.valid) {
-            return {
-              success: false,
-              error: riskValidation.reason ?? "Polymarket order blocked by risk policy",
-            };
-          }
-
-          const result = await placePolymarketOrder(
-            creds.apiKey,
-            creds.apiSecret,
-            creds.apiPassphrase,
-            {
-              tokenId: input.tokenId,
-              side: input.side,
-              price: input.price,
-              size: input.size,
-            },
-          );
-
-          if (result.success) {
-            await db.logAuditEvent(
-              "polymarket_order_placed",
-              JSON.stringify(input),
-              ctx.user!.openId
+            const riskValidation = validatePolymarketOrderRisk(
+              {
+                price: input.price,
+                size: input.size,
+              },
+              {
+                maxOrderUsdc: Math.max(
+                  1,
+                  Math.min(500, preferences.maxOrderNotional)
+                ),
+                maxExposurePercent: 0.05,
+                bankroll: Math.max(0, Number(capital?.currentBalance ?? 0)),
+              }
             );
-          } else {
-            await db.logAuditEvent(
+
+            if (!riskValidation.valid) {
+              return {
+                success: false,
+                error:
+                  riskValidation.reason ??
+                  "Polymarket order blocked by risk policy",
+              };
+            }
+
+            const result = await placePolymarketOrder(
+              creds.apiKey,
+              creds.apiSecret,
+              creds.apiPassphrase,
+              {
+                tokenId: input.tokenId,
+                side: input.side,
+                price: input.price,
+                size: input.size,
+              }
+            );
+
+            if (result.success) {
+              await db.logAuditEvent(
+                "polymarket_order_placed",
+                JSON.stringify(input),
+                ctx.user!.openId
+              );
+            } else {
+              await db.logAuditEvent(
+                "polymarket_order_blocked_or_failed",
+                JSON.stringify({
+                  tokenId: input.tokenId,
+                  side: input.side,
+                  price: input.price,
+                  size: input.size,
+                  reason: "REST_ERROR",
+                  error: result.error ?? "unknown",
+                }),
+                ctx.user!.openId
+              );
+            }
+
+            return result;
+          }); // end withUserLock
+        } catch (error) {
+          logger.error({ err: error }, "[Polymarket] Place order error");
+          await db
+            .logAuditEvent(
               "polymarket_order_blocked_or_failed",
               JSON.stringify({
                 tokenId: input.tokenId,
@@ -2325,28 +2704,13 @@ export const appRouter = router({
                 price: input.price,
                 size: input.size,
                 reason: "REST_ERROR",
-                error: result.error ?? "unknown",
+                error: error instanceof Error ? error.message : String(error),
               }),
               ctx.user!.openId
-            );
-          }
-
-          return result;
-          }); // end withUserLock
-        } catch (error) {
-          logger.error({ err: error }, "[Polymarket] Place order error");
-          await db.logAuditEvent(
-            "polymarket_order_blocked_or_failed",
-            JSON.stringify({
-              tokenId: input.tokenId,
-              side: input.side,
-              price: input.price,
-              size: input.size,
-              reason: "REST_ERROR",
-              error: error instanceof Error ? error.message : String(error),
-            }),
-            ctx.user!.openId
-          ).catch(() => {/* best-effort audit — do not swallow original error */});
+            )
+            .catch(() => {
+              /* best-effort audit — do not swallow original error */
+            });
           return { success: false, error: String(error) };
         }
       }),
@@ -2357,7 +2721,10 @@ export const appRouter = router({
     getKnownClusters: protectedProcedure.query(async ({ ctx }) => {
       const userId = getRequiredUserId(ctx);
       if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Not subscribed to Polymarket",
+        });
       }
       return KNOWN_CLUSTERS;
     }),
@@ -2380,19 +2747,22 @@ export const appRouter = router({
             /** marketIds resolving within 4 hours */
             resolvingWithin4Hours: z.array(z.string()).optional(),
           })
-          .optional(),
+          .optional()
       )
       .query(async ({ input, ctx }) => {
         const userId = getRequiredUserId(ctx);
         if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
-          throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Not subscribed to Polymarket",
+          });
         }
         try {
           const markets = await fetchPolymarketMarkets({
             limit: POLYMARKET_SIGNAL_GENERATION_MARKET_LIMIT,
           });
 
-          const snapshots: MarketSnapshot[] = markets.map((m) => ({
+          const snapshots: MarketSnapshot[] = markets.map(m => ({
             marketId: m.marketId,
             question: m.question,
             category: m.category,
@@ -2408,10 +2778,7 @@ export const appRouter = router({
           }));
 
           const clusterSignals = detectClusterActivityBatch(snapshots);
-          const recommendations = buildFadeRecommendations(
-            clusterSignals,
-            0.5,
-          );
+          const recommendations = buildFadeRecommendations(clusterSignals, 0.5);
 
           return {
             clusterSignals,
@@ -2439,12 +2806,15 @@ export const appRouter = router({
             resolvingWithin5Min: z.array(z.string()).optional(),
             resolvingWithin4Hours: z.array(z.string()).optional(),
           })
-          .optional(),
+          .optional()
       )
       .mutation(async ({ input, ctx }) => {
         const userId = getRequiredUserId(ctx);
         if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
-          throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Not subscribed to Polymarket",
+          });
         }
         try {
           const markets = await fetchPolymarketMarkets({
@@ -2473,16 +2843,23 @@ export const appRouter = router({
             "polymarket_cluster_signals_generated",
             JSON.stringify({
               total: signals.length,
-              clusterFade: signals.filter((s) => s.signalType === "cluster_fade").length,
-              clusterCopy: signals.filter((s) => s.signalType === "cluster_copy").length,
-              washWarning: signals.filter((s) => s.signalType === "wash_volume_warning").length,
+              clusterFade: signals.filter(s => s.signalType === "cluster_fade")
+                .length,
+              clusterCopy: signals.filter(s => s.signalType === "cluster_copy")
+                .length,
+              washWarning: signals.filter(
+                s => s.signalType === "wash_volume_warning"
+              ).length,
             }),
-            ctx.user!.openId,
+            ctx.user!.openId
           );
 
           return { success: true, signals };
         } catch (error) {
-          logger.error({ err: error }, "[Polymarket] Cluster signal generation error");
+          logger.error(
+            { err: error },
+            "[Polymarket] Cluster signal generation error"
+          );
           return { success: false, signals: [], error: String(error) };
         }
       }),
@@ -2499,15 +2876,28 @@ export const appRouter = router({
           .object({
             minLiquidity: z.number().min(0).optional().default(500),
             orderSizeUsdc: z.number().min(1).max(500).optional().default(20),
-            minHalfSpread: z.number().min(0.005).max(0.1).optional().default(0.01),
-            maxHalfSpread: z.number().min(0.01).max(0.2).optional().default(0.06),
+            minHalfSpread: z
+              .number()
+              .min(0.005)
+              .max(0.1)
+              .optional()
+              .default(0.01),
+            maxHalfSpread: z
+              .number()
+              .min(0.01)
+              .max(0.2)
+              .optional()
+              .default(0.06),
           })
-          .optional(),
+          .optional()
       )
       .query(async ({ input, ctx }) => {
         const userId = getRequiredUserId(ctx);
         if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
-          throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Not subscribed to Polymarket",
+          });
         }
         try {
           const markets = await fetchPolymarketMarkets({
@@ -2515,7 +2905,7 @@ export const appRouter = router({
           });
 
           const fairValues = new Map(
-            markets.map((m) => [m.marketId, m.impliedProbabilityYes]),
+            markets.map(m => [m.marketId, m.impliedProbabilityYes])
           );
 
           const quotes = generateMMQuotePairs(
@@ -2527,12 +2917,15 @@ export const appRouter = router({
               minHalfSpread: input?.minHalfSpread ?? 0.01,
               maxHalfSpread: input?.maxHalfSpread ?? 0.06,
             },
-            { minLiquidity: input?.minLiquidity ?? 500 },
+            { minLiquidity: input?.minLiquidity ?? 500 }
           );
 
           return { quotes, marketsScanned: markets.length };
         } catch (error) {
-          logger.error({ err: error }, "[Polymarket] MM quote generation error");
+          logger.error(
+            { err: error },
+            "[Polymarket] MM quote generation error"
+          );
           return { quotes: [], marketsScanned: 0 };
         }
       }),
@@ -2545,14 +2938,22 @@ export const appRouter = router({
       .input(
         z
           .object({
-            minProfitPct: z.number().min(0.005).max(0.5).optional().default(0.02),
+            minProfitPct: z
+              .number()
+              .min(0.005)
+              .max(0.5)
+              .optional()
+              .default(0.02),
           })
-          .optional(),
+          .optional()
       )
       .query(async ({ input, ctx }) => {
         const userId = getRequiredUserId(ctx);
         if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
-          throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Not subscribed to Polymarket",
+          });
         }
         try {
           const markets = await fetchPolymarketMarkets({
@@ -2560,11 +2961,14 @@ export const appRouter = router({
           });
           const mispricings = detectYesNoMispricings(
             markets,
-            input?.minProfitPct ?? 0.02,
+            input?.minProfitPct ?? 0.02
           );
           return { mispricings, marketsScanned: markets.length };
         } catch (error) {
-          logger.error({ err: error }, "[Polymarket] YES/NO mispricing detection error");
+          logger.error(
+            { err: error },
+            "[Polymarket] YES/NO mispricing detection error"
+          );
           return { mispricings: [], marketsScanned: 0 };
         }
       }),
@@ -2579,7 +2983,10 @@ export const appRouter = router({
       try {
         const userId = getRequiredUserId(ctx);
         if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
-          throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Not subscribed to Polymarket",
+          });
         }
         const result = await runPolymarketAutonomousTrading(userId, {
           triggeredByOpenId: ctx.user!.openId,
@@ -2613,18 +3020,23 @@ export const appRouter = router({
       .input(
         z
           .object({
-            minSumDeviation: z.number().min(0).max(0.5).optional().default(0.03),
+            minSumDeviation: z
+              .number()
+              .min(0)
+              .max(0.5)
+              .optional()
+              .default(0.03),
             minViolation: z.number().min(0).max(0.5).optional().default(0.05),
             minLiquidity: z.number().min(0).optional().default(500),
           })
-          .optional(),
+          .optional()
       )
       .query(async ({ input }) => {
         try {
           const rawMarkets = await fetchKalshiMarkets({ status: "open" });
           const markets: ArbitrageMarket[] = rawMarkets
-            .filter((m) => m.status === "open")
-            .map((m) => ({
+            .filter(m => m.status === "open")
+            .map(m => ({
               marketId: m.id,
               title: m.title,
               category: m.category,
@@ -2643,7 +3055,10 @@ export const appRouter = router({
 
           return { opportunities, marketsAnalyzed: markets.length };
         } catch (error) {
-          logger.error({ err: error }, "[Combinatorial] Kalshi arbitrage detection error");
+          logger.error(
+            { err: error },
+            "[Combinatorial] Kalshi arbitrage detection error"
+          );
           return { opportunities: [], marketsAnalyzed: 0 };
         }
       }),
@@ -2655,28 +3070,40 @@ export const appRouter = router({
       .input(
         z
           .object({
-            minSumDeviation: z.number().min(0).max(0.5).optional().default(0.03),
+            minSumDeviation: z
+              .number()
+              .min(0)
+              .max(0.5)
+              .optional()
+              .default(0.03),
             minViolation: z.number().min(0).max(0.5).optional().default(0.05),
             minLiquidity: z.number().min(0).optional().default(500),
           })
-          .optional(),
+          .optional()
       )
       .query(async ({ input, ctx }) => {
         const userId = getRequiredUserId(ctx);
         if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
-          throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Not subscribed to Polymarket",
+          });
         }
         try {
           const rawMarkets = await fetchPolymarketMarkets({
             limit: POLYMARKET_SIGNAL_GENERATION_MARKET_LIMIT,
           });
-          const markets: ArbitrageMarket[] = rawMarkets.map((m) => ({
+          const markets: ArbitrageMarket[] = rawMarkets.map(m => ({
             marketId: m.marketId,
             title: m.question,
             category: m.category,
             impliedProbabilityYes: m.impliedProbabilityYes,
-            yesPrice: m.tokens.find((t) => t.outcome.toLowerCase() === "yes")?.price ?? m.impliedProbabilityYes,
-            noPrice: m.tokens.find((t) => t.outcome.toLowerCase() === "no")?.price ?? (1 - m.impliedProbabilityYes),
+            yesPrice:
+              m.tokens.find(t => t.outcome.toLowerCase() === "yes")?.price ??
+              m.impliedProbabilityYes,
+            noPrice:
+              m.tokens.find(t => t.outcome.toLowerCase() === "no")?.price ??
+              1 - m.impliedProbabilityYes,
             volume: m.volume,
             liquidity: m.liquidity,
           }));
@@ -2689,7 +3116,10 @@ export const appRouter = router({
 
           return { opportunities, marketsAnalyzed: markets.length };
         } catch (error) {
-          logger.error({ err: error }, "[Combinatorial] Polymarket arbitrage detection error");
+          logger.error(
+            { err: error },
+            "[Combinatorial] Polymarket arbitrage detection error"
+          );
           return { opportunities: [], marketsAnalyzed: 0 };
         }
       }),
@@ -2707,22 +3137,27 @@ export const appRouter = router({
             minLiquidity: z.number().min(0).optional().default(100),
             minNetEdge: z.number().min(0.01).max(0.5).optional().default(0.05),
           })
-          .optional(),
+          .optional()
       )
       .query(async ({ input, ctx }) => {
         const userId = getRequiredUserId(ctx);
         if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
-          throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Not subscribed to Polymarket",
+          });
         }
         try {
           const [rawKalshi, rawPolymarket] = await Promise.all([
             fetchKalshiMarkets({ status: "open" }),
-            fetchPolymarketMarkets({ limit: POLYMARKET_SIGNAL_GENERATION_MARKET_LIMIT }),
+            fetchPolymarketMarkets({
+              limit: POLYMARKET_SIGNAL_GENERATION_MARKET_LIMIT,
+            }),
           ]);
 
           const kalshiMarkets = rawKalshi
-            .filter((m) => m.status === "open")
-            .map((m) => ({
+            .filter(m => m.status === "open")
+            .map(m => ({
               marketId: m.id,
               title: m.title,
               category: m.category,
@@ -2731,12 +3166,16 @@ export const appRouter = router({
               liquidity: Number(m.yesVolume ?? 0) + Number(m.noVolume ?? 0),
             }));
 
-          const polymarketMarkets = rawPolymarket.map((m) => ({
+          const polymarketMarkets = rawPolymarket.map(m => ({
             marketId: m.marketId,
             question: m.question,
             category: m.category,
-            yesPrice: m.tokens.find((t) => t.outcome.toLowerCase() === "yes")?.price ?? m.impliedProbabilityYes,
-            noPrice: m.tokens.find((t) => t.outcome.toLowerCase() === "no")?.price ?? (1 - m.impliedProbabilityYes),
+            yesPrice:
+              m.tokens.find(t => t.outcome.toLowerCase() === "yes")?.price ??
+              m.impliedProbabilityYes,
+            noPrice:
+              m.tokens.find(t => t.outcome.toLowerCase() === "no")?.price ??
+              1 - m.impliedProbabilityYes,
             liquidity: m.liquidity,
           }));
 
@@ -2748,7 +3187,7 @@ export const appRouter = router({
               minSpread: input?.minSpread ?? 0.03,
               minLiquidity: input?.minLiquidity ?? 100,
               minNetEdge: input?.minNetEdge ?? 0.05,
-            },
+            }
           );
 
           return {
@@ -2757,8 +3196,15 @@ export const appRouter = router({
             polymarketMarketsScanned: polymarketMarkets.length,
           };
         } catch (error) {
-          logger.error({ err: error }, "[Combinatorial] Cross-platform arbitrage detection error");
-          return { opportunities: [], kalshiMarketsScanned: 0, polymarketMarketsScanned: 0 };
+          logger.error(
+            { err: error },
+            "[Combinatorial] Cross-platform arbitrage detection error"
+          );
+          return {
+            opportunities: [],
+            kalshiMarketsScanned: 0,
+            polymarketMarketsScanned: 0,
+          };
         }
       }),
   }),
@@ -2781,13 +3227,16 @@ export const appRouter = router({
             /** Maximum total signals to return */
             limit: z.number().int().min(1).max(100).optional().default(30),
           })
-          .optional(),
+          .optional()
       )
       .mutation(async ({ input, ctx }) => {
         try {
           const userId = getRequiredUserId(ctx);
           if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
-            throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
+            throw new TRPCError({
+              code: "FORBIDDEN",
+              message: "Not subscribed to Polymarket",
+            });
           }
           const minConfidence = input?.minConfidence ?? 0.5;
           const limit = input?.limit ?? 30;
@@ -2795,7 +3244,9 @@ export const appRouter = router({
           // Fetch markets from both platforms in parallel
           const [kalshiMarkets, polymarketMarkets] = await Promise.all([
             fetchKalshiMarkets({ status: "open" }),
-            fetchPolymarketMarkets({ limit: POLYMARKET_SIGNAL_GENERATION_MARKET_LIMIT }),
+            fetchPolymarketMarkets({
+              limit: POLYMARKET_SIGNAL_GENERATION_MARKET_LIMIT,
+            }),
           ]);
 
           // Build Kalshi feeds + signals (limit how many markets we check for feeds)
@@ -2806,21 +3257,33 @@ export const appRouter = router({
             if (feed) feeds.set(m.id, feed);
           }
 
-          const validKalshiMarkets = kalshiMarkets.filter((m) => {
+          const validKalshiMarkets = kalshiMarkets.filter(m => {
             const yp = Number(m.yesPrice ?? 0);
             const np = Number(m.noPrice ?? 0);
             const ip = Number(m.impliedProbability ?? 0.5);
             return (
-              Number.isFinite(yp) && yp > 0.01 && yp < 0.99 &&
-              Number.isFinite(np) && np > 0.01 && np < 0.99 &&
-              Number.isFinite(ip) && ip > 0.01 && ip < 0.99
+              Number.isFinite(yp) &&
+              yp > 0.01 &&
+              yp < 0.99 &&
+              Number.isFinite(np) &&
+              np > 0.01 &&
+              np < 0.99 &&
+              Number.isFinite(ip) &&
+              ip > 0.01 &&
+              ip < 0.99
             );
           });
 
           // Generate signals from both platforms concurrently
           const [kalshiRaw, polymarketRaw] = await Promise.all([
             validKalshiMarkets.length > 0
-              ? generateSignalsForMarkets(validKalshiMarkets, feeds, undefined, undefined, getRequiredUserId(ctx))
+              ? generateSignalsForMarkets(
+                  validKalshiMarkets,
+                  feeds,
+                  undefined,
+                  undefined,
+                  getRequiredUserId(ctx)
+                )
               : Promise.resolve([]),
             Promise.resolve(
               generatePolymarketSignals(polymarketMarkets, {
@@ -2831,11 +3294,12 @@ export const appRouter = router({
           ]);
 
           // Build a title map so Kalshi signals can show human-readable questions
-          const kalshiTitles = new Map(
-            kalshiMarkets.map((m) => [m.id, m.title]),
-          );
+          const kalshiTitles = new Map(kalshiMarkets.map(m => [m.id, m.title]));
 
-          const kalshiFiltered = filterSignalsByConfidence(kalshiRaw, minConfidence);
+          const kalshiFiltered = filterSignalsByConfidence(
+            kalshiRaw,
+            minConfidence
+          );
           const merged = mergePlatformSignals(kalshiFiltered, polymarketRaw, {
             minConfidence,
             kalshiTitles,
@@ -2848,7 +3312,7 @@ export const appRouter = router({
               polymarketCount: merged.polymarketCount,
               consensusCount: merged.consensusCount,
             }),
-            ctx.user!.openId,
+            ctx.user!.openId
           );
 
           return {
@@ -2893,284 +3357,349 @@ export const appRouter = router({
           executionRisk: z.number().min(0).max(1).optional(),
           hedgeRatio: z.number().min(0.5).max(1).optional(),
           /** Size for the Kalshi leg in contracts */
-          kalshiContracts: z.number().int().min(1).max(MAX_KALSHI_ORDER_CONTRACTS),
+          kalshiContracts: z
+            .number()
+            .int()
+            .min(1)
+            .max(MAX_KALSHI_ORDER_CONTRACTS),
           /** Size for the Polymarket leg in USDC */
           polymarketSizeUsdc: z.number().min(1).max(500),
-        }),
+        })
       )
       .mutation(async ({ input, ctx }) => {
         try {
           const userId = getRequiredUserId(ctx);
 
           return await withUserLock(userId, async () => {
+            if (
+              !(await polymarketCredDb.isUserSubscribedToPolymarket(userId))
+            ) {
+              throw new TRPCError({
+                code: "FORBIDDEN",
+                message: "Not subscribed to Polymarket",
+              });
+            }
 
-          if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
-            throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
-          }
+            // Verify both platform credentials
+            const [kalshiCreds, polymarketCreds] = await Promise.all([
+              kalshiCredDb.getKalshiCredentials(userId),
+              polymarketCredDb.getPolymarketCredentials(userId),
+            ]);
 
-          // Verify both platform credentials
-          const [kalshiCreds, polymarketCreds] = await Promise.all([
-            kalshiCredDb.getKalshiCredentials(userId),
-            polymarketCredDb.getPolymarketCredentials(userId),
-          ]);
+            if (
+              !kalshiCreds ||
+              ("needsReauth" in kalshiCreds && kalshiCreds.needsReauth) ||
+              kalshiCreds.accountStatus !== "connected"
+            ) {
+              return {
+                success: false,
+                error:
+                  kalshiCreds &&
+                  "needsReauth" in kalshiCreds &&
+                  kalshiCreds.needsReauth
+                    ? "Your Kalshi credentials need to be re-entered. Please reconnect your Kalshi account."
+                    : "Connect a Kalshi account before executing cross-arb.",
+              };
+            }
+            if (
+              !polymarketCreds ||
+              polymarketCreds.accountStatus !== "connected"
+            ) {
+              return {
+                success: false,
+                error:
+                  "Connect a Polymarket account before executing cross-arb.",
+              };
+            }
 
-          if (!kalshiCreds || ("needsReauth" in kalshiCreds && kalshiCreds.needsReauth) || kalshiCreds.accountStatus !== "connected") {
-            return {
-              success: false,
-              error:
-                kalshiCreds && "needsReauth" in kalshiCreds && kalshiCreds.needsReauth
-                  ? "Your Kalshi credentials need to be re-entered. Please reconnect your Kalshi account."
-                  : "Connect a Kalshi account before executing cross-arb.",
-            };
-          }
-          if (!polymarketCreds || polymarketCreds.accountStatus !== "connected") {
-            return { success: false, error: "Connect a Polymarket account before executing cross-arb." };
-          }
+            // Basic risk check: don't trade if live trading is disabled
+            const preferences =
+              await tradingPreferencesDb.getTradingPreferences(userId);
+            if (!preferences.liveTradingEnabled) {
+              return {
+                success: false,
+                error: "Arm live trading before executing cross-arb orders.",
+              };
+            }
 
-          // Basic risk check: don't trade if live trading is disabled
-          const preferences = await tradingPreferencesDb.getTradingPreferences(userId);
-          if (!preferences.liveTradingEnabled) {
-            return { success: false, error: "Arm live trading before executing cross-arb orders." };
-          }
+            const [
+              capital,
+              openPositions,
+              todayRealizedLoss,
+              riskLimits,
+              todayOrderCount,
+            ] = await Promise.all([
+              db.getKalshiCapital(userId),
+              db.getOpenKalshiPositions(userId),
+              db.getTodayRealizedLoss(userId),
+              getDynamicRiskLimits(userId),
+              db.getTodayKalshiOrderCount(userId),
+            ]);
 
-          const [capital, openPositions, todayRealizedLoss, riskLimits, todayOrderCount] = await Promise.all([
-            db.getKalshiCapital(userId),
-            db.getOpenKalshiPositions(userId),
-            db.getTodayRealizedLoss(userId),
-            getDynamicRiskLimits(userId),
-            db.getTodayKalshiOrderCount(userId),
-          ]);
+            // Fetch live market data and recompute edge server-side.
+            const [pmMarkets, liveKalshiMarket] = await Promise.all([
+              fetchPolymarketMarkets({
+                limit: POLYMARKET_SIGNAL_GENERATION_MARKET_LIMIT,
+              }),
+              fetchKalshiMarketDetails(input.kalshiMarketId),
+            ]);
+            const pmMarket = pmMarkets.find(
+              m => m.marketId === input.polymarketMarketId
+            );
+            if (!pmMarket) {
+              return {
+                success: false,
+                error: `Polymarket market ${input.polymarketMarketId} not found in current market data.`,
+              };
+            }
+            if (!liveKalshiMarket) {
+              return {
+                success: false,
+                error: `Kalshi market ${input.kalshiMarketId} not found in current market data.`,
+              };
+            }
+            const tokenIdYes = pmMarket.tokens.find(
+              t => t.outcome.toLowerCase() === "yes"
+            )?.token_id;
+            const tokenIdNo = pmMarket.tokens.find(
+              t => t.outcome.toLowerCase() === "no"
+            )?.token_id;
+            if (!tokenIdYes || !tokenIdNo) {
+              return {
+                success: false,
+                error:
+                  "Could not resolve YES/NO token IDs for the Polymarket market.",
+              };
+            }
 
-          // Fetch live market data and recompute edge server-side.
-          const [pmMarkets, liveKalshiMarket] = await Promise.all([
-            fetchPolymarketMarkets({ limit: POLYMARKET_SIGNAL_GENERATION_MARKET_LIMIT }),
-            fetchKalshiMarketDetails(input.kalshiMarketId),
-          ]);
-          const pmMarket = pmMarkets.find((m) => m.marketId === input.polymarketMarketId);
-          if (!pmMarket) {
-            return {
-              success: false,
-              error: `Polymarket market ${input.polymarketMarketId} not found in current market data.`,
-            };
-          }
-          if (!liveKalshiMarket) {
-            return {
-              success: false,
-              error: `Kalshi market ${input.kalshiMarketId} not found in current market data.`,
-            };
-          }
-          const tokenIdYes = pmMarket.tokens.find((t) => t.outcome.toLowerCase() === "yes")?.token_id;
-          const tokenIdNo = pmMarket.tokens.find((t) => t.outcome.toLowerCase() === "no")?.token_id;
-          if (!tokenIdYes || !tokenIdNo) {
-            return {
-              success: false,
-              error: "Could not resolve YES/NO token IDs for the Polymarket market.",
-            };
-          }
+            const liveKalshiYesPrice = Number(
+              liveKalshiMarket.yesPrice ?? input.kalshiYesPrice
+            );
+            const livePolymarketYesPrice =
+              pmMarket.tokens.find(t => t.outcome.toLowerCase() === "yes")
+                ?.price ?? pmMarket.impliedProbabilityYes;
+            const spread = Math.abs(
+              liveKalshiYesPrice - livePolymarketYesPrice
+            );
+            const feeBurden = 0.05;
+            const latencyRisk =
+              estimateLatencyRisk(0.1, 500) + estimateLatencyRisk(0.1, 3000);
+            const slippageRisk = Math.min(
+              0.02,
+              0.5 / Math.max(pmMarket.liquidity ?? 1, 1)
+            );
+            const executionRisk = latencyRisk + slippageRisk;
+            const netEdge = spread - feeBurden - executionRisk;
 
-          const liveKalshiYesPrice = Number(liveKalshiMarket.yesPrice ?? input.kalshiYesPrice);
-          const livePolymarketYesPrice =
-            pmMarket.tokens.find((t) => t.outcome.toLowerCase() === "yes")?.price
-            ?? pmMarket.impliedProbabilityYes;
-          const spread = Math.abs(liveKalshiYesPrice - livePolymarketYesPrice);
-          const feeBurden = 0.05;
-          const latencyRisk =
-            estimateLatencyRisk(0.1, 500) +
-            estimateLatencyRisk(0.1, 3000);
-          const slippageRisk = Math.min(0.02, 0.5 / Math.max(pmMarket.liquidity ?? 1, 1));
-          const executionRisk = latencyRisk + slippageRisk;
-          const netEdge = spread - feeBurden - executionRisk;
-
-          const kalshiSide = input.buyPlatform === "kalshi" ? "yes" : "no";
-          const kalshiLimitPrice = input.buyPlatform === "kalshi"
-            ? liveKalshiYesPrice
-            : 1 - liveKalshiYesPrice;
-          const kalshiOrderRisk = calculateKalshiBuyOrderRisk({
-            quantity: input.kalshiContracts,
-            limitPrice: kalshiLimitPrice,
-          });
-
-          if (todayOrderCount >= preferences.maxDailyOrders) {
-            return {
-              success: false,
-              error: `Daily order cap reached (${preferences.maxDailyOrders})`,
-            };
-          }
-
-          if (kalshiOrderRisk.orderExposure > preferences.maxOrderNotional) {
-            return {
-              success: false,
-              error: `Kalshi leg exposure of $${kalshiOrderRisk.orderExposure.toFixed(2)} exceeds max order notional of $${preferences.maxOrderNotional}`,
-            };
-          }
-
-          if (openPositions.length >= riskLimits.maxOpenPositions) {
-            return {
-              success: false,
-              error: `Open position limit reached (${riskLimits.maxOpenPositions})`,
-            };
-          }
-
-          if (kalshiOrderRisk.orderExposure > riskLimits.maxPositionSize) {
-            return {
-              success: false,
-              error: `Kalshi leg exposure exceeds max position size of $${riskLimits.maxPositionSize}`,
-            };
-          }
-
-          if (kalshiOrderRisk.maxLossOnTrade > riskLimits.maxLossPerTrade) {
-            return {
-              success: false,
-              error: `Kalshi leg max loss of $${kalshiOrderRisk.maxLossOnTrade.toFixed(2)} exceeds max per-trade risk of $${riskLimits.maxLossPerTrade}`,
-            };
-          }
-
-          if (todayRealizedLoss >= riskLimits.maxLossPerDay) {
-            return {
-              success: false,
-              error: `Daily loss limit reached ($${riskLimits.maxLossPerDay})`,
-            };
-          }
-
-          const bankroll = Math.max(
-            0,
-            Number(capital?.currentBalance ?? capital?.startingBalance ?? 0),
-          );
-          if (bankroll <= 0 || kalshiOrderRisk.orderExposure > bankroll) {
-            return {
-              success: false,
-              error: "Cross-arb order exceeds available capital",
-            };
-          }
-
-          const polymarketPrice =
-            input.buyPlatform === "polymarket"
-              ? livePolymarketYesPrice
-              : 1 - livePolymarketYesPrice;
-          const maxExposurePercent =
-            riskLimits.maxCapital > 0
-              ? Math.max(0.01, Math.min(1, riskLimits.maxPositionSize / riskLimits.maxCapital))
-              : 0.01;
-          const polymarketRisk = validatePolymarketOrderRisk(
-            { price: polymarketPrice, size: input.polymarketSizeUsdc },
-            {
-              maxOrderUsdc: Math.max(1, Math.min(500, preferences.maxOrderNotional)),
-              maxExposurePercent,
-              bankroll,
-            },
-          );
-          if (!polymarketRisk.valid) {
-            return {
-              success: false,
-              error: `Polymarket risk check failed: ${polymarketRisk.reason ?? "unknown reason"}`,
-            };
-          }
-
-          if (netEdge <= 0.05) {
-            return {
-              success: false,
-              error: "Net edge must exceed 5% after fees and execution risk",
-            };
-          }
-
-          const hedgeRatio = calculateDynamicHedgeRatio({
-            latencyRisk,
-            slippageRisk,
-          });
-
-          const opportunity = {
-            type: (input.buyPlatform === "kalshi"
-              ? "buy_kalshi_yes_sell_polymarket_yes"
-              : "buy_polymarket_yes_sell_kalshi_yes") as
-              | "buy_kalshi_yes_sell_polymarket_yes"
-              | "buy_polymarket_yes_sell_kalshi_yes",
-            kalshiMarketId: input.kalshiMarketId,
-            kalshiTitle: input.kalshiMarketId,
-            polymarketMarketId: input.polymarketMarketId,
-            polymarketQuestion: pmMarket.question,
-            kalshiYesPrice: liveKalshiYesPrice,
-            polymarketYesPrice: livePolymarketYesPrice,
-            spread,
-            netEdge,
-            buyPlatform: input.buyPlatform,
-            sellPlatform: (input.buyPlatform === "kalshi" ? "polymarket" : "kalshi") as
-              | "kalshi"
-              | "polymarket",
-            confidence: 0,
-            reasoning: "",
-            minLiquidity: 0,
-            feeBurden,
-            executionRisk,
-            hedgeRatio,
-          };
-
-          const {
-            apiKey: pmKey,
-            apiSecret: pmSecret,
-            apiPassphrase: pmPass,
-          } = polymarketCreds;
-
-          const result = await executeCrossArbLegs(
-            opportunity,
-            {
-              kalshiContracts: input.kalshiContracts,
-              polymarketSizeUsdc: input.polymarketSizeUsdc,
-              polymarketTokenIdYes: tokenIdYes,
-              polymarketTokenIdNo: tokenIdNo,
-            },
-            {
-              placeKalshiOrder: (marketId, side, quantity, limitPrice) =>
-                placeKalshiOrder(userId, marketId, side, quantity, limitPrice),
-              placePolymarketOrder: (tokenId, side, price, size) =>
-                placePolymarketOrder(pmKey, pmSecret, pmPass, {
-                  tokenId,
-                  side,
-                  price,
-                  size,
-                }),
-            },
-          );
-
-          await db.logAuditEvent(
-            result.bothLegsExecuted
-              ? "cross_bot_arb_executed"
-              : "cross_bot_arb_partial_or_failed",
-            JSON.stringify({
-              kalshiMarketId: input.kalshiMarketId,
-              polymarketMarketId: input.polymarketMarketId,
-              buyPlatform: input.buyPlatform,
-              netEdge,
-              kalshiSuccess: result.kalshiLeg.success,
-              polymarketSuccess: result.polymarketLeg.success,
-            }),
-            ctx.user!.openId,
-          );
-
-          try {
-            await db.saveCrossPlatformArbitrageExecution({
-              userId,
-              kalshiMarketId: input.kalshiMarketId,
-              polymarketMarketId: input.polymarketMarketId,
-              buyPlatform: input.buyPlatform,
-              netEdge,
-              feeBurden: opportunity.feeBurden,
-              executionRisk: opportunity.executionRisk,
-              hedgeRatio: opportunity.hedgeRatio,
-              bothLegsExecuted: result.bothLegsExecuted,
-              kalshiOrderId: result.kalshiLeg.orderId ?? null,
-              polymarketOrderId: result.polymarketLeg.orderId ?? null,
-              partialLegAction: result.partialLegAction ?? null,
-              pnlAttributionArb: netEdge,
-              pnlAttributionMarketMove: 0,
+            const kalshiSide = input.buyPlatform === "kalshi" ? "yes" : "no";
+            const kalshiLimitPrice =
+              input.buyPlatform === "kalshi"
+                ? liveKalshiYesPrice
+                : 1 - liveKalshiYesPrice;
+            const kalshiOrderRisk = calculateKalshiBuyOrderRisk({
+              quantity: input.kalshiContracts,
+              limitPrice: kalshiLimitPrice,
             });
-            return result;
-          } catch (persistErr) {
-            logger.error({ err: persistErr }, "[CrossBot] Failed to persist cross-arb execution details");
-            return {
-              ...result,
-              reasoning: `${result.reasoning} Persistence warning: execution history write failed.`,
+
+            if (todayOrderCount >= preferences.maxDailyOrders) {
+              return {
+                success: false,
+                error: `Daily order cap reached (${preferences.maxDailyOrders})`,
+              };
+            }
+
+            if (kalshiOrderRisk.orderExposure > preferences.maxOrderNotional) {
+              return {
+                success: false,
+                error: `Kalshi leg exposure of $${kalshiOrderRisk.orderExposure.toFixed(2)} exceeds max order notional of $${preferences.maxOrderNotional}`,
+              };
+            }
+
+            if (openPositions.length >= riskLimits.maxOpenPositions) {
+              return {
+                success: false,
+                error: `Open position limit reached (${riskLimits.maxOpenPositions})`,
+              };
+            }
+
+            if (kalshiOrderRisk.orderExposure > riskLimits.maxPositionSize) {
+              return {
+                success: false,
+                error: `Kalshi leg exposure exceeds max position size of $${riskLimits.maxPositionSize}`,
+              };
+            }
+
+            if (kalshiOrderRisk.maxLossOnTrade > riskLimits.maxLossPerTrade) {
+              return {
+                success: false,
+                error: `Kalshi leg max loss of $${kalshiOrderRisk.maxLossOnTrade.toFixed(2)} exceeds max per-trade risk of $${riskLimits.maxLossPerTrade}`,
+              };
+            }
+
+            if (todayRealizedLoss >= riskLimits.maxLossPerDay) {
+              return {
+                success: false,
+                error: `Daily loss limit reached ($${riskLimits.maxLossPerDay})`,
+              };
+            }
+
+            const bankroll = Math.max(
+              0,
+              Number(capital?.currentBalance ?? capital?.startingBalance ?? 0)
+            );
+            if (bankroll <= 0 || kalshiOrderRisk.orderExposure > bankroll) {
+              return {
+                success: false,
+                error: "Cross-arb order exceeds available capital",
+              };
+            }
+
+            const polymarketPrice =
+              input.buyPlatform === "polymarket"
+                ? livePolymarketYesPrice
+                : 1 - livePolymarketYesPrice;
+            const maxExposurePercent =
+              riskLimits.maxCapital > 0
+                ? Math.max(
+                    0.01,
+                    Math.min(
+                      1,
+                      riskLimits.maxPositionSize / riskLimits.maxCapital
+                    )
+                  )
+                : 0.01;
+            const polymarketRisk = validatePolymarketOrderRisk(
+              { price: polymarketPrice, size: input.polymarketSizeUsdc },
+              {
+                maxOrderUsdc: Math.max(
+                  1,
+                  Math.min(500, preferences.maxOrderNotional)
+                ),
+                maxExposurePercent,
+                bankroll,
+              }
+            );
+            if (!polymarketRisk.valid) {
+              return {
+                success: false,
+                error: `Polymarket risk check failed: ${polymarketRisk.reason ?? "unknown reason"}`,
+              };
+            }
+
+            if (netEdge <= 0.05) {
+              return {
+                success: false,
+                error: "Net edge must exceed 5% after fees and execution risk",
+              };
+            }
+
+            const hedgeRatio = calculateDynamicHedgeRatio({
+              latencyRisk,
+              slippageRisk,
+            });
+
+            const opportunity = {
+              type: (input.buyPlatform === "kalshi"
+                ? "buy_kalshi_yes_sell_polymarket_yes"
+                : "buy_polymarket_yes_sell_kalshi_yes") as
+                | "buy_kalshi_yes_sell_polymarket_yes"
+                | "buy_polymarket_yes_sell_kalshi_yes",
+              kalshiMarketId: input.kalshiMarketId,
+              kalshiTitle: input.kalshiMarketId,
+              polymarketMarketId: input.polymarketMarketId,
+              polymarketQuestion: pmMarket.question,
+              kalshiYesPrice: liveKalshiYesPrice,
+              polymarketYesPrice: livePolymarketYesPrice,
+              spread,
+              netEdge,
+              buyPlatform: input.buyPlatform,
+              sellPlatform: (input.buyPlatform === "kalshi"
+                ? "polymarket"
+                : "kalshi") as "kalshi" | "polymarket",
+              confidence: 0,
+              reasoning: "",
+              minLiquidity: 0,
+              feeBurden,
+              executionRisk,
+              hedgeRatio,
             };
-          }
+
+            const {
+              apiKey: pmKey,
+              apiSecret: pmSecret,
+              apiPassphrase: pmPass,
+            } = polymarketCreds;
+
+            const result = await executeCrossArbLegs(
+              opportunity,
+              {
+                kalshiContracts: input.kalshiContracts,
+                polymarketSizeUsdc: input.polymarketSizeUsdc,
+                polymarketTokenIdYes: tokenIdYes,
+                polymarketTokenIdNo: tokenIdNo,
+              },
+              {
+                placeKalshiOrder: (marketId, side, quantity, limitPrice) =>
+                  placeKalshiOrder(
+                    userId,
+                    marketId,
+                    side,
+                    quantity,
+                    limitPrice
+                  ),
+                placePolymarketOrder: (tokenId, side, price, size) =>
+                  placePolymarketOrder(pmKey, pmSecret, pmPass, {
+                    tokenId,
+                    side,
+                    price,
+                    size,
+                  }),
+              }
+            );
+
+            await db.logAuditEvent(
+              result.bothLegsExecuted
+                ? "cross_bot_arb_executed"
+                : "cross_bot_arb_partial_or_failed",
+              JSON.stringify({
+                kalshiMarketId: input.kalshiMarketId,
+                polymarketMarketId: input.polymarketMarketId,
+                buyPlatform: input.buyPlatform,
+                netEdge,
+                kalshiSuccess: result.kalshiLeg.success,
+                polymarketSuccess: result.polymarketLeg.success,
+              }),
+              ctx.user!.openId
+            );
+
+            try {
+              await db.saveCrossPlatformArbitrageExecution({
+                userId,
+                kalshiMarketId: input.kalshiMarketId,
+                polymarketMarketId: input.polymarketMarketId,
+                buyPlatform: input.buyPlatform,
+                netEdge,
+                feeBurden: opportunity.feeBurden,
+                executionRisk: opportunity.executionRisk,
+                hedgeRatio: opportunity.hedgeRatio,
+                bothLegsExecuted: result.bothLegsExecuted,
+                kalshiOrderId: result.kalshiLeg.orderId ?? null,
+                polymarketOrderId: result.polymarketLeg.orderId ?? null,
+                partialLegAction: result.partialLegAction ?? null,
+                pnlAttributionArb: netEdge,
+                pnlAttributionMarketMove: 0,
+              });
+              return result;
+            } catch (persistErr) {
+              logger.error(
+                { err: persistErr },
+                "[CrossBot] Failed to persist cross-arb execution details"
+              );
+              return {
+                ...result,
+                reasoning: `${result.reasoning} Persistence warning: execution history write failed.`,
+              };
+            }
           });
         } catch (error) {
           logger.error({ err: error }, "[CrossBot] Execute cross-arb error");
@@ -3189,7 +3718,10 @@ export const appRouter = router({
 
       // Count autonomy cycles (runs with status: executed, skipped, or error)
       const autonomyCyclesCompleted = recentRuns.filter(
-        (r: any) => r.status === "executed" || r.status === "skipped" || r.status === "error"
+        (r: any) =>
+          r.status === "executed" ||
+          r.status === "skipped" ||
+          r.status === "error"
       ).length;
 
       // Determine paper trading mode and duration
@@ -3200,7 +3732,8 @@ export const appRouter = router({
           : null;
       const daysInPaperMode = firstRunDate
         ? Math.floor(
-            (Date.now() - new Date(firstRunDate).getTime()) / (1000 * 60 * 60 * 24)
+            (Date.now() - new Date(firstRunDate).getTime()) /
+              (1000 * 60 * 60 * 24)
           )
         : 0;
 
@@ -3231,31 +3764,31 @@ export const appRouter = router({
 
       // Fetch desk memory for Kalshi and Polymarket
       const kalshiDesks = await Promise.all([
-        import("./db.desk-memory").then((m) =>
+        import("./db.desk-memory").then(m =>
           m.getDeskMemory(userId, "kalshi", "kalshi_sports")
         ),
-        import("./db.desk-memory").then((m) =>
+        import("./db.desk-memory").then(m =>
           m.getDeskMemory(userId, "kalshi", "kalshi_crypto")
         ),
-        import("./db.desk-memory").then((m) =>
+        import("./db.desk-memory").then(m =>
           m.getDeskMemory(userId, "kalshi", "kalshi_politics")
         ),
-        import("./db.desk-memory").then((m) =>
+        import("./db.desk-memory").then(m =>
           m.getDeskMemory(userId, "kalshi", "kalshi_esports")
         ),
       ]);
 
       const polymarketDesks = await Promise.all([
-        import("./db.desk-memory").then((m) =>
+        import("./db.desk-memory").then(m =>
           m.getDeskMemory(userId, "polymarket", "polymarket_crypto")
         ),
-        import("./db.desk-memory").then((m) =>
+        import("./db.desk-memory").then(m =>
           m.getDeskMemory(userId, "polymarket", "polymarket_politics")
         ),
-        import("./db.desk-memory").then((m) =>
+        import("./db.desk-memory").then(m =>
           m.getDeskMemory(userId, "polymarket", "polymarket_general")
         ),
-        import("./db.desk-memory").then((m) =>
+        import("./db.desk-memory").then(m =>
           m.getDeskMemory(userId, "polymarket", "polymarket_sports")
         ),
       ]);
@@ -3316,9 +3849,7 @@ export const appRouter = router({
           event.eventType === "scheduled_autonomy_order_placed"
         ) {
           try {
-            const details = event.details
-              ? JSON.parse(event.details)
-              : {};
+            const details = event.details ? JSON.parse(event.details) : {};
             const pnl =
               details.realizedPnl !== undefined
                 ? Number(details.realizedPnl)
@@ -3335,7 +3866,8 @@ export const appRouter = router({
 
       const paperWinRate =
         paperTrades > 0 ? Math.round((paperWins / paperTrades) * 100) : 0;
-      const realWinRate = realTrades > 0 ? Math.round((realWins / realTrades) * 100) : 0;
+      const realWinRate =
+        realTrades > 0 ? Math.round((realWins / realTrades) * 100) : 0;
 
       let alertMessage: string | undefined;
       let recommendation: string | undefined;
@@ -3375,7 +3907,10 @@ export const appRouter = router({
 
       // Gather metrics
       const autonomyCyclesCompleted = recentRuns.filter(
-        (r: any) => r.status === "executed" || r.status === "skipped" || r.status === "error"
+        (r: any) =>
+          r.status === "executed" ||
+          r.status === "skipped" ||
+          r.status === "error"
       ).length;
 
       const firstRunDate =
@@ -3384,34 +3919,35 @@ export const appRouter = router({
           : null;
       const daysInPaperMode = firstRunDate
         ? Math.floor(
-            (Date.now() - new Date(firstRunDate).getTime()) / (1000 * 60 * 60 * 24)
+            (Date.now() - new Date(firstRunDate).getTime()) /
+              (1000 * 60 * 60 * 24)
           )
         : 0;
 
       // Count desk memory lessons per desk
       const allDesks = await Promise.all([
-        import("./db.desk-memory").then((m) =>
+        import("./db.desk-memory").then(m =>
           m.getDeskMemory(userId, "kalshi", "kalshi_sports")
         ),
-        import("./db.desk-memory").then((m) =>
+        import("./db.desk-memory").then(m =>
           m.getDeskMemory(userId, "kalshi", "kalshi_crypto")
         ),
-        import("./db.desk-memory").then((m) =>
+        import("./db.desk-memory").then(m =>
           m.getDeskMemory(userId, "kalshi", "kalshi_politics")
         ),
-        import("./db.desk-memory").then((m) =>
+        import("./db.desk-memory").then(m =>
           m.getDeskMemory(userId, "kalshi", "kalshi_esports")
         ),
-        import("./db.desk-memory").then((m) =>
+        import("./db.desk-memory").then(m =>
           m.getDeskMemory(userId, "polymarket", "polymarket_crypto")
         ),
-        import("./db.desk-memory").then((m) =>
+        import("./db.desk-memory").then(m =>
           m.getDeskMemory(userId, "polymarket", "polymarket_politics")
         ),
       ]);
 
       const deskDesksWithLessons = allDesks.filter(
-        (d) => d && d.notes.length >= 4
+        d => d && d.notes.length >= 4
       ).length;
 
       // Calculate paper win rate
@@ -3424,9 +3960,7 @@ export const appRouter = router({
         ) {
           paperTrades += 1;
           try {
-            const details = event.details
-              ? JSON.parse(event.details)
-              : {};
+            const details = event.details ? JSON.parse(event.details) : {};
             if (Number(details.realizedPnl) > 0) {
               paperWins += 1;
             }
@@ -3473,7 +4007,8 @@ export const appRouter = router({
         {
           id: "paper_win_rate",
           label: "Paper win rate >60%",
-          description: "Paper trading win rate exceeds 60% confidence threshold",
+          description:
+            "Paper trading win rate exceeds 60% confidence threshold",
           completed: paperWinRate > 60,
           score: paperWinRate > 60 ? 15 : 0,
           evidence: `${Math.round(paperWinRate)}% win rate (${paperTrades} trades)`,

@@ -6,12 +6,19 @@ const normalizePositiveInt = (value: string | undefined, fallback: number) => {
 const normalizeBoolean = (value: string | undefined, fallback = false) => {
   const trimmed = value?.trim().toLowerCase();
   if (trimmed === undefined || trimmed === "") return fallback;
-  return trimmed === "1" || trimmed === "true" || trimmed === "yes" || trimmed === "on";
+  return (
+    trimmed === "1" ||
+    trimmed === "true" ||
+    trimmed === "yes" ||
+    trimmed === "on"
+  );
 };
 
 export const ENV = {
   cookieSecret: normalize(process.env.JWT_SECRET),
-  credentialEncryptionSecret: normalize(process.env.CREDENTIAL_ENCRYPTION_SECRET),
+  credentialEncryptionSecret: normalize(
+    process.env.CREDENTIAL_ENCRYPTION_SECRET
+  ),
   databaseUrl: normalize(process.env.DATABASE_URL),
   ownerEmail: normalize(process.env.OWNER_EMAIL),
   ownerPassword: normalize(process.env.OWNER_PASSWORD),
@@ -19,26 +26,49 @@ export const ENV = {
   // OpenRouter API key.  OPENROUTER_API_KEY is the canonical variable;
   // ANTHROPIC_API_KEY is accepted as a backward-compatible fallback so
   // existing deployments do not need to rename their environment variable.
-  openrouterApiKey: normalize(process.env.OPENROUTER_API_KEY) || normalize(process.env.ANTHROPIC_API_KEY),
+  openrouterApiKey:
+    normalize(process.env.OPENROUTER_API_KEY) ||
+    normalize(process.env.ANTHROPIC_API_KEY),
   // Keep anthropicApiKey as an alias so existing call-sites compile without
   // change during the transition period.
-  get anthropicApiKey() { return this.openrouterApiKey; },
+  get anthropicApiKey() {
+    return this.openrouterApiKey;
+  },
   // The model served through OpenRouter.  Override via OPENROUTER_MODEL.
   // All tiers (triage / review / deep) resolve to this single model since
   // tencent/hy3-preview:free is the configured provider.
-  openrouterModel: normalize(process.env.OPENROUTER_MODEL) || "tencent/hy3-preview:free",
+  openrouterModel:
+    normalize(process.env.OPENROUTER_MODEL) || "tencent/hy3-preview:free",
   // Backward-compat model aliases — all resolve to openrouterModel.
-  get anthropicModel() { return this.openrouterModel; },
-  get anthropicTriageModel() { return this.openrouterModel; },
-  get anthropicDeepModel() { return this.openrouterModel; },
-  anthropicTimeoutMs: normalizePositiveInt(process.env.ANTHROPIC_TIMEOUT_MS, 12000),
+  get anthropicModel() {
+    return this.openrouterModel;
+  },
+  get anthropicTriageModel() {
+    return this.openrouterModel;
+  },
+  get anthropicDeepModel() {
+    return this.openrouterModel;
+  },
+  anthropicTimeoutMs: normalizePositiveInt(
+    process.env.ANTHROPIC_TIMEOUT_MS,
+    12000
+  ),
   /**
    * Deep-tier timeout in milliseconds.  Defaults to 25 s.
    */
-  anthropicDeepTimeoutMs: normalizePositiveInt(process.env.ANTHROPIC_DEEP_TIMEOUT_MS, 25000),
+  anthropicDeepTimeoutMs: normalizePositiveInt(
+    process.env.ANTHROPIC_DEEP_TIMEOUT_MS,
+    25000
+  ),
   // Feature toggles for the AI toolbelt.
-  enableAiPromptCache: normalizeBoolean(process.env.ENABLE_AI_PROMPT_CACHE, true),
-  enableAiCategoryRouting: normalizeBoolean(process.env.ENABLE_AI_CATEGORY_ROUTING, true),
+  enableAiPromptCache: normalizeBoolean(
+    process.env.ENABLE_AI_PROMPT_CACHE,
+    true
+  ),
+  enableAiCategoryRouting: normalizeBoolean(
+    process.env.ENABLE_AI_CATEGORY_ROUTING,
+    true
+  ),
   // Web search and extended thinking are Anthropic-only features; they are
   // disabled when routing through OpenRouter.
   enableAiWebSearch: false,
@@ -57,7 +87,10 @@ export const ENV = {
    * agree to keep the trade; disagreement drops it.  Cheap, in-family
    * replacement for the OpenAI second-opinion we previously ran.
    */
-  enableAiIntraEscalation: normalizeBoolean(process.env.ENABLE_AI_INTRA_ESCALATION, true),
+  enableAiIntraEscalation: normalizeBoolean(
+    process.env.ENABLE_AI_INTRA_ESCALATION,
+    true
+  ),
   kalshiApiKey: normalize(process.env.KALSHI_API_KEY),
   isProduction: process.env.NODE_ENV === "production",
   gnewsApiKey: normalize(process.env.GNEWS_API_KEY),
@@ -71,6 +104,10 @@ export const ENV = {
   // Paper trading mode: when true, all orders are simulated at current market prices.
   // Simulated trades still update desk memory and learning feedback.
   paperTradeMode: normalizeBoolean(process.env.PAPER_TRADE_MODE, false),
+  starterCheckoutUrl: normalize(process.env.STARTER_CHECKOUT_URL),
+  proCheckoutUrl: normalize(process.env.PRO_CHECKOUT_URL),
+  fundCheckoutUrl: normalize(process.env.FUND_CHECKOUT_URL),
+  billingPortalUrl: normalize(process.env.BILLING_PORTAL_URL),
 };
 
 const REQUIRED_SERVER_ENV = [
@@ -82,9 +119,9 @@ const REQUIRED_SERVER_ENV = [
 ] as const;
 
 export function validateServerEnv() {
-  const missing = REQUIRED_SERVER_ENV.filter(([, value]) => value.length === 0).map(
-    ([name]) => name
-  );
+  const missing = REQUIRED_SERVER_ENV.filter(
+    ([, value]) => value.length === 0
+  ).map(([name]) => name);
 
   if (missing.length > 0) {
     // Surface a diagnostic that tells the operator *what their runtime
@@ -94,9 +131,9 @@ export function validateServerEnv() {
     // redeployed since the var was added), the operator's instinct is
     // "but I set those!" — proving the variable is genuinely absent from
     // process.env saves a long debugging cycle.
-    const present = REQUIRED_SERVER_ENV
-      .filter(([, value]) => value.length > 0)
-      .map(([name]) => name);
+    const present = REQUIRED_SERVER_ENV.filter(
+      ([, value]) => value.length > 0
+    ).map(([name]) => name);
     const otherEnvKeyCount = Object.keys(process.env).length;
 
     console.error(
@@ -122,7 +159,9 @@ export function validateServerEnv() {
   }
 
   if (ENV.isProduction && ENV.credentialEncryptionSecret.length < 32) {
-    throw new Error("CREDENTIAL_ENCRYPTION_SECRET must be at least 32 characters in production");
+    throw new Error(
+      "CREDENTIAL_ENCRYPTION_SECRET must be at least 32 characters in production"
+    );
   }
 
   if (ENV.isProduction && ENV.ownerPassword.length < 12) {
@@ -152,7 +191,9 @@ export function getCredentialEncryptionSecret() {
   const secret = ENV.credentialEncryptionSecret || ENV.cookieSecret;
 
   if (!secret) {
-    throw new Error("CREDENTIAL_ENCRYPTION_SECRET or JWT_SECRET is required for credential encryption");
+    throw new Error(
+      "CREDENTIAL_ENCRYPTION_SECRET or JWT_SECRET is required for credential encryption"
+    );
   }
 
   return secret;
