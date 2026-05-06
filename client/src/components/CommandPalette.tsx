@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useLocation } from "wouter";
-import { LayoutDashboard, TrendingUp, ListChecks, BarChart2, Activity, BarChart3, Play, Zap, SlidersHorizontal } from "lucide-react";
+import { Sparkles, Zap, RefreshCw, ShieldAlert, Plug, Wallet } from "lucide-react";
 import {
   CommandDialog,
   CommandEmpty,
@@ -10,26 +10,30 @@ import {
   CommandList,
   CommandSeparator,
 } from "@/components/ui/command";
+import { trpc } from "@/lib/trpc";
+import { navSections } from "@/components/shell/navigation";
 
-const pages = [
-  { icon: LayoutDashboard, label: "Dashboard", path: "/dashboard" },
-  { icon: TrendingUp, label: "Signals", path: "/signals" },
-  { icon: ListChecks, label: "Positions", path: "/positions" },
-  { icon: BarChart3, label: "Performance", path: "/performance" },
-  { icon: SlidersHorizontal, label: "Trading Autonomy", path: "/autonomy" },
-  { icon: Activity, label: "Trades", path: "/trades" },
-  { icon: BarChart2, label: "Analytics", path: "/analytics" },
-];
-
-const actions = [
-  { icon: Play, label: "Start Trading", path: "/autonomy" },
-  { icon: Zap, label: "Generate Signals", path: "/signals" },
-  { icon: BarChart2, label: "View Positions", path: "/positions" },
-];
-
+/**
+ * Global command palette (⌘K / Ctrl+K).
+ *
+ * Includes every navigation route grouped by section, plus a few
+ * high-leverage actions (kill switch, refresh, jump to onboarding).
+ */
 export function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [, navigate] = useLocation();
+  const utils = trpc.useUtils();
+
+  const killSwitchMutation = trpc.kalshi.killSwitch.useMutation({
+    onSuccess: async () => {
+      await Promise.all([
+        utils.kalshi.getTradingPreferences.invalidate(),
+        utils.kalshi.getKalshiAccountStatus.invalidate(),
+        utils.kalshi.getPositions.invalidate(),
+        utils.kalshi.getCapital.invalidate(),
+      ]);
+    },
+  });
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -42,10 +46,36 @@ export function CommandPalette() {
     return () => document.removeEventListener("keydown", handler);
   }, []);
 
-  const handleSelect = useCallback((path: string) => {
-    navigate(path);
+  const handleNavigate = useCallback(
+    (path: string) => {
+      navigate(path);
+      setOpen(false);
+    },
+    [navigate],
+  );
+
+  const handleKillSwitch = useCallback(() => {
     setOpen(false);
-  }, [navigate]);
+    if (
+      window.confirm(
+        "Activate kill switch? This will disarm live trading and submit close orders for all positions.",
+      )
+    ) {
+      killSwitchMutation.mutate();
+    }
+  }, [killSwitchMutation]);
+
+  const handleRefreshAll = useCallback(async () => {
+    setOpen(false);
+    await Promise.all([
+      utils.kalshi.getKalshiAccountStatus.invalidate(),
+      utils.kalshi.getPerformanceOverview.invalidate(),
+      utils.kalshi.getTradingPreferences.invalidate(),
+      utils.kalshi.getAutonomyActivity.invalidate(),
+      utils.kalshi.getPositions.invalidate(),
+      utils.kalshi.getCapital.invalidate(),
+    ]);
+  }, [utils]);
 
   return (
     <CommandDialog
@@ -53,34 +83,77 @@ export function CommandPalette() {
       onOpenChange={setOpen}
       className="border border-white/10 bg-slate-900/80 backdrop-blur-xl shadow-2xl"
     >
-      <CommandInput placeholder="Type a command or search..." />
+      <CommandInput placeholder="Search pages or run an action…" />
       <CommandList>
         <CommandEmpty>No results found.</CommandEmpty>
-        <CommandGroup heading="Pages">
-          {pages.map((item) => (
-            <CommandItem
-              key={item.path + item.label}
-              value={item.label}
-              onSelect={() => handleSelect(item.path)}
-            >
-              <item.icon className="mr-2 h-4 w-4 opacity-70" />
-              {item.label}
-            </CommandItem>
-          ))}
+
+        <CommandGroup heading="Quick actions">
+          <CommandItem
+            value="Connect exchange Kalshi Polymarket onboarding"
+            onSelect={() => handleNavigate("/connect")}
+          >
+            <Plug className="mr-2 h-4 w-4 opacity-70" />
+            Connect an exchange
+          </CommandItem>
+          <CommandItem
+            value="Fund deposit balance"
+            onSelect={() => handleNavigate("/funding")}
+          >
+            <Wallet className="mr-2 h-4 w-4 opacity-70" />
+            Fund account
+          </CommandItem>
+          <CommandItem
+            value="Generate signals scan"
+            onSelect={() => handleNavigate("/signals")}
+          >
+            <Sparkles className="mr-2 h-4 w-4 opacity-70" />
+            View latest signals
+          </CommandItem>
+          <CommandItem
+            value="Arm autonomy go live"
+            onSelect={() => handleNavigate("/autonomy")}
+          >
+            <Zap className="mr-2 h-4 w-4 opacity-70" />
+            Configure autonomy
+          </CommandItem>
+          <CommandItem value="Refresh dashboard data" onSelect={handleRefreshAll}>
+            <RefreshCw className="mr-2 h-4 w-4 opacity-70" />
+            Refresh all data
+          </CommandItem>
+          <CommandItem
+            value="Kill switch panic disarm emergency"
+            onSelect={handleKillSwitch}
+            className="text-destructive focus:bg-destructive/10 focus:text-destructive"
+          >
+            <ShieldAlert className="mr-2 h-4 w-4" />
+            Kill switch — disarm everything
+          </CommandItem>
         </CommandGroup>
+
         <CommandSeparator />
-        <CommandGroup heading="Actions">
-          {actions.map((item) => (
-            <CommandItem
-              key={item.label}
-              value={item.label}
-              onSelect={() => handleSelect(item.path)}
-            >
-              <item.icon className="mr-2 h-4 w-4 opacity-70" />
-              {item.label}
-            </CommandItem>
-          ))}
-        </CommandGroup>
+
+        {navSections.map((section) => (
+          <CommandGroup key={section.label} heading={section.label}>
+            {section.items.map((item) => {
+              const Icon = item.icon;
+              return (
+                <CommandItem
+                  key={item.path}
+                  value={`${item.label} ${item.hint ?? ""}`}
+                  onSelect={() => handleNavigate(item.path)}
+                >
+                  <Icon className="mr-2 h-4 w-4 opacity-70" />
+                  <span>{item.label}</span>
+                  {item.hint && (
+                    <span className="ml-auto text-xs text-muted-foreground">
+                      {item.hint}
+                    </span>
+                  )}
+                </CommandItem>
+              );
+            })}
+          </CommandGroup>
+        ))}
       </CommandList>
     </CommandDialog>
   );

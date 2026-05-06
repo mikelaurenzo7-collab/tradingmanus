@@ -3,13 +3,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { AlertCircle, CheckCircle2, KeyRound, Laptop, Loader2, ShieldCheck, Link2, ToggleLeft, ToggleRight, WifiOff, Wifi, Zap } from "lucide-react";
+import { AlertCircle, CheckCircle2, KeyRound, Laptop, Loader2, ShieldCheck, Link2, ToggleLeft, ToggleRight, WifiOff, Wifi } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { buildKalshiConnectionSuccessMessage, buildPolymarketConnectionSuccessMessage } from "@/lib/connectFlow";
 import { trpc } from "@/lib/trpc";
-import { PageHeader } from "@/components/PageHeader";
-import { StatCard } from "@/components/widgets/StatCard";
 import { EmptyState } from "@/components/EmptyStates";
 
 // ---------- Kalshi panel ----------
@@ -503,62 +501,138 @@ export default function Connect() {
 
   const kalshiConnected = kalshiStatus.data?.connected === true;
   const polymarketConnected = polymarketStatus.data?.connected === true;
+  const equity = kalshiStatus.data?.equity ?? 0;
+  const isFunded = equity > 0;
+  const liveTradingEnabled =
+    kalshiStatus.data?.tradingPreferences?.liveTradingEnabled ?? false;
+
+  // Onboarding step state for the stepper hero
+  const stepConnect = kalshiConnected || polymarketConnected;
+  const stepFund = isFunded;
+  const stepArm = liveTradingEnabled;
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6 animate-fade-in">
-      <PageHeader
-        icon={Link2}
-        title="Exchange Connections"
-        description="API credentials and account validation for autonomous trading"
-        iconColor="text-primary"
-      />
+    <div className="max-w-5xl mx-auto space-y-5 animate-fade-in">
+      {/* Stepper hero — replaces previous bulky page header + status cards */}
+      <Card className="glass-panel border-primary/10">
+        <CardContent className="p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <div>
+              <h1 className="text-xl font-bold tracking-tight">Onboarding</h1>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                Connect at least one exchange, fund your account, then arm autonomy.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Badge
+                variant="outline"
+                className={
+                  kalshiConnected
+                    ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-300"
+                    : "border-border/60 text-muted-foreground"
+                }
+              >
+                {kalshiConnected ? <Wifi className="w-3 h-3 mr-1" /> : <WifiOff className="w-3 h-3 mr-1" />}
+                Kalshi
+              </Badge>
+              <Badge
+                variant="outline"
+                className={
+                  polymarketConnected
+                    ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-300"
+                    : "border-border/60 text-muted-foreground"
+                }
+              >
+                {polymarketConnected ? <Wifi className="w-3 h-3 mr-1" /> : <WifiOff className="w-3 h-3 mr-1" />}
+                Polymarket
+              </Badge>
+            </div>
+          </div>
 
-      {/* Connection Status Hero */}
-      <div className="grid sm:grid-cols-2 gap-4 animate-fade-in" style={{ animationDelay: '50ms' }}>
-        <StatCard
-          label="Kalshi Connection"
-          value={kalshiConnected ? "Connected" : "Disconnected"}
-          icon={kalshiConnected ? <Wifi className="w-5 h-5" /> : <WifiOff className="w-5 h-5" />}
-          color={kalshiConnected ? "#10b981" : "#ef4444"}
-          className={`glass-panel ${kalshiConnected ? 'glow-success border-indigo-500/30' : 'border-red-500/30'}`}
-          loading={kalshiStatus.isLoading}
-        />
-        <StatCard
-          label="Polymarket Connection"
-          value={polymarketConnected ? "Connected" : "Disconnected"}
-          icon={polymarketConnected ? <Wifi className="w-5 h-5" /> : <WifiOff className="w-5 h-5" />}
-          color={polymarketConnected ? "#10b981" : "#ef4444"}
-          className={`glass-panel ${polymarketConnected ? 'glow-success border-emerald-500/30' : 'border-red-500/30'}`}
-          loading={polymarketStatus.isLoading}
-        />
+          <div className="grid grid-cols-3 gap-2">
+            <ConnectStep
+              n={1}
+              title="Connect"
+              hint="API credentials"
+              done={stepConnect}
+              active={!stepConnect}
+            />
+            <ConnectStep
+              n={2}
+              title="Fund"
+              hint={isFunded ? `$${equity.toFixed(2)}` : "Deposit on Kalshi"}
+              done={stepFund}
+              active={stepConnect && !stepFund}
+            />
+            <ConnectStep
+              n={3}
+              title="Arm"
+              hint={stepArm ? "Live trading armed" : "Configure autonomy"}
+              done={stepArm}
+              active={stepFund && !stepArm}
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Slim security inline note */}
+      <div className="flex items-start gap-2 px-3 py-2 rounded-md border border-border/60 bg-card/40 text-xs text-muted-foreground">
+        <ShieldCheck className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" />
+        <span>
+          Credentials are validated live and stored AES-256-GCM encrypted, scoped to your
+          authenticated account.
+        </span>
       </div>
 
-      <Alert className="border-primary-400/30 bg-primary-500/10 animate-fade-in" style={{ animationDelay: '100ms' }}>
-        <ShieldCheck className="h-4 w-4 text-primary" />
-        <AlertDescription className="text-violet-200 text-sm">
-          Your credentials are validated live, then encrypted (AES-256-GCM) before storage. The bot trades on your behalf based on your autonomy settings.
-        </AlertDescription>
-      </Alert>
+      {/* Connection panels — side by side on desktop */}
+      <div className="grid md:grid-cols-2 gap-5">
+        <KalshiConnectPanel />
+        <PolymarketConnectPanel />
+      </div>
 
-      <div className="grid gap-6">
-        {/* Connection cards side by side */}
-        <div className="grid md:grid-cols-2 gap-6">
-          <KalshiConnectPanel />
-          <PolymarketConnectPanel />
-        </div>
+      {/* Platform subscription */}
+      <PlatformSubscriptionCard />
+    </div>
+  );
+}
 
-        {/* Platform subscription */}
-        <div className="animate-fade-in" style={{ animationDelay: '350ms' }}>
-          <PlatformSubscriptionCard />
-        </div>
-
-        <Alert className="animate-fade-in" style={{ animationDelay: '400ms' }}>
-          <ShieldCheck className="h-4 w-4" />
-          <AlertDescription>
-            <strong>Security:</strong> All credentials are AES-256-GCM encrypted before storage
-            and are scoped exclusively to your authenticated account.
-          </AlertDescription>
-        </Alert>
+function ConnectStep({
+  n,
+  title,
+  hint,
+  done,
+  active,
+}: {
+  n: number;
+  title: string;
+  hint: string;
+  done?: boolean;
+  active?: boolean;
+}) {
+  return (
+    <div
+      className={`flex items-center gap-3 rounded-md border p-3 transition-colors ${
+        done
+          ? "border-emerald-400/40 bg-emerald-500/5"
+          : active
+            ? "border-primary/40 bg-primary/5"
+            : "border-border/60 bg-card/40 opacity-70"
+      }`}
+    >
+      <div
+        className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${
+          done
+            ? "bg-emerald-500 text-white"
+            : active
+              ? "bg-primary text-white"
+              : "bg-muted text-muted-foreground"
+        }`}
+      >
+        {done ? <CheckCircle2 className="w-4 h-4" /> : n}
+      </div>
+      <div className="min-w-0">
+        <p className="text-sm font-semibold leading-tight truncate">{title}</p>
+        <p className="text-xs text-muted-foreground truncate">{hint}</p>
       </div>
     </div>
   );

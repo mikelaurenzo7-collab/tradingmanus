@@ -1,31 +1,29 @@
 import {
-  Loader2,
-  TrendingUp,
-  TrendingDown,
-  AlertTriangle,
-  Zap,
-  Sparkles,
   Activity,
-  CheckCircle2,
   AlertCircle,
+  AlertTriangle,
+  ArrowRight,
+  CheckCircle2,
+  DollarSign,
+  Layers,
   Plug,
   RefreshCw,
-  DollarSign,
-  Target,
+  Settings as SettingsIcon,
+  Sparkles,
   Trophy,
-  Layers,
+  Zap,
 } from "lucide-react";
+import { useMemo, useState } from "react";
+import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { StartTradingDialog } from "@/components/StartTradingDialog";
-import { PageHeader } from "@/components/PageHeader";
 import { StatCard } from "@/components/widgets/StatCard";
 import { PerformanceChart } from "@/components/charts/PerformanceChart";
+import { StartTradingDialog } from "@/components/StartTradingDialog";
 import { DashboardSkeleton } from "@/components/enhanced/Skeletons";
-import { useState, useMemo } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
-import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
+import { cn } from "@/lib/utils";
 import {
   DEFAULT_TRADING_PREFERENCES,
   formatAutonomyActivityTime,
@@ -46,13 +44,10 @@ function getTimestampMs(value: Date | string | null | undefined) {
 function formatFreshnessLabel(value: Date | string | null | undefined) {
   const timestamp = getTimestampMs(value);
   if (!timestamp) return "not synced yet";
-
   const ageMs = Math.max(0, Date.now() - timestamp);
   if (ageMs < 60 * 1000) return "just now";
-
   const ageMinutes = Math.floor(ageMs / (60 * 1000));
   if (ageMinutes < 60) return `${ageMinutes}m ago`;
-
   const ageHours = Math.floor(ageMinutes / 60);
   return `${ageHours}h ago`;
 }
@@ -61,12 +56,10 @@ export default function Dashboard() {
   const { user } = useAuth();
   const [, navigate] = useLocation();
   const utils = trpc.useUtils();
-  const [killSwitchConfirm, setKillSwitchConfirm] = useState(false);
   const [showStartTrading, setShowStartTrading] = useState(false);
   const [activationMessage, setActivationMessage] = useState<string | null>(null);
 
-  const performanceOverviewQuery =
-    trpc.kalshi.getPerformanceOverview.useQuery();
+  const performanceOverviewQuery = trpc.kalshi.getPerformanceOverview.useQuery();
   const accountStatusQuery = trpc.kalshi.getKalshiAccountStatus.useQuery();
   const { data: instructions } = trpc.training.getInstructions.useQuery();
   const autonomyActivityQuery = trpc.kalshi.getAutonomyActivity.useQuery();
@@ -78,71 +71,35 @@ export default function Dashboard() {
       setActivationMessage(
         result.preferences.liveTradingEnabled
           ? `${getAutonomyModeLabel(result.preferences.autonomyMode)} mode is now armed for live trading.`
-          : "Live trading has been disarmed."
+          : "Live trading has been disarmed.",
       );
       await Promise.all([
         utils.kalshi.getKalshiAccountStatus.invalidate(),
         utils.kalshi.getTradingPreferences.invalidate(),
       ]);
     },
-    onError: (error) => {
-      setActivationMessage(error.message || "Unable to arm live trading.");
-    },
-  });
-  const killSwitchMutation = trpc.kalshi.killSwitch.useMutation({
-    onSuccess: async (result) => {
-      setKillSwitchConfirm(false);
-      setActivationMessage(
-        result.success
-          ? `Kill switch submitted. Live trading is disarmed and ${result.closedPositions}/${result.totalPositions} position(s) have close orders submitted or closed.`
-          : `Kill switch disarmed live trading, but ${result.failedPositions}/${result.totalPositions} position(s) need manual review.`
-      );
-      await Promise.all([
-        utils.kalshi.getKalshiAccountStatus.invalidate(),
-        utils.kalshi.getTradingPreferences.invalidate(),
-        utils.kalshi.getAutonomyActivity.invalidate(),
-        utils.kalshi.getPositions.invalidate(),
-      ]);
-    },
-    onError: (error) => {
-      setKillSwitchConfirm(false);
-      setActivationMessage(error.message || "Unable to disarm live trading.");
-    },
+    onError: (error) => setActivationMessage(error.message || "Unable to arm live trading."),
   });
 
-  // NOTE: All hooks must be called unconditionally before any early return to
-  // satisfy React's Rules of Hooks. Extract query data here for later memoization.
   const equityCurveForMemo = equityCurveQuery.data;
 
-  // Wire chart to real getEquityCurve data (7 days)
   const performanceChartData = useMemo(() => {
-    // If query is loading, errored, or returned no data, fall back to empty
     if (!equityCurveForMemo?.points || equityCurveForMemo.points.length === 0) {
       return [];
     }
-
     const { points, startingBalance } = equityCurveForMemo;
-
-    // Transform ISO date strings (e.g., "2026-05-06") to display format (e.g., "May 6")
     return points.map((point) => {
       const dateObj = new Date(`${point.date}T00:00:00Z`);
-      const dayLabel = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const dayLabel = dateObj.toLocaleDateString("en-US", { month: "short", day: "numeric" });
       const pnl = point.equity - startingBalance;
-
-      return {
-        date: dayLabel,
-        equity: point.equity,
-        pnl,
-      };
+      return { date: dayLabel, equity: point.equity, pnl };
     });
   }, [equityCurveForMemo]);
 
-  // Generate trend data for sparklines (last 7 data points)
   const pnlTrend = useMemo(
     () => performanceChartData.map((d) => d.pnl),
     [performanceChartData],
   );
-
   const equityTrend = useMemo(
     () => performanceChartData.map((d) => d.equity),
     [performanceChartData],
@@ -156,21 +113,14 @@ export default function Dashboard() {
     return <DashboardSkeleton />;
   }
 
-  // We deliberately *don't* hard-block the dashboard when only the
-  // performance-overview or autonomy-activity queries fail. Those datasets
-  // are derived/aggregated and a single sub-query failure (e.g. transient
-  // schema drift on Railway) used to brick the entire landing page. The
-  // page already tolerates missing metrics (everything is `?? 0`), so we
-  // surface a non-blocking banner instead and let the user keep working.
-  // We only fail-hard if the account status itself is unloadable, since
-  // that drives the connection-required vs. connected branches below.
+  // Hard-fail only if account status itself can't load — derived data is fail-soft.
   if (accountStatusQuery.isError) {
     const errorMessage =
       accountStatusQuery.error?.message ||
       "We couldn't load your account status. Please try again.";
 
     return (
-      <div className="flex items-center justify-center min-h-screen p-6">
+      <div className="flex items-center justify-center min-h-[60vh] p-6">
         <Card className="w-full max-w-md">
           <CardContent className="flex flex-col items-center gap-4 p-6 text-center">
             <AlertTriangle className="h-12 w-12 text-destructive" />
@@ -201,10 +151,8 @@ export default function Dashboard() {
   const performanceOverview = performanceOverviewQuery.data;
   const metrics = performanceOverview?.metrics;
 
-  // Show $0 until Kalshi account is connected
   const isConnected = accountStatus?.connected || false;
   const equity = isConnected ? accountStatus?.equity || 0 : 0;
-  const displayEquity = equity;
   const isFunded = equity > 0;
   const hasInstructions = (instructions?.length || 0) > 0;
   const tradingPreferences = accountStatus?.tradingPreferences ?? DEFAULT_TRADING_PREFERENCES;
@@ -220,13 +168,8 @@ export default function Dashboard() {
   const lastAccountSyncMs = getTimestampMs(lastAccountSyncAt);
   const accountSyncAgeMs = lastAccountSyncMs ? Date.now() - lastAccountSyncMs : Number.POSITIVE_INFINITY;
   const isAccountDataStale = isConnected && accountSyncAgeMs > DATA_STALE_AFTER_MS;
-  const dashboardRefreshedAt = performanceOverviewQuery.dataUpdatedAt
-    ? new Date(performanceOverviewQuery.dataUpdatedAt)
-    : null;
 
   const hasClosedTrades = (metrics?.totalTrades || 0) > 0;
-  const winningTrades = metrics?.winningTrades ?? 0;
-  const totalTrades = metrics?.totalTrades ?? 0;
   const winRate = metrics?.winRate ?? 0;
   const dailyPnl = metrics?.dailyPnL ?? 0;
   const sharpeRatio = metrics?.sharpeRatio ?? 0;
@@ -234,19 +177,7 @@ export default function Dashboard() {
   const realizedPnl = metrics?.realizedPnL ?? 0;
   const unrealizedPnl = metrics?.unrealizedPnL ?? 0;
   const activePositions = metrics?.activePositions ?? 0;
-
-  const handleKillSwitch = async () => {
-    if (!killSwitchConfirm) {
-      setKillSwitchConfirm(true);
-      return;
-    }
-
-    try {
-      await killSwitchMutation.mutateAsync();
-    } catch (error) {
-      console.error("Kill switch activation failed:", error);
-    }
-  };
+  const recoveryFactor = metrics?.recoveryFactor ?? 0;
 
   const handleStartTrading = () => {
     setActivationMessage(null);
@@ -257,166 +188,33 @@ export default function Dashboard() {
     performanceOverviewQuery.refetch();
     accountStatusQuery.refetch();
     autonomyActivityQuery.refetch();
+    equityCurveQuery.refetch();
   };
 
-  // Show connection required if not connected
+  const isRefreshing =
+    performanceOverviewQuery.isFetching ||
+    accountStatusQuery.isFetching ||
+    autonomyActivityQuery.isFetching ||
+    equityCurveQuery.isFetching;
+
+  // ---------- Onboarding gates ---------- //
+
   if (!isConnected) {
-    return (
-      <div className="space-y-8">
-        <PageHeader
-          icon={Plug}
-          title="Connect Your Kalshi Account"
-          description="Connect your Kalshi account to start trading and see your real account balance"
-          iconColor="text-primary"
-        />
-
-        <Card className="data-card border-primary/30 bg-primary/5">
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-4 mb-6">
-              <Plug className="w-12 h-12 text-primary" />
-              <div>
-                <p className="text-sm text-muted-foreground mb-1">
-                  Account Balance
-                </p>
-                <p className="text-3xl font-bold text-primary">$0.00</p>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <p className="text-muted-foreground">
-                To start trading on Kalshi prediction markets, connect your
-                Kalshi account first. Your real account balance will appear here
-                once connected.
-              </p>
-              <Button
-                onClick={() => navigate("/connect")}
-                className="w-full bg-gradient-to-r from-primary to-accent hover:opacity-90 transition-all"
-                size="lg"
-              >
-                <Plug className="w-4 h-4 mr-2" />
-                Connect Kalshi Account
-              </Button>
-              <p className="text-xs text-muted-foreground text-center">
-                Your API key is encrypted and stored securely
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Explicit empty-state metrics while disconnected */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 opacity-50">
-          <Card className="data-card">
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-sm text-muted-foreground">GLOBAL EQUITY</p>
-                <Sparkles className="w-4 h-4 text-primary" />
-              </div>
-              <p className="text-3xl font-bold text-muted-foreground">$0.00</p>
-              <p className="text-xs text-muted-foreground mt-2">
-                Connect to see real balance
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card className="data-card">
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-sm text-muted-foreground">TOTAL TRADES</p>
-                <TrendingUp className="w-4 h-4 stat-increase" />
-              </div>
-              <p className="text-3xl font-bold text-muted-foreground">—</p>
-              <p className="text-xs text-muted-foreground mt-2">
-                Connect to unlock trade history
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card className="data-card">
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-sm text-muted-foreground">WIN RATE</p>
-                <TrendingDown className="w-4 h-4 stat-decrease" />
-              </div>
-              <p className="text-3xl font-bold text-muted-foreground">—</p>
-              <p className="text-xs text-muted-foreground mt-2">
-                Requires completed trades
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card className="data-card">
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-sm text-muted-foreground">SHARPE RATIO</p>
-                <Activity className="w-4 h-4" />
-              </div>
-              <p className="text-3xl font-bold text-muted-foreground">—</p>
-              <p className="text-xs text-muted-foreground mt-2">
-                Calculated after closed trades
-              </p>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-    );
+    return <ConnectionGate onConnect={() => navigate("/connect")} />;
   }
 
-  // Show funding page if connected but not funded
   if (!isFunded) {
-    return (
-      <div className="space-y-8">
-        <PageHeader
-          icon={AlertCircle}
-          title="Account Funding Required"
-          description="Your Kalshi account needs funds to start trading"
-          iconColor="text-warning"
-        />
-
-        <Card className="data-card border-warning/30 bg-warning/5">
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-4 mb-6">
-              <AlertCircle className="w-12 h-12 text-warning" />
-              <div>
-                <p className="text-sm text-muted-foreground mb-1">
-                  Current Balance
-                </p>
-                <p className="text-3xl font-bold text-warning">
-                  ${equity.toFixed(2)}
-                </p>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <p className="text-muted-foreground">
-                To start trading on Kalshi prediction markets, you need to
-                deposit funds into your account.
-              </p>
-              <Button
-                onClick={() =>
-                  window.open("https://kalshi.com/account/deposit", "_blank")
-                }
-                className="w-full bg-gradient-to-r from-warning to-warning/80 hover:opacity-90 transition-all"
-                size="lg"
-              >
-                Deposit Funds on Kalshi
-              </Button>
-              <p className="text-xs text-muted-foreground text-center">
-                Deposit only the amount that matches your risk tolerance and first-test plan.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    );
+    return <FundingGate equity={equity} />;
   }
 
-  // Funded account - show full dashboard
+  // ---------- Funded dashboard ---------- //
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
+      {/* Optional banners */}
       {degradedSources.length > 0 && (
-        <Card className="glass-panel border-warning/30 bg-warning/5">
-          <CardContent className="flex flex-wrap items-center gap-3 p-4 text-sm">
+        <Card className="border-warning/30 bg-warning/5">
+          <CardContent className="flex flex-wrap items-center gap-3 p-3 text-sm">
             <AlertCircle className="w-4 h-4 text-warning shrink-0" />
             <span className="text-foreground">
               Some dashboard data is temporarily unavailable
@@ -426,106 +224,169 @@ export default function Dashboard() {
             <Button
               size="sm"
               variant="ghost"
-              className="ml-auto"
-              onClick={() => {
-                performanceOverviewQuery.refetch();
-                autonomyActivityQuery.refetch();
-              }}
+              className="ml-auto h-7"
+              onClick={handleRefreshDashboard}
             >
-              <RefreshCw className="w-3.5 h-3.5 mr-2" />
+              <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
               Retry
             </Button>
           </CardContent>
         </Card>
       )}
 
-      {/* Header */}
-      <PageHeader
-        icon={Activity}
-        title="Dashboard"
-        description={
-          <>
-            {user?.name} · Kalshi equity:{" "}
-            <strong className="text-foreground tabular-nums">${displayEquity.toFixed(2)}</strong>
-          </>
-        }
-        iconColor="text-primary"
-        actions={
-          <>
-            <Button
-              onClick={handleRefreshDashboard}
-              variant="outline"
-              size="sm"
-              disabled={
-                performanceOverviewQuery.isFetching ||
-                accountStatusQuery.isFetching ||
-                autonomyActivityQuery.isFetching
-              }
-              className="gap-2"
+      {activationMessage && (
+        <Card className="border-accent/30 bg-accent/5">
+          <CardContent className="flex items-center gap-2 p-3 text-sm">
+            <CheckCircle2 className="w-4 h-4 text-accent shrink-0" />
+            <span className="text-foreground">{activationMessage}</span>
+            <button
+              onClick={() => setActivationMessage(null)}
+              className="ml-auto text-xs text-muted-foreground hover:text-foreground"
             >
-              <RefreshCw
-                className={`w-4 h-4 ${
-                  performanceOverviewQuery.isFetching ||
-                  accountStatusQuery.isFetching ||
-                  autonomyActivityQuery.isFetching
-                    ? "animate-spin"
-                    : ""
-                }`}
-              />
-              Refresh
-            </Button>
-            <Button
-              onClick={handleKillSwitch}
-              size="sm"
-              variant={killSwitchConfirm ? "destructive" : "outline"}
-              className={`gap-2 ${killSwitchConfirm ? "bg-rose-600 hover:bg-rose-700 border-rose-500" : "border-rose-400/40 text-rose-300 hover:bg-rose-500/10 hover:text-rose-200"}`}
-            >
-              <Zap className="w-4 h-4" />
-              {killSwitchConfirm ? "Confirm Kill Switch" : "Kill Switch"}
-            </Button>
-          </>
-        }
-      />
+              Dismiss
+            </button>
+          </CardContent>
+        </Card>
+      )}
 
-      <Card className={`glass-panel ${isAccountDataStale ? "border-warning/30 bg-warning/5" : "border-accent/20 bg-accent/5"}`}>
-        <CardContent className="flex flex-col gap-3 pt-6 md:flex-row md:items-center md:justify-between">
-          <div>
-            <p className="text-sm font-semibold text-foreground">Live data freshness</p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Kalshi equity synced {formatFreshnessLabel(lastAccountSyncAt)}. Dashboard refreshed {formatFreshnessLabel(dashboardRefreshedAt)}.
-            </p>
-          </div>
-          <div className={`rounded-full border px-3 py-1 text-xs font-semibold ${isAccountDataStale ? "border-warning/40 text-warning-foreground" : "border-accent/40 text-accent-foreground"}`}>
-            {isAccountDataStale ? "Refresh before trading decisions" : "Fresh enough for monitoring"}
+      {/* Row 1: Hero KPI strip */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <StatCard
+          label="Total P&L"
+          value={`$${realizedPnl.toFixed(2)}`}
+          change={realizedPnl !== 0 && equity > 0 ? (realizedPnl / equity) * 100 : undefined}
+          trend={pnlTrend}
+          icon={<DollarSign size={18} />}
+          color={realizedPnl >= 0 ? "#10b981" : "#ef4444"}
+        />
+        <StatCard
+          label="Account Capital"
+          value={`$${equity.toFixed(2)}`}
+          trend={equityTrend}
+          icon={<Sparkles size={18} />}
+          color="#6366f1"
+        />
+        <StatCard
+          label="Open Positions"
+          value={activePositions}
+          icon={<Layers size={18} />}
+          color="#f59e0b"
+        />
+        <StatCard
+          label="Win Rate"
+          value={hasClosedTrades ? `${(winRate * 100).toFixed(1)}%` : "—"}
+          icon={<Trophy size={18} />}
+          color="#ec4899"
+        />
+      </div>
+
+      {/* Row 2: Chart + autonomy command panel */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
+        <Card className="xl:col-span-2 glass-panel">
+          <CardContent className="p-4 space-y-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                  Equity Curve
+                  <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                    7d
+                  </span>
+                </h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Synced {formatFreshnessLabel(lastAccountSyncAt)}
+                  {isAccountDataStale && (
+                    <span className="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-warning/10 text-warning text-[10px] font-medium">
+                      <AlertCircle className="w-3 h-3" />
+                      Refresh before trading
+                    </span>
+                  )}
+                </p>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleRefreshDashboard}
+                disabled={isRefreshing}
+                className="h-7 px-2 text-xs"
+              >
+                <RefreshCw className={cn("w-3.5 h-3.5", isRefreshing && "animate-spin")} />
+              </Button>
+            </div>
+            <PerformanceChart
+              data={performanceChartData}
+              series={[{ key: "equity", name: "Equity", color: "#8864ff" }]}
+              height={240}
+              formatY={(value) => `$${value.toFixed(0)}`}
+              areaShading={true}
+            />
+          </CardContent>
+        </Card>
+
+        <AutonomyCommandPanel
+          welcomeName={user?.name ?? null}
+          equity={equity}
+          autonomyStatusTitle={autonomyStatus.title}
+          autonomyStatusTone={autonomyStatus.tone}
+          modeLabel={getAutonomyModeLabel(tradingPreferences.autonomyMode)}
+          minConfidencePct={Math.round(tradingPreferences.minSignalConfidence * 100)}
+          maxOrderNotional={tradingPreferences.maxOrderNotional}
+          liveArmed={tradingPreferences.liveTradingEnabled}
+          canArm={tradingPreferences.autonomyMode !== "manual"}
+          reviewTitle={autonomyReviewSummary.title}
+          reviewTone={autonomyReviewSummary.tone}
+          lastScanLabel={formatAutonomyActivityTime(autonomyActivityQuery.data?.lastRun?.createdAt)}
+          readinessTitle={autonomyReadinessSummary.title}
+          readinessTone={autonomyReadinessSummary.tone}
+          onArm={() => setShowStartTrading(true)}
+          onSettings={() => navigate("/autonomy")}
+        />
+      </div>
+
+      {/* Row 3: Detailed performance metrics — single line at lg+ */}
+      <Card className="data-card">
+        <CardContent className="p-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-x-6 gap-y-4">
+            <MiniMetric
+              label="Daily P&L"
+              value={`${dailyPnl >= 0 ? "+" : ""}$${dailyPnl.toFixed(2)}`}
+              tone={dailyPnl >= 0 ? "increase" : "decrease"}
+              hint="Closed today"
+            />
+            <MiniMetric
+              label="Realized"
+              value={`${realizedPnl >= 0 ? "+" : ""}$${realizedPnl.toFixed(2)}`}
+              tone={realizedPnl >= 0 ? "increase" : "decrease"}
+              hint="Closed positions"
+            />
+            <MiniMetric
+              label="Unrealized"
+              value={`${unrealizedPnl >= 0 ? "+" : ""}$${unrealizedPnl.toFixed(2)}`}
+              tone={unrealizedPnl >= 0 ? "increase" : "decrease"}
+              hint="Open positions"
+            />
+            <MiniMetric
+              label="Max Drawdown"
+              value={`${(maxDrawdown * 100).toFixed(2)}%`}
+              tone="destructive"
+              hint="Peak-to-trough"
+            />
+            <MiniMetric
+              label="Sharpe"
+              value={sharpeRatio.toFixed(2)}
+              tone="accent"
+              hint={hasClosedTrades ? "risk-adjusted" : "awaiting trades"}
+            />
+            <MiniMetric
+              label="Recovery"
+              value={recoveryFactor.toFixed(2)}
+              tone="primary"
+              hint="Profit vs max loss"
+            />
           </div>
         </CardContent>
       </Card>
 
-      {activationMessage ? (
-        <Card className="glass-panel border-accent/30 bg-accent/5">
-          <CardContent className="pt-6">
-            <p className="text-sm text-accent-foreground">{activationMessage}</p>
-          </CardContent>
-        </Card>
-      ) : null}
-
-      {/* Autonomy status bar */}
-      {!showStartTrading && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border/60 bg-background/50 px-4 py-3">
-          <div className="text-sm">
-            <span className={`font-semibold ${autonomyStatus.tone}`}>{autonomyStatus.title}</span>
-            <span className="text-muted-foreground ml-2">· {getAutonomyModeLabel(tradingPreferences.autonomyMode)} · {Math.round(tradingPreferences.minSignalConfidence * 100)}% min confidence · ${tradingPreferences.maxOrderNotional.toFixed(0)} max order</span>
-          </div>
-          <div className="flex gap-2">
-            <Button size="sm" variant="outline" onClick={() => navigate("/autonomy")}>Settings</Button>
-            {!tradingPreferences.liveTradingEnabled && (
-              <Button size="sm" className="bg-gradient-to-r from-primary to-accent hover:opacity-90" disabled={tradingPreferences.autonomyMode === "manual"} onClick={() => setShowStartTrading(true)}>Arm</Button>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Start Trading Dialog */}
+      {/* Start trading dialog (modal) */}
       {showStartTrading && (
         <StartTradingDialog
           equity={equity}
@@ -537,111 +398,275 @@ export default function Dashboard() {
           isLoading={startTradingMutation.isPending}
         />
       )}
+    </div>
+  );
+}
 
-      {/* Last scan summary */}
-      <div className="rounded-lg border border-border/60 bg-background/50 px-4 py-3 text-sm">
-        <div className="flex items-center justify-between gap-2 flex-wrap">
-          <div>
-            <span className={`font-medium ${autonomyReviewSummary.tone}`}>{autonomyReviewSummary.title}</span>
-            <span className="text-muted-foreground ml-2">· Last scan: {formatAutonomyActivityTime(autonomyActivityQuery.data?.lastRun?.createdAt)}</span>
+// =========================================================================
+// Sub-components
+// =========================================================================
+
+interface AutonomyCommandPanelProps {
+  welcomeName: string | null;
+  equity: number;
+  autonomyStatusTitle: string;
+  autonomyStatusTone: string;
+  modeLabel: string;
+  minConfidencePct: number;
+  maxOrderNotional: number;
+  liveArmed: boolean;
+  canArm: boolean;
+  reviewTitle: string;
+  reviewTone: string;
+  lastScanLabel: string;
+  readinessTitle: string;
+  readinessTone: string;
+  onArm: () => void;
+  onSettings: () => void;
+}
+
+function AutonomyCommandPanel(props: AutonomyCommandPanelProps) {
+  return (
+    <Card className="glass-panel border-primary/10">
+      <CardContent className="p-4 space-y-3">
+        {/* Status header */}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Activity className="w-4 h-4 text-primary" />
+            <h3 className="text-sm font-semibold">Autonomy</h3>
           </div>
-          <span className={`text-xs ${autonomyReadinessSummary.tone}`}>{autonomyReadinessSummary.title}</span>
+          <span className={cn("text-xs font-semibold", props.autonomyStatusTone)}>
+            {props.autonomyStatusTitle}
+          </span>
         </div>
+
+        {/* Config snapshot */}
+        <div className="space-y-1.5 text-xs rounded-md bg-background/40 border border-border/40 p-2.5">
+          <ConfigRow label="Mode" value={props.modeLabel} />
+          <ConfigRow label="Min confidence" value={`${props.minConfidencePct}%`} />
+          <ConfigRow label="Max order" value={`$${props.maxOrderNotional.toFixed(0)}`} />
+        </div>
+
+        {/* Last scan + readiness */}
+        <div className="space-y-1.5 text-xs">
+          <div className="flex items-start justify-between gap-2">
+            <span className="text-muted-foreground">Last scan</span>
+            <span className="text-foreground text-right">{props.lastScanLabel || "Pending"}</span>
+          </div>
+          <div className="flex items-start justify-between gap-2">
+            <span className="text-muted-foreground">Reviewer</span>
+            <span className={cn("text-right", props.reviewTone)}>{props.reviewTitle}</span>
+          </div>
+          <div className="flex items-start justify-between gap-2">
+            <span className="text-muted-foreground">Readiness</span>
+            <span className={cn("text-right", props.readinessTone)}>{props.readinessTitle}</span>
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="flex gap-2 pt-1">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={props.onSettings}
+            className="flex-1 h-8 gap-1.5"
+          >
+            <SettingsIcon className="w-3.5 h-3.5" />
+            Settings
+          </Button>
+          {!props.liveArmed && (
+            <Button
+              size="sm"
+              disabled={!props.canArm}
+              onClick={props.onArm}
+              className="flex-1 h-8 gap-1.5 bg-gradient-to-r from-primary to-accent hover:opacity-90"
+            >
+              <Zap className="w-3.5 h-3.5" />
+              Arm
+            </Button>
+          )}
+          {props.liveArmed && (
+            <div className="flex-1 h-8 rounded-md border border-destructive/30 bg-destructive/10 flex items-center justify-center gap-1.5 text-xs font-semibold text-destructive">
+              <span className="w-1.5 h-1.5 rounded-full bg-destructive animate-pulse" />
+              Live armed
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ConfigRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="font-medium text-foreground tabular-nums">{value}</span>
+    </div>
+  );
+}
+
+interface MiniMetricProps {
+  label: string;
+  value: string;
+  tone: "increase" | "decrease" | "destructive" | "accent" | "primary";
+  hint: string;
+}
+
+function MiniMetric({ label, value, tone, hint }: MiniMetricProps) {
+  const toneClass: Record<MiniMetricProps["tone"], string> = {
+    increase: "stat-increase",
+    decrease: "stat-decrease",
+    destructive: "text-destructive",
+    accent: "text-accent",
+    primary: "text-primary",
+  };
+
+  return (
+    <div>
+      <p className="text-[10px] uppercase tracking-widest text-muted-foreground/70 mb-1">
+        {label}
+      </p>
+      <p className={cn("text-lg font-bold tabular-nums leading-none", toneClass[tone])}>
+        {value}
+      </p>
+      <p className="text-[10px] text-muted-foreground mt-1">{hint}</p>
+    </div>
+  );
+}
+
+// =========================================================================
+// Onboarding gates
+// =========================================================================
+
+function ConnectionGate({ onConnect }: { onConnect: () => void }) {
+  return (
+    <div className="max-w-2xl mx-auto pt-8 space-y-6">
+      <div className="text-center space-y-3">
+        <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-br from-primary to-accent shadow-lg">
+          <Plug className="w-7 h-7 text-white" />
+        </div>
+        <h1 className="text-2xl font-bold gradient-text">Welcome to Laurenzo</h1>
+        <p className="text-sm text-muted-foreground max-w-md mx-auto">
+          Let's get your trading desk live in three steps. Start by connecting your Kalshi account.
+        </p>
       </div>
 
-      {/* Key metrics grid - 4-column StatCard layout */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 animate-fade-in">
-        <StatCard
-          label="Total P&L"
-          value={`$${realizedPnl.toFixed(2)}`}
-          change={realizedPnl !== 0 ? (realizedPnl / displayEquity) * 100 : undefined}
-          trend={pnlTrend}
-          icon={<DollarSign size={20} />}
-          color={realizedPnl >= 0 ? "#10b981" : "#ef4444"}
-          className="data-card hover:scale-105 transition-transform"
-        />
-        <StatCard
-          label="Account Capital"
-          value={`$${displayEquity.toFixed(2)}`}
-          trend={equityTrend}
-          icon={<Sparkles size={20} />}
-          color="#6366f1"
-          className="data-card hover:scale-105 transition-transform"
-        />
-        <StatCard
-          label="Open Positions"
-          value={activePositions}
-          icon={<Layers size={20} />}
-          color="#f59e0b"
-          className="data-card hover:scale-105 transition-transform"
-        />
-        <StatCard
-          label="Win Rate"
-          value={hasClosedTrades ? `${(winRate * 100).toFixed(1)}%` : "—"}
-          icon={<Trophy size={20} />}
-          color="#ec4899"
-          className="data-card hover:scale-105 transition-transform"
-        />
+      {/* Step indicators */}
+      <div className="grid grid-cols-3 gap-3">
+        <OnboardingStep number={1} title="Connect" subtitle="API credentials" active />
+        <OnboardingStep number={2} title="Fund" subtitle="Deposit on Kalshi" />
+        <OnboardingStep number={3} title="Arm" subtitle="Configure & go live" />
       </div>
 
-      {/* Performance Chart */}
-      <Card className="glass-panel animate-fade-in">
-        <CardContent className="pt-6">
-          <div className="mb-4">
-            <h3 className="text-lg font-semibold text-foreground mb-1">Equity Curve</h3>
-            <p className="text-sm text-muted-foreground">7-day performance overview</p>
+      <Card className="border-primary/30 bg-primary/5">
+        <CardContent className="p-6 space-y-4">
+          <div>
+            <h2 className="text-base font-semibold flex items-center gap-2">
+              <Plug className="w-4 h-4 text-primary" />
+              Step 1 · Connect Kalshi
+            </h2>
+            <p className="text-sm text-muted-foreground mt-1">
+              Generate an RSA key pair inside your Kalshi account, then paste the credentials.
+              Keys are validated live and stored AES-256-GCM encrypted.
+            </p>
           </div>
-          <PerformanceChart
-            data={performanceChartData}
-            series={[
-              { key: 'equity', name: 'Equity', color: '#8864ff' },
-            ]}
-            height={280}
-            formatY={(value) => `$${value.toFixed(0)}`}
-            areaShading={false}
-          />
+          <Button
+            onClick={onConnect}
+            size="lg"
+            className="w-full gap-2 bg-gradient-to-r from-primary to-accent hover:opacity-90"
+          >
+            Connect Kalshi
+            <ArrowRight className="w-4 h-4" />
+          </Button>
+          <p className="text-xs text-muted-foreground text-center">
+            Polymarket can be connected on the same screen and is optional.
+          </p>
         </CardContent>
       </Card>
+    </div>
+  );
+}
 
-      {/* P&L + risk metrics - Enhanced card layout */}
-      <Card className="data-card animate-fade-in">
-        <CardContent className="pt-6">
-          <h3 className="text-lg font-semibold text-foreground mb-4">Performance Metrics</h3>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-6">
-            <div>
-              <p className="text-xs text-muted-foreground mb-1">Daily P&L</p>
-              <p className={`text-xl font-bold stat-${dailyPnl >= 0 ? "increase" : "decrease"}`}>{dailyPnl >= 0 ? "+" : ""}${dailyPnl.toFixed(2)}</p>
-              <p className="text-xs text-muted-foreground mt-1">Closed today</p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground mb-1">Realized P&L</p>
-              <p className={`text-xl font-bold stat-${realizedPnl >= 0 ? "increase" : "decrease"}`}>{realizedPnl >= 0 ? "+" : ""}${realizedPnl.toFixed(2)}</p>
-              <p className="text-xs text-muted-foreground mt-1">Closed positions</p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground mb-1">Unrealized P&L</p>
-              <p className={`text-xl font-bold stat-${unrealizedPnl >= 0 ? "increase" : "decrease"}`}>{unrealizedPnl >= 0 ? "+" : ""}${unrealizedPnl.toFixed(2)}</p>
-              <p className="text-xs text-muted-foreground mt-1">Open positions</p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground mb-1">Max Drawdown</p>
-              <p className="text-xl font-bold text-destructive">{(maxDrawdown * 100).toFixed(2)}%</p>
-              <p className="text-xs text-muted-foreground mt-1">Peak-to-trough</p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground mb-1">Sharpe Ratio</p>
-              <p className="text-xl font-bold text-accent">{sharpeRatio.toFixed(2)}</p>
-              <p className="text-xs text-muted-foreground mt-1">{hasClosedTrades ? "risk-adjusted" : "awaiting trades"}</p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground mb-1">Recovery Factor</p>
-              <p className="text-xl font-bold text-primary">{(metrics?.recoveryFactor ?? 0).toFixed(2)}</p>
-              <p className="text-xs text-muted-foreground mt-1">Profit vs max loss</p>
-            </div>
+function FundingGate({ equity }: { equity: number }) {
+  return (
+    <div className="max-w-2xl mx-auto pt-8 space-y-6">
+      <div className="text-center space-y-3">
+        <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-br from-warning to-amber-500 shadow-lg">
+          <AlertCircle className="w-7 h-7 text-white" />
+        </div>
+        <h1 className="text-2xl font-bold">Fund your account</h1>
+        <p className="text-sm text-muted-foreground max-w-md mx-auto">
+          Connection successful. Deposit funds on Kalshi to enable trading.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-3 gap-3">
+        <OnboardingStep number={1} title="Connect" subtitle="API credentials" complete />
+        <OnboardingStep number={2} title="Fund" subtitle="Deposit on Kalshi" active />
+        <OnboardingStep number={3} title="Arm" subtitle="Configure & go live" />
+      </div>
+
+      <Card className="border-warning/30 bg-warning/5">
+        <CardContent className="p-6 space-y-4">
+          <div>
+            <p className="text-xs uppercase tracking-widest text-muted-foreground">Current balance</p>
+            <p className="text-3xl font-bold text-warning tabular-nums">${equity.toFixed(2)}</p>
           </div>
+          <p className="text-sm text-muted-foreground">
+            Deposit only the amount that matches your risk tolerance and first-test plan. Funds
+            remain in your Kalshi account at all times.
+          </p>
+          <Button
+            onClick={() => window.open("https://kalshi.com/account/deposit", "_blank")}
+            size="lg"
+            className="w-full gap-2 bg-gradient-to-r from-warning to-amber-500 hover:opacity-90"
+          >
+            Open Kalshi deposits
+            <ArrowRight className="w-4 h-4" />
+          </Button>
         </CardContent>
       </Card>
+    </div>
+  );
+}
 
+function OnboardingStep({
+  number,
+  title,
+  subtitle,
+  active,
+  complete,
+}: {
+  number: number;
+  title: string;
+  subtitle: string;
+  active?: boolean;
+  complete?: boolean;
+}) {
+  return (
+    <div
+      className={cn(
+        "rounded-lg border p-3 flex items-start gap-3 transition-colors",
+        complete && "border-success/40 bg-success/5",
+        active && !complete && "border-primary/40 bg-primary/5",
+        !active && !complete && "border-border/60 bg-card/40 opacity-60",
+      )}
+    >
+      <div
+        className={cn(
+          "shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold",
+          complete && "bg-success text-white",
+          active && !complete && "bg-primary text-white",
+          !active && !complete && "bg-muted text-muted-foreground",
+        )}
+      >
+        {complete ? <CheckCircle2 className="w-4 h-4" /> : number}
+      </div>
+      <div className="min-w-0">
+        <p className="text-sm font-semibold text-foreground leading-tight">{title}</p>
+        <p className="text-xs text-muted-foreground truncate">{subtitle}</p>
+      </div>
     </div>
   );
 }
