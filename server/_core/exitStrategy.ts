@@ -109,23 +109,20 @@ export function initializeExitStrategy(config: ExitStrategyConfig): ExitStrategy
 /**
  * Update the trailing stop based on a new current price and the current ATR.
  * Returns a new (immutable) state object.
+ *
+ * `side` is taken explicitly because once the high-water mark moves past the
+ * first profit target (the realistic trailing-stop case), inferring side from
+ * `profitTargets[0] > highWaterMark` flips and corrupts the ratchet.
  */
 export function updateTrailingStop(
   state: ExitStrategyState,
   currentPrice: number,
   atr: number,
+  side: "yes" | "no",
 ): ExitStrategyState {
   let { highWaterMark, trailingStop } = state;
 
-  if (state.profitTargets.length === 0) {
-    // No targets means we can't infer side; return unchanged
-    return { ...state };
-  }
-
-  // Infer side from profit target direction vs stop level
-  const isYes = state.profitTargets[0] > state.highWaterMark;
-
-  if (isYes) {
+  if (side === "yes") {
     if (currentPrice > highWaterMark) {
       highWaterMark = currentPrice;
       const newTrailing = currentPrice - TRAILING_STOP_ATR_MULTIPLE * atr;

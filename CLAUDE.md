@@ -325,10 +325,12 @@ evaluateExitsForOpenPositions()       ← exitMonitor.ts
   └── else: continue
 ```
 
-Stateless design: trailing stops + profit-target hit memory require
-per-position persistent state (high-water mark, hitTargets[]) — that's a
-follow-up pass.  The current implementation ships hard stop-loss + profit
-targets, which capture the majority of the P&L lift from disciplined exits.
+Per-position state (high-water mark, trailing stop level, hit profit
+targets) is persisted in the `kalshiPositions.exitState` JSONB column so
+the trailing stop ratchets across ticks without regression.  Schema
+push (`pnpm db:push`) is required after pulling this — drizzle-kit will
+add the column non-destructively as a nullable JSONB; rows that pre-date
+it are treated as fresh state.
 
 ---
 

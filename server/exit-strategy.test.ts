@@ -101,14 +101,14 @@ describe("updateTrailingStop", () => {
 
   it("updates HWM when price rises for 'yes'", () => {
     const state = makeYesState(0.5);
-    const updated = updateTrailingStop(state, 0.65, 0.02);
+    const updated = updateTrailingStop(state, 0.65, 0.02, "yes");
     expect(updated.highWaterMark).toBeCloseTo(0.65, 5);
   });
 
   it("tightens trailing stop as price rises for 'yes'", () => {
     const state = makeYesState(0.5);
     const atr = 0.02;
-    const updated = updateTrailingStop(state, 0.65, atr);
+    const updated = updateTrailingStop(state, 0.65, atr, "yes");
     // new trailing = 0.65 - 3 * 0.02 = 0.59
     expect(updated.trailingStop).toBeCloseTo(0.59, 5);
     expect(updated.trailingStop).toBeGreaterThan(state.trailingStop);
@@ -116,21 +116,33 @@ describe("updateTrailingStop", () => {
 
   it("does not lower HWM when price falls for 'yes'", () => {
     const state = makeYesState(0.5);
-    const updated = updateTrailingStop(state, 0.45, 0.02);
+    const updated = updateTrailingStop(state, 0.45, 0.02, "yes");
     expect(updated.highWaterMark).toBe(0.5); // unchanged
   });
 
   it("trailing stop never moves down for 'yes' when price drops", () => {
     const state = makeYesState(0.5);
-    const updated = updateTrailingStop(state, 0.45, 0.02);
+    const updated = updateTrailingStop(state, 0.45, 0.02, "yes");
     expect(updated.trailingStop).toBe(state.trailingStop); // never worsens
   });
 
   it("updates HWM when price falls for 'no'", () => {
     const config = makeConfig({ side: "no", entryPrice: 0.5, volatility: 0.15 });
     const state = initializeExitStrategy(config);
-    const updated = updateTrailingStop(state, 0.35, 0.02);
+    const updated = updateTrailingStop(state, 0.35, 0.02, "no");
     expect(updated.highWaterMark).toBeCloseTo(0.35, 5);
+  });
+
+  it("ratchets trailing stop correctly even after HWM moves past first profit target (yes)", () => {
+    // Regression test: previously updateTrailingStop inferred side from
+    // profitTargets[0] vs highWaterMark, which flips once HWM > target.
+    const state = makeYesState(0.5);
+    // Step 1: price rises to 0.65 → HWM=0.65, well above target_1 (0.575)
+    const afterRise = updateTrailingStop(state, 0.65, 0.02, "yes");
+    // Step 2: price retraces to 0.55 → HWM must NOT regress
+    const afterRetrace = updateTrailingStop(afterRise, 0.55, 0.02, "yes");
+    expect(afterRetrace.highWaterMark).toBeCloseTo(0.65, 5);
+    expect(afterRetrace.trailingStop).toBe(afterRise.trailingStop); // never worsens
   });
 });
 
@@ -171,7 +183,7 @@ describe("checkExitConditions", () => {
     const config = makeConfig({ entryPrice: 0.5, volatility: 0.15 });
     const state = initializeExitStrategy(config);
     // Push trailing stop up: price rose to 0.65 with atr=0.02 → trailing = 0.59
-    const updated = updateTrailingStop(state, 0.65, 0.02);
+    const updated = updateTrailingStop(state, 0.65, 0.02, "yes");
     // Price drops to 0.58 (below trailing 0.59, above hard stop 0.425)
     const decision = checkExitConditions(updated, 0.58, config);
     expect(decision.shouldExit).toBe(true);
