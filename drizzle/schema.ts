@@ -2,6 +2,7 @@ import {
   doublePrecision,
   index,
   integer,
+  jsonb,
   pgEnum,
   pgTable,
   serial,
@@ -315,6 +316,12 @@ export const kalshiPositions = pgTable("kalshiPositions", {
   positionStatus: kalshiPositionStatusEnum("positionStatus")
     .default("open")
     .notNull(),
+  // Stateful exit-strategy bookkeeping (high-water mark, trailing stop level,
+  // hit profit-target indices).  Nullable: rows that pre-date this column or
+  // pre-date the first exit-monitor tick get treated as fresh state by the
+  // monitor and re-initialised from entry price + side.  Schema is the
+  // ExitStrategyState shape from server/_core/exitStrategy.ts.
+  exitState: jsonb("exitState"),
   openedAt: createdAt(),
   closedAt: timestamp("closedAt", { withTimezone: true }),
 });
