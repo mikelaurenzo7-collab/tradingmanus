@@ -30,7 +30,6 @@
 import * as db from "../db";
 import { kalshiMarkets, kalshiPositions } from "../../drizzle/schema";
 import { eq } from "drizzle-orm";
-import { ENV } from "./env";
 import { logger } from "./logger";
 import {
   initializeExitStrategy,
@@ -43,6 +42,7 @@ import {
 } from "./exitStrategy";
 import { closeKalshiPosition } from "./kalshiExecution";
 import { estimateMarketVolatility } from "./marketVolatility";
+import { getEffectivePaperTradeMode } from "./effectivePaperMode";
 
 // ATR proxy used by updateTrailingStop().  Conservative default; a follow-up
 // pass can compute this per-market from the kalshiMarketSnapshots table.
@@ -135,6 +135,10 @@ export async function evaluateExitsForOpenPositions(
   triggeredByOpenId: string = "local_scheduler",
 ): Promise<ExitEvaluation[]> {
   const positions = await db.getOpenKalshiPositions(userId);
+  // Resolve once per tick so the audit payload reflects this user's mode.
+  // closeKalshiPosition() does its own per-user lookup internally — this is
+  // purely for the audit `paperMode` flag.
+  const userPaperMode = await getEffectivePaperTradeMode(userId);
   const evaluations: ExitEvaluation[] = [];
 
   for (const position of positions) {
@@ -228,7 +232,7 @@ export async function evaluateExitsForOpenPositions(
           profitTargets: state.profitTargets,
           hitTargets: state.hitTargets,
           autoCloseEnabled: AUTO_CLOSE_ENABLED,
-          paperMode: ENV.paperTradeMode,
+          paperMode: userPaperMode,
         }),
         triggeredByOpenId,
       );

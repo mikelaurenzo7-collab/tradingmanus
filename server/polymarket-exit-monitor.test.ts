@@ -40,6 +40,13 @@ vi.mock("./_core/paperTrading", () => ({
   simulatePolymarketPositionClose: mocks.simulatePolymarketPositionClose,
 }));
 
+// effectivePaperMode does an async getUserById lookup which we don't want
+// to wire up.  Stub the resolver so the test controls paper vs live via
+// PAPER_TRADE_MODE env (true/unset) — matching pre-per-user behaviour.
+vi.mock("./_core/effectivePaperMode", () => ({
+  getEffectivePaperTradeMode: vi.fn(async () => (process.env.PAPER_TRADE_MODE === "true")),
+}));
+
 function fakeDb(opts: { onUpdate?: (state: unknown) => void }) {
   const update = vi.fn(() => {
     let pendingState: unknown;

@@ -34,6 +34,7 @@ import { withUserLock } from "./userMutex";
 import { reviewSignalsWithTrader } from "./tradingReviewer";
 import { getCacheHitRatio, newReviewerTelemetry } from "./aiToolbelt";
 import { createOrderSyncLock } from "./distributedLock";
+import { getEffectivePaperTradeMode } from "./effectivePaperMode";
 import {
   alertIfConsecutiveFailures,
   alertEquityDrop,
@@ -1520,6 +1521,10 @@ export async function runScheduledAutonomousTrading(
     );
   }
 
+  // Resolve once for both audit-event sites below — keeps userId out of
+  // the audit-payload object literal and avoids a second DB read.
+  const effectivePaperMode = await getEffectivePaperTradeMode(userId);
+
   const result = await placeKalshiOrder(
     userId,
     eligibleSignal.marketId,
@@ -1552,7 +1557,7 @@ export async function runScheduledAutonomousTrading(
         reason: result.error ?? "unknown",
         exchangeRequest: result.exchangeRequest ?? null,
         exchangeResponse: result.exchangeResponse ?? null,
-        simulated: ENV.paperTradeMode,
+        simulated: effectivePaperMode,
       }),
       triggeredByOpenId
     );
@@ -1615,7 +1620,7 @@ export async function runScheduledAutonomousTrading(
       kellySuggestedSize: eligibleKellySuggestedSize ?? null,
       reconciliationStatus: result.needsReconciliation ? "pending" : "not_required",
       reconciliationReason: result.reconciliationReason ?? null,
-      simulated: ENV.paperTradeMode,
+      simulated: effectivePaperMode,
     }),
     triggeredByOpenId
   );

@@ -38,6 +38,7 @@ import { recordPolymarketTradeEntry } from "./polymarketLearning";
 import { withUserLock } from "./userMutex";
 import { simulatePolymarketOrderFill } from "./paperTrading";
 import { ENV } from "./env";
+import { getEffectivePaperTradeMode } from "./effectivePaperMode";
 import { logger } from "./logger";
 
 const MAX_SCHEDULED_MARKETS = 80;
@@ -584,13 +585,12 @@ export async function runPolymarketAutonomousTrading(
   }
 
   // --- 6. Place the order ---
-  // Paper-mode short-circuit: never hit the live Polymarket CLOB when
-  // PAPER_TRADE_MODE=true.  This was previously a Kalshi-only safety net,
-  // making the env var dangerous for an operator validating Polymarket
-  // signals.  Simulator returns the same shape so downstream code is
-  // unchanged.
+  // Per-user paper-mode short-circuit: never hit the live Polymarket CLOB
+  // when this user's effective paper-mode is true.  Owner trades live by
+  // default; non-owner users (and the global emergency switch) are paper.
+  const effectivePaperMode = await getEffectivePaperTradeMode(scopedUserId);
   try {
-    const orderResult = ENV.paperTradeMode
+    const orderResult = effectivePaperMode
       ? await simulatePolymarketOrderFill(
           scopedUserId,
           {

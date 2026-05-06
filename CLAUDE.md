@@ -83,7 +83,7 @@ used.  Never use `npm` or `yarn` in this repo — the lockfile is
 | `AUTO_CLOSE_ON_EXIT_SIGNAL` | optional | `true` to auto-close positions when stop-loss / profit-target hits (default `false` — emits audit signal only, lets operator validate first) |
 | `ALLOWED_ORIGIN` | optional | Extra CORS origin for production (e.g. Railway public URL) |
 | `ALERT_WEBHOOK_URL` | optional | Webhook URL for ops alerts (consecutive failures, equity drops) |
-| `PAPER_TRADE_MODE` | optional | `true` to simulate orders without placing real trades |
+| `PAPER_TRADE_MODE` | optional | `true` is a **global emergency override** — forces every user (including owner) into paper mode.  When unset/false, the configured `OWNER_EMAIL` user trades **live** by default; every other user is forced into paper.  See "Paper-mode policy" below. |
 
 See `.env.example` for the full set.
 
@@ -367,6 +367,33 @@ it are treated as fresh state.
   rejections (emitted via `server/_core/alerting.ts`).
 - The `/api/health` endpoint also surfaces DB latency, scheduler runtime, and
   uptime in its body — useful for dashboard scrapers.
+
+---
+
+## Paper-mode policy (per-user)
+
+`server/_core/effectivePaperMode.ts:getEffectivePaperTradeMode(userId)` resolves
+each order/cancel/close call to either paper or live, in this order:
+
+1. `ENV.paperTradeMode === true` → **everyone** is paper.  This is the
+   global emergency kill-switch — flip the env var, redeploy, all real
+   trading stops immediately without per-user changes.
+2. The user's email matches `OWNER_EMAIL` (case- and whitespace-insensitive)
+   → **live**.  The founder's bots place real orders by default.
+3. Anything else (any non-owner user) → **paper**.
+
+This shape lets the founder accept the risk for their own account while
+keeping any future invited user on the safe paper rails until they
+graduate.  The graduation path (UI toggle, time-in-paper minimum,
+win-rate threshold) is a follow-up; for now, only the owner can be live.
+
+The result is cached per-userId for 5 minutes, so an autonomy run that
+opens one Kalshi order and one Polymarket order pays a single `users`
+table read regardless of how many positions are evaluated by exit
+monitors during the same tick.
+
+If `getUserById` fails or the user record is missing, the resolver
+returns `true` (paper) — the safer default for an unknown user.
 
 ---
 

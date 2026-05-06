@@ -29,7 +29,6 @@ import * as polymarketCredDb from "../db.polymarket-credentials";
 import { getOpenPolymarketPositions } from "../db.polymarket";
 import { polymarketPositions } from "../../drizzle/schema";
 import { eq } from "drizzle-orm";
-import { ENV } from "./env";
 import { logger } from "./logger";
 import {
   initializeExitStrategy,
@@ -44,6 +43,7 @@ import { fetchPolymarketMarkets, closePolymarketPosition } from "./polymarketAut
 import { simulatePolymarketPositionClose } from "./paperTrading";
 import { withUserLock } from "./userMutex";
 import { MARKET_VOLATILITY_DEFAULT } from "./marketVolatility";
+import { getEffectivePaperTradeMode } from "./effectivePaperMode";
 
 // Polymarket markets don't yet have a snapshots table, so we use the
 // constant for now.  A follow-up pass can build polymarketMarketSnapshots
@@ -139,9 +139,13 @@ export async function evaluatePolymarketExitsForOpenPositions(
   const priceMap = await buildTokenPriceMap();
   if (!priceMap) return [];
 
+  // Resolve per-user paper-mode once for this tick.  Owner gets live by
+  // default; non-owner users (or the global emergency switch) are paper.
+  const userPaperMode = await getEffectivePaperTradeMode(userId);
+
   // Fetch credentials once per user (only needed for live close, but
   // hoisting keeps the loop tidy).
-  const creds = ENV.paperTradeMode ? null : await polymarketCredDb.getPolymarketCredentials(userId);
+  const creds = userPaperMode ? null : await polymarketCredDb.getPolymarketCredentials(userId);
 
   const evaluations: PolymarketExitEvaluation[] = [];
 
@@ -223,7 +227,7 @@ export async function evaluatePolymarketExitsForOpenPositions(
           profitTargets: state.profitTargets,
           hitTargets: state.hitTargets,
           autoCloseEnabled: AUTO_CLOSE_ENABLED,
-          paperMode: ENV.paperTradeMode,
+          paperMode: userPaperMode,
         }),
         triggeredByOpenId,
       );
@@ -239,7 +243,7 @@ export async function evaluatePolymarketExitsForOpenPositions(
           // can't read stale position state mid-close (mirrors the Kalshi
           // closeKalshiPosition design).
           const result = await withUserLock(userId, async () => {
-            if (ENV.paperTradeMode) {
+            if (userPaperMode) {
               return simulatePolymarketPositionClose(userId, positionId, currentPrice, triggeredByOpenId);
             }
             if (!creds || creds.accountStatus !== "connected" || !creds.apiKey) {
@@ -262,7 +266,7 @@ export async function evaluatePolymarketExitsForOpenPositions(
             // For live close (not paper), mark the position as 'closing' in
             // the local DB so the next exit-monitor tick doesn't re-trigger
             // before the SELL fills.  Paper close already marks it 'closed'.
-            if (!ENV.paperTradeMode) {
+            if (!userPaperMode) {
               const database = await db.getDb();
               if (database) {
                 await database
