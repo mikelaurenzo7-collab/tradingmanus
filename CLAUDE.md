@@ -24,7 +24,7 @@ function (secondary).
 | Backend | Node 20, Express 4, tRPC v11 |
 | Database | Neon Postgres (serverless HTTP driver), Drizzle ORM |
 | Auth | JWT (24 h access / 7 d refresh) in `httpOnly` cookies, optional 2FA/TOTP |
-| AI | Anthropic Claude — prompt caching, `web_search_20250305`, extended thinking |
+| AI | OpenRouter (default model: `tencent/hy3-preview:free`) with Anthropic-compatible interface |
 | Testing | Vitest 3, no jsdom (pure unit tests) |
 | Build | `pnpm build` → Vite (frontend to `dist/public`), `pnpm build:server` → esbuild (backend to `dist/index.js`) |
 
@@ -73,13 +73,14 @@ used.  Never use `npm` or `yarn` in this repo — the lockfile is
 | `CREDENTIAL_ENCRYPTION_SECRET` | ✅ | 32+ random chars, different from `JWT_SECRET` |
 | `OWNER_EMAIL` | ✅ | Login email |
 | `OWNER_PASSWORD` | ✅ | 12+ chars in production |
-| `ANTHROPIC_API_KEY` | ✅ | Claude reviewer — required for any live trading |
+| `OPENROUTER_API_KEY` | ✅ | AI reviewer via OpenRouter — required for any live trading. `ANTHROPIC_API_KEY` accepted as fallback. |
 | `NODE_ENV` | ✅ | `development` / `production` |
-| `CRON_SECRET` | Vercel only | Bearer token for Vercel Cron jobs |
+| `CRON_SECRET` | Vercel only | Bearer token for Vercel Cron jobs (32+ chars) |
 | `LOG_LEVEL` | optional | `debug`/`info`/`warn`/`error` (default `info`) |
-| `ANTHROPIC_MODEL` | optional | Default `claude-sonnet-4-5` |
-| `ANTHROPIC_TRIAGE_MODEL` | optional | Default `claude-haiku-4-5` |
-| `ANTHROPIC_DEEP_MODEL` | optional | Default `claude-opus-4-5` |
+| `OPENROUTER_MODEL` | optional | Default `tencent/hy3-preview:free` |
+| `ALLOWED_ORIGIN` | optional | Extra CORS origin for production (e.g. Railway public URL) |
+| `ALERT_WEBHOOK_URL` | optional | Webhook URL for ops alerts (consecutive failures, equity drops) |
+| `PAPER_TRADE_MODE` | optional | `true` to simulate orders without placing real trades |
 
 See `.env.example` for the full set.
 
@@ -268,13 +269,14 @@ filterSignalsByMarketConditions()   ← drop illiquid / poor-condition markets
 applyInstructionsToSignals()        ← apply user training rules
   │
   ▼
-reviewSignalsWithTrader()           ← Claude review (tradingReviewer.ts)
+reviewSignalsWithTrader()           ← AI review via OpenRouter (tradingReviewer.ts)
 ┌─────────────────────────────────────────────────────────────────┐
-│  1. Haiku triage (if >12 candidates) → drop non-starters early  │
-│  2. Per-desk Sonnet review with caching + web_search            │
-│  3. Auto-escalate to Opus for high-stakes or contested signals  │
+│  1. Triage pre-filter (if >threshold candidates) via same model │
+│  2. Per-desk review with 16 category personas                   │
+│  3. Intra-model second pass for high-stakes or contested signals│
 │  4. Confidence/EV adjustments applied (bounded)                 │
 │  5. Desk memory tape injected into each desk's system prompt    │
+│  Note: web_search + extended thinking disabled (OpenRouter)     │
 └─────────────────────────────────────────────────────────────────┘
   │
   ▼
@@ -289,7 +291,7 @@ placeKalshiOrder()                  ← Kalshi REST (wrapped in withUserLock)
 
 **Audit event emitted at every stage:**
 - `kalshi_signal_pipeline` — per-filter-stage counts
-- `kalshi_reviewer_telemetry` — token usage, cache hit ratio, web_search calls
+- `kalshi_reviewer_telemetry` — token usage, cache hit ratio, escalation counts
 - `scheduled_autonomy_run_executed` / `generated_only` / `skipped` / `error`
 - `kalshi_order_placed` / `kalshi_order_blocked_or_failed`
 
