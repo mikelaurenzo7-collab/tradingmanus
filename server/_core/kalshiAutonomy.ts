@@ -20,7 +20,7 @@ import {
 import { placeKalshiOrder } from "./kalshiExecution";
 import { syncPendingOrders } from "./kalshiOrderSync";
 import { calculateKalshiBuyOrderRisk, estimateContractsForRiskBudget } from "./kalshiRisk";
-import { calculateKelly } from "./kellyCriterion";
+import { calculateKelly, applyKellyToPositionSize } from "./kellyCriterion";
 import { assertPositiveIntegerUserId } from "./userScope";
 import { withUserLock } from "./userMutex";
 import { reviewSignalsWithTrader } from "./tradingReviewer";
@@ -745,9 +745,10 @@ function evaluateExecutionCandidate(
     : 0;
   const kellyResult = calculateKelly({
     winProbability: signal.confidence,
-    expectedValue: netOdds,
+    netOdds,
     totalCapital: input.totalCapital,
   });
+  const kellyConstrainedBudget = applyKellyToPositionSize(input.maxBudget, kellyResult);
   const kellySuggestedSize = kellyResult.kellySuggestedSize;
 
   logger.debug(
@@ -766,6 +767,7 @@ function evaluateExecutionCandidate(
     blockedBy: null,
     reason: null,
     kellySuggestedSize,
+    kellyConstrainedBudget,
   };
 }
 
@@ -1193,7 +1195,7 @@ export async function runScheduledAutonomousTrading(
 
     if (evaluation.eligible && !eligibleSignal) {
       eligibleSignal = signal;
-      eligibleMaxBudget = maxBudget;
+      eligibleMaxBudget = evaluation.kellyConstrainedBudget;
       eligibleKellySuggestedSize = evaluation.kellySuggestedSize;
       continue;
     }

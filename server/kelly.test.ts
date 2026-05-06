@@ -7,13 +7,13 @@ import {
 
 describe("calculateKelly", () => {
   it("returns correct fractions for a positive-EV signal", () => {
-    // p=0.6, market price=0.4 → netOdds = 0.6/0.4 = 1.5
+    // p=0.6, market price=0.4 → netOdds = (1 - 0.4) / 0.4 = 1.5
     // fullKelly = (0.6*1.5 - 0.4) / 1.5 = (0.9 - 0.4) / 1.5 = 0.5/1.5 ≈ 0.3333
     // fractionalKelly = 0.3333 * 0.25 ≈ 0.0833
     // kellySuggestedSize = 0.0833 * 1000 ≈ 83.33
     const result = calculateKelly({
       winProbability: 0.6,
-      expectedValue: 1.5,
+      netOdds: 1.5,
       totalCapital: 1000,
     });
 
@@ -27,7 +27,7 @@ describe("calculateKelly", () => {
     // p=0.4, EV=0.5: fullKelly = (0.4*0.5 - 0.6)/0.5 = (0.2-0.6)/0.5 = -0.8 → clamped to 0
     const result = calculateKelly({
       winProbability: 0.4,
-      expectedValue: 0.5,
+      netOdds: 0.5,
       totalCapital: 1000,
     });
 
@@ -39,7 +39,7 @@ describe("calculateKelly", () => {
   it("returns zero when EV is zero", () => {
     const result = calculateKelly({
       winProbability: 0.5,
-      expectedValue: 0,
+      netOdds: 0,
       totalCapital: 1000,
     });
 
@@ -51,7 +51,7 @@ describe("calculateKelly", () => {
   it("returns zero when EV is negative", () => {
     const result = calculateKelly({
       winProbability: 0.5,
-      expectedValue: -1,
+      netOdds: -1,
       totalCapital: 1000,
     });
 
@@ -63,7 +63,7 @@ describe("calculateKelly", () => {
     // p=0: fullKelly = (0 - 1)/EV = negative → clamped to 0
     const result = calculateKelly({
       winProbability: 0,
-      expectedValue: 1.5,
+      netOdds: 1.5,
       totalCapital: 1000,
     });
 
@@ -75,7 +75,7 @@ describe("calculateKelly", () => {
   it("caps at MAX_KELLY_FRACTION when winProbability is 1 (guaranteed win)", () => {
     const result = calculateKelly({
       winProbability: 1,
-      expectedValue: 1.5,
+      netOdds: 1.5,
       totalCapital: 1000,
     });
 
@@ -88,7 +88,7 @@ describe("calculateKelly", () => {
     // p=0.99, EV=5 → very high fullKelly; after 0.25x fractional it could exceed 0.25
     const result = calculateKelly({
       winProbability: 0.99,
-      expectedValue: 5,
+      netOdds: 5,
       totalCapital: 1000,
     });
 
@@ -99,7 +99,7 @@ describe("calculateKelly", () => {
   it("returns zero kellySuggestedSize when totalCapital is zero", () => {
     const result = calculateKelly({
       winProbability: 0.6,
-      expectedValue: 1.5,
+      netOdds: 1.5,
       totalCapital: 0,
     });
 
@@ -111,9 +111,9 @@ describe("calculateKelly", () => {
 
   it("handles non-finite inputs gracefully", () => {
     const inputs: KellyInput[] = [
-      { winProbability: NaN, expectedValue: 1.5, totalCapital: 1000 },
-      { winProbability: 0.6, expectedValue: Infinity, totalCapital: 1000 },
-      { winProbability: 0.6, expectedValue: 1.5, totalCapital: NaN },
+      { winProbability: NaN, netOdds: 1.5, totalCapital: 1000 },
+      { winProbability: 0.6, netOdds: Infinity, totalCapital: 1000 },
+      { winProbability: 0.6, netOdds: 1.5, totalCapital: NaN },
     ];
 
     for (const input of inputs) {
@@ -129,7 +129,7 @@ describe("applyKellyToPositionSize", () => {
   it("returns Kelly size when Kelly suggests less than current size", () => {
     const kelly = calculateKelly({
       winProbability: 0.6,
-      expectedValue: 1.5,
+      netOdds: 1.5,
       totalCapital: 1000,
     });
     const result = applyKellyToPositionSize(500, kelly);
@@ -141,7 +141,7 @@ describe("applyKellyToPositionSize", () => {
   it("returns original size when Kelly suggests more than current size (conservative)", () => {
     const kelly = calculateKelly({
       winProbability: 0.6,
-      expectedValue: 1.5,
+      netOdds: 1.5,
       totalCapital: 1000,
     });
     // Current size is 10, Kelly suggests ~83 → return 10
@@ -152,7 +152,7 @@ describe("applyKellyToPositionSize", () => {
   it("returns zero when Kelly suggested size is zero (negative EV)", () => {
     const kelly = calculateKelly({
       winProbability: 0.3,
-      expectedValue: 0.5,
+      netOdds: 0.5,
       totalCapital: 1000,
     });
     expect(kelly.kellySuggestedSize).toBe(0);

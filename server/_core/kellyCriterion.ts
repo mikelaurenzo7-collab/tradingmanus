@@ -18,8 +18,8 @@ const MIN_KELLY_FRACTION = 0; // Never negative (no shorting prediction markets)
 export interface KellyInput {
   /** p: estimated probability of winning (0–1) */
   winProbability: number;
-  /** Net odds: amount won per dollar bet. For a market at price P: b = (1-P)/P */
-  expectedValue: number;
+  /** Net odds: amount won per dollar bet. For binary market at price P: netOdds = (1-P)/P */
+  netOdds: number;
   /** Total available capital in dollars */
   totalCapital: number;
 }
@@ -45,7 +45,7 @@ export interface KellyResult {
  * - totalCapital ≤ 0 → kellySuggestedSize = 0
  */
 export function calculateKelly(input: KellyInput): KellyResult {
-  const { winProbability, expectedValue, totalCapital } = input;
+  const { winProbability, netOdds: expectedValue, totalCapital } = input;
 
   const zero: KellyResult = {
     fullKellyFraction: 0,
