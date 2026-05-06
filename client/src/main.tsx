@@ -1,6 +1,7 @@
 import { trpc } from "@/lib/trpc";
-import { UNAUTHED_ERR_MSG } from '@shared/const';
+import { UNAUTHED_ERR_MSG } from "@shared/const";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { getOrCreateCsrfToken } from "@/lib/csrf";
 import { httpBatchLink, TRPCClientError } from "@trpc/client";
 import { createRoot } from "react-dom/client";
 import superjson from "superjson";
@@ -13,7 +14,7 @@ const analyticsWebsiteId = import.meta.env.VITE_ANALYTICS_WEBSITE_ID?.trim();
 
 if (analyticsEndpoint && analyticsWebsiteId) {
   const existingScript = document.querySelector<HTMLScriptElement>(
-    'script[data-website-id]'
+    "script[data-website-id]"
   );
   if (!existingScript) {
     const script = document.createElement("script");
@@ -57,15 +58,12 @@ const trpcClient = trpc.createClient({
       url: "/api/trpc",
       transformer: superjson,
       headers() {
-        // Double-submit cookie pattern: read the CSRF token from the cookie
-        // (set by the server on GET requests) and mirror it in the header so
-        // the server can validate it on mutations.
-        const match = document.cookie
-          .split(";")
-          .map((c) => c.trim())
-          .find((c) => c.startsWith("csrf_token="));
-        const csrfToken = match ? match.slice("csrf_token=".length) : undefined;
-        return csrfToken ? { "X-CSRF-Token": csrfToken } : {};
+        // Double-submit cookie pattern: mirror the CSRF cookie in a header so
+        // the server can validate state-changing requests. The server mints
+        // the token on the initial HTML GET; this client fallback bootstraps
+        // environments where the first tRPC POST happens before that cookie is
+        // available (for example, test harnesses or cached static shells).
+        return { "X-CSRF-Token": getOrCreateCsrfToken() };
       },
       async fetch(input, init) {
         const response = await globalThis.fetch(input, {
@@ -85,7 +83,10 @@ const trpcClient = trpc.createClient({
         }
 
         const rawBody = await response.text();
-        const snippet = rawBody.trim().slice(0, 200) || response.statusText || "Unknown error";
+        const snippet =
+          rawBody.trim().slice(0, 200) ||
+          response.statusText ||
+          "Unknown error";
         const message =
           response.status >= 500
             ? `Server error (${response.status}): ${snippet}. Please try again in a moment.`
@@ -98,7 +99,10 @@ const trpcClient = trpc.createClient({
                 message,
                 code: response.status >= 500 ? -32603 : -32600,
                 data: {
-                  code: response.status >= 500 ? "INTERNAL_SERVER_ERROR" : "BAD_REQUEST",
+                  code:
+                    response.status >= 500
+                      ? "INTERNAL_SERVER_ERROR"
+                      : "BAD_REQUEST",
                   httpStatus: response.status,
                 },
               },
