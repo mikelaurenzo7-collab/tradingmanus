@@ -519,9 +519,39 @@ export const portfolioVolatilityHistory = pgTable("portfolio_volatility_history"
   portfolioVolHistIdx: index("portfolio_vol_hist_idx").on(t.userId, t.calculatedAt),
 }));
 
+// ── Position Exits ────────────────────────────────────────────────────────────
+
+export const positionExitReasonEnum = pgEnum("position_exit_reason", [
+  "stop_loss",
+  "trailing_stop",
+  "profit_target_1",
+  "profit_target_2",
+  "profit_target_3",
+  "time_decay",
+  "volatility_adjustment",
+  "manual",
+]);
+
+export const positionExits = pgTable("position_exits", {
+  id: serial("id").primaryKey(),
+  positionId: varchar("positionId", { length: 128 }).notNull(),
+  userId: integer("userId").notNull(),
+  platform: varchar("platform", { length: 32 }).notNull().default("kalshi"),
+  exitReason: positionExitReasonEnum("exitReason").notNull(),
+  entryPrice: doublePrecision("entryPrice").notNull(),
+  exitPrice: doublePrecision("exitPrice").notNull(),
+  pnlPct: doublePrecision("pnlPct").notNull(),          // (exit - entry) / entry
+  exitedAt: timestamp("exitedAt", { withTimezone: true }).defaultNow().notNull(),
+  stopLevel: doublePrecision("stopLevel"),
+  profitTargetHit: integer("profitTargetHit"),           // 1, 2, or 3
+}, (t) => ({
+  positionExitsIdx: index("position_exits_idx").on(t.userId, t.exitedAt),
+}));
+
 export type User = typeof users.$inferSelect;
 export type BotConfig = typeof botConfigs.$inferSelect;
 export type ChatMessage = typeof chatMessages.$inferSelect;
 export type PolymarketOrder = typeof polymarketOrders.$inferSelect;
 export type PolymarketFill = typeof polymarketFills.$inferSelect;
 export type PolymarketPosition = typeof polymarketPositions.$inferSelect;
+export type PositionExit = typeof positionExits.$inferSelect;

@@ -15,6 +15,7 @@ import {
   marketMicrostructure,
   signalBayesianUpdates,
   portfolioVolatilityHistory,
+  positionExits,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 import { eq, and, desc, gte, inArray, ne, sql } from "drizzle-orm";
@@ -1259,5 +1260,33 @@ export async function savePortfolioVolatility(data: {
     volScalingFactor: data.volScalingFactor,
     positionCount: data.positionCount,
     targetVol: data.targetVol,
+  });
+}
+
+// Position Exit Tracking
+export async function savePositionExit(data: {
+  positionId: string;
+  userId: number;
+  platform?: string;
+  exitReason: "stop_loss" | "trailing_stop" | "profit_target_1" | "profit_target_2" | "profit_target_3" | "time_decay" | "volatility_adjustment" | "manual";
+  entryPrice: number;
+  exitPrice: number;
+  stopLevel?: number;
+  profitTargetHit?: number;
+}): Promise<void> {
+  const database = await getDb();
+  if (!database) return;
+  const scopedUserId = assertPositiveIntegerUserId(data.userId, "savePositionExit userId");
+  const pnlPct = (data.exitPrice - data.entryPrice) / data.entryPrice;
+  await database.insert(positionExits).values({
+    positionId: data.positionId,
+    userId: scopedUserId,
+    platform: data.platform ?? "kalshi",
+    exitReason: data.exitReason,
+    entryPrice: data.entryPrice,
+    exitPrice: data.exitPrice,
+    pnlPct,
+    stopLevel: data.stopLevel ?? null,
+    profitTargetHit: data.profitTargetHit ?? null,
   });
 }
