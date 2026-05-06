@@ -2,11 +2,32 @@ import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { AlertCircle, CheckCircle2, KeyRound, Laptop, Loader2, ShieldCheck, Link2, ToggleLeft, ToggleRight, WifiOff, Wifi } from "lucide-react";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  AlertCircle,
+  CheckCircle2,
+  KeyRound,
+  Laptop,
+  Loader2,
+  ShieldCheck,
+  Link2,
+  ToggleLeft,
+  ToggleRight,
+  WifiOff,
+  Wifi,
+} from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { buildKalshiConnectionSuccessMessage, buildPolymarketConnectionSuccessMessage } from "@/lib/connectFlow";
+import {
+  buildKalshiConnectionSuccessMessage,
+  buildPolymarketConnectionSuccessMessage,
+} from "@/lib/connectFlow";
 import { trpc } from "@/lib/trpc";
 import { EmptyState } from "@/components/EmptyStates";
 
@@ -15,14 +36,18 @@ function KalshiConnectPanel() {
   const utils = trpc.useUtils();
   const [apiKey, setApiKey] = useState("");
   const [privateKey, setPrivateKey] = useState("");
-  const [connectionMessage, setConnectionMessage] = useState<string | null>(null);
+  const [connectionMessage, setConnectionMessage] = useState<string | null>(
+    null
+  );
   const [connected, setConnected] = useState(false);
 
   const trimmedApiKey = apiKey.trim();
   const trimmedPrivateKey = privateKey.trim();
   const privateKeyLooksComplete = useMemo(
-    () => trimmedPrivateKey.includes("BEGIN") && trimmedPrivateKey.includes("PRIVATE KEY"),
-    [trimmedPrivateKey],
+    () =>
+      trimmedPrivateKey.includes("BEGIN") &&
+      trimmedPrivateKey.includes("PRIVATE KEY"),
+    [trimmedPrivateKey]
   );
 
   const statusQuery = trpc.kalshi.getKalshiAccountStatus.useQuery(undefined, {
@@ -30,10 +55,13 @@ function KalshiConnectPanel() {
   });
 
   const connectMutation = trpc.kalshi.connectKalshiAccount.useMutation({
-    onSuccess: async (data) => {
+    onSuccess: async data => {
       if (data.success) {
         setConnectionMessage(
-          buildKalshiConnectionSuccessMessage({ equity: data.equity, mode: data.mode }),
+          buildKalshiConnectionSuccessMessage({
+            equity: data.equity,
+            mode: data.mode,
+          })
         );
         setApiKey("");
         setPrivateKey("");
@@ -47,11 +75,14 @@ function KalshiConnectPanel() {
         return;
       }
       setConnectionMessage(
-        data.error || "Connection failed. Please verify your Kalshi API Key ID and private key.",
+        data.error ||
+          "Connection failed. Please verify your Kalshi API Key ID and private key."
       );
     },
-    onError: (error) => {
-      setConnectionMessage(error.message || "Failed to connect your Kalshi account.");
+    onError: error => {
+      setConnectionMessage(
+        error.message || "Failed to connect your Kalshi account."
+      );
     },
   });
 
@@ -67,15 +98,23 @@ function KalshiConnectPanel() {
 
   const handleConnect = () => {
     if (!trimmedApiKey || !trimmedPrivateKey) {
-      setConnectionMessage("Both the Kalshi API Key ID and the private key are required.");
+      setConnectionMessage(
+        "Both the Kalshi API Key ID and the private key are required."
+      );
       return;
     }
     setConnectionMessage(null);
-    connectMutation.mutate({ apiKey: trimmedApiKey, privateKey: trimmedPrivateKey });
+    connectMutation.mutate({
+      apiKey: trimmedApiKey,
+      privateKey: trimmedPrivateKey,
+    });
   };
 
   return (
-    <Card className={`glass-panel animate-fade-in border-l-4 ${isAlreadyConnected ? 'glow-success border-l-indigo-500' : 'border-l-indigo-500/40'}`} style={{ animationDelay: '100ms' }}>
+    <Card
+      className={`glass-panel animate-fade-in border-l-4 ${isAlreadyConnected ? "glow-success border-l-indigo-500" : "border-l-indigo-500/40"}`}
+      style={{ animationDelay: "100ms" }}
+    >
       <CardHeader className="pb-4">
         <div className="flex items-center justify-between">
           <CardTitle className="flex items-center gap-3 text-xl">
@@ -85,15 +124,18 @@ function KalshiConnectPanel() {
             <span className="gradient-text font-bold">Kalshi</span>
           </CardTitle>
           {isAlreadyConnected && (
-            <Badge variant="outline" className="border-emerald-400/40 bg-emerald-500/10 text-emerald-300 gap-1.5 px-2.5 py-1">
+            <Badge
+              variant="outline"
+              className="border-emerald-400/40 bg-emerald-500/10 text-emerald-300 gap-1.5 px-2.5 py-1"
+            >
               <CheckCircle2 className="w-3 h-3" />
               Connected
             </Badge>
           )}
         </div>
         <CardDescription className="text-sm leading-relaxed mt-2">
-          Connect using an RSA key pair generated inside your Kalshi account. Your credentials are
-          validated live, then encrypted before storage.
+          Connect using an RSA key pair generated inside your Kalshi account.
+          Your credentials are validated live, then encrypted before storage.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -122,7 +164,9 @@ function KalshiConnectPanel() {
         ) : connected ? (
           <Alert className="border-emerald-400/30 bg-emerald-500/10">
             <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-            <AlertDescription className="text-emerald-200">{connectionMessage}</AlertDescription>
+            <AlertDescription className="text-emerald-200">
+              {connectionMessage}
+            </AlertDescription>
           </Alert>
         ) : (
           <>
@@ -145,7 +189,8 @@ function KalshiConnectPanel() {
                 >
                   Kalshi account settings
                 </a>
-                , copy the API Key ID and the full PEM private key file, then paste both below.
+                , copy the API Key ID and the full PEM private key file, then
+                paste both below.
               </AlertDescription>
             </Alert>
 
@@ -155,7 +200,7 @@ function KalshiConnectPanel() {
                 <Input
                   placeholder="Example: a952bcbe-ec3b-4b5b-b8f9-11dae589608c"
                   value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
+                  onChange={e => setApiKey(e.target.value)}
                   type="password"
                   className="font-mono text-xs"
                   disabled={connectMutation.isPending}
@@ -163,11 +208,15 @@ function KalshiConnectPanel() {
               </div>
 
               <div className="space-y-2">
-                <label className="text-sm font-medium">Kalshi private key (RSA PEM)</label>
+                <label className="text-sm font-medium">
+                  Kalshi private key (RSA PEM)
+                </label>
                 <Textarea
-                  placeholder={"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"}
+                  placeholder={
+                    "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
+                  }
                   value={privateKey}
-                  onChange={(e) => setPrivateKey(e.target.value)}
+                  onChange={e => setPrivateKey(e.target.value)}
                   className="min-h-32 font-mono text-xs"
                   disabled={connectMutation.isPending}
                 />
@@ -178,14 +227,17 @@ function KalshiConnectPanel() {
               <Alert variant="destructive" className="glow-destructive">
                 <AlertCircle className="h-4 w-4" />
                 <AlertDescription>
-                  The private key does not look complete. Make sure you copied the full PEM text
-                  including the header and footer lines.
+                  The private key does not look complete. Make sure you copied
+                  the full PEM text including the header and footer lines.
                 </AlertDescription>
               </Alert>
             ) : null}
 
             {connectionMessage && !connected ? (
-              <Alert variant={connectMutation.isError ? "destructive" : "default"} className={connectMutation.isError ? "glow-destructive" : ""}>
+              <Alert
+                variant={connectMutation.isError ? "destructive" : "default"}
+                className={connectMutation.isError ? "glow-destructive" : ""}
+              >
                 <AlertCircle className="h-4 w-4" />
                 <AlertDescription>{connectionMessage}</AlertDescription>
               </Alert>
@@ -193,7 +245,11 @@ function KalshiConnectPanel() {
 
             <Button
               onClick={handleConnect}
-              disabled={connectMutation.isPending || !trimmedApiKey || !trimmedPrivateKey}
+              disabled={
+                connectMutation.isPending ||
+                !trimmedApiKey ||
+                !trimmedPrivateKey
+              }
               className="w-full bg-gradient-to-br from-indigo-500 to-violet-500 hover:from-indigo-600 hover:to-violet-600 glow-primary"
               size="lg"
             >
@@ -222,15 +278,20 @@ function PolymarketConnectPanel() {
   const [apiKey, setApiKey] = useState("");
   const [apiSecret, setApiSecret] = useState("");
   const [apiPassphrase, setApiPassphrase] = useState("");
-  const [connectionMessage, setConnectionMessage] = useState<string | null>(null);
+  const [connectionMessage, setConnectionMessage] = useState<string | null>(
+    null
+  );
   const [connected, setConnected] = useState(false);
 
-  const statusQuery = trpc.polymarket.getPolymarketAccountStatus.useQuery(undefined, {
-    retry: false,
-  });
+  const statusQuery = trpc.polymarket.getPolymarketAccountStatus.useQuery(
+    undefined,
+    {
+      retry: false,
+    }
+  );
 
   const connectMutation = trpc.polymarket.connectPolymarketAccount.useMutation({
-    onSuccess: async (data) => {
+    onSuccess: async data => {
       if (data.success) {
         setConnectionMessage(buildPolymarketConnectionSuccessMessage());
         setApiKey("");
@@ -241,21 +302,25 @@ function PolymarketConnectPanel() {
         return;
       }
       setConnectionMessage(
-        data.error || "Connection failed. Please verify your Polymarket API credentials.",
+        data.error ||
+          "Connection failed. Please verify your Polymarket API credentials."
       );
     },
-    onError: (error) => {
-      setConnectionMessage(error.message || "Failed to connect your Polymarket account.");
+    onError: error => {
+      setConnectionMessage(
+        error.message || "Failed to connect your Polymarket account."
+      );
     },
   });
 
-  const disconnectMutation = trpc.polymarket.disconnectPolymarketAccount.useMutation({
-    onSuccess: async () => {
-      setConnected(false);
-      setConnectionMessage(null);
-      await utils.polymarket.getPolymarketAccountStatus.invalidate();
-    },
-  });
+  const disconnectMutation =
+    trpc.polymarket.disconnectPolymarketAccount.useMutation({
+      onSuccess: async () => {
+        setConnected(false);
+        setConnectionMessage(null);
+        await utils.polymarket.getPolymarketAccountStatus.invalidate();
+      },
+    });
 
   const isAlreadyConnected = statusQuery.data?.connected === true;
 
@@ -273,7 +338,10 @@ function PolymarketConnectPanel() {
   };
 
   return (
-    <Card className={`glass-panel animate-fade-in border-l-4 ${isAlreadyConnected ? 'glow-success border-l-emerald-500' : 'border-l-emerald-500/40'}`} style={{ animationDelay: '200ms' }}>
+    <Card
+      className={`glass-panel animate-fade-in border-l-4 ${isAlreadyConnected ? "glow-success border-l-emerald-500" : "border-l-emerald-500/40"}`}
+      style={{ animationDelay: "200ms" }}
+    >
       <CardHeader className="pb-4">
         <div className="flex items-center justify-between">
           <CardTitle className="flex items-center gap-3 text-xl">
@@ -283,15 +351,18 @@ function PolymarketConnectPanel() {
             <span className="gradient-text font-bold">Polymarket</span>
           </CardTitle>
           {isAlreadyConnected && (
-            <Badge variant="outline" className="border-emerald-400/40 bg-emerald-500/10 text-emerald-300 gap-1.5 px-2.5 py-1">
+            <Badge
+              variant="outline"
+              className="border-emerald-400/40 bg-emerald-500/10 text-emerald-300 gap-1.5 px-2.5 py-1"
+            >
               <CheckCircle2 className="w-3 h-3" />
               Connected
             </Badge>
           )}
         </div>
         <CardDescription className="text-sm leading-relaxed mt-2">
-          Connect using L2 CLOB API credentials generated inside Polymarket. You need all three
-          values: API Key, Secret, and Passphrase.
+          Connect using L2 CLOB API credentials generated inside Polymarket. You
+          need all three values: API Key, Secret, and Passphrase.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -319,7 +390,9 @@ function PolymarketConnectPanel() {
         ) : connected ? (
           <Alert className="border-emerald-400/30 bg-emerald-500/10">
             <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-            <AlertDescription className="text-emerald-200">{connectionMessage}</AlertDescription>
+            <AlertDescription className="text-emerald-200">
+              {connectionMessage}
+            </AlertDescription>
           </Alert>
         ) : (
           <>
@@ -348,11 +421,13 @@ function PolymarketConnectPanel() {
 
             <div className="data-card space-y-4 p-4 bg-gradient-to-br from-emerald-500/5 to-teal-500/5">
               <div className="space-y-2">
-                <label className="text-sm font-medium">Polymarket API Key</label>
+                <label className="text-sm font-medium">
+                  Polymarket API Key
+                </label>
                 <Input
                   placeholder="API key from Polymarket"
                   value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
+                  onChange={e => setApiKey(e.target.value)}
                   type="password"
                   className="font-mono text-xs"
                   disabled={connectMutation.isPending}
@@ -360,11 +435,13 @@ function PolymarketConnectPanel() {
               </div>
 
               <div className="space-y-2">
-                <label className="text-sm font-medium">Polymarket API Secret</label>
+                <label className="text-sm font-medium">
+                  Polymarket API Secret
+                </label>
                 <Input
                   placeholder="API secret from Polymarket"
                   value={apiSecret}
-                  onChange={(e) => setApiSecret(e.target.value)}
+                  onChange={e => setApiSecret(e.target.value)}
                   type="password"
                   className="font-mono text-xs"
                   disabled={connectMutation.isPending}
@@ -372,11 +449,13 @@ function PolymarketConnectPanel() {
               </div>
 
               <div className="space-y-2">
-                <label className="text-sm font-medium">Polymarket API Passphrase</label>
+                <label className="text-sm font-medium">
+                  Polymarket API Passphrase
+                </label>
                 <Input
                   placeholder="Passphrase from Polymarket"
                   value={apiPassphrase}
-                  onChange={(e) => setApiPassphrase(e.target.value)}
+                  onChange={e => setApiPassphrase(e.target.value)}
                   type="password"
                   className="font-mono text-xs"
                   disabled={connectMutation.isPending}
@@ -385,7 +464,10 @@ function PolymarketConnectPanel() {
             </div>
 
             {connectionMessage && !connected ? (
-              <Alert variant={connectMutation.isError ? "destructive" : "default"} className={connectMutation.isError ? "glow-destructive" : ""}>
+              <Alert
+                variant={connectMutation.isError ? "destructive" : "default"}
+                className={connectMutation.isError ? "glow-destructive" : ""}
+              >
                 <AlertCircle className="h-4 w-4" />
                 <AlertDescription>{connectionMessage}</AlertDescription>
               </Alert>
@@ -450,7 +532,10 @@ function PlatformSubscriptionCard() {
   ];
 
   return (
-    <Card className="glass-panel animate-fade-in" style={{ animationDelay: '300ms' }}>
+    <Card
+      className="glass-panel animate-fade-in"
+      style={{ animationDelay: "300ms" }}
+    >
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           {current === "both" ? (
@@ -461,16 +546,19 @@ function PlatformSubscriptionCard() {
           Platform Subscription
         </CardTitle>
         <CardDescription>
-          Choose which prediction markets the bot actively monitors and trades. You can subscribe
-          to either or both depending on where you have funded accounts.
+          Choose which prediction markets the bot actively monitors and trades.
+          Kalshi and Polymarket bot coverage is shown here so subscribers can
+          enable one venue or both funded venues.
         </CardDescription>
       </CardHeader>
       <CardContent>
         <div className="grid gap-3">
-          {options.map((option) => (
+          {options.map(option => (
             <button
               key={option.value}
-              onClick={() => saveMutation.mutate({ subscribedPlatforms: option.value })}
+              onClick={() =>
+                saveMutation.mutate({ subscribedPlatforms: option.value })
+              }
               disabled={saveMutation.isPending}
               className={`text-left p-4 rounded-lg border transition-all ${
                 current === option.value
@@ -484,7 +572,9 @@ function PlatformSubscriptionCard() {
                   <CheckCircle2 className="w-4 h-4 text-primary" />
                 )}
               </div>
-              <p className="text-xs text-muted-foreground">{option.description}</p>
+              <p className="text-xs text-muted-foreground">
+                {option.description}
+              </p>
             </button>
           ))}
         </div>
@@ -496,8 +586,13 @@ function PlatformSubscriptionCard() {
 // ---------- Main page ----------
 export default function Connect() {
   // Query connection status for both platforms
-  const kalshiStatus = trpc.kalshi.getKalshiAccountStatus.useQuery(undefined, { retry: false });
-  const polymarketStatus = trpc.polymarket.getPolymarketAccountStatus.useQuery(undefined, { retry: false });
+  const kalshiStatus = trpc.kalshi.getKalshiAccountStatus.useQuery(undefined, {
+    retry: false,
+  });
+  const polymarketStatus = trpc.polymarket.getPolymarketAccountStatus.useQuery(
+    undefined,
+    { retry: false }
+  );
 
   const kalshiConnected = kalshiStatus.data?.connected === true;
   const polymarketConnected = polymarketStatus.data?.connected === true;
@@ -520,7 +615,8 @@ export default function Connect() {
             <div>
               <h1 className="text-xl font-bold tracking-tight">Onboarding</h1>
               <p className="text-sm text-muted-foreground mt-0.5">
-                Connect at least one exchange, fund your account, then arm autonomy.
+                Connect at least one exchange, fund your account, then arm
+                autonomy.
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -532,7 +628,11 @@ export default function Connect() {
                     : "border-border/60 text-muted-foreground"
                 }
               >
-                {kalshiConnected ? <Wifi className="w-3 h-3 mr-1" /> : <WifiOff className="w-3 h-3 mr-1" />}
+                {kalshiConnected ? (
+                  <Wifi className="w-3 h-3 mr-1" />
+                ) : (
+                  <WifiOff className="w-3 h-3 mr-1" />
+                )}
                 Kalshi
               </Badge>
               <Badge
@@ -543,7 +643,11 @@ export default function Connect() {
                     : "border-border/60 text-muted-foreground"
                 }
               >
-                {polymarketConnected ? <Wifi className="w-3 h-3 mr-1" /> : <WifiOff className="w-3 h-3 mr-1" />}
+                {polymarketConnected ? (
+                  <Wifi className="w-3 h-3 mr-1" />
+                ) : (
+                  <WifiOff className="w-3 h-3 mr-1" />
+                )}
                 Polymarket
               </Badge>
             </div>
@@ -560,7 +664,9 @@ export default function Connect() {
             <ConnectStep
               n={2}
               title="Fund"
-              hint={isFunded ? `$${equity.toFixed(2)}` : "Deposit on Kalshi"}
+              hint={
+                isFunded ? `$${equity.toFixed(2)}` : "Fund Kalshi or Polymarket"
+              }
               done={stepFund}
               active={stepConnect && !stepFund}
             />
@@ -579,8 +685,8 @@ export default function Connect() {
       <div className="flex items-start gap-2 px-3 py-2 rounded-md border border-border/60 bg-card/40 text-xs text-muted-foreground">
         <ShieldCheck className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" />
         <span>
-          Credentials are validated live and stored AES-256-GCM encrypted, scoped to your
-          authenticated account.
+          Credentials are validated live and stored AES-256-GCM encrypted,
+          scoped to your authenticated account.
         </span>
       </div>
 

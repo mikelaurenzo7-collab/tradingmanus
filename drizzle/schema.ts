@@ -11,29 +11,135 @@ import {
 } from "drizzle-orm/pg-core";
 
 export const userRoleEnum = pgEnum("user_role", ["user", "admin"]);
-export const betaAccessLevelEnum = pgEnum("beta_access_level", ["none", "internal", "invited", "public"]);
-export const instructionTypeEnum = pgEnum("instruction_type", ["market_filter", "signal_filter", "position_limit", "time_window", "custom"]);
-export const instructionRuleTypeEnum = pgEnum("instruction_rule_type", ["include", "exclude", "require", "forbid"]);
-export const instructionScheduleTypeEnum = pgEnum("instruction_schedule_type", ["always", "time_window", "day_of_week", "market_condition"]);
-export const kalshiAccountStatusEnum = pgEnum("kalshi_account_status", ["connected", "disconnected", "error"]);
-export const kalshiMarketStatusEnum = pgEnum("kalshi_market_status", ["open", "closed", "resolved"]);
+export const subscriptionTierEnum = pgEnum("subscription_tier", [
+  "starter",
+  "pro",
+  "fund",
+]);
+export const subscriptionStatusEnum = pgEnum("subscription_status", [
+  "trialing",
+  "active",
+  "past_due",
+  "cancelled",
+  "unpaid",
+]);
+export const betaAccessLevelEnum = pgEnum("beta_access_level", [
+  "none",
+  "internal",
+  "invited",
+  "public",
+]);
+export const instructionTypeEnum = pgEnum("instruction_type", [
+  "market_filter",
+  "signal_filter",
+  "position_limit",
+  "time_window",
+  "custom",
+]);
+export const instructionRuleTypeEnum = pgEnum("instruction_rule_type", [
+  "include",
+  "exclude",
+  "require",
+  "forbid",
+]);
+export const instructionScheduleTypeEnum = pgEnum("instruction_schedule_type", [
+  "always",
+  "time_window",
+  "day_of_week",
+  "market_condition",
+]);
+export const kalshiAccountStatusEnum = pgEnum("kalshi_account_status", [
+  "connected",
+  "disconnected",
+  "error",
+]);
+export const kalshiMarketStatusEnum = pgEnum("kalshi_market_status", [
+  "open",
+  "closed",
+  "resolved",
+]);
 export const kalshiSideEnum = pgEnum("kalshi_side", ["yes", "no"]);
-export const kalshiOrderActionEnum = pgEnum("kalshi_order_action", ["buy", "sell"]);
-export const kalshiOrderStatusEnum = pgEnum("kalshi_order_status", ["pending", "filled", "cancelled", "rejected"]);
-export const kalshiPositionStatusEnum = pgEnum("kalshi_position_status", ["open", "closing", "closed"]);
-export const kalshiSignalTypeEnum = pgEnum("kalshi_signal_type", ["value_play", "momentum", "contrarian", "arbitrage", "sentiment", "multi_timeframe", "order_flow"]);
-export const kalshiOutcomeEnum = pgEnum("kalshi_outcome", ["win", "loss", "partial"]);
-export const evidenceTypeEnum = pgEnum("evidence_type", ["price_move", "volume_spike", "sentiment_shift", "news_item", "market_close", "fundamental"]);
-export const evidenceDirectionEnum = pgEnum("evidence_direction", ["bullish", "bearish", "neutral"]);
-export const autonomyModeEnum = pgEnum("autonomy_mode", ["manual", "approval_required", "semi_autonomous", "fully_autonomous"]);
-export const executionCadenceEnum = pgEnum("execution_cadence", ["manual_only", "session_assisted", "hourly_watch", "continuous_watch"]);
-export const riskPostureEnum = pgEnum("risk_posture", ["conservative", "balanced", "aggressive"]);
-export const autonomyRunStatusEnum = pgEnum("autonomy_run_status", ["in_progress", "executed", "generated_only", "skipped", "blocked", "error"]);
-export const reconciliationStatusEnum = pgEnum("reconciliation_status", ["not_required", "pending", "reconciled"]);
+export const kalshiOrderActionEnum = pgEnum("kalshi_order_action", [
+  "buy",
+  "sell",
+]);
+export const kalshiOrderStatusEnum = pgEnum("kalshi_order_status", [
+  "pending",
+  "filled",
+  "cancelled",
+  "rejected",
+]);
+export const kalshiPositionStatusEnum = pgEnum("kalshi_position_status", [
+  "open",
+  "closing",
+  "closed",
+]);
+export const kalshiSignalTypeEnum = pgEnum("kalshi_signal_type", [
+  "value_play",
+  "momentum",
+  "contrarian",
+  "arbitrage",
+  "sentiment",
+  "multi_timeframe",
+  "order_flow",
+]);
+export const kalshiOutcomeEnum = pgEnum("kalshi_outcome", [
+  "win",
+  "loss",
+  "partial",
+]);
+export const evidenceTypeEnum = pgEnum("evidence_type", [
+  "price_move",
+  "volume_spike",
+  "sentiment_shift",
+  "news_item",
+  "market_close",
+  "fundamental",
+]);
+export const evidenceDirectionEnum = pgEnum("evidence_direction", [
+  "bullish",
+  "bearish",
+  "neutral",
+]);
+export const autonomyModeEnum = pgEnum("autonomy_mode", [
+  "manual",
+  "approval_required",
+  "semi_autonomous",
+  "fully_autonomous",
+]);
+export const executionCadenceEnum = pgEnum("execution_cadence", [
+  "manual_only",
+  "session_assisted",
+  "hourly_watch",
+  "continuous_watch",
+]);
+export const riskPostureEnum = pgEnum("risk_posture", [
+  "conservative",
+  "balanced",
+  "aggressive",
+]);
+export const autonomyRunStatusEnum = pgEnum("autonomy_run_status", [
+  "in_progress",
+  "executed",
+  "generated_only",
+  "skipped",
+  "blocked",
+  "error",
+]);
+export const reconciliationStatusEnum = pgEnum("reconciliation_status", [
+  "not_required",
+  "pending",
+  "reconciled",
+]);
 
 const now = () => new Date();
-const createdAt = () => timestamp("createdAt", { withTimezone: true }).defaultNow().notNull();
-const updatedAt = () => timestamp("updatedAt", { withTimezone: true }).defaultNow().notNull().$onUpdate(now);
+const createdAt = () =>
+  timestamp("createdAt", { withTimezone: true }).defaultNow().notNull();
+const updatedAt = () =>
+  timestamp("updatedAt", { withTimezone: true })
+    .defaultNow()
+    .notNull()
+    .$onUpdate(now);
 
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
@@ -41,7 +147,20 @@ export const users = pgTable("users", {
   name: text("name"),
   email: varchar("email", { length: 320 }),
   role: userRoleEnum("role").default("user").notNull(),
-  betaAccessLevel: betaAccessLevelEnum("betaAccessLevel").default("none").notNull(),
+  betaAccessLevel: betaAccessLevelEnum("betaAccessLevel")
+    .default("none")
+    .notNull(),
+  passwordHash: text("passwordHash"),
+  subscriptionTier: subscriptionTierEnum("subscriptionTier")
+    .default("starter")
+    .notNull(),
+  subscriptionStatus: subscriptionStatusEnum("subscriptionStatus")
+    .default("trialing")
+    .notNull(),
+  subscriptionCurrentPeriodEnd: timestamp("subscriptionCurrentPeriodEnd", {
+    withTimezone: true,
+  }),
+  stripeCustomerId: varchar("stripeCustomerId", { length: 128 }),
   twoFactorSecret: text("twoFactorSecret"), // Encrypted 2FA secret
   twoFactorEnabled: integer("twoFactorEnabled").default(0).notNull(), // 0 = disabled, 1 = enabled
   backupCodesHash: text("backupCodesHash"), // JSON array of hashed backup codes
@@ -107,7 +226,9 @@ export const kalshiCredentials = pgTable("kalshiCredentials", {
   apiKeyEncrypted: text("apiKeyEncrypted").notNull(),
   privateKeyEncrypted: text("privateKeyEncrypted").notNull(),
   accountEquity: doublePrecision("accountEquity").default(0).notNull(),
-  accountStatus: kalshiAccountStatusEnum("accountStatus").default("disconnected").notNull(),
+  accountStatus: kalshiAccountStatusEnum("accountStatus")
+    .default("disconnected")
+    .notNull(),
   lastSyncedAt: timestamp("lastSyncedAt", { withTimezone: true }),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
@@ -125,7 +246,9 @@ export const kalshiMarkets = pgTable("kalshiMarkets", {
   noPrice: doublePrecision("noPrice").default(0).notNull(),
   yesVolume: doublePrecision("yesVolume").default(0).notNull(),
   noVolume: doublePrecision("noVolume").default(0).notNull(),
-  impliedProbability: doublePrecision("impliedProbability").default(0.5).notNull(),
+  impliedProbability: doublePrecision("impliedProbability")
+    .default(0.5)
+    .notNull(),
   liquidity: doublePrecision("liquidity").default(0).notNull(),
   lastUpdated: updatedAt(),
   createdAt: createdAt(),
@@ -189,7 +312,9 @@ export const kalshiPositions = pgTable("kalshiPositions", {
   currentPrice: doublePrecision("currentPrice").notNull(),
   unrealizedPnl: doublePrecision("unrealizedPnl").default(0).notNull(),
   realizedPnl: doublePrecision("realizedPnl").default(0).notNull(),
-  positionStatus: kalshiPositionStatusEnum("positionStatus").default("open").notNull(),
+  positionStatus: kalshiPositionStatusEnum("positionStatus")
+    .default("open")
+    .notNull(),
   openedAt: createdAt(),
   closedAt: timestamp("closedAt", { withTimezone: true }),
 });
@@ -222,23 +347,30 @@ export const kalshiPerformance = pgTable("kalshiPerformance", {
   resolvedAt: createdAt(),
 });
 
-export const signalBayesianUpdates = pgTable("signalBayesianUpdates", {
-  id: serial("id").primaryKey(),
-  signalId: integer("signalId").notNull(),
-  userId: integer("userId").notNull(),
-  prior: doublePrecision("prior").notNull(),
-  likelihood: doublePrecision("likelihood").notNull(),
-  evidenceProb: doublePrecision("evidenceProb").notNull(),
-  posterior: doublePrecision("posterior").notNull(),
-  evidenceType: evidenceTypeEnum("evidenceType").notNull(),
-  evidenceValue: doublePrecision("evidenceValue").notNull(),
-  evidenceDirection: evidenceDirectionEnum("evidenceDirection").notNull(),
-  evidenceMetadata: text("evidenceMetadata"),
-  weight: doublePrecision("weight").notNull(), // Time-decay weight
-  updatedAt: createdAt(),
-}, (table) => ({
-  signalLookupIdx: index("signal_bayesian_lookup_idx").on(table.signalId, table.updatedAt),
-}));
+export const signalBayesianUpdates = pgTable(
+  "signalBayesianUpdates",
+  {
+    id: serial("id").primaryKey(),
+    signalId: integer("signalId").notNull(),
+    userId: integer("userId").notNull(),
+    prior: doublePrecision("prior").notNull(),
+    likelihood: doublePrecision("likelihood").notNull(),
+    evidenceProb: doublePrecision("evidenceProb").notNull(),
+    posterior: doublePrecision("posterior").notNull(),
+    evidenceType: evidenceTypeEnum("evidenceType").notNull(),
+    evidenceValue: doublePrecision("evidenceValue").notNull(),
+    evidenceDirection: evidenceDirectionEnum("evidenceDirection").notNull(),
+    evidenceMetadata: text("evidenceMetadata"),
+    weight: doublePrecision("weight").notNull(), // Time-decay weight
+    updatedAt: createdAt(),
+  },
+  table => ({
+    signalLookupIdx: index("signal_bayesian_lookup_idx").on(
+      table.signalId,
+      table.updatedAt
+    ),
+  })
+);
 
 export const kalshiCapital = pgTable("kalshiCapital", {
   id: serial("id").primaryKey(),
@@ -257,14 +389,22 @@ export const kalshiCapital = pgTable("kalshiCapital", {
 export const tradingPreferences = pgTable("tradingPreferences", {
   id: serial("id").primaryKey(),
   userId: integer("userId").notNull().unique(),
-  autonomyMode: autonomyModeEnum("autonomyMode").default("approval_required").notNull(),
+  autonomyMode: autonomyModeEnum("autonomyMode")
+    .default("approval_required")
+    .notNull(),
   liveTradingEnabled: integer("liveTradingEnabled").default(0).notNull(),
-  executionCadence: executionCadenceEnum("executionCadence").default("manual_only").notNull(),
+  executionCadence: executionCadenceEnum("executionCadence")
+    .default("manual_only")
+    .notNull(),
   riskPosture: riskPostureEnum("riskPosture").default("balanced").notNull(),
-  minSignalConfidence: doublePrecision("minSignalConfidence").default(0.72).notNull(),
+  minSignalConfidence: doublePrecision("minSignalConfidence")
+    .default(0.72)
+    .notNull(),
   maxOrderNotional: doublePrecision("maxOrderNotional").default(10).notNull(),
   maxDailyOrders: integer("maxDailyOrders").default(3).notNull(),
-  requireApprovalAbove: doublePrecision("requireApprovalAbove").default(8).notNull(),
+  requireApprovalAbove: doublePrecision("requireApprovalAbove")
+    .default(8)
+    .notNull(),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -292,7 +432,9 @@ export const autonomyRuns = pgTable("autonomyRuns", {
   appliedGuardrails: text("appliedGuardrails"),
   exchangeRequest: text("exchangeRequest"),
   exchangeResponse: text("exchangeResponse"),
-  reconciliationStatus: reconciliationStatusEnum("reconciliationStatus").default("not_required").notNull(),
+  reconciliationStatus: reconciliationStatusEnum("reconciliationStatus")
+    .default("not_required")
+    .notNull(),
   reconciliationReason: text("reconciliationReason"),
   startedAt: createdAt(),
   completedAt: timestamp("completedAt", { withTimezone: true }),
@@ -304,9 +446,17 @@ export const autonomyRuns = pgTable("autonomyRuns", {
 // Kalshi tables as a proxy. Polymarket uses USDC CLOB semantics; sizes are in
 // USDC rather than contracts.
 
-export const polymarketOrderStatusEnum = pgEnum("polymarket_order_status", ["pending", "filled", "cancelled", "rejected"]);
+export const polymarketOrderStatusEnum = pgEnum("polymarket_order_status", [
+  "pending",
+  "filled",
+  "cancelled",
+  "rejected",
+]);
 export const polymarketSideEnum = pgEnum("polymarket_side", ["yes", "no"]);
-export const polymarketPositionStatusEnum = pgEnum("polymarket_position_status", ["open", "closing", "closed"]);
+export const polymarketPositionStatusEnum = pgEnum(
+  "polymarket_position_status",
+  ["open", "closing", "closed"]
+);
 
 export const polymarketOrders = pgTable("polymarketOrders", {
   id: serial("id").primaryKey(),
@@ -350,13 +500,23 @@ export const polymarketPositions = pgTable("polymarketPositions", {
   currentPrice: doublePrecision("currentPrice").notNull(),
   unrealizedPnl: doublePrecision("unrealizedPnl").default(0).notNull(),
   realizedPnl: doublePrecision("realizedPnl").default(0).notNull(),
-  positionStatus: polymarketPositionStatusEnum("positionStatus").default("open").notNull(),
+  positionStatus: polymarketPositionStatusEnum("positionStatus")
+    .default("open")
+    .notNull(),
   openedAt: createdAt(),
   closedAt: timestamp("closedAt", { withTimezone: true }),
 });
 
-export const polymarketAccountStatusEnum = pgEnum("polymarket_account_status", ["connected", "disconnected", "error"]);
-export const platformSubscriptionEnum = pgEnum("platform_subscription", ["kalshi", "polymarket", "both"]);
+export const polymarketAccountStatusEnum = pgEnum("polymarket_account_status", [
+  "connected",
+  "disconnected",
+  "error",
+]);
+export const platformSubscriptionEnum = pgEnum("platform_subscription", [
+  "kalshi",
+  "polymarket",
+  "both",
+]);
 
 export const polymarketCredentials = pgTable("polymarketCredentials", {
   id: serial("id").primaryKey(),
@@ -364,7 +524,9 @@ export const polymarketCredentials = pgTable("polymarketCredentials", {
   apiKeyEncrypted: text("apiKeyEncrypted").notNull(),
   apiSecretEncrypted: text("apiSecretEncrypted").notNull(),
   apiPassphraseEncrypted: text("apiPassphraseEncrypted").notNull(),
-  accountStatus: polymarketAccountStatusEnum("accountStatus").default("disconnected").notNull(),
+  accountStatus: polymarketAccountStatusEnum("accountStatus")
+    .default("disconnected")
+    .notNull(),
   lastSyncedAt: timestamp("lastSyncedAt", { withTimezone: true }),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
@@ -373,15 +535,24 @@ export const polymarketCredentials = pgTable("polymarketCredentials", {
 export const userPlatformSubscriptions = pgTable("userPlatformSubscriptions", {
   id: serial("id").primaryKey(),
   userId: integer("userId").notNull().unique(),
-  subscribedPlatforms: platformSubscriptionEnum("subscribedPlatforms").default("kalshi").notNull(),
+  subscribedPlatforms: platformSubscriptionEnum("subscribedPlatforms")
+    .default("kalshi")
+    .notNull(),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
 
 // ── AI Desk Memory (per-user, per-platform, per-category persistent learnings) ─
 
-export const deskPlatformEnum = pgEnum("desk_platform", ["kalshi", "polymarket"]);
-export const deskOutcomeEnum = pgEnum("desk_outcome", ["win", "loss", "scratch"]);
+export const deskPlatformEnum = pgEnum("desk_platform", [
+  "kalshi",
+  "polymarket",
+]);
+export const deskOutcomeEnum = pgEnum("desk_outcome", [
+  "win",
+  "loss",
+  "scratch",
+]);
 
 /**
  * One row per (userId, platform, deskId).  Each row is the rolling tape of
@@ -412,20 +583,30 @@ export const deskMemory = pgTable("deskMemory", {
  * Stores momentum, volatility, volume, and trend strength calculations
  * for 5min/15min/1hour/4hour/24hour timeframes.
  */
-export const marketTimeframeAnalysis = pgTable("market_timeframe_analysis", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id").notNull(),
-  marketId: text("market_id").notNull(),
-  platform: text("platform").notNull(), // 'kalshi' | 'polymarket'
-  timeframe: text("timeframe").notNull(), // timeframe in milliseconds as string
-  momentum: doublePrecision("momentum").notNull(),
-  volatility: doublePrecision("volatility").notNull(),
-  volume: doublePrecision("volume").notNull(),
-  trendStrength: doublePrecision("trend_strength").notNull(),
-  analyzedAt: timestamp("analyzed_at", { withTimezone: true }).notNull().defaultNow(),
-}, (table) => ({
-  marketLookupIdx: index("market_tf_lookup_idx").on(table.marketId, table.platform, table.analyzedAt),
-}));
+export const marketTimeframeAnalysis = pgTable(
+  "market_timeframe_analysis",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id").notNull(),
+    marketId: text("market_id").notNull(),
+    platform: text("platform").notNull(), // 'kalshi' | 'polymarket'
+    timeframe: text("timeframe").notNull(), // timeframe in milliseconds as string
+    momentum: doublePrecision("momentum").notNull(),
+    volatility: doublePrecision("volatility").notNull(),
+    volume: doublePrecision("volume").notNull(),
+    trendStrength: doublePrecision("trend_strength").notNull(),
+    analyzedAt: timestamp("analyzed_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  table => ({
+    marketLookupIdx: index("market_tf_lookup_idx").on(
+      table.marketId,
+      table.platform,
+      table.analyzedAt
+    ),
+  })
+);
 
 // ── Market Microstructure ────────────────────────────────────────────────────
 
@@ -433,26 +614,44 @@ export const marketTimeframeAnalysis = pgTable("market_timeframe_analysis", {
  * Per-market microstructure snapshot: spread, order-book imbalance, and VPIN
  * proxy.  One row per analyzeMicrostructure() call; append-only.
  */
-export const marketMicrostructure = pgTable("market_microstructure", {
-  id: serial("id").primaryKey(),
-  marketId: varchar("marketId", { length: 128 }).notNull(),
-  platform: varchar("platform", { length: 32 }).notNull().default("kalshi"),
-  analyzedAt: timestamp("analyzedAt", { withTimezone: true }).defaultNow().notNull(),
-  spread: doublePrecision("spread").notNull(),
-  spreadPct: doublePrecision("spreadPct").notNull(),
-  spreadScore: doublePrecision("spreadScore").notNull(),
-  imbalance: doublePrecision("imbalance").notNull(),
-  vpin: doublePrecision("vpin").notNull(),
-  microstructureScore: doublePrecision("microstructureScore").notNull(),
-}, (t) => ({
-  microLookupIdx: index("market_micro_lookup_idx").on(t.marketId, t.platform, t.analyzedAt),
-}));
+export const marketMicrostructure = pgTable(
+  "market_microstructure",
+  {
+    id: serial("id").primaryKey(),
+    marketId: varchar("marketId", { length: 128 }).notNull(),
+    platform: varchar("platform", { length: 32 }).notNull().default("kalshi"),
+    analyzedAt: timestamp("analyzedAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    spread: doublePrecision("spread").notNull(),
+    spreadPct: doublePrecision("spreadPct").notNull(),
+    spreadScore: doublePrecision("spreadScore").notNull(),
+    imbalance: doublePrecision("imbalance").notNull(),
+    vpin: doublePrecision("vpin").notNull(),
+    microstructureScore: doublePrecision("microstructureScore").notNull(),
+  },
+  t => ({
+    microLookupIdx: index("market_micro_lookup_idx").on(
+      t.marketId,
+      t.platform,
+      t.analyzedAt
+    ),
+  })
+);
 
 // ── Chatbot ────────────────────────────────────────────────────────────────────
 
-export const chatBotPlatformEnum = pgEnum("chat_bot_platform", ["kalshi", "polymarket"]);
+export const chatBotPlatformEnum = pgEnum("chat_bot_platform", [
+  "kalshi",
+  "polymarket",
+]);
 export const chatRoleEnum = pgEnum("chat_role", ["user", "assistant"]);
-export const botToneEnum = pgEnum("bot_tone", ["professional", "casual", "aggressive", "analytical"]);
+export const botToneEnum = pgEnum("bot_tone", [
+  "professional",
+  "casual",
+  "aggressive",
+  "analytical",
+]);
 
 /**
  * Per-user, per-platform bot configuration.
@@ -499,25 +698,36 @@ export const chatMessages = pgTable("chatMessages", {
  */
 export const distributedLocks = pgTable("distributedLocks", {
   lockKey: varchar("lockKey", { length: 255 }).primaryKey(),
-  acquiredAt: timestamp("acquiredAt", { withTimezone: true }).defaultNow().notNull(),
+  acquiredAt: timestamp("acquiredAt", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
   expiresAt: timestamp("expiresAt", { withTimezone: true }).notNull(),
   acquiredBy: varchar("acquiredBy", { length: 128 }).notNull(),
 });
 
 // ── Portfolio Volatility History ───────────────────────────────────────────────
 
-export const portfolioVolatilityHistory = pgTable("portfolio_volatility_history", {
-  id: serial("id").primaryKey(),
-  userId: integer("userId").notNull(),
-  calculatedAt: timestamp("calculatedAt", { withTimezone: true }).defaultNow().notNull(),
-  annualizedVol: doublePrecision("annualizedVol").notNull(),
-  dailyVol: doublePrecision("dailyVol").notNull(),
-  volScalingFactor: doublePrecision("volScalingFactor").notNull(),
-  positionCount: integer("positionCount").notNull(),
-  targetVol: doublePrecision("targetVol").notNull(),
-}, (t) => ({
-  portfolioVolHistIdx: index("portfolio_vol_hist_idx").on(t.userId, t.calculatedAt),
-}));
+export const portfolioVolatilityHistory = pgTable(
+  "portfolio_volatility_history",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("userId").notNull(),
+    calculatedAt: timestamp("calculatedAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    annualizedVol: doublePrecision("annualizedVol").notNull(),
+    dailyVol: doublePrecision("dailyVol").notNull(),
+    volScalingFactor: doublePrecision("volScalingFactor").notNull(),
+    positionCount: integer("positionCount").notNull(),
+    targetVol: doublePrecision("targetVol").notNull(),
+  },
+  t => ({
+    portfolioVolHistIdx: index("portfolio_vol_hist_idx").on(
+      t.userId,
+      t.calculatedAt
+    ),
+  })
+);
 
 // ── Position Exits ────────────────────────────────────────────────────────────
 
@@ -532,21 +742,27 @@ export const positionExitReasonEnum = pgEnum("position_exit_reason", [
   "manual",
 ]);
 
-export const positionExits = pgTable("position_exits", {
-  id: serial("id").primaryKey(),
-  positionId: varchar("positionId", { length: 128 }).notNull(),
-  userId: integer("userId").notNull(),
-  platform: varchar("platform", { length: 32 }).notNull().default("kalshi"),
-  exitReason: positionExitReasonEnum("exitReason").notNull(),
-  entryPrice: doublePrecision("entryPrice").notNull(),
-  exitPrice: doublePrecision("exitPrice").notNull(),
-  pnlPct: doublePrecision("pnlPct").notNull(),          // (exit - entry) / entry
-  exitedAt: timestamp("exitedAt", { withTimezone: true }).defaultNow().notNull(),
-  stopLevel: doublePrecision("stopLevel"),
-  profitTargetHit: integer("profitTargetHit"),           // 1, 2, or 3
-}, (t) => ({
-  positionExitsIdx: index("position_exits_idx").on(t.userId, t.exitedAt),
-}));
+export const positionExits = pgTable(
+  "position_exits",
+  {
+    id: serial("id").primaryKey(),
+    positionId: varchar("positionId", { length: 128 }).notNull(),
+    userId: integer("userId").notNull(),
+    platform: varchar("platform", { length: 32 }).notNull().default("kalshi"),
+    exitReason: positionExitReasonEnum("exitReason").notNull(),
+    entryPrice: doublePrecision("entryPrice").notNull(),
+    exitPrice: doublePrecision("exitPrice").notNull(),
+    pnlPct: doublePrecision("pnlPct").notNull(), // (exit - entry) / entry
+    exitedAt: timestamp("exitedAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    stopLevel: doublePrecision("stopLevel"),
+    profitTargetHit: integer("profitTargetHit"), // 1, 2, or 3
+  },
+  t => ({
+    positionExitsIdx: index("position_exits_idx").on(t.userId, t.exitedAt),
+  })
+);
 
 // ── ML Ensemble Models ────────────────────────────────────────────────────────
 
@@ -554,11 +770,13 @@ export const mlEnsembleModels = pgTable("ml_ensemble_models", {
   id: serial("id").primaryKey(),
   version: integer("version").notNull(),
   platform: varchar("platform", { length: 32 }).notNull().default("kalshi"),
-  modelJson: text("modelJson").notNull(),        // serialized EnsembleModel
+  modelJson: text("modelJson").notNull(), // serialized EnsembleModel
   trainingSamples: integer("trainingSamples").notNull(),
-  accuracy: doublePrecision("accuracy"),          // hold-out accuracy if available
-  isActive: integer("isActive").default(0).notNull(),  // 0 or 1
-  trainedAt: timestamp("trainedAt", { withTimezone: true }).defaultNow().notNull(),
+  accuracy: doublePrecision("accuracy"), // hold-out accuracy if available
+  isActive: integer("isActive").default(0).notNull(), // 0 or 1
+  trainedAt: timestamp("trainedAt", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
   createdAt: createdAt(),
 });
 
@@ -566,23 +784,33 @@ export type MlEnsembleModel = typeof mlEnsembleModels.$inferSelect;
 
 // ── Market Sentiment History ──────────────────────────────────────────────────
 
-export const marketSentimentHistory = pgTable("market_sentiment_history", {
-  id: serial("id").primaryKey(),
-  marketId: varchar("marketId", { length: 128 }).notNull(),
-  platform: varchar("platform", { length: 32 }).notNull().default("kalshi"),
-  compositeScore: doublePrecision("compositeScore").notNull(),
-  compositeConfidence: doublePrecision("compositeConfidence").notNull(),
-  sentimentMomentum: doublePrecision("sentimentMomentum").notNull(),
-  isAlertTriggered: integer("isAlertTriggered").default(0).notNull(),
-  gdeltScore: doublePrecision("gdeltScore"),
-  redditScore: doublePrecision("redditScore"),
-  twitterScore: doublePrecision("twitterScore"),
-  expertScore: doublePrecision("expertScore"),
-  consensusScore: doublePrecision("consensusScore"),
-  recordedAt: timestamp("recordedAt", { withTimezone: true }).defaultNow().notNull(),
-}, (t) => ({
-  sentimentHistIdx: index("sentiment_hist_idx").on(t.marketId, t.platform, t.recordedAt),
-}));
+export const marketSentimentHistory = pgTable(
+  "market_sentiment_history",
+  {
+    id: serial("id").primaryKey(),
+    marketId: varchar("marketId", { length: 128 }).notNull(),
+    platform: varchar("platform", { length: 32 }).notNull().default("kalshi"),
+    compositeScore: doublePrecision("compositeScore").notNull(),
+    compositeConfidence: doublePrecision("compositeConfidence").notNull(),
+    sentimentMomentum: doublePrecision("sentimentMomentum").notNull(),
+    isAlertTriggered: integer("isAlertTriggered").default(0).notNull(),
+    gdeltScore: doublePrecision("gdeltScore"),
+    redditScore: doublePrecision("redditScore"),
+    twitterScore: doublePrecision("twitterScore"),
+    expertScore: doublePrecision("expertScore"),
+    consensusScore: doublePrecision("consensusScore"),
+    recordedAt: timestamp("recordedAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  t => ({
+    sentimentHistIdx: index("sentiment_hist_idx").on(
+      t.marketId,
+      t.platform,
+      t.recordedAt
+    ),
+  })
+);
 
 export type MarketSentimentHistory = typeof marketSentimentHistory.$inferSelect;
 
@@ -592,94 +820,153 @@ export type MarketSentimentHistory = typeof marketSentimentHistory.$inferSelect;
  * Per-order execution quality record.
  * Tracks expected vs actual fill price, slippage, and order strategy used.
  */
-export const executionQualityMetrics = pgTable("execution_quality_metrics", {
-  id: serial("id").primaryKey(),
-  orderId: varchar("orderId", { length: 128 }).notNull(),
-  userId: integer("userId").notNull(),
-  platform: varchar("platform", { length: 32 }).notNull().default("kalshi"),
-  strategy: varchar("strategy", { length: 32 }).notNull(),
-  expectedPrice: doublePrecision("expectedPrice").notNull(),
-  actualPrice: doublePrecision("actualPrice"),
-  slippagePct: doublePrecision("slippagePct"),
-  targetBudgetUsd: doublePrecision("targetBudgetUsd").notNull(),
-  executedAt: timestamp("executedAt", { withTimezone: true }).defaultNow().notNull(),
-}, (t) => ({
-  execQualityIdx: index("exec_quality_idx").on(t.userId, t.executedAt),
-}));
+export const executionQualityMetrics = pgTable(
+  "execution_quality_metrics",
+  {
+    id: serial("id").primaryKey(),
+    orderId: varchar("orderId", { length: 128 }).notNull(),
+    userId: integer("userId").notNull(),
+    platform: varchar("platform", { length: 32 }).notNull().default("kalshi"),
+    strategy: varchar("strategy", { length: 32 }).notNull(),
+    expectedPrice: doublePrecision("expectedPrice").notNull(),
+    actualPrice: doublePrecision("actualPrice"),
+    slippagePct: doublePrecision("slippagePct"),
+    targetBudgetUsd: doublePrecision("targetBudgetUsd").notNull(),
+    executedAt: timestamp("executedAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  t => ({
+    execQualityIdx: index("exec_quality_idx").on(t.userId, t.executedAt),
+  })
+);
 
-export type ExecutionQualityMetric = typeof executionQualityMetrics.$inferSelect;
+export type ExecutionQualityMetric =
+  typeof executionQualityMetrics.$inferSelect;
 
 // ── Cross-Platform Arbitrage Execution History ───────────────────────────────
 
-export const crossPlatformArbitrageExecutions = pgTable("cross_platform_arbitrage_executions", {
-  id: serial("id").primaryKey(),
-  userId: integer("userId").notNull(),
-  kalshiMarketId: varchar("kalshiMarketId", { length: 128 }).notNull(),
-  polymarketMarketId: varchar("polymarketMarketId", { length: 128 }).notNull(),
-  buyPlatform: varchar("buyPlatform", { length: 32 }).notNull(),
-  netEdge: doublePrecision("netEdge").notNull(),
-  feeBurden: doublePrecision("feeBurden").notNull(),
-  executionRisk: doublePrecision("executionRisk").notNull(),
-  hedgeRatio: doublePrecision("hedgeRatio").notNull(),
-  bothLegsExecuted: integer("bothLegsExecuted").notNull(),
-  kalshiOrderId: varchar("kalshiOrderId", { length: 128 }),
-  polymarketOrderId: varchar("polymarketOrderId", { length: 128 }),
-  partialLegAction: varchar("partialLegAction", { length: 32 }),
-  pnlAttributionArb: doublePrecision("pnlAttributionArb").default(0).notNull(),
-  pnlAttributionMarketMove: doublePrecision("pnlAttributionMarketMove").default(0).notNull(),
-  executedAt: timestamp("executedAt", { withTimezone: true }).defaultNow().notNull(),
-}, (t) => ({
-  crossArbExecIdx: index("cross_arb_exec_idx").on(t.userId, t.executedAt),
-}));
+export const crossPlatformArbitrageExecutions = pgTable(
+  "cross_platform_arbitrage_executions",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("userId").notNull(),
+    kalshiMarketId: varchar("kalshiMarketId", { length: 128 }).notNull(),
+    polymarketMarketId: varchar("polymarketMarketId", {
+      length: 128,
+    }).notNull(),
+    buyPlatform: varchar("buyPlatform", { length: 32 }).notNull(),
+    netEdge: doublePrecision("netEdge").notNull(),
+    feeBurden: doublePrecision("feeBurden").notNull(),
+    executionRisk: doublePrecision("executionRisk").notNull(),
+    hedgeRatio: doublePrecision("hedgeRatio").notNull(),
+    bothLegsExecuted: integer("bothLegsExecuted").notNull(),
+    kalshiOrderId: varchar("kalshiOrderId", { length: 128 }),
+    polymarketOrderId: varchar("polymarketOrderId", { length: 128 }),
+    partialLegAction: varchar("partialLegAction", { length: 32 }),
+    pnlAttributionArb: doublePrecision("pnlAttributionArb")
+      .default(0)
+      .notNull(),
+    pnlAttributionMarketMove: doublePrecision("pnlAttributionMarketMove")
+      .default(0)
+      .notNull(),
+    executedAt: timestamp("executedAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  t => ({
+    crossArbExecIdx: index("cross_arb_exec_idx").on(t.userId, t.executedAt),
+  })
+);
 
-export type CrossPlatformArbitrageExecution = typeof crossPlatformArbitrageExecutions.$inferSelect;
+export type CrossPlatformArbitrageExecution =
+  typeof crossPlatformArbitrageExecutions.$inferSelect;
 
 // ── Online Learning Updates ──────────────────────────────────────────────────
 
-export const onlineLearningUpdates = pgTable("online_learning_updates", {
-  id: serial("id").primaryKey(),
-  userId: integer("userId").notNull(),
-  platform: varchar("platform", { length: 32 }).notNull().default("kalshi"),
-  signalType: varchar("signalType", { length: 64 }).notNull(),
-  outcome: varchar("outcome", { length: 16 }).notNull(),
-  pnl: doublePrecision("pnl").notNull(),
-  weightBefore: doublePrecision("weightBefore").notNull(),
-  weightAfter: doublePrecision("weightAfter").notNull(),
-  emaPnl: doublePrecision("emaPnl").notNull(),
-  driftDetected: integer("driftDetected").default(0).notNull(),
-  explorationTaken: integer("explorationTaken").default(0).notNull(),
-  confidenceLower: doublePrecision("confidenceLower").notNull(),
-  confidenceUpper: doublePrecision("confidenceUpper").notNull(),
-  modelVersion: integer("modelVersion").notNull(),
-  createdAt: timestamp("createdAt", { withTimezone: true }).defaultNow().notNull(),
-}, (t) => ({
-  onlineLearningIdx: index("online_learning_idx").on(t.userId, t.platform, t.createdAt),
-}));
+export const onlineLearningUpdates = pgTable(
+  "online_learning_updates",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("userId").notNull(),
+    platform: varchar("platform", { length: 32 }).notNull().default("kalshi"),
+    signalType: varchar("signalType", { length: 64 }).notNull(),
+    outcome: varchar("outcome", { length: 16 }).notNull(),
+    pnl: doublePrecision("pnl").notNull(),
+    weightBefore: doublePrecision("weightBefore").notNull(),
+    weightAfter: doublePrecision("weightAfter").notNull(),
+    emaPnl: doublePrecision("emaPnl").notNull(),
+    driftDetected: integer("driftDetected").default(0).notNull(),
+    explorationTaken: integer("explorationTaken").default(0).notNull(),
+    confidenceLower: doublePrecision("confidenceLower").notNull(),
+    confidenceUpper: doublePrecision("confidenceUpper").notNull(),
+    modelVersion: integer("modelVersion").notNull(),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  t => ({
+    onlineLearningIdx: index("online_learning_idx").on(
+      t.userId,
+      t.platform,
+      t.createdAt
+    ),
+  })
+);
 
 export type OnlineLearningUpdate = typeof onlineLearningUpdates.$inferSelect;
 
 // ── Performance Attribution History ─────────────────────────────────────────
 
-export const performanceAttribution = pgTable("performance_attribution", {
-  id: serial("id").primaryKey(),
-  userId: integer("userId").notNull(),
-  platform: varchar("platform", { length: 32 }).notNull().default("kalshi"),
-  marketId: varchar("marketId", { length: 128 }).notNull(),
-  signalType: varchar("signalType", { length: 64 }).notNull(),
-  category: varchar("category", { length: 64 }).notNull().default("unknown"),
-  totalPnl: doublePrecision("totalPnl").notNull(),
-  signalAlpha: doublePrecision("signalAlpha").notNull(),
-  execution: doublePrecision("execution").notNull(),
-  timing: doublePrecision("timing").notNull(),
-  luck: doublePrecision("luck").notNull(),
-  createdAt: timestamp("createdAt", { withTimezone: true }).defaultNow().notNull(),
-}, (t) => ({
-  performanceAttributionIdx: index("performance_attribution_idx").on(t.userId, t.platform, t.createdAt),
-}));
+export const performanceAttribution = pgTable(
+  "performance_attribution",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("userId").notNull(),
+    platform: varchar("platform", { length: 32 }).notNull().default("kalshi"),
+    marketId: varchar("marketId", { length: 128 }).notNull(),
+    signalType: varchar("signalType", { length: 64 }).notNull(),
+    category: varchar("category", { length: 64 }).notNull().default("unknown"),
+    totalPnl: doublePrecision("totalPnl").notNull(),
+    signalAlpha: doublePrecision("signalAlpha").notNull(),
+    execution: doublePrecision("execution").notNull(),
+    timing: doublePrecision("timing").notNull(),
+    luck: doublePrecision("luck").notNull(),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  t => ({
+    performanceAttributionIdx: index("performance_attribution_idx").on(
+      t.userId,
+      t.platform,
+      t.createdAt
+    ),
+  })
+);
 
-export type PerformanceAttributionRecord = typeof performanceAttribution.$inferSelect;
+export type PerformanceAttributionRecord =
+  typeof performanceAttribution.$inferSelect;
 
-export type User = typeof users.$inferSelect;
+type UserRow = typeof users.$inferSelect;
+export type User = Omit<
+  UserRow,
+  | "passwordHash"
+  | "subscriptionTier"
+  | "subscriptionStatus"
+  | "subscriptionCurrentPeriodEnd"
+  | "stripeCustomerId"
+> &
+  Partial<
+    Pick<
+      UserRow,
+      | "passwordHash"
+      | "subscriptionTier"
+      | "subscriptionStatus"
+      | "subscriptionCurrentPeriodEnd"
+      | "stripeCustomerId"
+    >
+  >;
 export type BotConfig = typeof botConfigs.$inferSelect;
 export type ChatMessage = typeof chatMessages.$inferSelect;
 export type PolymarketOrder = typeof polymarketOrders.$inferSelect;

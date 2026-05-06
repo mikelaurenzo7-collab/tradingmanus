@@ -130,15 +130,25 @@ export const db = {
 };
 
 // User queries
-export async function upsertUser(payload: { 
-  openId: string; 
-  name?: string; 
-  email?: string; 
-  loginMethod?: string; 
+export async function upsertUser(payload: {
+  openId: string;
+  name?: string;
+  email?: string;
+  loginMethod?: string;
   lastSignedIn?: Date;
   twoFactorSecret?: string | null;
   twoFactorEnabled?: number;
   backupCodesHash?: string | null;
+  passwordHash?: string | null;
+  subscriptionTier?: "starter" | "pro" | "fund";
+  subscriptionStatus?:
+    | "trialing"
+    | "active"
+    | "past_due"
+    | "cancelled"
+    | "unpaid";
+  subscriptionCurrentPeriodEnd?: Date | null;
+  stripeCustomerId?: string | null;
 }) {
   const database = await getDb();
   if (!database) {
@@ -149,21 +159,53 @@ export async function upsertUser(payload: {
   const values: any = { openId: payload.openId };
   if (payload.name !== undefined) values.name = payload.name;
   if (payload.email !== undefined) values.email = payload.email;
-  if (payload.lastSignedIn !== undefined) values.lastSignedIn = payload.lastSignedIn;
-  if (payload.twoFactorSecret !== undefined) values.twoFactorSecret = payload.twoFactorSecret;
-  if (payload.twoFactorEnabled !== undefined) values.twoFactorEnabled = payload.twoFactorEnabled;
-  if (payload.backupCodesHash !== undefined) values.backupCodesHash = payload.backupCodesHash;
+  if (payload.lastSignedIn !== undefined)
+    values.lastSignedIn = payload.lastSignedIn;
+  if (payload.twoFactorSecret !== undefined)
+    values.twoFactorSecret = payload.twoFactorSecret;
+  if (payload.twoFactorEnabled !== undefined)
+    values.twoFactorEnabled = payload.twoFactorEnabled;
+  if (payload.backupCodesHash !== undefined)
+    values.backupCodesHash = payload.backupCodesHash;
+  if (payload.stripeCustomerId !== undefined)
+    values.stripeCustomerId = payload.stripeCustomerId;
+  if (payload.subscriptionCurrentPeriodEnd !== undefined)
+    values.subscriptionCurrentPeriodEnd = payload.subscriptionCurrentPeriodEnd;
+  if (payload.subscriptionStatus !== undefined)
+    values.subscriptionStatus = payload.subscriptionStatus;
+  if (payload.subscriptionTier !== undefined)
+    values.subscriptionTier = payload.subscriptionTier;
+  if (payload.passwordHash !== undefined)
+    values.passwordHash = payload.passwordHash;
 
   const updates: any = {};
   if (payload.name !== undefined) updates.name = payload.name;
   if (payload.email !== undefined) updates.email = payload.email;
-  if (payload.lastSignedIn !== undefined) updates.lastSignedIn = payload.lastSignedIn;
-  if (payload.twoFactorSecret !== undefined) updates.twoFactorSecret = payload.twoFactorSecret;
-  if (payload.twoFactorEnabled !== undefined) updates.twoFactorEnabled = payload.twoFactorEnabled;
-  if (payload.backupCodesHash !== undefined) updates.backupCodesHash = payload.backupCodesHash;
+  if (payload.lastSignedIn !== undefined)
+    updates.lastSignedIn = payload.lastSignedIn;
+  if (payload.twoFactorSecret !== undefined)
+    updates.twoFactorSecret = payload.twoFactorSecret;
+  if (payload.twoFactorEnabled !== undefined)
+    updates.twoFactorEnabled = payload.twoFactorEnabled;
+  if (payload.backupCodesHash !== undefined)
+    updates.backupCodesHash = payload.backupCodesHash;
+  if (payload.stripeCustomerId !== undefined)
+    updates.stripeCustomerId = payload.stripeCustomerId;
+  if (payload.subscriptionCurrentPeriodEnd !== undefined)
+    updates.subscriptionCurrentPeriodEnd = payload.subscriptionCurrentPeriodEnd;
+  if (payload.subscriptionStatus !== undefined)
+    updates.subscriptionStatus = payload.subscriptionStatus;
+  if (payload.subscriptionTier !== undefined)
+    updates.subscriptionTier = payload.subscriptionTier;
+  if (payload.passwordHash !== undefined)
+    updates.passwordHash = payload.passwordHash;
 
   try {
-    const existingUser = await database.select().from(users).where(eq(users.openId, payload.openId)).then((rows: any[]) => rows[0]);
+    const existingUser = await database
+      .select()
+      .from(users)
+      .where(eq(users.openId, payload.openId))
+      .then((rows: any[]) => rows[0]);
 
     if (!existingUser) {
       await database.insert(users).values(values);
@@ -171,7 +213,10 @@ export async function upsertUser(payload: {
     }
 
     if (Object.keys(updates).length > 0) {
-      await database.update(users).set(updates).where(eq(users.openId, payload.openId));
+      await database
+        .update(users)
+        .set(updates)
+        .where(eq(users.openId, payload.openId));
     }
   } catch (error: any) {
     if (error?.code === "23505") {
@@ -182,13 +227,64 @@ export async function upsertUser(payload: {
   }
 }
 
+export async function getUserByEmail(email: string) {
+  const database = await getDb();
+  if (!database) return null;
+
+  const normalizedEmail = email.trim().toLowerCase();
+  const result = await database
+    .select()
+    .from(users)
+    .where(eq(users.email, normalizedEmail))
+    .limit(1);
+  return result[0] ?? null;
+}
+
+export async function createUserAccount(payload: {
+  openId: string;
+  name?: string | null;
+  email: string;
+  passwordHash: string;
+  subscriptionTier: "starter" | "pro" | "fund";
+  subscriptionStatus:
+    | "trialing"
+    | "active"
+    | "past_due"
+    | "cancelled"
+    | "unpaid";
+  subscriptionCurrentPeriodEnd?: Date | null;
+}) {
+  const database = await getDb();
+  if (!database) {
+    throw new Error("Database not available");
+  }
+
+  const values = {
+    openId: payload.openId,
+    name: payload.name ?? null,
+    email: payload.email.trim().toLowerCase(),
+    passwordHash: payload.passwordHash,
+    subscriptionTier: payload.subscriptionTier,
+    subscriptionStatus: payload.subscriptionStatus,
+    subscriptionCurrentPeriodEnd: payload.subscriptionCurrentPeriodEnd ?? null,
+    lastSignedIn: new Date(),
+  };
+
+  const inserted = await database.insert(users).values(values).returning();
+  return inserted[0] ?? null;
+}
+
 export async function getUserById(userId: number) {
   const database = await getDb();
   if (!database) {
     return null;
   }
 
-  const result = await database.select().from(users).where(eq(users.id, userId)).limit(1);
+  const result = await database
+    .select()
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
   return result[0] ?? null;
 }
 
@@ -199,6 +295,15 @@ export async function updateUser(
     twoFactorEnabled?: number;
     backupCodesHash?: string | null;
     lastSignedIn?: Date;
+    subscriptionTier?: "starter" | "pro" | "fund";
+    subscriptionStatus?:
+      | "trialing"
+      | "active"
+      | "past_due"
+      | "cancelled"
+      | "unpaid";
+    subscriptionCurrentPeriodEnd?: Date | null;
+    stripeCustomerId?: string | null;
   }
 ) {
   const database = await getDb();
@@ -207,11 +312,8 @@ export async function updateUser(
   }
 
   try {
-    await database
-      .update(users)
-      .set(updates)
-      .where(eq(users.id, userId));
-    
+    await database.update(users).set(updates).where(eq(users.id, userId));
+
     return { success: true };
   } catch (error) {
     logger.error({ err: error }, "[Database] Error updating user");
@@ -222,8 +324,11 @@ export async function updateUser(
 export async function getUser(openId: string) {
   const database = await getDb();
   if (!database) return null;
-  
-  const result = await database.select().from(users).where(eq(users.openId, openId));
+
+  const result = await database
+    .select()
+    .from(users)
+    .where(eq(users.openId, openId));
   return result[0] || null;
 }
 
@@ -251,8 +356,14 @@ export async function getUsersEligibleForAutomaticScheduledTrading() {
       and(
         inArray(users.role, ["user", "admin"]),
         eq(tradingPreferences.liveTradingEnabled, 1),
-        inArray(tradingPreferences.autonomyMode, ["semi_autonomous", "fully_autonomous"]),
-        inArray(tradingPreferences.executionCadence, ["hourly_watch", "continuous_watch"]),
+        inArray(tradingPreferences.autonomyMode, [
+          "semi_autonomous",
+          "fully_autonomous",
+        ]),
+        inArray(tradingPreferences.executionCadence, [
+          "hourly_watch",
+          "continuous_watch",
+        ]),
         eq(kalshiCredentials.accountStatus, "connected"),
         ne(kalshiCredentials.apiKeyEncrypted, ""),
         ne(kalshiCredentials.privateKeyEncrypted, "")
@@ -275,7 +386,9 @@ export async function upsertKalshiMarket(market: any) {
     : Number(market.yesVolume ?? 0) + Number(market.noVolume ?? 0);
   const safeTitle = String(market.title ?? marketId).slice(0, 255);
   const safeCategory = String(market.category ?? "uncategorized").slice(0, 128);
-  const safeDescription = market.description ? String(market.description) : null;
+  const safeDescription = market.description
+    ? String(market.description)
+    : null;
 
   await database
     .insert(kalshiMarkets)
@@ -284,7 +397,9 @@ export async function upsertKalshiMarket(market: any) {
       title: safeTitle,
       category: safeCategory,
       description: safeDescription,
-      resolutionDate: market.resolutionDate ? new Date(market.resolutionDate) : null,
+      resolutionDate: market.resolutionDate
+        ? new Date(market.resolutionDate)
+        : null,
       status: market.status,
       yesPrice: market.yesPrice,
       noPrice: market.noPrice,
@@ -341,7 +456,7 @@ function toKalshiMarketRecord(record: any) {
 export async function getKalshiMarket(marketId: string) {
   const database = await getDb();
   if (!database) return null;
-  
+
   const result = await database
     .select()
     .from(kalshiMarkets)
@@ -352,7 +467,7 @@ export async function getKalshiMarket(marketId: string) {
 export async function getOpenKalshiMarkets() {
   const database = await getDb();
   if (!database) return [];
-  
+
   const rows = await database
     .select()
     .from(kalshiMarkets)
@@ -365,8 +480,11 @@ export async function getOpenKalshiMarkets() {
 export async function createKalshiOrder(order: any) {
   const database = await getDb();
   if (!database) return;
-  const userId = assertPositiveIntegerUserId(order.userId, "createKalshiOrder userId");
-  
+  const userId = assertPositiveIntegerUserId(
+    order.userId,
+    "createKalshiOrder userId"
+  );
+
   await database.insert(kalshiOrders).values({
     userId,
     orderId: order.orderId,
@@ -379,49 +497,76 @@ export async function createKalshiOrder(order: any) {
   });
 }
 
-export async function updateKalshiOrderStatus(orderId: string, status: string, userId: number, filledQuantity?: number, averagePrice?: number) {
-  const scopedUserId = assertPositiveIntegerUserId(userId, "updateKalshiOrderStatus userId");
+export async function updateKalshiOrderStatus(
+  orderId: string,
+  status: string,
+  userId: number,
+  filledQuantity?: number,
+  averagePrice?: number
+) {
+  const scopedUserId = assertPositiveIntegerUserId(
+    userId,
+    "updateKalshiOrderStatus userId"
+  );
   const database = await getDb();
   if (!database) return;
-  
+
   const updates: any = { status };
   if (filledQuantity !== undefined) updates.filledQuantity = filledQuantity;
   if (averagePrice !== undefined) updates.averagePrice = averagePrice;
   if (status === "filled") updates.filledAt = new Date();
   if (status === "cancelled") updates.cancelledAt = new Date();
-  
+
   await database
     .update(kalshiOrders)
     .set(updates)
     .where(
-      and(eq(kalshiOrders.orderId, orderId), eq(kalshiOrders.userId, scopedUserId))
+      and(
+        eq(kalshiOrders.orderId, orderId),
+        eq(kalshiOrders.userId, scopedUserId)
+      )
     );
 }
 
 export async function getKalshiOrder(orderId: string, userId: number) {
-  const scopedUserId = assertPositiveIntegerUserId(userId, "getKalshiOrder userId");
+  const scopedUserId = assertPositiveIntegerUserId(
+    userId,
+    "getKalshiOrder userId"
+  );
   const database = await getDb();
   if (!database) return null;
-  
+
   const result = await database
     .select()
     .from(kalshiOrders)
     .where(
-      and(eq(kalshiOrders.orderId, orderId), eq(kalshiOrders.userId, scopedUserId))
+      and(
+        eq(kalshiOrders.orderId, orderId),
+        eq(kalshiOrders.userId, scopedUserId)
+      )
     );
   return result[0] || null;
 }
 
-export async function getKalshiOrdersByMarket(marketId: string, userId: number) {
-  const scopedUserId = assertPositiveIntegerUserId(userId, "getKalshiOrdersByMarket userId");
+export async function getKalshiOrdersByMarket(
+  marketId: string,
+  userId: number
+) {
+  const scopedUserId = assertPositiveIntegerUserId(
+    userId,
+    "getKalshiOrdersByMarket userId"
+  );
   const database = await getDb();
   if (!database) return [];
-  
+
   return await database
     .select()
     .from(kalshiOrders)
     .where(
-      and(eq(kalshiOrders.marketId, marketId), eq(kalshiOrders.userId, scopedUserId))
+      and(
+        eq(kalshiOrders.marketId, marketId),
+        eq(kalshiOrders.userId, scopedUserId)
+      )
     );
 }
 
@@ -432,7 +577,10 @@ export async function getKalshiOrdersByMarket(marketId: string, userId: number) 
  * exposure on that market and should not stack another buy on top of it.
  */
 export async function getPendingKalshiOrders(userId: number) {
-  const scopedUserId = assertPositiveIntegerUserId(userId, "getPendingKalshiOrders userId");
+  const scopedUserId = assertPositiveIntegerUserId(
+    userId,
+    "getPendingKalshiOrders userId"
+  );
   const database = await getDb();
   if (!database) return [];
 
@@ -440,30 +588,44 @@ export async function getPendingKalshiOrders(userId: number) {
     .select()
     .from(kalshiOrders)
     .where(
-      and(eq(kalshiOrders.userId, scopedUserId), eq(kalshiOrders.status, "pending"))
+      and(
+        eq(kalshiOrders.userId, scopedUserId),
+        eq(kalshiOrders.status, "pending")
+      )
     );
 }
 
 export async function getTodayKalshiOrderCount(userId: number) {
-  const scopedUserId = assertPositiveIntegerUserId(userId, "getTodayKalshiOrderCount userId");
+  const scopedUserId = assertPositiveIntegerUserId(
+    userId,
+    "getTodayKalshiOrderCount userId"
+  );
   const database = await getDb();
   if (!database) return 0;
 
   // Use UTC midnight so the daily cap is anchored to a real calendar day
   // and is deterministic across server restarts and timezone changes.
   const now = new Date();
-  const startOfDay = new Date(Date.UTC(
-    now.getUTCFullYear(),
-    now.getUTCMonth(),
-    now.getUTCDate(),
-    0, 0, 0, 0,
-  ));
+  const startOfDay = new Date(
+    Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate(),
+      0,
+      0,
+      0,
+      0
+    )
+  );
 
   const orders = await database
     .select()
     .from(kalshiOrders)
     .where(
-      and(eq(kalshiOrders.userId, scopedUserId), gte(kalshiOrders.createdAt, startOfDay))
+      and(
+        eq(kalshiOrders.userId, scopedUserId),
+        gte(kalshiOrders.createdAt, startOfDay)
+      )
     );
 
   return orders.length;
@@ -473,8 +635,11 @@ export async function getTodayKalshiOrderCount(userId: number) {
 export async function createKalshiPosition(position: any) {
   const database = await getDb();
   if (!database) return;
-  const userId = assertPositiveIntegerUserId(position.userId, "createKalshiPosition userId");
-  
+  const userId = assertPositiveIntegerUserId(
+    position.userId,
+    "createKalshiPosition userId"
+  );
+
   await database.insert(kalshiPositions).values({
     userId,
     marketId: position.marketId,
@@ -485,52 +650,77 @@ export async function createKalshiPosition(position: any) {
   });
 }
 
-export async function updateKalshiPositionPrice(positionId: number, currentPrice: number, userId: number) {
-  const scopedUserId = assertPositiveIntegerUserId(userId, "updateKalshiPositionPrice userId");
+export async function updateKalshiPositionPrice(
+  positionId: number,
+  currentPrice: number,
+  userId: number
+) {
+  const scopedUserId = assertPositiveIntegerUserId(
+    userId,
+    "updateKalshiPositionPrice userId"
+  );
   const database = await getDb();
   if (!database) return;
-  
+
   const position = await database
     .select()
     .from(kalshiPositions)
     .where(
-      and(eq(kalshiPositions.id, positionId), eq(kalshiPositions.userId, scopedUserId))
+      and(
+        eq(kalshiPositions.id, positionId),
+        eq(kalshiPositions.userId, scopedUserId)
+      )
     )
     .then((rows: any[]) => rows[0]);
-  
+
   if (!position) return;
-  
-  const unrealizedPnl = position.side === "no"
-    ? position.quantity * (position.entryPrice - currentPrice)
-    : position.quantity * (currentPrice - position.entryPrice);
-  
+
+  const unrealizedPnl =
+    position.side === "no"
+      ? position.quantity * (position.entryPrice - currentPrice)
+      : position.quantity * (currentPrice - position.entryPrice);
+
   await database
     .update(kalshiPositions)
     .set({ currentPrice, unrealizedPnl })
     .where(
-      and(eq(kalshiPositions.id, positionId), eq(kalshiPositions.userId, scopedUserId))
+      and(
+        eq(kalshiPositions.id, positionId),
+        eq(kalshiPositions.userId, scopedUserId)
+      )
     );
 }
 
-export async function closeKalshiPosition(positionId: number, exitPrice: number, userId: number) {
-  const scopedUserId = assertPositiveIntegerUserId(userId, "closeKalshiPosition userId");
+export async function closeKalshiPosition(
+  positionId: number,
+  exitPrice: number,
+  userId: number
+) {
+  const scopedUserId = assertPositiveIntegerUserId(
+    userId,
+    "closeKalshiPosition userId"
+  );
   const database = await getDb();
   if (!database) return;
-  
+
   const position = await database
     .select()
     .from(kalshiPositions)
     .where(
-      and(eq(kalshiPositions.id, positionId), eq(kalshiPositions.userId, scopedUserId))
+      and(
+        eq(kalshiPositions.id, positionId),
+        eq(kalshiPositions.userId, scopedUserId)
+      )
     )
     .then((rows: any[]) => rows[0]);
-  
+
   if (!position) return;
-  
-  const realizedPnl = position.side === "no"
-    ? position.quantity * (position.entryPrice - exitPrice)
-    : position.quantity * (exitPrice - position.entryPrice);
-  
+
+  const realizedPnl =
+    position.side === "no"
+      ? position.quantity * (position.entryPrice - exitPrice)
+      : position.quantity * (exitPrice - position.entryPrice);
+
   await database
     .update(kalshiPositions)
     .set({
@@ -539,7 +729,10 @@ export async function closeKalshiPosition(positionId: number, exitPrice: number,
       realizedPnl,
     })
     .where(
-      and(eq(kalshiPositions.id, positionId), eq(kalshiPositions.userId, scopedUserId))
+      and(
+        eq(kalshiPositions.id, positionId),
+        eq(kalshiPositions.userId, scopedUserId)
+      )
     );
 
   // Best-effort online learning + attribution updates.
@@ -558,10 +751,17 @@ export async function closeKalshiPosition(positionId: number, exitPrice: number,
       .limit(1);
 
     const signalType = String(latestSignal?.signalType ?? "unknown");
-    const category = String(latestSignal?.metadata?.marketCategory ?? "unknown");
-    const outcome: TradeOutcome = realizedPnl > 0 ? "win" : realizedPnl < 0 ? "loss" : "breakeven";
+    const category = String(
+      latestSignal?.metadata?.marketCategory ?? "unknown"
+    );
+    const outcome: TradeOutcome =
+      realizedPnl > 0 ? "win" : realizedPnl < 0 ? "loss" : "breakeven";
 
-    const recentLearning = await getRecentOnlineLearningUpdates(scopedUserId, "kalshi", 200);
+    const recentLearning = await getRecentOnlineLearningUpdates(
+      scopedUserId,
+      "kalshi",
+      200
+    );
     const model = deriveModelFromUpdates({
       userId: scopedUserId,
       platform: "kalshi",
@@ -613,14 +813,19 @@ export async function closeKalshiPosition(positionId: number, exitPrice: number,
       ...attribution,
     });
   } catch (err) {
-    logger.debug({ err, userId: scopedUserId, positionId }, "non-critical learning/attribution update failed");
+    logger.debug(
+      { err, userId: scopedUserId, positionId },
+      "non-critical learning/attribution update failed"
+    );
   }
 
   // Side-effect: grow the desk's learning tape with what just happened.
   // Wrapped + swallowed inside tryRecordKalshiCloseToDeskMemory so a memory
   // failure can never block a real trade close.
   try {
-    const { tryRecordKalshiCloseToDeskMemory } = await import("./db.desk-memory");
+    const { tryRecordKalshiCloseToDeskMemory } = await import(
+      "./db.desk-memory"
+    );
     await tryRecordKalshiCloseToDeskMemory({
       userId: scopedUserId,
       marketId: position.marketId,
@@ -636,10 +841,13 @@ export async function closeKalshiPosition(positionId: number, exitPrice: number,
 }
 
 export async function getOpenKalshiPositions(userId: number) {
-  const scopedUserId = assertPositiveIntegerUserId(userId, "getOpenKalshiPositions userId");
+  const scopedUserId = assertPositiveIntegerUserId(
+    userId,
+    "getOpenKalshiPositions userId"
+  );
   const database = await getDb();
   if (!database) return [];
-  
+
   return await database
     .select()
     .from(kalshiPositions)
@@ -652,7 +860,10 @@ export async function getOpenKalshiPositions(userId: number) {
 }
 
 export async function getKalshiTradeHistory(limit: number, userId: number) {
-  const scopedUserId = assertPositiveIntegerUserId(userId, "getKalshiTradeHistory userId");
+  const scopedUserId = assertPositiveIntegerUserId(
+    userId,
+    "getKalshiTradeHistory userId"
+  );
   const database = await getDb();
   if (!database) return [];
 
@@ -667,7 +878,10 @@ export async function getKalshiTradeHistory(limit: number, userId: number) {
 }
 
 export async function getTodayRealizedLoss(userId: number) {
-  const scopedUserId = assertPositiveIntegerUserId(userId, "getTodayRealizedLoss userId");
+  const scopedUserId = assertPositiveIntegerUserId(
+    userId,
+    "getTodayRealizedLoss userId"
+  );
   const database = await getDb();
   if (!database) return 0;
 
@@ -676,12 +890,17 @@ export async function getTodayRealizedLoss(userId: number) {
   // timezone and can effectively reset at non-midnight wallclock
   // times across restarts.
   const now = new Date();
-  const startOfDay = new Date(Date.UTC(
-    now.getUTCFullYear(),
-    now.getUTCMonth(),
-    now.getUTCDate(),
-    0, 0, 0, 0,
-  ));
+  const startOfDay = new Date(
+    Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate(),
+      0,
+      0,
+      0,
+      0
+    )
+  );
 
   const closedToday = await database
     .select()
@@ -704,8 +923,11 @@ export async function getTodayRealizedLoss(userId: number) {
 export async function createKalshiSignal(signal: any) {
   const database = await getDb();
   if (!database) return;
-  const userId = assertPositiveIntegerUserId(signal.userId, "createKalshiSignal userId");
-  
+  const userId = assertPositiveIntegerUserId(
+    signal.userId,
+    "createKalshiSignal userId"
+  );
+
   const result = await database.insert(kalshiSignals).values({
     userId,
     marketId: signal.marketId,
@@ -718,15 +940,18 @@ export async function createKalshiSignal(signal: any) {
     marketPrice: signal.marketPrice,
     expectedValue: signal.expectedValue,
   });
-  
+
   return result;
 }
 
 export async function getRecentSignals(limit: number, userId: number) {
-  const scopedUserId = assertPositiveIntegerUserId(userId, "getRecentSignals userId");
+  const scopedUserId = assertPositiveIntegerUserId(
+    userId,
+    "getRecentSignals userId"
+  );
   const database = await getDb();
   if (!database) return [];
-  
+
   const query = database
     .select()
     .from(kalshiSignals)
@@ -771,8 +996,11 @@ export async function saveTimeframeAnalysis(payload: {
 }) {
   const database = await getDb();
   if (!database) return;
-  
-  const scopedUserId = assertPositiveIntegerUserId(payload.userId, "saveTimeframeAnalysis userId");
+
+  const scopedUserId = assertPositiveIntegerUserId(
+    payload.userId,
+    "saveTimeframeAnalysis userId"
+  );
 
   // Insert each timeframe analysis as a separate row
   for (const analysis of payload.timeframeAnalyses) {
@@ -789,7 +1017,10 @@ export async function saveTimeframeAnalysis(payload: {
         analyzedAt: new Date(),
       });
     } catch (error) {
-      logger.error({ error, marketId: payload.marketId, timeframe: analysis.timeframe }, "Failed to save timeframe analysis");
+      logger.error(
+        { error, marketId: payload.marketId, timeframe: analysis.timeframe },
+        "Failed to save timeframe analysis"
+      );
     }
   }
 }
@@ -820,16 +1051,19 @@ export async function saveMicrostructure(data: {
 }
 
 // Bayesian Signal Updates
-export async function getSignalById(signalId: number, dbInstance?: Awaited<ReturnType<typeof getDb>>) {
-  const database = dbInstance || await getDb();
+export async function getSignalById(
+  signalId: number,
+  dbInstance?: Awaited<ReturnType<typeof getDb>>
+) {
+  const database = dbInstance || (await getDb());
   if (!database) return null;
-  
+
   const result = await database
     .select()
     .from(kalshiSignals)
     .where(eq(kalshiSignals.id, signalId))
     .limit(1);
-  
+
   return result[0] || null;
 }
 
@@ -849,10 +1083,13 @@ export async function insertBayesianUpdate(
   },
   dbInstance?: Awaited<ReturnType<typeof getDb>>
 ) {
-  const database = dbInstance || await getDb();
+  const database = dbInstance || (await getDb());
   if (!database) return;
-  
-  const scopedUserId = assertPositiveIntegerUserId(update.userId, "insertBayesianUpdate userId");
+
+  const scopedUserId = assertPositiveIntegerUserId(
+    update.userId,
+    "insertBayesianUpdate userId"
+  );
 
   await database.insert(signalBayesianUpdates).values({
     signalId: update.signalId,
@@ -874,7 +1111,7 @@ export async function updateSignalBayesianProbability(
   bayesianProbability: number,
   dbInstance?: Awaited<ReturnType<typeof getDb>>
 ) {
-  const database = dbInstance || await getDb();
+  const database = dbInstance || (await getDb());
   if (!database) return;
 
   await database
@@ -883,8 +1120,11 @@ export async function updateSignalBayesianProbability(
     .where(eq(kalshiSignals.id, signalId));
 }
 
-export async function getBayesianUpdatesForSignal(signalId: number, dbInstance?: Awaited<ReturnType<typeof getDb>>) {
-  const database = dbInstance || await getDb();
+export async function getBayesianUpdatesForSignal(
+  signalId: number,
+  dbInstance?: Awaited<ReturnType<typeof getDb>>
+) {
+  const database = dbInstance || (await getDb());
   if (!database) return [];
 
   const updates = await database
@@ -897,8 +1137,14 @@ export async function getBayesianUpdatesForSignal(signalId: number, dbInstance?:
 }
 
 // Kalshi capital queries
-export async function initializeKalshiCapital(startingBalance: number, userId: number) {
-  const scopedUserId = assertPositiveIntegerUserId(userId, "initializeKalshiCapital userId");
+export async function initializeKalshiCapital(
+  startingBalance: number,
+  userId: number
+) {
+  const scopedUserId = assertPositiveIntegerUserId(
+    userId,
+    "initializeKalshiCapital userId"
+  );
   const database = await getDb();
   if (!database) return;
 
@@ -927,7 +1173,10 @@ export async function initializeKalshiCapital(startingBalance: number, userId: n
 }
 
 export async function getKalshiCapital(userId: number) {
-  const scopedUserId = assertPositiveIntegerUserId(userId, "getKalshiCapital userId");
+  const scopedUserId = assertPositiveIntegerUserId(
+    userId,
+    "getKalshiCapital userId"
+  );
   const database = await getDb();
   if (!database) return null;
 
@@ -939,8 +1188,14 @@ export async function getKalshiCapital(userId: number) {
   return result[0] || null;
 }
 
-export async function syncKalshiCapitalWithLiveEquity(liveEquity: number, userId: number) {
-  const scopedUserId = assertPositiveIntegerUserId(userId, "syncKalshiCapitalWithLiveEquity userId");
+export async function syncKalshiCapitalWithLiveEquity(
+  liveEquity: number,
+  userId: number
+) {
+  const scopedUserId = assertPositiveIntegerUserId(
+    userId,
+    "syncKalshiCapitalWithLiveEquity userId"
+  );
   const database = await getDb();
   if (!database) return null;
 
@@ -960,17 +1215,17 @@ export async function syncKalshiCapitalWithLiveEquity(liveEquity: number, userId
 
   const shouldResetStartingBalance =
     Number(existing.totalTrades ?? 0) === 0 &&
-    (
-      !Number.isFinite(Number(existing.startingBalance)) ||
+    (!Number.isFinite(Number(existing.startingBalance)) ||
       Number(existing.startingBalance) <= 0 ||
-      (Number(existing.startingBalance) === 100 && normalizedEquity !== 100)
-    );
+      (Number(existing.startingBalance) === 100 && normalizedEquity !== 100));
 
   await database
     .update(kalshiCapital)
     .set({
       currentBalance: normalizedEquity,
-      ...(shouldResetStartingBalance ? { startingBalance: normalizedEquity } : {}),
+      ...(shouldResetStartingBalance
+        ? { startingBalance: normalizedEquity }
+        : {}),
       updatedAt: new Date(),
     })
     .where(eq(kalshiCapital.id, existing.id));
@@ -979,7 +1234,10 @@ export async function syncKalshiCapitalWithLiveEquity(liveEquity: number, userId
 }
 
 export async function updateKalshiCapital(updates: any, userId: number) {
-  const scopedUserId = assertPositiveIntegerUserId(userId, "updateKalshiCapital userId");
+  const scopedUserId = assertPositiveIntegerUserId(
+    userId,
+    "updateKalshiCapital userId"
+  );
   const database = await getDb();
   if (!database) return;
 
@@ -1020,11 +1278,22 @@ export async function createAutonomyRun(run: {
   userId: number;
   triggeredByOpenId: string;
   triggerSource: string;
-  autonomyMode: "manual" | "approval_required" | "semi_autonomous" | "fully_autonomous";
-  executionCadence: "manual_only" | "session_assisted" | "hourly_watch" | "continuous_watch";
+  autonomyMode:
+    | "manual"
+    | "approval_required"
+    | "semi_autonomous"
+    | "fully_autonomous";
+  executionCadence:
+    | "manual_only"
+    | "session_assisted"
+    | "hourly_watch"
+    | "continuous_watch";
   appliedGuardrails?: string | null;
 }) {
-  const scopedUserId = assertPositiveIntegerUserId(run.userId, "createAutonomyRun userId");
+  const scopedUserId = assertPositiveIntegerUserId(
+    run.userId,
+    "createAutonomyRun userId"
+  );
   const database = await getDb();
   if (!database) return null;
 
@@ -1033,7 +1302,10 @@ export async function createAutonomyRun(run: {
       runId: run.runId,
       runKey: run.runKey,
       userId: scopedUserId,
-      triggeredByOpenId: assertNonEmptyOpenId(run.triggeredByOpenId, "createAutonomyRun triggeredByOpenId"),
+      triggeredByOpenId: assertNonEmptyOpenId(
+        run.triggeredByOpenId,
+        "createAutonomyRun triggeredByOpenId"
+      ),
       triggerSource: String(run.triggerSource || "unknown").slice(0, 32),
       autonomyMode: run.autonomyMode,
       executionCadence: run.executionCadence,
@@ -1050,7 +1322,10 @@ export async function createAutonomyRun(run: {
     .select()
     .from(autonomyRuns)
     .where(
-      and(eq(autonomyRuns.runId, run.runId), eq(autonomyRuns.userId, scopedUserId))
+      and(
+        eq(autonomyRuns.runId, run.runId),
+        eq(autonomyRuns.userId, scopedUserId)
+      )
     )
     .then((rows: any[]) => rows[0]);
 
@@ -1062,7 +1337,10 @@ export async function updateAutonomyRun(
   userId: number,
   updates: Record<string, unknown>
 ) {
-  const scopedUserId = assertPositiveIntegerUserId(userId, "updateAutonomyRun userId");
+  const scopedUserId = assertPositiveIntegerUserId(
+    userId,
+    "updateAutonomyRun userId"
+  );
   const database = await getDb();
   if (!database) return null;
 
@@ -1088,7 +1366,10 @@ export async function updateAutonomyRun(
 }
 
 export async function getLatestAutonomyRun(userId: number) {
-  const scopedUserId = assertPositiveIntegerUserId(userId, "getLatestAutonomyRun userId");
+  const scopedUserId = assertPositiveIntegerUserId(
+    userId,
+    "getLatestAutonomyRun userId"
+  );
   const database = await getDb();
   if (!database) return null;
 
@@ -1103,7 +1384,10 @@ export async function getLatestAutonomyRun(userId: number) {
 }
 
 export async function getRecentAutonomyRuns(userId: number, limit: number = 8) {
-  const scopedUserId = assertPositiveIntegerUserId(userId, "getRecentAutonomyRuns userId");
+  const scopedUserId = assertPositiveIntegerUserId(
+    userId,
+    "getRecentAutonomyRuns userId"
+  );
   const database = await getDb();
   if (!database) return [];
 
@@ -1121,9 +1405,12 @@ export async function logAuditEvent(
   details: string,
   triggeredByOpenId: string,
   entityType: string = "system",
-  entityId?: number | null,
+  entityId?: number | null
 ) {
-  const scopedOpenId = assertNonEmptyOpenId(triggeredByOpenId, "logAuditEvent triggeredByOpenId");
+  const scopedOpenId = assertNonEmptyOpenId(
+    triggeredByOpenId,
+    "logAuditEvent triggeredByOpenId"
+  );
   const database = await getDb();
   if (!database) return false;
 
@@ -1144,9 +1431,12 @@ export async function logAuditEvent(
 
 export async function getLatestAuditEventByType(
   eventType: string,
-  triggeredByOpenId: string,
+  triggeredByOpenId: string
 ) {
-  const scopedOpenId = assertNonEmptyOpenId(triggeredByOpenId, "getLatestAuditEventByType triggeredByOpenId");
+  const scopedOpenId = assertNonEmptyOpenId(
+    triggeredByOpenId,
+    "getLatestAuditEventByType triggeredByOpenId"
+  );
   const database = await getDb();
   if (!database) return null;
 
@@ -1167,9 +1457,12 @@ export async function getLatestAuditEventByType(
 
 export async function getAuditLog(
   limitDays: number = 7,
-  triggeredByOpenId: string,
+  triggeredByOpenId: string
 ) {
-  const scopedOpenId = assertNonEmptyOpenId(triggeredByOpenId, "getAuditLog triggeredByOpenId");
+  const scopedOpenId = assertNonEmptyOpenId(
+    triggeredByOpenId,
+    "getAuditLog triggeredByOpenId"
+  );
   const database = await getDb();
   if (!database) return [];
 
@@ -1238,7 +1531,10 @@ export async function createKalshiFill(fill: {
   fillPrice: number;
   fillQuantity: number;
 }) {
-  const scopedUserId = assertPositiveIntegerUserId(fill.userId, "createKalshiFill userId");
+  const scopedUserId = assertPositiveIntegerUserId(
+    fill.userId,
+    "createKalshiFill userId"
+  );
   const database = await getDb();
   if (!database) return null;
 
@@ -1254,7 +1550,10 @@ export async function createKalshiFill(fill: {
 }
 
 export async function getKalshiFillsByOrder(orderId: string, userId: number) {
-  const scopedUserId = assertPositiveIntegerUserId(userId, "getKalshiFillsByOrder userId");
+  const scopedUserId = assertPositiveIntegerUserId(
+    userId,
+    "getKalshiFillsByOrder userId"
+  );
   const database = await getDb();
   if (!database) return [];
 
@@ -1272,7 +1571,10 @@ export async function getKalshiFillsByOrder(orderId: string, userId: number) {
 
 // Autonomy run detail query
 export async function getAutonomyRunDetail(runId: string, userId: number) {
-  const scopedUserId = assertPositiveIntegerUserId(userId, "getAutonomyRunDetail userId");
+  const scopedUserId = assertPositiveIntegerUserId(
+    userId,
+    "getAutonomyRunDetail userId"
+  );
   const database = await getDb();
   if (!database) return null;
 
@@ -1280,10 +1582,7 @@ export async function getAutonomyRunDetail(runId: string, userId: number) {
     .select()
     .from(autonomyRuns)
     .where(
-      and(
-        eq(autonomyRuns.runId, runId),
-        eq(autonomyRuns.userId, scopedUserId)
-      )
+      and(eq(autonomyRuns.runId, runId), eq(autonomyRuns.userId, scopedUserId))
     )
     .limit(1);
 
@@ -1295,7 +1594,10 @@ export async function setBetaAccessLevel(
   userId: number,
   level: "none" | "internal" | "invited" | "public"
 ) {
-  const scopedUserId = assertPositiveIntegerUserId(userId, "setBetaAccessLevel userId");
+  const scopedUserId = assertPositiveIntegerUserId(
+    userId,
+    "setBetaAccessLevel userId"
+  );
   const database = await getDb();
   if (!database) throw new Error("Database not available");
 
@@ -1314,7 +1616,10 @@ export async function setBetaAccessLevel(
 }
 
 export async function getUserBetaAccessLevel(userId: number) {
-  const scopedUserId = assertPositiveIntegerUserId(userId, "getUserBetaAccessLevel userId");
+  const scopedUserId = assertPositiveIntegerUserId(
+    userId,
+    "getUserBetaAccessLevel userId"
+  );
   const database = await getDb();
   if (!database) return "none" as const;
 
@@ -1324,7 +1629,11 @@ export async function getUserBetaAccessLevel(userId: number) {
     .where(eq(users.id, scopedUserId))
     .limit(1);
 
-  return (result[0]?.betaAccessLevel ?? "none") as "none" | "internal" | "invited" | "public";
+  return (result[0]?.betaAccessLevel ?? "none") as
+    | "none"
+    | "internal"
+    | "invited"
+    | "public";
 }
 
 // Portfolio Volatility History
@@ -1338,7 +1647,10 @@ export async function savePortfolioVolatility(data: {
 }): Promise<void> {
   const database = await getDb();
   if (!database) return;
-  const scopedUserId = assertPositiveIntegerUserId(data.userId, "savePortfolioVolatility userId");
+  const scopedUserId = assertPositiveIntegerUserId(
+    data.userId,
+    "savePortfolioVolatility userId"
+  );
   await database.insert(portfolioVolatilityHistory).values({
     userId: scopedUserId,
     annualizedVol: data.annualizedVol,
@@ -1354,7 +1666,15 @@ export async function savePositionExit(data: {
   positionId: string;
   userId: number;
   platform?: string;
-  exitReason: "stop_loss" | "trailing_stop" | "profit_target_1" | "profit_target_2" | "profit_target_3" | "time_decay" | "volatility_adjustment" | "manual";
+  exitReason:
+    | "stop_loss"
+    | "trailing_stop"
+    | "profit_target_1"
+    | "profit_target_2"
+    | "profit_target_3"
+    | "time_decay"
+    | "volatility_adjustment"
+    | "manual";
   entryPrice: number;
   exitPrice: number;
   stopLevel?: number;
@@ -1362,7 +1682,10 @@ export async function savePositionExit(data: {
 }): Promise<void> {
   const database = await getDb();
   if (!database) return;
-  const scopedUserId = assertPositiveIntegerUserId(data.userId, "savePositionExit userId");
+  const scopedUserId = assertPositiveIntegerUserId(
+    data.userId,
+    "savePositionExit userId"
+  );
   const pnlPct = (data.exitPrice - data.entryPrice) / data.entryPrice;
   await database.insert(positionExits).values({
     positionId: data.positionId,
@@ -1544,14 +1867,22 @@ export async function getRecentOnlineLearningUpdates(
   platform: "kalshi" | "polymarket",
   limit: number = 200
 ) {
-  const scopedUserId = assertPositiveIntegerUserId(userId, "getRecentOnlineLearningUpdates userId");
+  const scopedUserId = assertPositiveIntegerUserId(
+    userId,
+    "getRecentOnlineLearningUpdates userId"
+  );
   const database = await getDb();
   if (!database) return [];
 
   return await database
     .select()
     .from(onlineLearningUpdates)
-    .where(and(eq(onlineLearningUpdates.userId, scopedUserId), eq(onlineLearningUpdates.platform, platform)))
+    .where(
+      and(
+        eq(onlineLearningUpdates.userId, scopedUserId),
+        eq(onlineLearningUpdates.platform, platform)
+      )
+    )
     .orderBy(desc(onlineLearningUpdates.createdAt))
     .limit(limit);
 }
@@ -1590,14 +1921,22 @@ export async function getPerformanceAttributionHistory(
   platform: "kalshi" | "polymarket",
   limit: number = 200
 ) {
-  const scopedUserId = assertPositiveIntegerUserId(userId, "getPerformanceAttributionHistory userId");
+  const scopedUserId = assertPositiveIntegerUserId(
+    userId,
+    "getPerformanceAttributionHistory userId"
+  );
   const database = await getDb();
   if (!database) return [];
 
   return await database
     .select()
     .from(performanceAttribution)
-    .where(and(eq(performanceAttribution.userId, scopedUserId), eq(performanceAttribution.platform, platform)))
+    .where(
+      and(
+        eq(performanceAttribution.userId, scopedUserId),
+        eq(performanceAttribution.platform, platform)
+      )
+    )
     .orderBy(desc(performanceAttribution.createdAt))
     .limit(limit);
 }
@@ -1610,8 +1949,14 @@ export async function getPerformanceAttributionHistory(
  * caller (UI) typically prepends the starting balance / appends current
  * balance as needed.
  */
-export async function getKalshiEquityCurve(userId: number, limitDays: number = 365) {
-  const scopedUserId = assertPositiveIntegerUserId(userId, "getKalshiEquityCurve userId");
+export async function getKalshiEquityCurve(
+  userId: number,
+  limitDays: number = 365
+) {
+  const scopedUserId = assertPositiveIntegerUserId(
+    userId,
+    "getKalshiEquityCurve userId"
+  );
   const database = await getDb();
   if (!database) return [];
 
@@ -1637,11 +1982,15 @@ export async function getKalshiEquityCurve(userId: number, limitDays: number = 3
   for (const row of closed) {
     const closedAt = row.closedAt as Date | null;
     if (!closedAt) continue;
-    const key = new Date(Date.UTC(
-      closedAt.getUTCFullYear(),
-      closedAt.getUTCMonth(),
-      closedAt.getUTCDate(),
-    )).toISOString().split("T")[0];
+    const key = new Date(
+      Date.UTC(
+        closedAt.getUTCFullYear(),
+        closedAt.getUTCMonth(),
+        closedAt.getUTCDate()
+      )
+    )
+      .toISOString()
+      .split("T")[0];
     const pnl = Number(row.realizedPnl ?? 0);
     if (!Number.isFinite(pnl)) continue;
     dailyPnl.set(key, (dailyPnl.get(key) ?? 0) + pnl);
@@ -1658,8 +2007,14 @@ export async function getKalshiEquityCurve(userId: number, limitDays: number = 3
  * createdAt when filledAt is null so pending/cancelled orders still
  * surface as "attempted" activity.
  */
-export async function getKalshiActivityHeatmap(userId: number, limitDays: number = 90) {
-  const scopedUserId = assertPositiveIntegerUserId(userId, "getKalshiActivityHeatmap userId");
+export async function getKalshiActivityHeatmap(
+  userId: number,
+  limitDays: number = 90
+) {
+  const scopedUserId = assertPositiveIntegerUserId(
+    userId,
+    "getKalshiActivityHeatmap userId"
+  );
   const database = await getDb();
   if (!database) return [];
 
