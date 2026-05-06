@@ -43,10 +43,12 @@ import {
 import { fetchPolymarketMarkets, closePolymarketPosition } from "./polymarketAuth";
 import { simulatePolymarketPositionClose } from "./paperTrading";
 import { withUserLock } from "./userMutex";
+import { MARKET_VOLATILITY_DEFAULT } from "./marketVolatility";
 
-// Same defaults as Kalshi exit monitor; can be tuned per-market in a
-// follow-up pass once we have polymarketMarketSnapshots.
-const DEFAULT_VOLATILITY = 0.15;
+// Polymarket markets don't yet have a snapshots table, so we use the
+// constant for now.  A follow-up pass can build polymarketMarketSnapshots
+// + a Polymarket version of estimateMarketVolatility.
+const DEFAULT_VOLATILITY = MARKET_VOLATILITY_DEFAULT;
 const DEFAULT_ATR = 0.01;
 // Bound the market-fetch — the autonomy run uses 80, we want enough to
 // cover any positions we hold.  Polymarket markets are paginated; this is
