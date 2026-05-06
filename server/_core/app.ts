@@ -13,8 +13,13 @@ import { runScheduledAutonomousTradingBatch } from "./kalshiAutonomy";
 import { syncPendingOrders, syncLivePositions } from "./kalshiOrderSync";
 import { logger } from "./logger";
 import { correlationIdMiddleware } from "./correlationId";
-import { apiLimiter, authLimiter, scheduledLimiter } from "./rateLimiter";
-import { csrfProtection } from "./csrf";
+import {
+  apiLimiter,
+  authLimiter,
+  scheduledLimiter,
+  tradingLimiter,
+} from "./rateLimiter";
+import { csrfProtection, issueCsrfToken } from "./csrf";
 import { createAutonomousTradingLock, createOrderSyncLock } from "./distributedLock";
 import { clearInvalidKalshiCredentials } from "../db.kalshi-credentials";
 
@@ -292,6 +297,7 @@ export async function createApp(options: { runStartupMigrations?: boolean } = {}
 
   // Cookie parser for CSRF tokens and session cookies
   app.use(cookieParser());
+  app.use(issueCsrfToken);
 
   // Correlation ID middleware for request tracing
   app.use(correlationIdMiddleware);
@@ -299,6 +305,14 @@ export async function createApp(options: { runStartupMigrations?: boolean } = {}
   // Body parsers — keep limits tight for a trading API.
   app.use(express.json({ limit: "100kb" }));
   app.use(express.urlencoded({ limit: "100kb", extended: true }));
+
+  // Extra protection for high-risk trading mutation endpoints. tRPC batch URLs
+  // include the procedure path in the URL, so this also catches batched calls
+  // that contain one of these mutation names.
+  app.use(
+    /\/api\/trpc\/.*(?:kalshi\.placeOrder|kalshi\.cancelOrder|kalshi\.killSwitch|kalshi\.setTradingActivation|polymarket\.placeOrder|polymarket\.runAutonomousTrading)/,
+    tradingLimiter
+  );
 
   // Rate limiting for API endpoints
   app.use("/api/trpc", apiLimiter);
