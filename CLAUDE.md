@@ -78,8 +78,9 @@ used.  Never use `npm` or `yarn` in this repo — the lockfile is
 | `LOG_LEVEL` | optional | `debug`/`info`/`warn`/`error` (default `info`) |
 | `OPENROUTER_MODEL` | optional | Default `tencent/hy3-preview:free` (free tier — upgrade to a paid model for sub-3-min cadence) |
 | `AUTONOMY_INTERVAL_MS` | optional | Kalshi+Polymarket autonomy cadence in ms (default `120000` = 2 min) |
-| `ORDER_SYNC_INTERVAL_MS` | optional | Kalshi order/position reconciliation cadence (default `30000` = 30 s) |
+| `ORDER_SYNC_INTERVAL_MS` | optional | Kalshi order/position reconciliation + exit monitor cadence (default `30000` = 30 s) |
 | `CROSS_ARB_INTERVAL_MS` | optional | Cross-platform arb scanner cadence (default `10000` = 10 s) |
+| `AUTO_CLOSE_ON_EXIT_SIGNAL` | optional | `true` to auto-close positions when stop-loss / profit-target hits (default `false` — emits audit signal only, lets operator validate first) |
 | `ALLOWED_ORIGIN` | optional | Extra CORS origin for production (e.g. Railway public URL) |
 | `ALERT_WEBHOOK_URL` | optional | Webhook URL for ops alerts (consecutive failures, equity drops) |
 | `PAPER_TRADE_MODE` | optional | `true` to simulate orders without placing real trades |
@@ -296,6 +297,38 @@ placeKalshiOrder()                  ← Kalshi REST (wrapped in withUserLock)
 - `kalshi_reviewer_telemetry` — token usage, cache hit ratio, escalation counts
 - `scheduled_autonomy_run_executed` / `generated_only` / `skipped` / `error`
 - `kalshi_order_placed` / `kalshi_order_blocked_or_failed`
+- `kalshi_position_exit_signal` — stop-loss or profit-target trigger (auto-close gated by `AUTO_CLOSE_ON_EXIT_SIGNAL`)
+- `kalshi_position_closed` / `kalshi_position_close_failed`
+
+---
+
+## Exit monitor (stop-loss + profit targets)
+
+Independent of the autonomy pipeline above, `server/_core/exitMonitor.ts`
+runs every `ORDER_SYNC_INTERVAL_MS` (default 30 s) for every open Kalshi
+position:
+
+```
+syncLivePositions()                   ← reflect Kalshi positions into DB
+  │
+  ▼
+evaluateExitsForOpenPositions()       ← exitMonitor.ts
+  │  for each open position:
+  │    1. read current market price from kalshiMarkets table
+  │    2. initializeExitStrategy(entry, side, vol=0.15)  ← stateless recompute
+  │    3. checkExitConditions(state, currentPrice)
+  │
+  ├── if shouldExit:
+  │     emit `kalshi_position_exit_signal` audit event always
+  │     if AUTO_CLOSE_ON_EXIT_SIGNAL=true: closeKalshiPosition() (real reverse order)
+  │
+  └── else: continue
+```
+
+Stateless design: trailing stops + profit-target hit memory require
+per-position persistent state (high-water mark, hitTargets[]) — that's a
+follow-up pass.  The current implementation ships hard stop-loss + profit
+targets, which capture the majority of the P&L lift from disciplined exits.
 
 ---
 

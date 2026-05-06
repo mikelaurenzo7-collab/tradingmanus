@@ -7,6 +7,7 @@ import { getUsersEligibleForAutomaticScheduledTrading } from "../db";
 import { runScheduledAutonomousTradingBatch } from "./kalshiAutonomy";
 import { runPolymarketAutonomousTrading } from "./polymarketAutonomy";
 import { syncPendingOrders, syncLivePositions } from "./kalshiOrderSync";
+import { evaluateExitsForOpenPositions } from "./exitMonitor";
 import { createAutonomousTradingLock, createOrderSyncLock, DistributedLock } from "./distributedLock";
 import { logger } from "./logger";
 import { fetchKalshiMarkets } from "./kalshiMarketData";
@@ -200,6 +201,19 @@ async function runOrderSync() {
       try {
         await syncPendingOrders(user.id);
         await syncLivePositions(user.id);
+        // Evaluate stop-loss / profit-target on every open position with each
+        // sync.  Inside the same lock so a concurrent autonomy run can't read
+        // a half-closed position state.
+        const exits = await evaluateExitsForOpenPositions(user.id, "local_scheduler");
+        const triggered = exits.filter((e) => e.decision.shouldExit);
+        if (triggered.length > 0) {
+          logger.info(
+            { userId: user.id, count: triggered.length, closed: triggered.filter((e) => e.closed).length },
+            "[ExitMonitor] %d exit signal(s) triggered for user %d",
+            triggered.length,
+            user.id,
+          );
+        }
       } catch (err) {
         logger.error({ err, userId: user.id }, "[OrderSync] Sync failed for user %d", user.id);
       } finally {
