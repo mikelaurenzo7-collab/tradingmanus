@@ -510,6 +510,11 @@ export const polymarketPositions = pgTable("polymarketPositions", {
   positionStatus: polymarketPositionStatusEnum("positionStatus")
     .default("open")
     .notNull(),
+  // Stateful exit-strategy bookkeeping (mirror of kalshiPositions.exitState).
+  // Holds ExitStrategyState shape from server/_core/exitStrategy.ts so the
+  // trailing stop ratchets across exit-monitor ticks for Polymarket positions
+  // too.  Nullable: pre-migration rows are treated as fresh state.
+  exitState: jsonb("exitState"),
   openedAt: createdAt(),
   closedAt: timestamp("closedAt", { withTimezone: true }),
 });

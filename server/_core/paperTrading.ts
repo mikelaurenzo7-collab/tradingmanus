@@ -406,3 +406,98 @@ export async function simulatePolymarketOrderFill(
     };
   }
 }
+
+/**
+ * Simulate a Polymarket position close at the given mark price.
+ * Marks the local position row as `closed` with realized PnL set to
+ * (markPrice - entryPrice) * sizeUsdc / entryPrice (proportional return
+ * approximation; precise CLOB fee accounting is a follow-up).
+ */
+export async function simulatePolymarketPositionClose(
+  userId: number,
+  positionId: number,
+  markPrice: number,
+  triggeredByOpenId: string,
+): Promise<PolymarketPlaceResult> {
+  try {
+    const scopedUserId = assertPositiveIntegerUserId(userId, "Polymarket paper close userId");
+
+    if (!Number.isFinite(markPrice) || markPrice <= 0 || markPrice >= 1) {
+      return { success: false, error: "Invalid mark price for paper-mode Polymarket close" };
+    }
+
+    const existing = await db
+      .select()
+      .from(polymarketPositions)
+      .where(eq(polymarketPositions.id, positionId))
+      .then((rows: unknown[]) => (rows as Array<Record<string, unknown>>)[0]);
+
+    if (!existing) {
+      return { success: false, error: "Position not found" };
+    }
+
+    const entryPrice = Number(existing.entryPrice ?? 0);
+    const sizeUsdc = Number(existing.sizeUsdc ?? 0);
+    const side = String(existing.side ?? "yes") as "yes" | "no";
+    // For YES position: gain = sizeUsdc * (markPrice/entryPrice - 1)
+    // For NO  position: gain = sizeUsdc * (entryPrice/markPrice - 1) inverted —
+    // simpler approximation that matches our other learning code.
+    const realizedPnl =
+      side === "yes"
+        ? sizeUsdc * (markPrice - entryPrice) / Math.max(entryPrice, 1e-9)
+        : sizeUsdc * (entryPrice - markPrice) / Math.max(entryPrice, 1e-9);
+
+    const closeOrderId = `nexus-poly-paper-close-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+    try {
+      await db
+        .update(polymarketPositions)
+        .set({
+          currentPrice: markPrice,
+          realizedPnl,
+          unrealizedPnl: 0,
+          positionStatus: "closed",
+          closedAt: new Date(),
+        })
+        .where(eq(polymarketPositions.id, positionId));
+    } catch (err) {
+      logger.error(
+        { err, positionId },
+        "[PaperTrading] Failed to mark simulated Polymarket close",
+      );
+      return { success: false, error: "Failed to update simulated Polymarket position" };
+    }
+
+    void logAuditEvent(
+      "polymarket_position_closed",
+      JSON.stringify({
+        positionId,
+        marketId: existing.marketId,
+        tokenId: existing.tokenId,
+        side,
+        sizeUsdc,
+        entryPrice,
+        markPrice,
+        realizedPnl,
+        orderId: closeOrderId,
+        simulated: true,
+      }),
+      triggeredByOpenId,
+    ).catch((auditErr) =>
+      logger.error({ err: auditErr, positionId }, "[PaperTrading] Failed to write Polymarket simulated close audit"),
+    );
+
+    logger.info(
+      { positionId, markPrice, realizedPnl, sizeUsdc },
+      "[PaperTrading] Simulated Polymarket position closed",
+    );
+
+    return { success: true, orderId: closeOrderId };
+  } catch (error) {
+    logger.error({ err: error }, "[PaperTrading] Polymarket close simulation error");
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}

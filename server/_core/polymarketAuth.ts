@@ -258,3 +258,30 @@ export async function placePolymarketOrder(
     };
   }
 }
+
+
+/**
+ * Close a Polymarket position by placing a SELL order at the given limit
+ * price.  On the Polymarket CLOB, "closing" a position means placing a
+ * SELL for the same token-id you previously bought; when the SELL fills,
+ * your token balance returns to zero.
+ *
+ * The SELL is GTC at the supplied limit (typically the current market
+ * price from a fresh fetchPolymarketMarkets() call).  If the book lacks
+ * matching bids the order rests until cancelled — callers should treat
+ * non-immediate fills as a known limitation.  A future pass should add
+ * IOC + price-improvement retry logic.
+ */
+export async function closePolymarketPosition(
+  apiKey: string,
+  apiSecret: string,
+  apiPassphrase: string,
+  position: { tokenId: string; sizeUsdc: number; price: number },
+): Promise<{ success: boolean; orderId?: string; error?: string }> {
+  return placePolymarketOrder(apiKey, apiSecret, apiPassphrase, {
+    tokenId: position.tokenId,
+    side: "SELL",
+    price: position.price,
+    size: position.sizeUsdc,
+  });
+}
