@@ -87,6 +87,12 @@ vi.mock("./db.training", () => ({
   applyInstructionsToSignals: mocks.applyInstructionsToSignals,
 }));
 
+// The mutex test exercises the live-order path; force live (paper=false)
+// so the autonomy hits placePolymarketOrder rather than the simulator.
+vi.mock("./_core/effectivePaperMode", () => ({
+  getEffectivePaperTradeMode: vi.fn(async () => false),
+}));
+
 vi.mock("./_core/aiToolbelt", () => ({
   newReviewerTelemetry: () => ({
     desks: [],

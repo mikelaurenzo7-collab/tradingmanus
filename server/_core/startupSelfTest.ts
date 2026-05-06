@@ -118,13 +118,16 @@ function checkPaperMode(): SelfTestCheck {
     return {
       name: "paper_trade_mode",
       status: "ok",
-      detail: "PAPER_TRADE_MODE=true — Kalshi and Polymarket orders simulated; no real exchange hits.",
+      detail:
+        "PAPER_TRADE_MODE=true (global override) — every user's orders simulated; no real exchange hits.",
     };
   }
   return {
     name: "paper_trade_mode",
     status: "warn",
-    detail: "PAPER_TRADE_MODE is OFF — orders will hit the live exchanges.  Verify per-user `liveTradingEnabled` is set deliberately.",
+    detail:
+      `PAPER_TRADE_MODE is OFF — owner ${ENV.ownerEmail || "(unset)"} trades LIVE by default; ` +
+      "every other user is forced to paper.  Verify per-user `liveTradingEnabled` is set deliberately.",
   };
 }
 

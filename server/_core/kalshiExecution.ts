@@ -15,6 +15,7 @@ import { logger } from "./logger";
 import { withUserLock } from "./userMutex";
 import { normalizePrivateKey } from "./keyUtils";
 import { ENV } from "./env";
+import { getEffectivePaperTradeMode } from "./effectivePaperMode";
 import { simulateKalshiOrderFill, simulateKalshiOrderCancellation, simulateKalshiPositionClose } from "./paperTrading";
 
 export interface KalshiOrder {
@@ -198,8 +199,9 @@ export async function placeKalshiOrder(
   exchangeRequest?: Record<string, unknown>;
   exchangeResponse?: Record<string, unknown>;
 }> {
-  // Route to paper trading simulator if enabled
-  if (ENV.paperTradeMode) {
+  // Route to paper trading simulator if enabled for this specific user.
+  // Owner trades live by default; non-owner users are forced into paper.
+  if (await getEffectivePaperTradeMode(userId)) {
     return simulateKalshiOrderFill(userId, marketId, side, quantity, limitPrice);
   }
 
@@ -434,7 +436,7 @@ export async function cancelKalshiOrder(
     const auditOpenId = triggeredByOpenId ?? String(scopedUserId);
     try {
       // In paper mode, cancel from local ledger only
-      if (ENV.paperTradeMode) {
+      if (await getEffectivePaperTradeMode(userId)) {
         const result = await simulateKalshiOrderCancellation(userId, orderId);
         if (!result.success) {
           void logAuditEvent(
@@ -735,7 +737,7 @@ export async function closeKalshiPosition(
       let orderId: string | undefined;
 
       // In paper mode, simulate the close without credentials
-      if (ENV.paperTradeMode) {
+      if (await getEffectivePaperTradeMode(userId)) {
         const closeResult = await simulateKalshiPositionClose(userId, marketId, side, quantity, markPrice);
         if (!closeResult.success) {
           void logAuditEvent(

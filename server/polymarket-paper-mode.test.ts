@@ -107,6 +107,12 @@ vi.mock("./_core/paperTrading", () => ({
   simulatePolymarketOrderFill: mocks.simulatePolymarketOrderFill,
 }));
 
+// Per-user paper-mode lookup; stub to read PAPER_TRADE_MODE so the test
+// can control routing without wiring up a fake user record.
+vi.mock("./_core/effectivePaperMode", () => ({
+  getEffectivePaperTradeMode: vi.fn(async () => (process.env.PAPER_TRADE_MODE === "true")),
+}));
+
 const SAMPLE_SIGNAL = {
   marketId: "market1",
   tokenId: "token1_yes",

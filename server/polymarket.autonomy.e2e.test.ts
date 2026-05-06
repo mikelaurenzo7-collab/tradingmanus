@@ -77,6 +77,12 @@ vi.mock("./db.training", () => ({
   applyInstructionsToSignals: mocks.applyInstructionsToSignals,
 }));
 
+// The E2E happy path exercises the live-order path; force live so the
+// autonomy hits placePolymarketOrder rather than the paper simulator.
+vi.mock("./_core/effectivePaperMode", () => ({
+  getEffectivePaperTradeMode: vi.fn(async () => false),
+}));
+
 vi.mock("./_core/aiToolbelt", () => ({
   newReviewerTelemetry: () => ({
     desks: [],
