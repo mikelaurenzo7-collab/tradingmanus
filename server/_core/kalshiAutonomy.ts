@@ -20,6 +20,7 @@ import {
 import { placeKalshiOrder } from "./kalshiExecution";
 import { syncPendingOrders } from "./kalshiOrderSync";
 import { calculateKalshiBuyOrderRisk, estimateContractsForRiskBudget } from "./kalshiRisk";
+import { calculateKelly } from "./kellyCriterion";
 import { assertPositiveIntegerUserId } from "./userScope";
 import { withUserLock } from "./userMutex";
 import { reviewSignalsWithTrader } from "./tradingReviewer";
@@ -653,6 +654,8 @@ function evaluateExecutionCandidate(
     preferences: Awaited<ReturnType<typeof tradingPreferencesDb.getTradingPreferences>>;
     effectiveMinConfidence: number;
     maxBudget: number;
+    /** Total available capital for Kelly sizing calculations */
+    totalCapital: number;
     /** Map of open position marketId → category string for concentration checks */
     openPositionCategories?: Map<string, string>;
   }
@@ -734,10 +737,35 @@ function evaluateExecutionCandidate(
     };
   }
 
+  // Kelly criterion sizing — applied AFTER all risk guardrails pass.
+  // Kelly can only reduce position size relative to the risk-checked budget.
+  // marketPrice is already validated+declared above (the budget check used it).
+  const netOdds = marketPrice > 0 && marketPrice < 1
+    ? (1 - marketPrice) / marketPrice
+    : 0;
+  const kellyResult = calculateKelly({
+    winProbability: signal.confidence,
+    expectedValue: netOdds,
+    totalCapital: input.totalCapital,
+  });
+  const kellySuggestedSize = kellyResult.kellySuggestedSize;
+
+  logger.debug(
+    {
+      marketId: signal.marketId,
+      fullKelly: kellyResult.fullKellyFraction,
+      fractionalKelly: kellyResult.fractionalKellyFraction,
+      kellySize: kellySuggestedSize,
+      maxBudget: input.maxBudget,
+    },
+    "Kelly position sizing",
+  );
+
   return {
     eligible: true as const,
     blockedBy: null,
     reason: null,
+    kellySuggestedSize,
   };
 }
 
@@ -1121,6 +1149,7 @@ export async function runScheduledAutonomousTrading(
   const rejectedCandidates: AwayTradingRejectedCandidate[] = [];
   let eligibleSignal: (KalshiSignal & { executionScore?: number }) | null = null;
   let eligibleMaxBudget: number | null = null;
+  let eligibleKellySuggestedSize: number | null = null;
 
   // Build a category → count map from currently open positions so the
   // concentration guard can see how many same-category slots are taken.
@@ -1158,12 +1187,14 @@ export async function runScheduledAutonomousTrading(
       preferences,
       effectiveMinConfidence,
       maxBudget,
+      totalCapital: availableNow,
       openPositionCategories,
     });
 
     if (evaluation.eligible && !eligibleSignal) {
       eligibleSignal = signal;
       eligibleMaxBudget = maxBudget;
+      eligibleKellySuggestedSize = evaluation.kellySuggestedSize;
       continue;
     }
 
@@ -1456,6 +1487,7 @@ export async function runScheduledAutonomousTrading(
       maxBudget,
       orderExposure,
       maxLossOnTrade,
+      kellySuggestedSize: eligibleKellySuggestedSize ?? null,
       reconciliationStatus: result.needsReconciliation ? "pending" : "not_required",
       reconciliationReason: result.reconciliationReason ?? null,
       simulated: ENV.paperTradeMode,
