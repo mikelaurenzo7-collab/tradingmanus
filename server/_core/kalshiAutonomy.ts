@@ -530,12 +530,51 @@ async function generateScheduledSignals(userId: number, minConfidence: number, a
     feeds,
     0.35
   );
-  const instructionFilteredSignals = activeInstructions.length > 0
-    ? applyInstructionsToSignals(conditionFilteredSignals, activeInstructions, {
+  
+  // Apply instruction filters and track match results for audit logging
+  let instructionFilteredSignals = conditionFilteredSignals;
+  if (activeInstructions.length > 0) {
+    // Store original signal count before filtering
+    const signalsBeforeInstructionFilter = [...conditionFilteredSignals];
+    
+    instructionFilteredSignals = applyInstructionsToSignals(
+      conditionFilteredSignals,
+      activeInstructions,
+      {
         markets: actionableMarkets,
         bypassInstructions: false,
-      })
-    : conditionFilteredSignals;
+      }
+    );
+
+    // Build audit payload for instruction matches evaluation
+    const instructionMatchesPayload = signalsBeforeInstructionFilter.map((signal) => {
+      // Check if this signal passed filtering (match on marketId + signalType + side)
+      const passed = instructionFilteredSignals.some(
+        (s) => s.marketId === signal.marketId && s.signalType === signal.signalType && s.side === signal.side
+      );
+      
+      return {
+        marketId: signal.marketId,
+        signalType: signal.signalType,
+        side: signal.side,
+        instructionMatches: signal.metadata?.instructionMatches,
+        filterOutcome: passed ? "passed" : "rejected",
+      };
+    });
+
+    // Log instruction match results for debugging and performance tracking
+    await db.logAuditEvent(
+      "instruction_matches_evaluated",
+      JSON.stringify({
+        totalSignalsEvaluated: signalsBeforeInstructionFilter.length,
+        signalsPassed: instructionFilteredSignals.length,
+        signalsRejected: signalsBeforeInstructionFilter.length - instructionFilteredSignals.length,
+        activeInstructionCount: activeInstructions.length,
+        signals: instructionMatchesPayload,
+      }),
+      `user:${userId}`,
+    );
+  }
 
   // Claude is the sole reviewer. Passing userId enables per-desk memory
   // injection — each desk loads its prior win/loss tape from the deskMemory

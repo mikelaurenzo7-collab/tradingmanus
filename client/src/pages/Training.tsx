@@ -24,6 +24,7 @@ export default function Training() {
   const [expanded, setExpanded] = useState<number | null>(null);
   const [addingRule, setAddingRule] = useState<number | null>(null);
   const [addingSchedule, setAddingSchedule] = useState<number | null>(null);
+  const [lookbackDays, setLookbackDays] = useState<7 | 30 | 90>(30);
 
   const [formData, setFormData] = useState({ title: "", description: "", instructionType: "market_filter" as const });
   const [ruleForm, setRuleForm] = useState({ ruleType: "exclude" as const, ruleKey: "category", ruleValue: "" });
@@ -42,6 +43,11 @@ export default function Training() {
   });
 
   const { data: instructions, isLoading, refetch } = trpc.training.getInstructions.useQuery();
+  const {
+    data: effectiveness,
+    isLoading: effectivenessLoading,
+    refetch: refetchEffectiveness,
+  } = trpc.training.getInstructionEffectiveness.useQuery({ lookbackDays });
 
   const createMutation = trpc.training.createInstruction.useMutation({
     onSuccess: () => { setFormData({ title: "", description: "", instructionType: "market_filter" }); setShowNewForm(false); refetch(); toast.success("Instruction created"); },
@@ -122,6 +128,85 @@ export default function Training() {
           <Link href="/autonomy">
             <Button className="laurenzo-button">Open Trading Autonomy</Button>
           </Link>
+        </CardContent>
+      </Card>
+
+      <Card className="glass-card border-emerald-500/30 animate-fade-in" style={{ animationDelay: '230ms' }}>
+        <CardHeader>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <CardTitle className="text-base">Instruction Effectiveness</CardTitle>
+            <div className="flex items-center gap-2">
+              <select
+                value={lookbackDays}
+                onChange={(e) => setLookbackDays(Number(e.target.value) as 7 | 30 | 90)}
+                className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+              >
+                <option value={7}>Last 7 days</option>
+                <option value={30}>Last 30 days</option>
+                <option value={90}>Last 90 days</option>
+              </select>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void refetchEffectiveness()}
+                disabled={effectivenessLoading}
+              >
+                {effectivenessLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Refresh"}
+              </Button>
+            </div>
+          </div>
+          <CardDescription>
+            Pass/reject rates and failed-rule hotspots from instruction_matches_evaluated audit events.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="rounded-lg border border-border bg-slate-900/40 p-3">
+              <p className="text-xs text-muted-foreground">Evaluated Signals</p>
+              <p className="text-xl font-semibold text-foreground">{effectiveness?.totalEvaluatedSignals ?? 0}</p>
+            </div>
+            <div className="rounded-lg border border-emerald-500/30 bg-emerald-950/20 p-3">
+              <p className="text-xs text-emerald-300/80">Passed Signals</p>
+              <p className="text-xl font-semibold text-emerald-300">{effectiveness?.totalPassedSignals ?? 0}</p>
+            </div>
+            <div className="rounded-lg border border-rose-500/30 bg-rose-950/20 p-3">
+              <p className="text-xs text-rose-300/80">Rejected Signals</p>
+              <p className="text-xl font-semibold text-rose-300">{effectiveness?.totalRejectedSignals ?? 0}</p>
+            </div>
+          </div>
+
+          {effectiveness?.instructions?.length ? (
+            <div className="space-y-3">
+              {effectiveness.instructions.map((metric) => (
+                <div key={metric.instructionId} className="rounded-lg border border-border bg-slate-900/40 p-3">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <p className="font-medium text-foreground">{metric.instructionTitle}</p>
+                    <Badge variant="outline" className="border-emerald-500/40 text-emerald-300">
+                      {(metric.passRate * 100).toFixed(1)}% pass rate
+                    </Badge>
+                  </div>
+                  <div className="mb-2 grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
+                    <span>Evaluated: {metric.evaluatedSignals}</span>
+                    <span>Passed: {metric.passedSignals}</span>
+                    <span>Rejected: {metric.rejectedSignals}</span>
+                  </div>
+                  {metric.failedRuleCounts.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {metric.failedRuleCounts.slice(0, 4).map((rule) => (
+                        <Badge key={`${metric.instructionId}-${rule.ruleKey}`} className="bg-rose-500/20 text-rose-300 border-0">
+                          {rule.ruleKey}: {rule.count}
+                        </Badge>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-emerald-300/80">No failed rules in this window.</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">No instruction effectiveness data yet for this time window.</p>
+          )}
         </CardContent>
       </Card>
 

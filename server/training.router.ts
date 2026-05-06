@@ -149,4 +149,31 @@ export const trainingRouter = router({
         return { success: false, error: String(error) };
       }
     }),
+
+  // Get instruction effectiveness analytics from audit events
+  getInstructionEffectiveness: protectedProcedure
+    .input(
+      z.object({
+        lookbackDays: z.number().int().min(1).max(365).optional().default(30),
+      }).optional()
+    )
+    .query(async ({ input, ctx }) => {
+      try {
+        const lookbackDays = input?.lookbackDays ?? 30;
+        return await trainingDb.getInstructionEffectivenessFromAudit(
+          ctx.user!.openId,
+          lookbackDays
+        );
+      } catch (error) {
+        logger.error({ err: error }, "[Training] Get instruction effectiveness error");
+        // Return empty result on error
+        return {
+          totalEvaluatedSignals: 0,
+          totalPassedSignals: 0,
+          totalRejectedSignals: 0,
+          generatedAt: new Date().toISOString(),
+          instructions: [],
+        };
+      }
+    }),
 });

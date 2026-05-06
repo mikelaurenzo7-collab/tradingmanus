@@ -280,8 +280,10 @@ export async function runPolymarketAutonomousTrading(
     (s) => s.signalType !== "wash_volume_warning"
   );
 
-  // Apply training instructions to signals
+  // Apply training instructions to signals and track match results
   if (activeInstructions.length > 0) {
+    const signalsBeforeInstructionFilter = [...executableSignals];
+    
     executableSignals = applyInstructionsToSignals(
       executableSignals,
       activeInstructions,
@@ -289,6 +291,35 @@ export async function runPolymarketAutonomousTrading(
         markets: filteredMarkets,
         bypassInstructions: false,
       }
+    );
+
+    // Build audit payload for instruction matches evaluation
+    const instructionMatchesPayload = signalsBeforeInstructionFilter.map((signal) => {
+      // Check if this signal passed filtering (match on marketId + signalType + side)
+      const passed = executableSignals.some(
+        (s) => s.marketId === signal.marketId && s.signalType === signal.signalType && s.side === signal.side
+      );
+      
+      return {
+        marketId: signal.marketId,
+        signalType: signal.signalType,
+        side: signal.side,
+        instructionMatches: signal.metadata?.instructionMatches,
+        filterOutcome: passed ? "passed" : "rejected",
+      };
+    });
+
+    // Log instruction match results for debugging and performance tracking
+    await db.logAuditEvent(
+      "instruction_matches_evaluated",
+      JSON.stringify({
+        totalSignalsEvaluated: signalsBeforeInstructionFilter.length,
+        signalsPassed: executableSignals.length,
+        signalsRejected: signalsBeforeInstructionFilter.length - executableSignals.length,
+        activeInstructionCount: activeInstructions.length,
+        signals: instructionMatchesPayload,
+      }),
+      `user:${scopedUserId}`,
     );
   }
 

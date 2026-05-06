@@ -45,6 +45,13 @@ export interface KalshiSignal {
     confluenceSignalTypes?: SignalType[];
     /** Kelly fraction recommended for position sizing based on edge and confidence. */
     kellyFraction?: number;
+    /** Instruction matches from training system (for effectiveness analytics). */
+    instructionMatches?: Array<{
+      instructionId: number;
+      instructionTitle: string;
+      passed: boolean;
+      failedRules?: Array<{ ruleId: number; ruleKey: string; ruleType: string; reason: string }>;
+    }>;
   };
 }
 

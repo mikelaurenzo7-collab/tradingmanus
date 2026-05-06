@@ -57,6 +57,16 @@ export interface PolymarketSignal {
   confluenceSignalTypes?: PolymarketSignalType[];
   /** Spread-adjusted expected value (net of bid-ask spread cost). */
   spreadAdjustedEV?: number;
+  /** Optional metadata for signal enrichment and analytics. */
+  metadata?: {
+    /** Instruction matches from training system (for effectiveness analytics). */
+    instructionMatches?: Array<{
+      instructionId: number;
+      instructionTitle: string;
+      passed: boolean;
+      failedRules?: Array<{ ruleId: number; ruleKey: string; ruleType: string; reason: string }>;
+    }>;
+  };
 }
 
 function clamp(value: number, min: number, max: number) {

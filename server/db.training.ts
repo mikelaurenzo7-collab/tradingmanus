@@ -5,7 +5,7 @@ import {
   instructionHistory,
 } from "../drizzle/schema";
 import { eq, and } from "drizzle-orm";
-import { getDb } from "./db";
+import { getDb, getAuditLog } from "./db";
 import { logger } from "./_core/logger";
 
 export interface InstructionMatch {
@@ -313,10 +313,18 @@ export function applyInstructionsToSignals(
       : new Map();
 
   return signals.filter((signal) => {
+    const instructionMatches: InstructionMatch[] = [];
+    let signalPassed = true;
+
     for (const instruction of activeInstructions) {
       const rules = instruction.rules || [];
+      let instructionPassed = true;
+      const failedRules: Array<{ ruleId: number; ruleKey: string; ruleType: string; reason: string }> = [];
 
       for (const rule of rules) {
+        let ruleFailed = false;
+        let failureReason = "";
+
         // Check new rule types
         if (rule.ruleKey === "must_have_keyword") {
           const market = marketsMap.get(signal.marketId);
@@ -324,10 +332,12 @@ export function applyInstructionsToSignals(
             const title = String(market.title).toLowerCase();
             const keyword = String(rule.ruleValue).toLowerCase();
             if (!title.includes(keyword)) {
-              return false;
+              ruleFailed = true;
+              failureReason = `Market title missing required keyword: ${rule.ruleValue}`;
             }
           } else {
-            return false; // No title available
+            ruleFailed = true;
+            failureReason = "Market title not available";
           }
         }
 
@@ -337,7 +347,8 @@ export function applyInstructionsToSignals(
             const title = String(market.title).toLowerCase();
             const keyword = String(rule.ruleValue).toLowerCase();
             if (title.includes(keyword)) {
-              return false;
+              ruleFailed = true;
+              failureReason = `Market title contains forbidden keyword: ${rule.ruleValue}`;
             }
           }
         }
@@ -345,16 +356,26 @@ export function applyInstructionsToSignals(
         if (rule.ruleKey === "min_volume") {
           const totalVolume = signal.metadata?.totalVolume ?? 0;
           const threshold = parseFloat(rule.ruleValue);
-          if (Number.isFinite(threshold) && totalVolume < threshold) {
-            return false;
+          if (!Number.isFinite(threshold)) {
+            // Fail closed: invalid threshold means rule fails
+            ruleFailed = true;
+            failureReason = `Invalid min_volume threshold: ${rule.ruleValue}`;
+          } else if (totalVolume < threshold) {
+            ruleFailed = true;
+            failureReason = `Volume ${totalVolume} below minimum ${threshold}`;
           }
         }
 
         if (rule.ruleKey === "max_price") {
           const price = signal.marketPrice ?? 0;
           const threshold = parseFloat(rule.ruleValue);
-          if (Number.isFinite(threshold) && price > threshold) {
-            return false;
+          if (!Number.isFinite(threshold)) {
+            // Fail closed: invalid threshold means rule fails
+            ruleFailed = true;
+            failureReason = `Invalid max_price threshold: ${rule.ruleValue}`;
+          } else if (price > threshold) {
+            ruleFailed = true;
+            failureReason = `Price ${price} exceeds maximum ${threshold}`;
           }
         }
 
@@ -365,7 +386,8 @@ export function applyInstructionsToSignals(
             .map((c: string) => c.trim().toLowerCase());
           const signalCategory = String(category).toLowerCase();
           if (!whitelist.includes(signalCategory)) {
-            return false;
+            ruleFailed = true;
+            failureReason = `Category '${category}' not in whitelist`;
           }
         }
 
@@ -376,7 +398,8 @@ export function applyInstructionsToSignals(
             .map((c: string) => c.trim().toLowerCase());
           const signalCategory = String(category).toLowerCase();
           if (blacklist.includes(signalCategory)) {
-            return false;
+            ruleFailed = true;
+            failureReason = `Category '${category}' in blacklist`;
           }
         }
 
@@ -386,36 +409,249 @@ export function applyInstructionsToSignals(
             rule.ruleKey === "category" &&
             (signal.metadata?.marketCategory ?? signal.marketCategory) === rule.ruleValue
           ) {
-            return false;
+            ruleFailed = true;
+            failureReason = `Category matches excluded value: ${rule.ruleValue}`;
           }
           if (rule.ruleKey === "signalType" && signal.signalType === rule.ruleValue) {
-            return false;
+            ruleFailed = true;
+            failureReason = `Signal type matches excluded value: ${rule.ruleValue}`;
           }
         }
 
         if (rule.ruleType === "require") {
           if (rule.ruleKey === "minConfidence") {
             const threshold = parseFloat(rule.ruleValue);
-            if (Number.isFinite(threshold) && signal.confidence < threshold) {
-              return false;
+            if (!Number.isFinite(threshold)) {
+              // Fail closed: invalid threshold means rule fails
+              ruleFailed = true;
+              failureReason = `Invalid minConfidence threshold: ${rule.ruleValue}`;
+            } else if (signal.confidence < threshold) {
+              ruleFailed = true;
+              failureReason = `Confidence ${signal.confidence} below required ${threshold}`;
             }
           }
           if (
             rule.ruleKey === "category" &&
             (signal.metadata?.marketCategory ?? signal.marketCategory) !== rule.ruleValue
           ) {
-            return false;
+            ruleFailed = true;
+            failureReason = `Category does not match required value: ${rule.ruleValue}`;
           }
         }
 
         if (rule.ruleType === "forbid") {
           if (rule.ruleKey === "side" && signal.side === rule.ruleValue) {
-            return false;
+            ruleFailed = true;
+            failureReason = `Side ${signal.side} is forbidden`;
           }
         }
+
+        if (ruleFailed) {
+          instructionPassed = false;
+          failedRules.push({
+            ruleId: rule.id,
+            ruleKey: rule.ruleKey,
+            ruleType: rule.ruleType,
+            reason: failureReason,
+          });
+        }
+      }
+
+      if (!instructionPassed) {
+        signalPassed = false;
+      }
+
+      instructionMatches.push({
+        instructionId: instruction.id,
+        instructionTitle: instruction.title,
+        passed: instructionPassed,
+        failedRules: failedRules.length > 0 ? failedRules : undefined,
+      });
+    }
+
+    // Store instruction matches in metadata for all evaluated signals (both passed and rejected)
+    // This enables effectiveness analytics from audit events
+    signal.metadata = signal.metadata || {};
+    signal.metadata.instructionMatches = instructionMatches;
+
+    return signalPassed;
+  });
+}
+
+/**
+ * Get instruction effectiveness metrics from audit events
+ * 
+ * Parses instruction_matches_evaluated audit events to aggregate:
+ * - Per-instruction: evaluatedSignals, passedSignals, rejectedSignals, passRate, failedRuleCounts
+ * - Top-level: totalEvaluatedSignals, totalPassedSignals, totalRejectedSignals, generatedAt
+ * 
+ * @param triggeredByOpenId - User openId to filter audit events
+ * @param lookbackDays - Number of days to look back (default 30)
+ */
+export async function getInstructionEffectivenessFromAudit(
+  triggeredByOpenId: string,
+  lookbackDays: number = 30
+): Promise<{
+  totalEvaluatedSignals: number;
+  totalPassedSignals: number;
+  totalRejectedSignals: number;
+  generatedAt: string;
+  instructions: Array<{
+    instructionId: number;
+    instructionTitle: string;
+    evaluatedSignals: number;
+    passedSignals: number;
+    rejectedSignals: number;
+    passRate: number;
+    failedRuleCounts: Array<{ ruleKey: string; count: number }>;
+  }>;
+}> {
+  try {
+    // Fetch audit events for the lookback period
+    const auditEvents = await getAuditLog(lookbackDays, triggeredByOpenId);
+    
+    // Filter for instruction_matches_evaluated events
+    const instructionEvents = auditEvents.filter(
+      (event: any) => event.eventType === "instruction_matches_evaluated"
+    );
+
+    // Aggregate per-instruction metrics
+    const instructionMetrics = new Map<number, {
+      instructionId: number;
+      instructionTitle: string;
+      evaluatedSignals: number;
+      passedSignals: number;
+      rejectedSignals: number;
+      failedRuleCounts: Map<string, number>;
+    }>();
+
+    let totalEvaluated = 0;
+    let totalPassed = 0;
+    let totalRejected = 0;
+
+    for (const event of instructionEvents) {
+      try {
+        // Parse audit event details (defensive parsing)
+        // Production audit log uses 'details' field, fallback to 'eventDetails' for legacy
+        const rawDetails = (event as any).details ?? (event as any).eventDetails;
+        const details = typeof rawDetails === "string" 
+          ? JSON.parse(rawDetails) 
+          : rawDetails;
+
+        if (!details || typeof details !== "object") continue;
+        
+        const signals = details.signals;
+        if (!Array.isArray(signals)) continue;
+
+        // Process each signal in the event
+        for (const signal of signals) {
+          if (!signal || typeof signal !== "object") continue;
+          
+          const instructionMatches = signal.instructionMatches;
+          if (!Array.isArray(instructionMatches)) continue;
+
+          const filterOutcome = signal.filterOutcome;
+          const passed = filterOutcome === "passed";
+
+          // Process each instruction match
+          for (const match of instructionMatches) {
+            if (!match || typeof match !== "object") continue;
+            
+            const instructionId = match.instructionId;
+            const instructionTitle = match.instructionTitle || `Instruction ${instructionId}`;
+            const matchPassed = match.passed === true;
+
+            if (typeof instructionId !== "number") continue;
+
+            // Initialize instruction metrics if not exists
+            if (!instructionMetrics.has(instructionId)) {
+              instructionMetrics.set(instructionId, {
+                instructionId,
+                instructionTitle,
+                evaluatedSignals: 0,
+                passedSignals: 0,
+                rejectedSignals: 0,
+                failedRuleCounts: new Map(),
+              });
+            }
+
+            const metrics = instructionMetrics.get(instructionId)!;
+            metrics.evaluatedSignals++;
+
+            if (matchPassed) {
+              metrics.passedSignals++;
+            } else {
+              metrics.rejectedSignals++;
+
+              // Track failed rule counts
+              const failedRules = match.failedRules;
+              if (Array.isArray(failedRules)) {
+                for (const failedRule of failedRules) {
+                  if (failedRule && typeof failedRule === "object" && failedRule.ruleKey) {
+                    const ruleKey = String(failedRule.ruleKey);
+                    const currentCount = metrics.failedRuleCounts.get(ruleKey) || 0;
+                    metrics.failedRuleCounts.set(ruleKey, currentCount + 1);
+                  }
+                }
+              }
+            }
+          }
+
+          // Track top-level totals (count each signal once)
+          totalEvaluated++;
+          if (passed) {
+            totalPassed++;
+          } else {
+            totalRejected++;
+          }
+        }
+      } catch (parseError) {
+        // Log parse errors but continue processing other events
+        logger.warn(
+          { err: parseError, eventId: event.id },
+          "[Training] Failed to parse instruction effectiveness audit event"
+        );
+        continue;
       }
     }
 
-    return true;
-  });
+    // Convert map to array and calculate pass rates
+    const instructions = Array.from(instructionMetrics.values()).map((metrics) => ({
+      instructionId: metrics.instructionId,
+      instructionTitle: metrics.instructionTitle,
+      evaluatedSignals: metrics.evaluatedSignals,
+      passedSignals: metrics.passedSignals,
+      rejectedSignals: metrics.rejectedSignals,
+      passRate: metrics.evaluatedSignals > 0 
+        ? metrics.passedSignals / metrics.evaluatedSignals 
+        : 0,
+      failedRuleCounts: Array.from(metrics.failedRuleCounts.entries()).map(
+        ([ruleKey, count]) => ({ ruleKey, count })
+      ).sort((a, b) => b.count - a.count), // Sort by count descending
+    }));
+
+    // Sort by total evaluated signals (most active first)
+    instructions.sort((a, b) => b.evaluatedSignals - a.evaluatedSignals);
+
+    return {
+      totalEvaluatedSignals: totalEvaluated,
+      totalPassedSignals: totalPassed,
+      totalRejectedSignals: totalRejected,
+      generatedAt: new Date().toISOString(),
+      instructions,
+    };
+  } catch (error) {
+    logger.error(
+      { err: error },
+      "[Training] Get instruction effectiveness from audit failed"
+    );
+    // Return empty result on error
+    return {
+      totalEvaluatedSignals: 0,
+      totalPassedSignals: 0,
+      totalRejectedSignals: 0,
+      generatedAt: new Date().toISOString(),
+      instructions: [],
+    };
+  }
 }
