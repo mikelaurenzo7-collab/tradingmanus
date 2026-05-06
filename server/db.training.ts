@@ -8,6 +8,22 @@ import { eq, and } from "drizzle-orm";
 import { getDb } from "./db";
 import { logger } from "./_core/logger";
 
+export interface InstructionMatch {
+  instructionId: number;
+  instructionTitle: string;
+  passed: boolean;
+  failedRules?: Array<{ ruleId: number; ruleKey: string; ruleType: string; reason: string }>;
+}
+
+export interface ApplyInstructionsOptions {
+  /** Map of marketId -> market object, used for keyword matching and market-level checks */
+  markets?: Map<string, any> | any[];
+  /** If true, skip all instruction filtering (emergency override) */
+  bypassInstructions?: boolean;
+  /** If true, log detailed instruction match results to console */
+  verbose?: boolean;
+}
+
 /**
  * Create a new training instruction
  */
@@ -253,18 +269,123 @@ export function isInstructionActiveNow(instruction: any): boolean {
 
 /**
  * Apply instructions to filter signals
+ * 
+ * Supports 6 rule types via ruleKey:
+ * - must_have_keyword: market title must contain keyword (case-insensitive)
+ * - must_not_have_keyword: market title must NOT contain keyword (case-insensitive)
+ * - min_volume: signal total volume must be >= threshold
+ * - max_price: signal market price must be <= threshold
+ * - category_whitelist: signal category must be in comma-separated list
+ * - category_blacklist: signal category must NOT be in comma-separated list
+ * 
+ * Legacy support for:
+ * - category (ruleType=exclude/require): category matching
+ * - signalType (ruleType=exclude): signal type filtering
+ * - minConfidence (ruleType=require): confidence threshold
+ * - side (ruleType=forbid): side filtering
  */
-export function applyInstructionsToSignals(signals: any[], instructions: any[]): any[] {
+export function applyInstructionsToSignals(
+  signals: any[],
+  instructions: any[],
+  options?: {
+    markets?: Map<string, any> | any[];
+    bypassInstructions?: boolean;
+  }
+): any[] {
+  // Handle bypass flag
+  if (options?.bypassInstructions) {
+    logger.info("[Training] Instruction filtering bypassed via bypassInstructions flag");
+    return signals;
+  }
+
   const activeInstructions = instructions.filter(isInstructionActiveNow);
+
+  if (activeInstructions.length === 0) {
+    return signals;
+  }
+
+  // Convert markets array to Map for efficient lookup
+  const marketsMap =
+    options?.markets instanceof Map
+      ? options.markets
+      : options?.markets
+      ? new Map((options.markets as any[]).map((m) => [m.id, m]))
+      : new Map();
 
   return signals.filter((signal) => {
     for (const instruction of activeInstructions) {
       const rules = instruction.rules || [];
 
       for (const rule of rules) {
+        // Check new rule types
+        if (rule.ruleKey === "must_have_keyword") {
+          const market = marketsMap.get(signal.marketId);
+          if (market?.title) {
+            const title = String(market.title).toLowerCase();
+            const keyword = String(rule.ruleValue).toLowerCase();
+            if (!title.includes(keyword)) {
+              return false;
+            }
+          } else {
+            return false; // No title available
+          }
+        }
+
+        if (rule.ruleKey === "must_not_have_keyword") {
+          const market = marketsMap.get(signal.marketId);
+          if (market?.title) {
+            const title = String(market.title).toLowerCase();
+            const keyword = String(rule.ruleValue).toLowerCase();
+            if (title.includes(keyword)) {
+              return false;
+            }
+          }
+        }
+
+        if (rule.ruleKey === "min_volume") {
+          const totalVolume = signal.metadata?.totalVolume ?? 0;
+          const threshold = parseFloat(rule.ruleValue);
+          if (Number.isFinite(threshold) && totalVolume < threshold) {
+            return false;
+          }
+        }
+
+        if (rule.ruleKey === "max_price") {
+          const price = signal.marketPrice ?? 0;
+          const threshold = parseFloat(rule.ruleValue);
+          if (Number.isFinite(threshold) && price > threshold) {
+            return false;
+          }
+        }
+
+        if (rule.ruleKey === "category_whitelist") {
+          const category = signal.metadata?.marketCategory ?? signal.marketCategory ?? "";
+          const whitelist = rule.ruleValue
+            .split(",")
+            .map((c: string) => c.trim().toLowerCase());
+          const signalCategory = String(category).toLowerCase();
+          if (!whitelist.includes(signalCategory)) {
+            return false;
+          }
+        }
+
+        if (rule.ruleKey === "category_blacklist") {
+          const category = signal.metadata?.marketCategory ?? signal.marketCategory ?? "";
+          const blacklist = rule.ruleValue
+            .split(",")
+            .map((c: string) => c.trim().toLowerCase());
+          const signalCategory = String(category).toLowerCase();
+          if (blacklist.includes(signalCategory)) {
+            return false;
+          }
+        }
+
+        // Legacy rule types
         if (rule.ruleType === "exclude") {
-          // Exclude signals matching this rule
-          if (rule.ruleKey === "category" && signal.marketCategory === rule.ruleValue) {
+          if (
+            rule.ruleKey === "category" &&
+            (signal.metadata?.marketCategory ?? signal.marketCategory) === rule.ruleValue
+          ) {
             return false;
           }
           if (rule.ruleKey === "signalType" && signal.signalType === rule.ruleValue) {
@@ -273,17 +394,21 @@ export function applyInstructionsToSignals(signals: any[], instructions: any[]):
         }
 
         if (rule.ruleType === "require") {
-          // Only include signals matching this rule
-          if (rule.ruleKey === "minConfidence" && signal.confidence < parseFloat(rule.ruleValue)) {
-            return false;
+          if (rule.ruleKey === "minConfidence") {
+            const threshold = parseFloat(rule.ruleValue);
+            if (Number.isFinite(threshold) && signal.confidence < threshold) {
+              return false;
+            }
           }
-          if (rule.ruleKey === "category" && signal.marketCategory !== rule.ruleValue) {
+          if (
+            rule.ruleKey === "category" &&
+            (signal.metadata?.marketCategory ?? signal.marketCategory) !== rule.ruleValue
+          ) {
             return false;
           }
         }
 
         if (rule.ruleType === "forbid") {
-          // Forbid signals with this property
           if (rule.ruleKey === "side" && signal.side === rule.ruleValue) {
             return false;
           }

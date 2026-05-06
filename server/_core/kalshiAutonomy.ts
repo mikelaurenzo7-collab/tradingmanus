@@ -531,7 +531,10 @@ async function generateScheduledSignals(userId: number, minConfidence: number, a
     0.35
   );
   const instructionFilteredSignals = activeInstructions.length > 0
-    ? applyInstructionsToSignals(conditionFilteredSignals, activeInstructions)
+    ? applyInstructionsToSignals(conditionFilteredSignals, activeInstructions, {
+        markets: actionableMarkets,
+        bypassInstructions: false,
+      })
     : conditionFilteredSignals;
 
   // Claude is the sole reviewer. Passing userId enables per-desk memory

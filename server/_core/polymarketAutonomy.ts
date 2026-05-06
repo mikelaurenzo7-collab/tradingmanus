@@ -284,7 +284,11 @@ export async function runPolymarketAutonomousTrading(
   if (activeInstructions.length > 0) {
     executableSignals = applyInstructionsToSignals(
       executableSignals,
-      activeInstructions
+      activeInstructions,
+      {
+        markets: filteredMarkets,
+        bypassInstructions: false,
+      }
     );
   }
 
