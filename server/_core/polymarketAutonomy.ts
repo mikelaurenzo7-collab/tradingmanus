@@ -35,6 +35,7 @@ import {
 } from "./polymarketRisk";
 import { assertPositiveIntegerUserId } from "./userScope";
 import { recordPolymarketTradeEntry } from "./polymarketLearning";
+import { withUserLock } from "./userMutex";
 import { logger } from "./logger";
 
 const MAX_SCHEDULED_MARKETS = 80;
@@ -457,6 +458,10 @@ export async function runPolymarketAutonomousTrading(
     };
   }
 
+  // Wrap the risk-check → size → place sequence in a per-user mutex so
+  // concurrent autonomy runs (e.g. Railway in-process scheduler + Vercel cron)
+  // cannot both pass the capital check and submit duplicate orders.
+  return withUserLock(scopedUserId, async () => {
   // Use Kalshi capital as a proxy for Polymarket bankroll. This is a
   // reasonable starting point because most users fund both from the same
   // overall budget, but a dedicated Polymarket balance endpoint (not yet
@@ -678,4 +683,5 @@ export async function runPolymarketAutonomousTrading(
       orderPlaced: false,
     };
   }
+  }); // end withUserLock
 }

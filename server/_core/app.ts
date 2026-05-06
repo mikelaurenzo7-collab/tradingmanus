@@ -2,6 +2,7 @@ import express from "express";
 import helmet from "helmet";
 import cors from "cors";
 import cookieParser from "cookie-parser";
+import crypto from "node:crypto";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:http";
 import { appRouter } from "../routers";
@@ -55,9 +56,25 @@ function readBearerToken(req: AppRequest) {
   return scheme?.toLowerCase() === "bearer" && token ? token : null;
 }
 
+function constantTimeEqual(a: string, b: string) {
+  // Buffer.byteLength is needed because timingSafeEqual requires equal-length
+  // inputs.  We compare lengths first to avoid the throw, but still do the
+  // constant-time compare on the longer side so failure timing is independent
+  // of where the mismatch occurs.
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) {
+    // Burn a constant amount of work so length-mismatch is indistinguishable
+    // from a value mismatch from the caller's perspective.
+    crypto.timingSafeEqual(bufA, bufA);
+    return false;
+  }
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
 async function getScheduledTrigger(req: AppRequest) {
   const bearer = readBearerToken(req);
-  if (ENV.cronSecret && bearer === ENV.cronSecret) {
+  if (ENV.cronSecret && bearer && constantTimeEqual(bearer, ENV.cronSecret)) {
     return { authorized: true as const, openId: "vercel_cron" };
   }
 
@@ -273,12 +290,18 @@ export async function createApp(options: { runStartupMigrations?: boolean } = {}
   }
 
   const app = express();
-  app.set("trust proxy", true);
+  // Trust exactly one proxy hop (Railway/Vercel ingress).  Setting this to
+  // `true` (all hops) allows clients to spoof X-Forwarded-For, which would
+  // bypass IP-based rate limiting.
+  app.set("trust proxy", 1);
 
   // Security middleware
   app.use(helmet({
     contentSecurityPolicy: ENV.isProduction ? undefined : false, // Disable CSP in dev for HMR
-    crossOriginEmbedderPolicy: false, // Allow embedding for iframe support
+    // COEP defaults to require-corp in helmet >= 5.  We keep that strict default
+    // because the client does not embed cross-origin iframes (verified via grep).
+    // If a future feature needs to embed third-party widgets, scope this to that
+    // route only rather than disabling globally.
   }));
 
   // CORS configuration
@@ -380,9 +403,12 @@ export async function createApp(options: { runStartupMigrations?: boolean } = {}
     });
   });
 
-  // Apply rate limiting to scheduled endpoints
-  app.all("/api/scheduled/autonomous-trading", scheduledLimiter, toExpressHandler(autonomousTradingHandler));
-  app.all("/api/scheduled/order-sync", scheduledLimiter, toExpressHandler(orderSyncHandler));
+  // Scheduled endpoints: Vercel cron fires GET; manual dashboard triggers use POST.
+  // Restrict to these two methods to limit attack surface.
+  app.get("/api/scheduled/autonomous-trading", scheduledLimiter, toExpressHandler(autonomousTradingHandler));
+  app.post("/api/scheduled/autonomous-trading", scheduledLimiter, toExpressHandler(autonomousTradingHandler));
+  app.get("/api/scheduled/order-sync", scheduledLimiter, toExpressHandler(orderSyncHandler));
+  app.post("/api/scheduled/order-sync", scheduledLimiter, toExpressHandler(orderSyncHandler));
 
   // Global error handler
   // Note: express.Request types can resolve inconsistently in some build

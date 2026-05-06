@@ -21,6 +21,7 @@
  */
 
 import OpenAI from "openai";
+import { logger } from "./logger";
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
@@ -160,7 +161,33 @@ export function createOpenRouterClient(apiKey: string): {
         const response = await oai.chat.completions.create(requestParams);
 
         const choice = response.choices[0];
-        const text = choice?.message?.content ?? "";
+        // OpenAI-shaped responses can return:
+        //   - string content (the common path for text completions)
+        //   - null content with `tool_calls` populated (when the model picks a
+        //     tool); we don't currently surface tool_calls back to Anthropic
+        //     callers, so flatten to "" but log a warning so silent-empty
+        //     reviewer responses don't masquerade as "approved nothing".
+        //   - array of content parts (rare, multi-modal).  We concatenate
+        //     text parts and skip non-text.
+        // OpenAI SDK types `message.content` as `string | null`. The null
+        // branch most often appears when the model picks `tool_calls`
+        // instead of returning text. Downstream reviewer code parses this
+        // string as JSON, so an unannotated null would silently degrade to
+        // "approved nothing" — log a warning so the pattern is visible.
+        const rawContent = choice?.message?.content;
+        let text = "";
+        if (typeof rawContent === "string") {
+          text = rawContent;
+        } else {
+          logger.warn(
+            {
+              finishReason: choice?.finish_reason,
+              model: response.model,
+              hadToolCalls: Boolean(choice?.message?.tool_calls?.length),
+            },
+            "[openrouter] Model returned non-string content; downstream callers will see empty response.",
+          );
+        }
 
         const usage = response.usage;
 
