@@ -111,10 +111,7 @@ export default function Dashboard() {
   });
 
   // NOTE: All hooks must be called unconditionally before any early return to
-  // satisfy React's Rules of Hooks. Derive the values these hooks depend on
-  // from the (possibly undefined) query data here.
-  const accountStatusForMemo = accountStatusQuery.data;
-  const performanceOverviewForMemo = performanceOverviewQuery.data;
+  // satisfy React's Rules of Hooks. Extract query data here for later memoization.
   const equityCurveForMemo = equityCurveQuery.data;
 
   // Wire chart to real getEquityCurve data (7 days)
