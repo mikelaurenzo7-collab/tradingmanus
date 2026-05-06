@@ -29,7 +29,6 @@ function makeInput(overrides: Partial<MicrostructureInput> = {}): Microstructure
     marketId: "test-market-1",
     yesBid: 0.48,
     yesAsk: 0.50,
-    volume: 10000,
     volume24h: 5000,
     openInterest: 2000,
     liquidity: 0.7,
@@ -137,37 +136,30 @@ describe("analyzeMicrostructure — order book imbalance", () => {
 // ── VPIN tests ────────────────────────────────────────────────────────────────
 
 describe("analyzeMicrostructure — VPIN proxy", () => {
-  it("VPIN is 0 when midprice is exactly at the bid (all selling)", () => {
-    // midPrice = yesBid, so buyFraction = 0 → |2*0 - 1| = 1
-    // Actually: buyFraction = (mid - bid) / spread = 0 → VPIN = |2*0-1| = 1
-    // This represents one-sided informed selling
-    const result = analyzeMicrostructure(makeInput({ yesBid: 0.48, yesAsk: 0.52 }));
-    // midPrice = 0.5, buyFraction = (0.5-0.48)/0.04 = 0.5 → VPIN = 0
+  // VPIN = clamp(|yesBid - 0.5| * 2, 0, 1)
+  // Informed traders push binary prices toward extremes; maximum uncertainty at 0.5.
+
+  it("VPIN is 0 when yesBid is at 0.5 (maximum uncertainty)", () => {
+    const result = analyzeMicrostructure(makeInput({ yesBid: 0.5, yesAsk: 0.52 }));
     expect(result.vpin).toBeCloseTo(0, 5);
   });
 
-  it("VPIN is 1 when midprice is at the bid (pure selling pressure)", () => {
-    // yesBid = yesAsk → spread degenerates; mid = bid, using epsilon spread
-    // For distinct bid=0.30, ask=0.70: mid=0.50; buyFraction=(0.5-0.3)/0.4=0.5 → VPIN=0
-    // To get VPIN=1: buyFraction should be 0 or 1
-    // buyFraction = (mid - bid) / spread = 0 → mid = bid
-    // Use asymmetric: bid=0.30, ask=0.32 → mid=0.31, buyFr=(0.31-0.30)/0.02=0.5→VPIN≈0
-    // Use bid=0.50, ask=0.52 → mid=0.51, buyFr=(0.51-0.50)/0.02=0.5→VPIN≈0
-    // VPIN = 1 requires buyFraction = 0 (mid==bid) or buyFraction = 1 (mid==ask)
-    // mid = bid: set ask = bid + epsilon (uses clamp so buyFraction goes to boundary)
-    // This is hard to test exactly; test that VPIN is in [0,1]
-    const result = analyzeMicrostructure(makeInput({ yesBid: 0.60, yesAsk: 0.80 }));
-    expect(result.vpin).toBeGreaterThanOrEqual(0);
-    expect(result.vpin).toBeLessThanOrEqual(1);
-    // Mid = (0.60+0.80)/2 = 0.70; buyFr = (0.70-0.60)/0.20 = 0.5 → VPIN = 0
-    expect(result.vpin).toBeCloseTo(0, 5);
+  it("VPIN is 0.8 when yesBid is 0.9", () => {
+    // |0.9 - 0.5| * 2 = 0.8
+    const result = analyzeMicrostructure(makeInput({ yesBid: 0.9, yesAsk: 0.92 }));
+    expect(result.vpin).toBeCloseTo(0.8, 5);
   });
 
-  it("VPIN is 0 when market is balanced (midprice at center of spread)", () => {
-    // Any market where mid = (bid + ask)/2 exactly
-    const result = analyzeMicrostructure(makeInput({ yesBid: 0.45, yesAsk: 0.55 }));
-    // mid = 0.5, buyFraction = (0.5-0.45)/0.10 = 0.5 → |2*0.5-1| = 0
-    expect(result.vpin).toBeCloseTo(0, 5);
+  it("VPIN is 0.8 when yesBid is 0.1", () => {
+    // |0.1 - 0.5| * 2 = 0.8
+    const result = analyzeMicrostructure(makeInput({ yesBid: 0.1, yesAsk: 0.12 }));
+    expect(result.vpin).toBeCloseTo(0.8, 5);
+  });
+
+  it("VPIN is 1.0 when yesBid is 0.0", () => {
+    // |0.0 - 0.5| * 2 = 1.0
+    const result = analyzeMicrostructure(makeInput({ yesBid: 0.0, yesAsk: 0.02 }));
+    expect(result.vpin).toBeCloseTo(1.0, 5);
   });
 
   it("VPIN is in [0, 1] for all inputs", () => {
@@ -204,7 +196,7 @@ describe("analyzeMicrostructure — microstructureScore", () => {
 
   it("does not crash with volume=0", () => {
     expect(() =>
-      analyzeMicrostructure(makeInput({ volume: 0, volume24h: 0, openInterest: 0 }))
+      analyzeMicrostructure(makeInput({ volume24h: 0, openInterest: 0 }))
     ).not.toThrow();
   });
 });
@@ -434,7 +426,7 @@ describe("analyzeMicrostructure — edge cases", () => {
       { yesBid: 0, yesAsk: 0 },
       { yesBid: 1, yesAsk: 1 },
       { yesBid: 0.5, yesAsk: 0.5 },
-      { volume: 0, volume24h: 0 },
+      { volume24h: 0 },
     ];
     for (const overrides of edgeCases) {
       const result = analyzeMicrostructure(makeInput(overrides));

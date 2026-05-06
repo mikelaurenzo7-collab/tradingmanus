@@ -18,6 +18,9 @@ vi.mock("../server/db");
 describe("Kalshi Signal Generation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // saveMicrostructure is async in production; ensure the mock returns a Promise
+    // so that the non-optional .catch() call in kalshiSignals.ts doesn't crash.
+    vi.mocked(db.saveMicrostructure).mockResolvedValue(undefined as any);
   });
 
   describe("generateSignalsForMarket", () => {

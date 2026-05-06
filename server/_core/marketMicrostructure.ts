@@ -9,14 +9,27 @@
 import type { KalshiSignal } from "./kalshiSignals";
 import { logger } from "./logger";
 
+// ── Named constants ───────────────────────────────────────────────────────────
+
+const SPREAD_WIDE_THRESHOLD = 0.05;        // >5% spread = low liquidity
+const SPREAD_SCORE_SCALER = 10;            // spread score denominator
+const IMBALANCE_STRONG_THRESHOLD = 0.6;    // strong directional imbalance
+const CONFIDENCE_SPREAD_PENALTY = 0.20;    // confidence reduction for wide spread
+const CONFIDENCE_IMBALANCE_BOOST = 0.15;   // confidence boost for aligned imbalance
+const LARGE_ORDER_VOLUME_THRESHOLD = 500;  // volume24h threshold for large orders
+const VOLUME_RATIO_CAP = 3;                // cap for volumeRatio calculation
+const COMPOSITE_WEIGHT_SPREAD = 0.35;
+const COMPOSITE_WEIGHT_IMBALANCE = 0.30;
+const COMPOSITE_WEIGHT_VPIN = 0.20;
+const COMPOSITE_WEIGHT_INFORMED = 0.15;
+
 // ── Input / Output types ──────────────────────────────────────────────────────
 
 export interface MicrostructureInput {
   marketId: string;
   yesBid: number;      // best bid price 0-1
   yesAsk: number;      // best ask price 0-1
-  volume: number;      // total volume
-  volume24h: number;   // 24h volume
+  volume24h: number;   // 24h volume (yesVolume + noVolume)
   openInterest: number;
   liquidity: number;   // liquidity score
 }
@@ -60,16 +73,16 @@ export function analyzeMicrostructure(input: MicrostructureInput): Microstructur
   const spread = Math.max(0, yesAsk - yesBid);
   const epsilon = 1e-9;
   const spreadPct = yesBid < epsilon ? 0 : spread / yesBid;
-  const spreadScore = clamp(1 - spreadPct * 10, 0, 1);
-  const hasWidespread = spreadPct > 0.05;
+  const spreadScore = clamp(1 - spreadPct * SPREAD_SCORE_SCALER, 0, 1);
+  const hasWidespread = spreadPct > SPREAD_WIDE_THRESHOLD;
 
   // ── Volume weight for imbalance ───────────────────────────────────────────
   // Kalshi REST does not provide bid/ask depth separately, so we use volume24h
   // and openInterest as a confidence weight: high turnover → price signal is
   // more reliable.  volumeRatio in [0, 3], volumeWeight in [0, 1].
   const volumeSurge = volume24h / (openInterest + 1);
-  const volumeRatio = clamp(volumeSurge, 0, 3);
-  const volumeWeight = clamp(volumeRatio / 3, 0, 1);
+  const volumeRatio = clamp(volumeSurge, 0, VOLUME_RATIO_CAP);
+  const volumeWeight = clamp(volumeRatio / VOLUME_RATIO_CAP, 0, 1);
 
   // ── Order-book imbalance (volume-weighted price-position proxy) ───────────
   // Ask-side approximation is the complement of the ask price from the NO
@@ -81,7 +94,7 @@ export function analyzeMicrostructure(input: MicrostructureInput): Microstructur
   const imbalanceDenom = bidSide + askSide + epsilon;
   const priceImbalance = clamp((bidSide - askSide) / imbalanceDenom, -1, 1);
   const imbalance = clamp(priceImbalance * (0.5 + 0.5 * volumeWeight), -1, 1);
-  const hasStrongImbalance = Math.abs(imbalance) > 0.6;
+  const hasStrongImbalance = Math.abs(imbalance) > IMBALANCE_STRONG_THRESHOLD;
   const imbalanceDirection: "bullish" | "bearish" | "neutral" = hasStrongImbalance
     ? imbalance > 0
       ? "bullish"
@@ -89,21 +102,18 @@ export function analyzeMicrostructure(input: MicrostructureInput): Microstructur
     : "neutral";
 
   // ── VPIN proxy ────────────────────────────────────────────────────────────
-  // Without tick data we estimate buy fraction from price position between
-  // bid and ask.  The midprice relative to bid/ask gives a [0,1] proxy of
-  // buy-side dominance.  VPIN = |2 * buyFraction - 1|.
-  const spreadForVpin = spread + epsilon;
-  const midPrice = (yesBid + yesAsk) / 2;
-  const buyFraction = clamp((midPrice - yesBid) / spreadForVpin, 0, 1);
-  const vpin = clamp(Math.abs(2 * buyFraction - 1), 0, 1);
+  // For binary prediction markets, informed traders push prices toward extremes
+  // (0 or 1) as they gain conviction. Price distance from the neutral 0.5
+  // midpoint serves as a proxy for informed trading pressure: VPIN=0 at
+  // yesBid=0.5 (maximum uncertainty), VPIN=1 at yesBid=0 or 1 (fully informed).
+  const vpin = clamp(Math.abs(yesBid - 0.5) * 2, 0, 1);
 
   // ── Informed trading detection ────────────────────────────────────────────
   // Proxies for large/aggressive order detection using available scalar data.
   // volumeSurge (already computed above) measures turnover vs open interest.
-  const turnoverScore = volumeWeight; // same value as volumeWeight, different semantic use
-  const largeOrderDetected = volume24h > 500;
+  const largeOrderDetected = volume24h > LARGE_ORDER_VOLUME_THRESHOLD;
   const informedTradingScore = clamp(
-    0.5 * turnoverScore + 0.5 * (largeOrderDetected ? 0.8 : 0.2),
+    0.5 * volumeWeight + 0.5 * (largeOrderDetected ? 0.8 : 0.2),
     0,
     1
   );
@@ -113,7 +123,10 @@ export function analyzeMicrostructure(input: MicrostructureInput): Microstructur
   // + 15% informed trading score
   const imbalanceNorm = (imbalance + 1) / 2;
   const microstructureScore = clamp(
-    0.35 * spreadScore + 0.30 * imbalanceNorm + 0.20 * (1 - vpin) + 0.15 * informedTradingScore,
+    COMPOSITE_WEIGHT_SPREAD * spreadScore +
+      COMPOSITE_WEIGHT_IMBALANCE * imbalanceNorm +
+      COMPOSITE_WEIGHT_VPIN * (1 - vpin) +
+      COMPOSITE_WEIGHT_INFORMED * informedTradingScore,
     0,
     1
   );
@@ -123,9 +136,9 @@ export function analyzeMicrostructure(input: MicrostructureInput): Microstructur
   // Signal-direction matching is resolved in applyMicrostructureToSignal.
   let confidenceAdjustment = 0;
   if (hasWidespread) {
-    confidenceAdjustment = -0.20;
+    confidenceAdjustment = -CONFIDENCE_SPREAD_PENALTY;
   } else if (hasStrongImbalance) {
-    confidenceAdjustment = +0.15;
+    confidenceAdjustment = +CONFIDENCE_IMBALANCE_BOOST;
   }
 
   logger.debug(
@@ -173,13 +186,13 @@ export function applyMicrostructureToSignal(
   // Determine direction-aware adjustment
   let adjustment = 0;
   if (result.hasWidespread) {
-    adjustment = -0.20;
+    adjustment = -CONFIDENCE_SPREAD_PENALTY;
   } else if (result.hasStrongImbalance) {
     // Only boost if imbalance direction matches the signal side
     const signalBullish = signal.side === "yes";
     const imbalanceBullish = result.imbalanceDirection === "bullish";
     if (signalBullish === imbalanceBullish) {
-      adjustment = +0.15;
+      adjustment = +CONFIDENCE_IMBALANCE_BOOST;
     }
     // Opposite direction → no adjustment (leave at 0)
   }

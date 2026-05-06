@@ -398,15 +398,14 @@ export async function generateSignalsForMarket(
     marketId: market.id,
     yesBid: market.yesPrice,
     yesAsk: 1 - market.noPrice,
-    volume: (market.yesVolume ?? 0) + (market.noVolume ?? 0),
-    volume24h: 0,
+    volume24h: (market.yesVolume ?? 0) + (market.noVolume ?? 0),
     openInterest: 0,
     liquidity: 0,
   };
   const microResult = analyzeMicrostructure(microInput);
 
   // Persist microstructure non-blocking
-  db.saveMicrostructure(microResult)?.catch((err: unknown) => {
+  db.saveMicrostructure(microResult).catch((err: unknown) => {
     logger.debug({ marketId: market.id, err }, "microstructure save failed");
   });
 
