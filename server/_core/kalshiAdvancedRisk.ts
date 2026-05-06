@@ -233,6 +233,7 @@ export function recommendAdjustments(
 
 const TARGET_VOL_ANNUAL = 0.15;         // 15% annual target vol
 const TRADING_DAYS_PER_YEAR = 252;
+const VOL_LOOKBACK_DAYS = 30;          // rolling window for returns-based vol
 const VOL_HIGH_THRESHOLD_1 = 0.20;     // >20% → reduce 30%
 const VOL_HIGH_THRESHOLD_2 = 0.25;     // >25% → reduce 50%, block high-risk
 const VOL_LOW_THRESHOLD = 0.10;        // <10% → increase 20%
@@ -242,11 +243,12 @@ export interface PositionVolData {
   positionId: string;
   weight: number;     // fraction of portfolio (0-1)
   dailyVol: number;   // daily volatility (0-1 scale)
-  returns: number[];  // array of recent daily returns
+  /** Daily returns (use last 30 days; longer arrays are sliced internally) */
+  returns: number[];
 }
 
 export interface PortfolioVolResult {
-  annualizedVol: number;
+  portfolioVolatility: number;
   dailyVol: number;
   volScalingFactor: number;
   isHighVol: boolean;
@@ -304,9 +306,10 @@ export function calculateCorrelation(returns1: number[], returns2: number[]): nu
 export function calculatePortfolioVol(positions: PositionVolData[]): number {
   if (positions.length === 0) return 0;
 
-  // Per-position sigma: prefer stdDev of returns if available
+  // Per-position sigma: prefer stdDev of last 30 returns if available
   const sigmas = positions.map((p) => {
-    if (p.returns.length >= 2) return stdDev(p.returns);
+    const sliced = p.returns.slice(-VOL_LOOKBACK_DAYS);
+    if (sliced.length >= 2) return stdDev(sliced);
     return p.dailyVol;
   });
 
@@ -314,7 +317,9 @@ export function calculatePortfolioVol(positions: PositionVolData[]): number {
   let portfolioVariance = 0;
   for (let i = 0; i < positions.length; i++) {
     for (let j = 0; j < positions.length; j++) {
-      const rho = i === j ? 1 : calculateCorrelation(positions[i].returns, positions[j].returns);
+      const ri = positions[i].returns.slice(-VOL_LOOKBACK_DAYS);
+      const rj = positions[j].returns.slice(-VOL_LOOKBACK_DAYS);
+      const rho = i === j ? 1 : calculateCorrelation(ri, rj);
       portfolioVariance += positions[i].weight * positions[j].weight * rho * sigmas[i] * sigmas[j];
     }
   }
@@ -350,10 +355,10 @@ export function getVolScalingFactor(annualizedVol: number): Pick<
  */
 export function calculatePortfolioVolatility(positions: PositionVolData[]): PortfolioVolResult {
   const dailyVol = calculatePortfolioVol(positions);
-  const annualizedVol = dailyVol * Math.sqrt(TRADING_DAYS_PER_YEAR);
-  const scaling = getVolScalingFactor(annualizedVol);
+  const portfolioVolatility = dailyVol * Math.sqrt(TRADING_DAYS_PER_YEAR);
+  const scaling = getVolScalingFactor(portfolioVolatility);
   return {
-    annualizedVol,
+    portfolioVolatility,
     dailyVol,
     ...scaling,
   };

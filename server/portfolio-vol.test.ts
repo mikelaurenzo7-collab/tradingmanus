@@ -201,7 +201,7 @@ describe("calculatePortfolioVolatility", () => {
       returns: [0.01, -0.01, 0.02, -0.02],
     };
     const result = calculatePortfolioVolatility([pos]);
-    expect(typeof result.annualizedVol).toBe("number");
+    expect(typeof result.portfolioVolatility).toBe("number");
     expect(typeof result.dailyVol).toBe("number");
     expect(typeof result.volScalingFactor).toBe("number");
     expect(typeof result.isHighVol).toBe("boolean");
@@ -211,7 +211,7 @@ describe("calculatePortfolioVolatility", () => {
     expect(typeof result.shouldBlockHighRiskSignals).toBe("boolean");
   });
 
-  it("annualizedVol = dailyVol * sqrt(252)", () => {
+  it("portfolioVolatility = dailyVol * sqrt(252)", () => {
     const pos: PositionVolData = {
       positionId: "p1",
       weight: 1.0,
@@ -219,18 +219,18 @@ describe("calculatePortfolioVolatility", () => {
       returns: [],
     };
     const result = calculatePortfolioVolatility([pos]);
-    expect(result.annualizedVol).toBeCloseTo(result.dailyVol * Math.sqrt(252), 10);
+    expect(result.portfolioVolatility).toBeCloseTo(result.dailyVol * Math.sqrt(252), 10);
   });
 
-  it("empty positions → annualizedVol = 0, isLowVol = true", () => {
+  it("empty positions → portfolioVolatility = 0, isLowVol = true", () => {
     const result = calculatePortfolioVolatility([]);
-    expect(result.annualizedVol).toBe(0);
+    expect(result.portfolioVolatility).toBe(0);
     expect(result.dailyVol).toBe(0);
     expect(result.isLowVol).toBe(true); // 0 < 10%
   });
 
   it("high vol position triggers isHighVol flag", () => {
-    // dailyVol = 0.20 → annualizedVol = 0.20 * sqrt(252) ≈ 3.17 → > 0.25 → extreme
+    // dailyVol = 0.20 → portfolioVolatility = 0.20 * sqrt(252) ≈ 3.17 → > 0.25 → extreme
     const pos: PositionVolData = {
       positionId: "p1",
       weight: 1.0,
