@@ -126,6 +126,8 @@ describe("kalshi dashboard resilience — tRPC router integration", () => {
 
     // Capital failed → null → zero-default for both balance fields.
     expect(result.startingBalance).toBe(0);
+    // PnL from resolved trade (realizedPnl: 2) is still accumulated.
+    expect(result.currentBalance).toBe(2);
   });
 
   it("propagates a TRPCError when getKalshiEquityCurve throws (chart route is NOT fail-soft)", async () => {
@@ -136,6 +138,8 @@ describe("kalshi dashboard resilience — tRPC router integration", () => {
 
     const caller = appRouter.createCaller(createProtectedContext());
     // Must throw — the equity curve route wraps errors in TRPCError.
-    await expect(caller.kalshi.getEquityCurve()).rejects.toThrow();
+    await expect(caller.kalshi.getEquityCurve()).rejects.toMatchObject({
+      message: "Unable to load equity curve",
+    });
   });
 });
