@@ -56,6 +56,7 @@ import {
 } from "./_core/kalshiAuth";
 import { getPerformanceOverview } from "./_core/kalshiLearning";
 import { getPnlSummary } from "./_core/paperPnlSummary";
+import { runExitStrategyBacktest } from "./_core/backtestExits";
 import {
   calculateSharpeBySource,
   identifyLosingPatterns,
@@ -1624,6 +1625,48 @@ export const appRouter = router({
           throw new TRPCError({
             code: "INTERNAL_SERVER_ERROR",
             message: "Unable to load P&L summary",
+            cause: error,
+          });
+        }
+      }),
+
+    /**
+     * Replays the exit strategy against historical kalshiMarketSnapshots so
+     * the operator can see win-rate / Sharpe / max-drawdown for the exit
+     * pipeline before committing real capital.  Limited to OWNER_EMAIL —
+     * it's an expensive query that grows with windowDays * snapshots.
+     */
+    runExitBacktest: protectedProcedure
+      .input(
+        z
+          .object({
+            windowDays: z.number().int().min(1).max(180).default(30),
+            sides: z
+              .array(z.enum(["yes", "no"]))
+              .default(["yes", "no"]),
+            entryPolicy: z
+              .object({
+                kind: z.enum(["first", "every-n"]).default("first"),
+                stride: z.number().int().min(1).max(100).optional(),
+              })
+              .default({ kind: "first" }),
+            initialRiskUsd: z.number().min(1).max(10000).default(100),
+          })
+          .optional(),
+      )
+      .mutation(async ({ input }) => {
+        try {
+          return await runExitStrategyBacktest({
+            windowDays: input?.windowDays ?? 30,
+            sides: input?.sides,
+            entryPolicy: input?.entryPolicy,
+            initialRiskUsd: input?.initialRiskUsd,
+          });
+        } catch (error) {
+          logger.error({ err: error }, "[Backtest] exit-strategy backtest failed");
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Backtest failed.  See server logs.",
             cause: error,
           });
         }
