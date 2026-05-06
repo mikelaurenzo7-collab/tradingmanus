@@ -93,6 +93,19 @@ vi.mock("./_core/effectivePaperMode", () => ({
   getEffectivePaperTradeMode: vi.fn(async () => false),
 }));
 
+// Bypass the adaptive-cadence gate; this test re-runs autonomy multiple
+// times for the same user/market and would otherwise hit the cache.
+vi.mock("./_core/adaptiveCadence", () => ({
+  shouldReviewMarketAt: vi.fn(() => true),
+  recordMarketReview: vi.fn(),
+  getAdaptiveCadenceTelemetry: vi.fn(() => ({
+    cachedMarketCount: 0,
+    medianAgeMs: 0,
+    priceDeltaBps: 50,
+    staleTtlMs: 600_000,
+  })),
+}));
+
 vi.mock("./_core/aiToolbelt", () => ({
   newReviewerTelemetry: () => ({
     desks: [],

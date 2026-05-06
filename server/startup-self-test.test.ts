@@ -80,7 +80,7 @@ describe("runStartupSelfTest", () => {
     expect(dbCheck?.detail).toContain("Could not reach Postgres");
   });
 
-  it("returns passed=false with a clear migration hint when exitState column is missing", async () => {
+  it("returns passed=true (warn-only) with a clear migration hint when exitState column is missing", async () => {
     process.env.NODE_ENV = "production";
     process.env.OPENROUTER_API_KEY = "sk-or-test";
     process.env.OPENROUTER_MODEL = "anthropic/claude-3.5-sonnet";
@@ -89,9 +89,12 @@ describe("runStartupSelfTest", () => {
     const { runStartupSelfTest } = await import("./_core/startupSelfTest");
     const result = await runStartupSelfTest();
 
-    expect(result.passed).toBe(false);
+    // Missing exitState is a WARN, not a FAIL: the exit monitor handles
+    // it gracefully (reads return no state → fresh init; writes are
+    // try/caught), so the deploy still proceeds.
+    expect(result.passed).toBe(true);
     const exitCheck = result.checks.find((c) => c.name === "schema.kalshiPositions.exitState");
-    expect(exitCheck?.status).toBe("fail");
+    expect(exitCheck?.status).toBe("warn");
     expect(exitCheck?.detail).toContain("pnpm db:push");
   });
 

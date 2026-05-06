@@ -39,6 +39,11 @@ import { withUserLock } from "./userMutex";
 import { simulatePolymarketOrderFill } from "./paperTrading";
 import { ENV } from "./env";
 import { getEffectivePaperTradeMode } from "./effectivePaperMode";
+import {
+  shouldReviewMarketAt,
+  recordMarketReview,
+  getAdaptiveCadenceTelemetry,
+} from "./adaptiveCadence";
 import { logger } from "./logger";
 
 const MAX_SCHEDULED_MARKETS = 80;
@@ -381,6 +386,35 @@ export async function runPolymarketAutonomousTrading(
     );
   }
 
+  // Adaptive cadence: skip the AI reviewer for markets whose price hasn't
+  // moved materially since their last review.  Mirror of the Kalshi gate
+  // — same env vars, same in-memory cache, so a deploy-wide tuning of
+  // SIGNAL_REVIEW_PRICE_DELTA_BPS / SIGNAL_REVIEW_STALE_TTL_MS controls
+  // both platforms uniformly.
+  const cadencePassedSignals: typeof executableSignals = [];
+  const cadenceSkippedMarketIds: string[] = [];
+  for (const signal of executableSignals) {
+    const sidePrice = Number(signal.limitPrice);
+    if (shouldReviewMarketAt(signal.marketId, sidePrice)) {
+      cadencePassedSignals.push(signal);
+      if (Number.isFinite(sidePrice)) recordMarketReview(signal.marketId, sidePrice);
+    } else {
+      cadenceSkippedMarketIds.push(signal.marketId);
+    }
+  }
+  if (cadenceSkippedMarketIds.length > 0) {
+    await db.logAuditEvent(
+      "polymarket_adaptive_cadence_skipped",
+      JSON.stringify({
+        skippedCount: cadenceSkippedMarketIds.length,
+        passedCount: cadencePassedSignals.length,
+        markets: cadenceSkippedMarketIds.slice(0, 50),
+        telemetry: getAdaptiveCadenceTelemetry(),
+      }),
+      triggeredByOpenId,
+    );
+  }
+
   // Import and use AI trader duo review
   const { reviewPolymarketSignalsWithTrader } = await import(
     "./polymarketSignalReviewer"
@@ -395,7 +429,7 @@ export async function runPolymarketAutonomousTrading(
   const reviewedSignals = await reviewPolymarketSignalsWithTrader(
     {
       markets: filteredMarkets,
-      signals: executableSignals,
+      signals: cadencePassedSignals,
       maxSignals: 12,
     },
     { userId: scopedUserId, telemetry },
