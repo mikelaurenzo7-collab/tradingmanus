@@ -12,6 +12,7 @@
     "build": "vite build",
     "build:server": "esbuild server/_core/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
     "start": "NODE_ENV=production node dist/index.js",
+    "backtest": "tsx scripts/backtest-exits.ts",
     "check": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write .",
