@@ -75,9 +75,11 @@ used.  Never use `npm` or `yarn` in this repo — the lockfile is
 | `OWNER_PASSWORD` | ✅ | 12+ chars in production |
 | `OPENROUTER_API_KEY` | ✅ | AI reviewer via OpenRouter — required for any live trading. `ANTHROPIC_API_KEY` accepted as fallback. |
 | `NODE_ENV` | ✅ | `development` / `production` |
-| `CRON_SECRET` | Vercel only | Bearer token for Vercel Cron jobs (32+ chars) |
 | `LOG_LEVEL` | optional | `debug`/`info`/`warn`/`error` (default `info`) |
-| `OPENROUTER_MODEL` | optional | Default `tencent/hy3-preview:free` |
+| `OPENROUTER_MODEL` | optional | Default `tencent/hy3-preview:free` (free tier — upgrade to a paid model for sub-3-min cadence) |
+| `AUTONOMY_INTERVAL_MS` | optional | Kalshi+Polymarket autonomy cadence in ms (default `120000` = 2 min) |
+| `ORDER_SYNC_INTERVAL_MS` | optional | Kalshi order/position reconciliation cadence (default `30000` = 30 s) |
+| `CROSS_ARB_INTERVAL_MS` | optional | Cross-platform arb scanner cadence (default `10000` = 10 s) |
 | `ALLOWED_ORIGIN` | optional | Extra CORS origin for production (e.g. Railway public URL) |
 | `ALERT_WEBHOOK_URL` | optional | Webhook URL for ops alerts (consecutive failures, equity drops) |
 | `PAPER_TRADE_MODE` | optional | `true` to simulate orders without placing real trades |
@@ -309,19 +311,17 @@ placeKalshiOrder()                  ← Kalshi REST (wrapped in withUserLock)
 
 ## Deployment
 
-### Railway (primary)
+### Railway (only deploy target)
 - `railway.json` sets `builder: DOCKERFILE`
 - `Dockerfile` pins Node 20 + pnpm 10.4.1, runs `pnpm install --frozen-lockfile && pnpm build && pnpm build:server`, starts `pnpm start`
 - `pnpm.onlyBuiltDependencies` in `package.json` allows `@tailwindcss/oxide` and `esbuild` postinstall scripts (Tailwind v4 native binary — **required** for the Vite build)
 - **Schema migrations are manual.** Before deploying any commit that changes `drizzle/schema.ts`, run `corepack pnpm db:push` against the production `DATABASE_URL` from a workstation. We do **not** run `db:push` automatically in `preDeployCommand` because `drizzle-kit push` is interactive: in a non-TTY release environment it would either hang on destructive prompts or auto-skip them, leaving the running server with a schema mismatch. If you want auto-applied migrations, switch to a versioned `drizzle/migrations` folder + `drizzle-kit migrate`.
 - Liveness probe: `GET /api/health/live` (Railway restart policy is wired here — never touches the DB so a Neon outage cannot cause a restart loop)
-- Schedulers run **in-process**: autonomy every 15 min, order sync every 30 sec
-- `CRON_SECRET` is not needed on Railway
-
-### Vercel (secondary)
-- One serverless function: `api/index.ts`
-- `vercel.json` handles rewrites, cron config, build command
-- Cron jobs authenticate with `Authorization: Bearer ${CRON_SECRET}`
+- Schedulers run **in-process** (`server/_core/index.ts`):
+  - Kalshi + Polymarket autonomy: every `AUTONOMY_INTERVAL_MS` (default 2 min)
+  - Kalshi order sync: every `ORDER_SYNC_INTERVAL_MS` (default 30 s)
+  - Cross-platform arb scanner: every `CROSS_ARB_INTERVAL_MS` (default 10 s, in-flight guarded)
+- The Vercel serverless entry (`api/index.ts`) and `vercel.json` were removed in the Railway-only consolidation pass; if a Vercel deploy is ever needed again, see git history for the prior shape.
 
 ### External monitoring (recommended)
 - Point an uptime monitor (Better Uptime, Cronitor, Pingdom, or Railway's external check)

@@ -8,7 +8,6 @@ function setBaseRequiredEnv() {
   process.env.DATABASE_URL = "postgresql://example";
   process.env.OWNER_EMAIL = "owner@example.com";
   process.env.OWNER_PASSWORD = "z".repeat(16);
-  process.env.CRON_SECRET = "c".repeat(32); // Changed to 32 chars
 }
 
 describe("validateServerEnv", () => {
@@ -25,19 +24,6 @@ describe("validateServerEnv", () => {
 
     const envModule = await import("./_core/env");
 
-    expect(() => envModule.validateServerEnv()).not.toThrow();
-  });
-
-  it("does not throw when CRON_SECRET is short in production (emits warning only)", async () => {
-    setBaseRequiredEnv();
-    process.env.NODE_ENV = "production";
-    process.env.CRON_SECRET = "short"; // Less than 32 chars
-    process.env.OPENROUTER_API_KEY = "sk-or-test";
-
-    const envModule = await import("./_core/env");
-
-    // CRON_SECRET too short now emits a console.warn instead of throwing,
-    // so the server can still start (autonomous trading just won't work).
     expect(() => envModule.validateServerEnv()).not.toThrow();
   });
 

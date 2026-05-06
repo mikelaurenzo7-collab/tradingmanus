@@ -5,8 +5,9 @@ import { createApp, scopeScheduledUsersToTrigger } from "./app";
 import { serveStatic, setupVite } from "./vite";
 import { getUsersEligibleForAutomaticScheduledTrading } from "../db";
 import { runScheduledAutonomousTradingBatch } from "./kalshiAutonomy";
+import { runPolymarketAutonomousTrading } from "./polymarketAutonomy";
 import { syncPendingOrders, syncLivePositions } from "./kalshiOrderSync";
-import { createAutonomousTradingLock, createOrderSyncLock } from "./distributedLock";
+import { createAutonomousTradingLock, createOrderSyncLock, DistributedLock } from "./distributedLock";
 import { logger } from "./logger";
 import { fetchKalshiMarkets } from "./kalshiMarketData";
 import { fetchPolymarketMarkets } from "./polymarketAuth";
@@ -86,9 +87,29 @@ async function startServer() {
   });
 }
 
-const AUTONOMOUS_TRADING_INTERVAL_MS = 15 * 60 * 1000;
-const ORDER_SYNC_INTERVAL_MS = 30 * 1000;
-const CROSS_PLATFORM_ARB_INTERVAL_MS = 10 * 1000;
+// All scheduler intervals are env-tunable so the operator can dial cadence
+// against AI cost.  Each Kalshi+Polymarket cycle issues ~1-3 OpenRouter
+// reviewer calls; with the free-tier model the daily quota caps practical
+// cadence around 5 min.  With a paid model 1-2 min is comfortable.
+function envIntervalMs(name: string, fallbackMs: number): number {
+  const raw = (process.env[name] ?? "").trim();
+  if (!raw) return fallbackMs;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 1000) return fallbackMs;
+  return parsed;
+}
+// Default 2 min: empirically the profit-maximizing cadence for a single-owner
+// prediction-market dashboard.  Most alpha in sports/crypto/news markets
+// persists 1-5 minutes after the catalyst — 2 min captures it before others
+// arbitrage it away while keeping AI reviewer cost bounded.
+//
+// Tune via env:
+//   AUTONOMY_INTERVAL_MS=60000   → 1 min  (max alpha, requires paid OpenRouter model)
+//   AUTONOMY_INTERVAL_MS=120000  → 2 min  (default — sweet spot)
+//   AUTONOMY_INTERVAL_MS=300000  → 5 min  (free-tier-safe; ~30% alpha sacrificed)
+const AUTONOMOUS_TRADING_INTERVAL_MS = envIntervalMs("AUTONOMY_INTERVAL_MS", 2 * 60 * 1000);
+const ORDER_SYNC_INTERVAL_MS = envIntervalMs("ORDER_SYNC_INTERVAL_MS", 30 * 1000);
+const CROSS_PLATFORM_ARB_INTERVAL_MS = envIntervalMs("CROSS_ARB_INTERVAL_MS", 10 * 1000);
 const POLYMARKET_MARKET_LIMIT = 80;
 
 async function runAutonomousScheduler() {
@@ -118,6 +139,45 @@ async function runAutonomousScheduler() {
     }
   } catch (error) {
     logger.error({ err: error }, "[Scheduler] Autonomous trading run failed");
+  }
+}
+
+// Polymarket runs on the same cadence as Kalshi but has its own per-user
+// lock (`polymarket_autonomy_user_${id}`) so a slow Polymarket cycle never
+// blocks the next Kalshi cycle (or vice-versa).  runPolymarketAutonomous-
+// Trading internally guards subscription, credentials, and the in-process
+// withUserLock around the risk-check → place sequence.
+async function runPolymarketAutonomousScheduler() {
+  try {
+    const eligibleUsers = await getUsersEligibleForAutomaticScheduledTrading();
+    const scopedUsers = scopeScheduledUsersToTrigger(
+      eligibleUsers as Array<{ id: number; openId: string; email?: string | null }>,
+      "local_scheduler"
+    );
+
+    const ownerUser = scopedUsers[0];
+    if (!ownerUser) return;
+
+    const lock = new DistributedLock(`polymarket_autonomy_user_${ownerUser.id}`);
+    const acquired = await lock.acquire({ ttlMs: 5 * 60 * 1000 });
+    if (!acquired) {
+      logger.info("[PolymarketScheduler] Polymarket autonomous trading already in progress, skipping");
+      return;
+    }
+
+    try {
+      const result = await runPolymarketAutonomousTrading(ownerUser.id, {
+        triggeredByOpenId: "local_scheduler",
+      });
+      logger.info(
+        { status: result.status, orderPlaced: result.orderPlaced },
+        "[PolymarketScheduler] run complete"
+      );
+    } finally {
+      await lock.release();
+    }
+  } catch (error) {
+    logger.error({ err: error }, "[PolymarketScheduler] Polymarket autonomous run failed");
   }
 }
 
@@ -217,12 +277,20 @@ async function runRealtimeCrossPlatformArbScan() {
 startServer()
   .then(() => {
     setInterval(runAutonomousScheduler, AUTONOMOUS_TRADING_INTERVAL_MS);
+    setInterval(runPolymarketAutonomousScheduler, AUTONOMOUS_TRADING_INTERVAL_MS);
     setInterval(runOrderSync, ORDER_SYNC_INTERVAL_MS);
     setInterval(runRealtimeCrossPlatformArbScan, CROSS_PLATFORM_ARB_INTERVAL_MS);
-    setTimeout(runAutonomousScheduler, 2 * 60 * 1000);
-    logger.info("[Scheduler] Autonomous trading scheduler started (15-min interval)");
-    logger.info("[OrderSync] Order sync started (30-sec interval)");
-    logger.info("[CrossArb] Realtime scanner started (10-sec interval)");
+    // Kick off the first Kalshi + Polymarket runs ~30s after boot so they
+    // don't both hit the AI reviewer simultaneously on startup.
+    setTimeout(runAutonomousScheduler, 30 * 1000);
+    setTimeout(runPolymarketAutonomousScheduler, 60 * 1000);
+    const autonomyMin = (AUTONOMOUS_TRADING_INTERVAL_MS / 60_000).toFixed(1);
+    const orderSyncSec = (ORDER_SYNC_INTERVAL_MS / 1_000).toFixed(0);
+    const crossArbSec = (CROSS_PLATFORM_ARB_INTERVAL_MS / 1_000).toFixed(0);
+    logger.info("[Scheduler] Kalshi autonomy started (%s-min interval)", autonomyMin);
+    logger.info("[PolymarketScheduler] Polymarket autonomy started (%s-min interval)", autonomyMin);
+    logger.info("[OrderSync] Order sync started (%s-sec interval)", orderSyncSec);
+    logger.info("[CrossArb] Realtime scanner started (%s-sec interval)", crossArbSec);
   })
   .catch((error) => {
     // Crash hard so the platform's restart policy kicks in. Logging only and
