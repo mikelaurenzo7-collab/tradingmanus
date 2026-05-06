@@ -202,7 +202,7 @@ export default function Backtesting() {
     <div className="space-y-8 max-w-7xl mx-auto animate-fade-in">
       <PageHeader
         icon={ActivitySquare}
-        iconGradient="from-violet-500 via-fuchsia-500 to-cyan-500"
+        iconColor="text-primary"
         title="Backtesting"
         description="Validate the trading stack with procedure-driven performance statistics, Monte Carlo robustness, and walk-forward analysis using either real closed trades or a scenario sandbox."
 
@@ -243,7 +243,7 @@ export default function Backtesting() {
         }
       />
 
-        <Card className="glass-card animate-fade-in" style={{ animationDelay: '0.1s' }}>
+        <Card className="glass-panel animate-fade-in" style={{ animationDelay: '0.1s' }}>
           <CardHeader>
             <CardTitle>Analysis Source</CardTitle>
             <CardDescription>{sourceDescription}</CardDescription>
@@ -329,7 +329,7 @@ export default function Backtesting() {
         </Card>
 
         {trades.length === 0 && !isLoadingAny ? (
-          <Card className="glass-card">
+          <Card className="glass-panel">
             <CardContent className="pt-6">
               <EmptyState
                 icon={BarChart3}
@@ -376,7 +376,7 @@ export default function Backtesting() {
             </div>
 
             <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr] animate-fade-in" style={{ animationDelay: '0.3s' }}>
-              <Card className="glass-card">
+              <Card className="glass-panel">
                 <CardHeader>
                   <CardTitle>Backtest Summary</CardTitle>
                   <CardDescription>
@@ -405,7 +405,7 @@ export default function Backtesting() {
                 </CardContent>
               </Card>
 
-              <Card className="glass-card">
+              <Card className="glass-panel">
                 <CardHeader>
                   <CardTitle>Monte Carlo Robustness</CardTitle>
                   <CardDescription>
@@ -437,7 +437,7 @@ export default function Backtesting() {
             </div>
 
             <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr] animate-fade-in" style={{ animationDelay: '0.4s' }}>
-              <Card className="glass-card">
+              <Card className="glass-panel">
                 <CardHeader>
                   <CardTitle>Equity Curve</CardTitle>
                   <CardDescription>
@@ -455,7 +455,7 @@ export default function Backtesting() {
                 </CardContent>
               </Card>
 
-              <Card className="glass-card">
+              <Card className="glass-panel">
                 <CardHeader>
                   <CardTitle>Walk-Forward Validation</CardTitle>
                   <CardDescription>
@@ -498,7 +498,7 @@ export default function Backtesting() {
             </div>
 
             {distributionData.length > 0 && (
-              <Card className="glass-card animate-fade-in" style={{ animationDelay: '0.5s' }}>
+              <Card className="glass-panel animate-fade-in" style={{ animationDelay: '0.5s' }}>
                 <CardHeader>
                   <CardTitle>Trade Outcome Distribution</CardTitle>
                   <CardDescription>Win/loss breakdown across the analyzed trade sequence.</CardDescription>
@@ -514,7 +514,7 @@ export default function Backtesting() {
             )}
 
             {tradeTableData.length > 0 && (
-              <Card className="glass-card animate-fade-in" style={{ animationDelay: '0.6s' }}>
+              <Card className="glass-panel animate-fade-in" style={{ animationDelay: '0.6s' }}>
                 <CardHeader>
                   <CardTitle>Trade-by-Trade Results</CardTitle>
                   <CardDescription>Detailed breakdown of each trade in the backtest sequence.</CardDescription>
@@ -534,7 +534,7 @@ export default function Backtesting() {
         )}
 
         {(tradeHistoryQuery.error || capitalQuery.error || runAnalysisMutation.error) && (
-          <Card className="glass-card border-rose-900/60 bg-rose-950/30">
+          <Card className="glass-panel border-rose-900/60 bg-rose-950/30">
             <CardHeader>
               <CardTitle className="text-rose-300">Backtesting Pipeline Unavailable</CardTitle>
               <CardDescription className="text-rose-200/80">

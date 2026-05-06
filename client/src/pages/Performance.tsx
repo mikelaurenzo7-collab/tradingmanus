@@ -98,9 +98,9 @@ export default function Performance() {
           icon={BarChart3}
           title="Performance Metrics"
           description="Track trading quality, capital attribution, and signal-learning posture from real Kalshi activity."
-          iconGradient="from-emerald-500 to-cyan-500"
+          iconColor="text-success"
         />
-        <div className="glass-card p-8">
+        <div className="glass-panel p-8">
           <ErrorState
             error="Failed to load performance metrics"
             onRetry={() => performanceOverviewQuery.refetch()}
@@ -116,7 +116,7 @@ export default function Performance() {
         icon={BarChart3}
         title="Performance Metrics"
         description="Track trading quality, capital attribution, and signal-learning posture from real Kalshi activity."
-        iconGradient="from-emerald-500 to-cyan-500"
+        iconColor="text-success"
       />
 
       {/* Stat Cards Grid — 6 key metrics */}
@@ -182,7 +182,7 @@ export default function Performance() {
 
       {/* Equity Curve Chart — Full Width */}
       {equityCurveData.length > 0 && (
-        <div className="glass-card p-6 glow-subtle">
+        <div className="glass-panel p-6 glow-subtle">
           <h3 className="text-lg font-semibold mb-4 text-foreground">Equity Curve</h3>
           <PerformanceChart
             data={equityCurveData}
@@ -200,7 +200,7 @@ export default function Performance() {
 
       {/* Distribution Chart — Signal Type Win Rates */}
       {distributionData.length > 0 && (
-        <div className="glass-card p-6 glow-subtle">
+        <div className="glass-panel p-6 glow-subtle">
           <h3 className="text-lg font-semibold mb-4 text-foreground">Strategy Win Rate Distribution</h3>
           <DistributionChart
             data={distributionData}
@@ -211,7 +211,7 @@ export default function Performance() {
       )}
 
       {/* Heatmap Chart — Activity Tracking (Demo Data) */}
-      <div className="glass-card p-6 glow-subtle">
+      <div className="glass-panel p-6 glow-subtle">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold text-foreground">Trading Activity Heatmap</h3>
           <span className="text-xs text-muted-foreground">Demo data — activity tracking coming soon</span>

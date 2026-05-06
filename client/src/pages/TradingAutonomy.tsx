@@ -98,7 +98,7 @@ export default function TradingAutonomy() {
         icon={isArmed ? Zap : Shield}
         title="Trading Autonomy"
         description="Configure autonomous trading and arm live order execution when ready."
-        iconGradient={isArmed ? "from-rose-500 to-orange-500" : "from-violet-500 to-indigo-500"}
+        iconColor={isArmed ? "text-destructive" : "text-primary"}
       />
 
       {/* Connection gate */}
@@ -113,14 +113,14 @@ export default function TradingAutonomy() {
 
       {/* Message feedback */}
       {message && (
-        <Alert className="border-cyan-500/30 bg-cyan-500/5">
+        <Alert className="border-accent-500/30 bg-accent-500/5">
           <CheckCircle2 className="h-4 w-4" />
           <AlertDescription>{message}</AlertDescription>
         </Alert>
       )}
 
       {/* ── Hero Status Card ─────────────────────────────────────────── */}
-      <Card className={`glass-card relative overflow-hidden ${isArmed ? 'glow-primary animate-pulse-glow' : ''}`}>
+      <Card className={`glass-panel relative overflow-hidden ${isArmed ? 'glow-primary animate-pulse-glow' : ''}`}>
         <CardContent className="pt-6 pb-6">
           <div className="flex flex-col md:flex-row items-center md:items-start justify-between gap-6">
             {/* Status indicator */}
@@ -156,7 +156,7 @@ export default function TradingAutonomy() {
               {!isArmed ? (
                 <Button
                   size="lg"
-                  className="laurenzo-button"
+                  className="bg-gradient-to-r from-primary to-accent hover:opacity-90 transition-all"
                   disabled={isMutating || !canArm}
                   onClick={() => activationMutation.mutate({ enabled: true })}
                 >
@@ -242,10 +242,10 @@ export default function TradingAutonomy() {
       </div>
 
       {/* ── Mode Selector ────────────────────────────────────────────── */}
-      <Card className="glass-card">
+      <Card className="glass-panel">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Target className="w-5 h-5 text-cyan-400" />
+            <Target className="w-5 h-5 text-accent" />
             Autonomy Mode
           </CardTitle>
           <p className="text-sm text-muted-foreground">
@@ -264,14 +264,14 @@ export default function TradingAutonomy() {
                   onClick={() =>
                     setForm((f) => ({ ...f, autonomyMode: mode, liveTradingEnabled: mode === "manual" ? false : f.liveTradingEnabled }))
                   }
-                  className={`glass-card p-5 text-left transition-all duration-300 disabled:cursor-not-allowed disabled:opacity-50 ${
-                    active ? 'glow-primary border-cyan-400' : 'hover:border-cyan-500/30'
+                  className={`glass-panel p-5 text-left transition-all duration-300 disabled:cursor-not-allowed disabled:opacity-50 ${
+                    active ? 'glow-primary border-accent-400' : 'hover:border-accent-500/30'
                   }`}
                 >
                   <div className="flex items-start justify-between gap-2 mb-3">
                     <div className="text-lg font-bold text-foreground">{getAutonomyModeLabel(mode)}</div>
                     {active ? (
-                      <CheckCircle2 className="w-5 h-5 text-cyan-400 shrink-0" />
+                      <CheckCircle2 className="w-5 h-5 text-accent shrink-0" />
                     ) : (
                       <Circle className="w-5 h-5 text-border/60 shrink-0" />
                     )}
@@ -307,13 +307,13 @@ export default function TradingAutonomy() {
                       disabled={policyLocked}
                       onClick={() => setForm((f) => ({ ...f, executionCadence: c }))}
                       className={`rounded-xl border px-4 py-3 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${
-                        active ? "border-violet-400 bg-violet-500/10" : "border-border/60 bg-background/40 hover:border-violet-500/30"
+                        active ? "border-primary-400 bg-primary-500/10" : "border-border/60 bg-background/40 hover:border-primary-500/30"
                       }`}
                     >
                       <div className="flex items-center justify-between gap-2">
                         <span className="font-semibold">{getExecutionCadenceLabel(c)}</span>
                         {active ? (
-                          <CheckCircle2 className="w-4 h-4 text-violet-400 shrink-0" />
+                          <CheckCircle2 className="w-4 h-4 text-primary shrink-0" />
                         ) : (
                           <Circle className="w-4 h-4 text-border/60 shrink-0" />
                         )}
@@ -329,10 +329,10 @@ export default function TradingAutonomy() {
       </Card>
 
       {/* ── Risk Settings ────────────────────────────────────────────── */}
-      <Card className="glass-card">
+      <Card className="glass-panel">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Shield className="w-5 h-5 text-pink-400" />
+            <Shield className="w-5 h-5 stat-decrease" />
             Risk Settings & Thresholds
           </CardTitle>
           <p className="text-sm text-muted-foreground">
@@ -358,13 +358,13 @@ export default function TradingAutonomy() {
                     disabled={policyLocked}
                     onClick={() => setForm((f) => ({ ...f, riskPosture: rp }))}
                     className={`rounded-xl border px-4 py-3 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${
-                      active ? "border-pink-400 bg-pink-500/10" : "border-border/60 bg-background/40 hover:border-pink-500/30"
+                      active ? "border-destructive-400 bg-destructive-500/10" : "border-border/60 bg-background/40 hover:border-destructive-500/30"
                     }`}
                   >
                     <div className="flex items-center justify-between gap-2">
                       <span className="font-semibold">{getRiskPostureLabel(rp)}</span>
                       {active ? (
-                        <CheckCircle2 className="w-4 h-4 text-pink-400 shrink-0" />
+                        <CheckCircle2 className="w-4 h-4 stat-decrease shrink-0" />
                       ) : (
                         <Circle className="w-4 h-4 text-border/60 shrink-0" />
                       )}
@@ -440,7 +440,7 @@ export default function TradingAutonomy() {
           {!isArmed && (
             <div className="flex gap-3">
               <Button
-                className="laurenzo-button"
+                className="bg-gradient-to-r from-primary to-accent hover:opacity-90 transition-all"
                 disabled={isMutating || policyLocked}
                 onClick={() => { setMessage(null); saveMutation.mutate(form); }}
               >
@@ -466,10 +466,10 @@ export default function TradingAutonomy() {
       </Card>
 
       {/* ── Recent Activity Timeline ────────────────────────────────── */}
-      <Card className="glass-card">
+      <Card className="glass-panel">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Activity className="w-5 h-5 text-cyan-400" />
+            <Activity className="w-5 h-5 text-accent" />
             Recent Autonomous Activity
           </CardTitle>
         </CardHeader>
@@ -479,19 +479,19 @@ export default function TradingAutonomy() {
 
           {/* Activity stats */}
           <div className="grid gap-3 sm:grid-cols-3">
-            <div className="glass-card p-4">
+            <div className="glass-panel p-4">
               <div className="text-xs text-muted-foreground mb-2 flex items-center gap-2">
                 <Clock className="w-3.5 h-3.5" />Last scan
               </div>
               <div className="font-medium text-sm">{formatAutonomyActivityTime(autonomyActivityQuery.data?.lastRun?.createdAt)}</div>
             </div>
-            <div className="glass-card p-4">
+            <div className="glass-panel p-4">
               <div className="text-xs text-muted-foreground mb-2 flex items-center gap-2">
                 <Zap className="w-3.5 h-3.5" />Last order
               </div>
               <div className="font-medium text-sm">{formatAutonomyActivityTime(autonomyActivityQuery.data?.lastOrder?.createdAt)}</div>
             </div>
-            <div className="glass-card p-4">
+            <div className="glass-panel p-4">
               <div className="text-xs text-muted-foreground mb-2 flex items-center gap-2">
                 <Ban className="w-3.5 h-3.5" />Last block reason
               </div>
@@ -514,7 +514,7 @@ export default function TradingAutonomy() {
                       ? 'bg-red-400' 
                       : event.eventType.includes('executed') || event.eventType.includes('placed')
                       ? 'bg-green-400'
-                      : 'bg-cyan-400'
+                      : 'bg-accent-400'
                   }`} />
                   <span className="text-sm text-foreground/80 flex-1">
                     {event.eventType.replace(/_/g, " ")}
@@ -537,7 +537,7 @@ export default function TradingAutonomy() {
 
       {/* ── Kill Switch (prominent when armed) ──────────────────────── */}
       {isArmed && (
-        <Card className="glass-card border-red-500/30 glow-destructive">
+        <Card className="glass-panel border-red-500/30 glow-destructive">
           <CardContent className="pt-6 pb-6">
             <div className="flex flex-col md:flex-row items-center md:items-start justify-between gap-4">
               <div className="flex items-center gap-4">

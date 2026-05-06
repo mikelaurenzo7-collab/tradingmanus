@@ -113,7 +113,7 @@ export function MarketCard({
         }
       `}</style>
       <Card
-        className={`laurenzo-card ${onClick ? 'cursor-pointer' : ''} ${className}`}
+        className={`data-card ${onClick ? 'cursor-pointer' : ''} ${className}`}
         onClick={onClick}
         style={animationStyle}
         data-market-id={marketId}

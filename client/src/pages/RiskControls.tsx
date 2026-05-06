@@ -111,7 +111,7 @@ export default function RiskControls() {
         icon={Shield}
         title="Risk Controls"
         description="Trading risk guardrails — hard limits enforced on every order"
-        iconGradient="from-rose-500 to-orange-500"
+        iconColor="text-destructive"
         actions={
           <Button
             variant="outline"
@@ -164,7 +164,7 @@ export default function RiskControls() {
 
       {/* Live snapshot + hard limits side-by-side */}
       <div className="grid gap-4 md:grid-cols-2 animate-fade-in" style={{ animationDelay: '200ms' }}>
-        <div className="glass-card laurenzo-card">
+        <div className="glass-panel data-card">
           <div className="mb-4">
             <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">Live Snapshot</h3>
           </div>
@@ -184,7 +184,7 @@ export default function RiskControls() {
           </div>
         </div>
 
-        <div className="glass-card laurenzo-card glow-destructive">
+        <div className="glass-panel data-card glow-destructive">
           <div className="mb-4">
             <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">Enforced Hard Limits</h3>
           </div>
@@ -206,7 +206,7 @@ export default function RiskControls() {
       </div>
 
       {/* Alerts */}
-      <div className="glass-card animate-fade-in" style={{ animationDelay: '300ms' }}>
+      <div className="glass-panel animate-fade-in" style={{ animationDelay: '300ms' }}>
         <div className="mb-4 flex items-center gap-2">
           <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">Active Alerts</h3>
           {riskAlerts.length > 0 && <span className="text-rose-400 text-xs font-semibold">({riskAlerts.length})</span>}
@@ -231,7 +231,7 @@ export default function RiskControls() {
       </div>
 
       {/* How limits work */}
-      <div className="glass-card animate-fade-in" style={{ animationDelay: '400ms' }}>
+      <div className="glass-panel animate-fade-in" style={{ animationDelay: '400ms' }}>
         <div className="mb-4">
           <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">How These Limits Work</h3>
         </div>

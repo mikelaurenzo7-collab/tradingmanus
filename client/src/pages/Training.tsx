@@ -49,6 +49,11 @@ export default function Training() {
     refetch: refetchEffectiveness,
   } = trpc.training.getInstructionEffectiveness.useQuery({ lookbackDays });
 
+  const {
+    data: suggestions,
+    isLoading: suggestionsLoading,
+  } = trpc.training.getInstructionSuggestions.useQuery({ lookbackDays });
+
   const createMutation = trpc.training.createInstruction.useMutation({
     onSuccess: () => { setFormData({ title: "", description: "", instructionType: "market_filter" }); setShowNewForm(false); refetch(); toast.success("Instruction created"); },
     onError: () => toast.error("Failed to create instruction"),
@@ -84,7 +89,7 @@ export default function Training() {
     exclude: "bg-red-500/20 text-red-300 border-red-500/30",
     forbid: "bg-red-500/20 text-red-300 border-red-500/30",
     include: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
-    require: "bg-cyan-500/20 text-cyan-300 border-cyan-500/30",
+    require: "bg-accent-500/20 text-cyan-300 border-accent-500/30",
   };
 
   if (isLoading) {
@@ -101,9 +106,9 @@ export default function Training() {
         icon={GraduationCap}
         title="Agent Training"
         description="Define trading instructions and rules. Your agent applies these to every autonomous scan."
-        iconGradient="from-violet-500 to-fuchsia-500"
+        iconColor="text-primary"
         actions={
-          <Button onClick={() => setShowNewForm(!showNewForm)} className="laurenzo-button gap-2" size="sm">
+          <Button onClick={() => setShowNewForm(!showNewForm)} className="bg-gradient-to-r from-primary to-accent hover:opacity-90 transition-all gap-2" size="sm">
             <Plus className="w-4 h-4" />
             New Instruction
           </Button>
@@ -117,7 +122,7 @@ export default function Training() {
         <StatCard label="Active Schedules" value={instructions?.reduce((sum: number, i: any) => sum + (i.schedules?.length ?? 0), 0) ?? 0} color="#06b6d4" />
       </div>
 
-      <Card className="glass-card border-violet-500/30 animate-fade-in" style={{ animationDelay: '200ms' }}>
+      <Card className="glass-panel border-primary-500/30 animate-fade-in" style={{ animationDelay: '200ms' }}>
         <CardContent className="flex flex-col gap-4 pt-6 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <p className="font-semibold text-foreground gradient-text">Training shapes behavior. Trading Autonomy decides execution authority.</p>
@@ -126,12 +131,12 @@ export default function Training() {
             </p>
           </div>
           <Link href="/autonomy">
-            <Button className="laurenzo-button">Open Trading Autonomy</Button>
+            <Button className="bg-gradient-to-r from-primary to-accent hover:opacity-90 transition-all">Open Trading Autonomy</Button>
           </Link>
         </CardContent>
       </Card>
 
-      <Card className="glass-card border-emerald-500/30 animate-fade-in" style={{ animationDelay: '230ms' }}>
+      <Card className="glass-panel border-emerald-500/30 animate-fade-in" style={{ animationDelay: '230ms' }}>
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <CardTitle className="text-base">Instruction Effectiveness</CardTitle>
@@ -210,9 +215,75 @@ export default function Training() {
         </CardContent>
       </Card>
 
+      {/* Suggestions Section */}
+      <Card className="glass-panel border-accent-500/30 animate-fade-in" style={{ animationDelay: '260ms' }}>
+        <CardHeader>
+          <CardTitle className="text-base">Suggestions</CardTitle>
+          <CardDescription>
+            Actionable recommendations based on instruction performance over the last {lookbackDays} days.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {suggestionsLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : suggestions?.suggestions?.length ? (
+            <div className="space-y-3">
+              {suggestions.suggestions.slice(0, 6).map((suggestion, idx) => {
+                const typeStyles = {
+                  high_performer: {
+                    badge: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
+                    border: "border-emerald-500/30",
+                    bg: "bg-emerald-950/20",
+                  },
+                  low_performer: {
+                    badge: "bg-amber-500/20 text-amber-300 border-amber-500/30",
+                    border: "border-amber-500/30",
+                    bg: "bg-amber-950/20",
+                  },
+                  common_failure_rule: {
+                    badge: "bg-rose-500/20 text-rose-300 border-rose-500/30",
+                    border: "border-rose-500/30",
+                    bg: "bg-rose-950/20",
+                  },
+                };
+                const style = typeStyles[suggestion.suggestionType];
+                return (
+                  <div
+                    key={`${suggestion.instructionId}-${suggestion.suggestionType}-${idx}`}
+                    className={`rounded-lg border ${style.border} ${style.bg} p-3`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1">
+                        <div className="mb-1 flex flex-wrap items-center gap-2">
+                          <Badge className={style.badge}>
+                            {suggestion.suggestionType.replace(/_/g, " ")}
+                          </Badge>
+                          <span className="text-xs text-muted-foreground">
+                            {Math.round(suggestion.confidence * 100)}% confidence
+                          </span>
+                        </div>
+                        <p className="text-sm text-foreground">{suggestion.message}</p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <EmptyState
+              title="No suggestions yet"
+              description="Suggestions will appear once instruction effectiveness data accumulates."
+              icon={AlertCircle}
+            />
+          )}
+        </CardContent>
+      </Card>
+
       {/* New Instruction Form */}
       {showNewForm && (
-        <Card className="glass-card glow-primary animate-fade-in">
+        <Card className="glass-panel glow-primary animate-fade-in">
           <CardHeader>
             <CardTitle className="gradient-text">Create New Instruction</CardTitle>
             <CardDescription>Define a rule set that your agent will follow. You can add specific rules after creating the instruction.</CardDescription>
@@ -241,7 +312,7 @@ export default function Training() {
               </select>
             </div>
             <div className="flex gap-3">
-              <Button onClick={() => createMutation.mutate(formData)} disabled={createMutation.isPending} className="laurenzo-button flex-1">
+              <Button onClick={() => createMutation.mutate(formData)} disabled={createMutation.isPending} className="bg-gradient-to-r from-primary to-accent hover:opacity-90 transition-all flex-1">
                 {createMutation.isPending ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Creating...</> : "Create Instruction"}
               </Button>
               <Button onClick={() => setShowNewForm(false)} variant="outline">Cancel</Button>
@@ -254,7 +325,7 @@ export default function Training() {
       <div className="grid gap-4">
         {instructions && instructions.length > 0 ? (
           instructions.map((instruction: any, idx: number) => (
-            <Card key={instruction.id} className="glass-card laurenzo-card animate-fade-in" style={{ animationDelay: `${300 + idx * 50}ms` }}>
+            <Card key={instruction.id} className="glass-panel data-card animate-fade-in" style={{ animationDelay: `${300 + idx * 50}ms` }}>
               <CardContent className="pt-6">
                 {/* Card Header Row */}
                 <div className="flex items-start justify-between gap-4">
@@ -265,7 +336,7 @@ export default function Training() {
                       <Badge className={instruction.isActive ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/30" : "bg-muted text-muted-foreground border-0"}>
                         {instruction.isActive ? "Active" : "Inactive"}
                       </Badge>
-                      <Badge variant="outline" className="text-xs border-violet-500/30 text-violet-300">{typeLabel[instruction.instructionType]}</Badge>
+                      <Badge variant="outline" className="text-xs border-primary-500/30 text-violet-300">{typeLabel[instruction.instructionType]}</Badge>
                     </div>
                     {instruction.description && (
                       <p className="text-sm text-muted-foreground mb-2">{instruction.description}</p>
@@ -328,7 +399,7 @@ export default function Training() {
 
                       {/* Add Rule Form */}
                       {addingRule === instruction.id && (
-                        <div className="mt-3 p-4 rounded-lg border border-violet-500/30 bg-slate-900/30 space-y-3 animate-fade-in">
+                        <div className="mt-3 p-4 rounded-lg border border-primary-500/30 bg-slate-900/30 space-y-3 animate-fade-in">
                           <p className="text-xs text-muted-foreground font-medium">New rule</p>
                           <div className="grid grid-cols-3 gap-3">
                             <div>
@@ -362,7 +433,7 @@ export default function Training() {
                             </div>
                           </div>
                           <div className="flex gap-2">
-                            <Button size="sm" className="laurenzo-button" disabled={!ruleForm.ruleValue || addRuleMutation.isPending}
+                            <Button size="sm" className="bg-gradient-to-r from-primary to-accent hover:opacity-90 transition-all" disabled={!ruleForm.ruleValue || addRuleMutation.isPending}
                               onClick={() => addRuleMutation.mutate({ instructionId: instruction.id, ...ruleForm })}>
                               {addRuleMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : "Add"}
                             </Button>
@@ -406,7 +477,7 @@ export default function Training() {
 
                       {/* Add Schedule Form */}
                       {addingSchedule === instruction.id && (
-                        <div className="mt-3 p-4 rounded-lg border border-cyan-500/30 bg-slate-900/30 space-y-3 animate-fade-in">
+                        <div className="mt-3 p-4 rounded-lg border border-accent-500/30 bg-slate-900/30 space-y-3 animate-fade-in">
                           <p className="text-xs text-muted-foreground font-medium">New schedule</p>
                           <div>
                             <label className="text-xs text-muted-foreground block mb-1">Schedule type</label>
@@ -445,7 +516,7 @@ export default function Training() {
                             </div>
                           )}
                           <div className="flex gap-2">
-                            <Button size="sm" className="laurenzo-button" disabled={addScheduleMutation.isPending}
+                            <Button size="sm" className="bg-gradient-to-r from-primary to-accent hover:opacity-90 transition-all" disabled={addScheduleMutation.isPending}
                               onClick={() => addScheduleMutation.mutate({ instructionId: instruction.id, ...scheduleForm })}>
                               {addScheduleMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : "Add"}
                             </Button>
@@ -466,7 +537,7 @@ export default function Training() {
             description="Create an instruction to tell your agent what markets to trade, what to avoid, or when to trade."
             iconGradient="from-violet-500/20 to-indigo-500/20"
             action={
-              <Button onClick={() => setShowNewForm(true)} className="laurenzo-button">
+              <Button onClick={() => setShowNewForm(true)} className="bg-gradient-to-r from-primary to-accent hover:opacity-90 transition-all">
                 Create Your First Instruction
               </Button>
             }
@@ -475,16 +546,16 @@ export default function Training() {
       </div>
 
       {/* Reference */}
-      <Card className="glass-card border-cyan-500/30 animate-fade-in" style={{ animationDelay: '500ms' }}>
+      <Card className="glass-panel border-accent-500/30 animate-fade-in" style={{ animationDelay: '500ms' }}>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
-            <AlertCircle className="w-4 h-4 text-cyan-400" />
+            <AlertCircle className="w-4 h-4 text-accent" />
             Rule Reference
           </CardTitle>
         </CardHeader>
         <CardContent className="text-sm space-y-2 text-muted-foreground">
           <p><span className="text-red-400 font-mono">exclude / forbid</span> — skip markets or signals matching this value</p>
-          <p><span className="text-cyan-400 font-mono">include / require</span> — only trade markets or signals matching this value</p>
+          <p><span className="text-accent font-mono">include / require</span> — only trade markets or signals matching this value</p>
           <p><strong>category</strong> examples: <code>politics</code>, <code>sports</code>, <code>crypto</code>, <code>economics</code></p>
           <p><strong>signalType</strong> examples: <code>value_play</code>, <code>momentum</code>, <code>contrarian</code></p>
           <p><strong>minConfidence</strong>: numeric 0–1, e.g. <code>0.80</code></p>

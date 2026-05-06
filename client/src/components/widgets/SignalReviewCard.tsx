@@ -93,7 +93,7 @@ export function SignalReviewCard({
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
       transition={springConfigs.smooth}
-      className={cn("laurenzo-card p-6 relative", className)}
+      className={cn("data-card p-6 relative", className)}
     >
       <div className="flex flex-col gap-6">
         {/* Top section: Confidence meter + EV badge */}

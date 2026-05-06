@@ -48,7 +48,7 @@ export function KeyboardShortcuts() {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="glass-card border-white/10 max-w-2xl">
+      <DialogContent className="glass-panel border-white/10 max-w-2xl">
         <DialogHeader>
           <DialogTitle className="text-2xl gradient-text">
             Keyboard Shortcuts

@@ -57,7 +57,7 @@ export default function DeskMemoryTape({ deskMemoryStats }: DeskMemoryTapeProps)
 
   return (
     <>
-      <div className="laurenzo-card space-y-4">
+      <div className="data-card space-y-4">
         <h2 className="text-xl font-semibold">📚 Desk Memory Health</h2>
 
         {desks.length === 0 ? (

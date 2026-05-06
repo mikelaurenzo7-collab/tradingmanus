@@ -25,7 +25,7 @@ export default function TradingReadiness() {
   if (readinessQuery.isLoading || metricsQuery.isLoading || checklistQuery.isLoading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
-        <Loader2 className="animate-spin w-8 h-8 text-violet-400" />
+        <Loader2 className="animate-spin w-8 h-8 text-primary" />
       </div>
     );
   }
@@ -40,7 +40,7 @@ export default function TradingReadiness() {
         <PageHeader
           icon={ClipboardCheck}
           title="Trading Readiness"
-          iconGradient="from-cyan-500 to-blue-500"
+          iconColor="text-accent"
         />
         <EmptyState
           title="Unable to load readiness data"
@@ -61,11 +61,11 @@ export default function TradingReadiness() {
         icon={ClipboardCheck}
         title="Trading Readiness"
         description="Monitor your preparation for live trading"
-        iconGradient="from-cyan-500 to-blue-500"
+        iconColor="text-accent"
       />
 
       {/* Hero Status Indicator */}
-      <div className={`glass-card p-8 text-center relative overflow-hidden ${isReady ? 'glow-success' : 'glow-destructive'}`}>
+      <div className={`glass-panel p-8 text-center relative overflow-hidden ${isReady ? 'glow-success' : 'glow-destructive'}`}>
         <div className="absolute inset-0 bg-gradient-to-br from-transparent via-transparent to-white/5" />
         <div className="relative z-10">
           {isReady ? (
@@ -125,9 +125,9 @@ export default function TradingReadiness() {
       </div>
 
       {/* Animated Checklist */}
-      <div className={`glass-card p-6 ${isReady ? 'glow-success border-emerald-500/30' : ''}`}>
+      <div className={`glass-panel p-6 ${isReady ? 'glow-success border-emerald-500/30' : ''}`}>
         <h2 className="text-xl font-semibold mb-6 flex items-center gap-2">
-          <ClipboardCheck className="w-6 h-6 text-cyan-400" />
+          <ClipboardCheck className="w-6 h-6 text-accent" />
           <span className="gradient-text">Pre-Live Checklist</span>
         </h2>
         <div className="space-y-3">
@@ -139,7 +139,7 @@ export default function TradingReadiness() {
             return (
               <div
                 key={item.id}
-                className={`laurenzo-card flex items-start gap-4 p-4 animate-fade-in transition-all duration-300 ${glowClass}`}
+                className={`data-card flex items-start gap-4 p-4 animate-fade-in transition-all duration-300 ${glowClass}`}
                 style={{ animationDelay: `${300 + index * 80}ms` }}
               >
                 <Icon className={`w-6 h-6 ${iconColor} flex-shrink-0 mt-0.5`} />
@@ -160,7 +160,7 @@ export default function TradingReadiness() {
       <DeskMemoryTape deskMemoryStats={readinessData.deskMemoryStats} />
 
       {/* Paper vs Real Performance */}
-      <div className="glass-card p-6 space-y-4">
+      <div className="glass-panel p-6 space-y-4">
         <h2 className="text-xl font-semibold"><span className="gradient-text">📈 Paper vs Real Performance</span></h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="border border-border rounded-lg p-4 bg-white/5">

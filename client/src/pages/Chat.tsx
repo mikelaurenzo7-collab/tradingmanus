@@ -127,7 +127,7 @@ function MessageBubble({ msg, index }: { msg: ChatMessage; index: number }) {
       <div className={`shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-sm font-bold shadow-md ${isUser ? "bg-gradient-to-br from-indigo-500 to-violet-500 text-white" : "bg-gradient-to-br from-violet-500/40 to-indigo-500/40 text-violet-200 ring-2 ring-violet-400/30"}`}>
         {isUser ? "U" : <Bot className="w-5 h-5" />}
       </div>
-      <div className={`max-w-[78%] rounded-2xl px-4 py-3 shadow-sm transition-all hover:shadow-md ${isUser ? "bg-primary/20 border border-primary/30 text-white rounded-tr-md" : "glass-card text-slate-200 rounded-tl-md"}`}>
+      <div className={`max-w-[78%] rounded-2xl px-4 py-3 shadow-sm transition-all hover:shadow-md ${isUser ? "bg-primary/20 border border-primary/30 text-white rounded-tr-md" : "glass-panel text-slate-200 rounded-tl-md"}`}>
         <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
         {!isUser && msg.actionType && (
           <ActionCard actionType={msg.actionType} actionData={msg.actionData} />
@@ -146,11 +146,11 @@ function TypingIndicator() {
       <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500/40 to-indigo-500/40 flex items-center justify-center ring-2 ring-violet-400/30 shadow-md">
         <Bot className="w-5 h-5 text-violet-200" />
       </div>
-      <div className="glass-card rounded-2xl rounded-tl-md px-4 py-3 flex items-center gap-2">
+      <div className="glass-panel rounded-2xl rounded-tl-md px-4 py-3 flex items-center gap-2">
         <div className="flex gap-1">
-          <span className="w-2 h-2 rounded-full bg-violet-400 animate-pulse" style={{ animationDelay: "0ms" }} />
-          <span className="w-2 h-2 rounded-full bg-violet-400 animate-pulse" style={{ animationDelay: "150ms" }} />
-          <span className="w-2 h-2 rounded-full bg-violet-400 animate-pulse" style={{ animationDelay: "300ms" }} />
+          <span className="w-2 h-2 rounded-full bg-primary-400 animate-pulse" style={{ animationDelay: "0ms" }} />
+          <span className="w-2 h-2 rounded-full bg-primary-400 animate-pulse" style={{ animationDelay: "150ms" }} />
+          <span className="w-2 h-2 rounded-full bg-primary-400 animate-pulse" style={{ animationDelay: "300ms" }} />
         </div>
         <span className="text-sm text-muted-foreground">Thinking…</span>
       </div>
@@ -229,7 +229,7 @@ function PlatformChat({ platform }: { platform: Platform }) {
   return (
     <div className="flex h-full gap-4">
       {/* ── Chat area ──────────────────────────────────────────────────────── */}
-      <div className="flex flex-col flex-1 min-w-0 glass-card rounded-xl">
+      <div className="flex flex-col flex-1 min-w-0 glass-panel rounded-xl">
         {/* Header */}
         <div className={`flex items-center justify-between rounded-t-xl border-b border-white/10 bg-gradient-to-r ${meta.color} px-5 py-4`}>
           <div className="flex items-center gap-3">
@@ -246,7 +246,7 @@ function PlatformChat({ platform }: { platform: Platform }) {
           </div>
           <div className="flex items-center gap-2">
             {config?.memorySummary && (
-              <Badge variant="outline" className="text-[10px] gap-1 border-violet-400/30 text-violet-300 bg-violet-500/10">
+              <Badge variant="outline" className="text-[10px] gap-1 border-primary-400/30 text-violet-300 bg-primary-500/10">
                 <Brain className="w-3 h-3" /> Memory active
               </Badge>
             )}
@@ -309,7 +309,7 @@ function PlatformChat({ platform }: { platform: Platform }) {
             onKeyDown={handleKeyDown}
             placeholder={`Message your ${meta.label} bot…`}
             disabled={sendMutation.isPending}
-            className="flex-1 glass-card border-white/10 focus:border-violet-400/50 focus:ring-2 focus:ring-violet-400/30 focus:glow-primary transition-all"
+            className="flex-1 glass-panel border-white/10 focus:border-primary-400/50 focus:ring-2 focus:ring-violet-400/30 focus:glow-primary transition-all"
           />
           <Button 
             onClick={handleSend} 
@@ -336,10 +336,10 @@ function PlatformChat({ platform }: { platform: Platform }) {
       {/* ── Config sidebar ─────────────────────────────────────────────────── */}
       {configOpen && (
         <div className="w-80 shrink-0 flex flex-col gap-3 overflow-y-auto">
-          <Card className="glass-card">
+          <Card className="glass-panel">
             <CardHeader className="pb-3 pt-5 px-5">
               <CardTitle className="text-sm flex items-center gap-2">
-                <Settings2 className="w-4 h-4 text-violet-400" /> Bot Configuration
+                <Settings2 className="w-4 h-4 text-primary" /> Bot Configuration
               </CardTitle>
             </CardHeader>
             <CardContent className="px-5 pb-5 space-y-4">
@@ -387,7 +387,7 @@ function PlatformChat({ platform }: { platform: Platform }) {
                   value={editPersona}
                   onChange={(e) => setEditPersona(e.target.value)}
                   placeholder="Describe your bot's personality…"
-                  className="text-xs h-24 resize-none bg-white/5 border-white/10 focus:border-violet-400/50 focus:ring-2 focus:ring-violet-400/20"
+                  className="text-xs h-24 resize-none bg-white/5 border-white/10 focus:border-primary-400/50 focus:ring-2 focus:ring-violet-400/20"
                   maxLength={1000}
                 />
               </div>
@@ -399,7 +399,7 @@ function PlatformChat({ platform }: { platform: Platform }) {
                   value={editInstructions}
                   onChange={(e) => setEditInstructions(e.target.value)}
                   placeholder="Extra instructions (e.g. only suggest trades ≥ 70% confidence)…"
-                  className="text-xs h-28 resize-none bg-white/5 border-white/10 focus:border-violet-400/50 focus:ring-2 focus:ring-violet-400/20"
+                  className="text-xs h-28 resize-none bg-white/5 border-white/10 focus:border-primary-400/50 focus:ring-2 focus:ring-violet-400/20"
                   maxLength={2000}
                 />
               </div>
@@ -416,15 +416,15 @@ function PlatformChat({ platform }: { platform: Platform }) {
           </Card>
 
           {/* Memory */}
-          <Card className="glass-card">
+          <Card className="glass-panel">
             <CardHeader className="pb-3 pt-5 px-5">
               <CardTitle className="text-sm flex items-center gap-2">
-                <Brain className="w-4 h-4 text-violet-400" /> Persistent Memory
+                <Brain className="w-4 h-4 text-primary" /> Persistent Memory
               </CardTitle>
             </CardHeader>
             <CardContent className="px-5 pb-5 space-y-3">
               {config?.memorySummary ? (
-                <div className="p-3 rounded-lg bg-violet-500/10 border border-violet-400/20">
+                <div className="p-3 rounded-lg bg-primary-500/10 border border-primary-400/20">
                   <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap max-h-40 overflow-y-auto">
                     {config.memorySummary}
                   </p>
@@ -448,7 +448,7 @@ function PlatformChat({ platform }: { platform: Platform }) {
           </Card>
 
           {/* Stats */}
-          <Card className="glass-card">
+          <Card className="glass-panel">
             <CardHeader className="pb-3 pt-5 px-5">
               <CardTitle className="text-sm flex items-center gap-2">
                 <MessageSquare className="w-4 h-4 text-indigo-400" /> Workspace Stats
@@ -460,7 +460,7 @@ function PlatformChat({ platform }: { platform: Platform }) {
                   <div className="text-xl font-bold font-mono tabular-nums text-indigo-300">{messages.length}</div>
                   <div className="text-[10px] text-muted-foreground uppercase tracking-wide mt-1">Messages</div>
                 </div>
-                <div className="bg-gradient-to-br from-violet-500/10 to-indigo-500/10 border border-violet-400/20 rounded-lg p-3 text-center">
+                <div className="bg-gradient-to-br from-violet-500/10 to-indigo-500/10 border border-primary-400/20 rounded-lg p-3 text-center">
                   <div className="text-xl font-bold font-mono tabular-nums text-violet-300">{config?.memorySummary ? "✓" : "–"}</div>
                   <div className="text-[10px] text-muted-foreground uppercase tracking-wide mt-1">Memory</div>
                 </div>
@@ -484,11 +484,11 @@ export default function Chat() {
           title="AI Trading Bots"
           description="Persistent-memory chatbots for Kalshi and Polymarket. Chat, trigger strategies, and get insights."
           badge={
-            <Badge variant="outline" className="border-violet-400/30 text-violet-300 gap-1.5 px-3 py-1.5">
+            <Badge variant="outline" className="border-primary-400/30 text-violet-300 gap-1.5 px-3 py-1.5">
               <Sparkles className="w-3.5 h-3.5" /> Powered by Claude
             </Badge>
           }
-          iconGradient="from-violet-500 to-indigo-500"
+          iconColor="text-primary"
         />
       </div>
 

@@ -25,7 +25,7 @@ export function StatCard({
 }: StatCardProps) {
   if (loading) {
     return (
-      <div className={`laurenzo-card ${className}`}>
+      <div className={`data-card ${className}`}>
         {/* Top row: icon and change badge */}
         <div className="flex items-start justify-between mb-4">
           <div className="w-10 h-10 rounded-full bg-white/5 animate-shimmer" />
@@ -51,7 +51,7 @@ export function StatCard({
 
   return (
     <div
-      className={`laurenzo-card hover:glow-primary transition-all duration-300 ${className}`}
+      className={`data-card hover:glow-primary transition-all duration-300 ${className}`}
     >
       {/* Top row: icon and change badge */}
       <div className="flex items-start justify-between mb-4">

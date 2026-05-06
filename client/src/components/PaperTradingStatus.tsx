@@ -21,7 +21,7 @@ export default function PaperTradingStatus({ data }: PaperTradingStatusProps) {
   const latestRun = data.recentAutonomyRuns?.[0];
 
   return (
-    <div className="laurenzo-card space-y-4">
+    <div className="data-card space-y-4">
       <h2 className="text-xl font-semibold">📊 Paper Trading Status</h2>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

@@ -176,4 +176,29 @@ export const trainingRouter = router({
         };
       }
     }),
+
+  // Get instruction suggestions from audit effectiveness analytics
+  getInstructionSuggestions: protectedProcedure
+    .input(
+      z.object({
+        lookbackDays: z.number().int().min(1).max(365).optional().default(30),
+      }).optional()
+    )
+    .query(async ({ input, ctx }) => {
+      const lookbackDays = input?.lookbackDays ?? 30;
+      try {
+        return await trainingDb.getInstructionSuggestionsFromAudit(
+          ctx.user!.openId,
+          lookbackDays
+        );
+      } catch (error) {
+        logger.error({ err: error }, "[Training] Get instruction suggestions error");
+        // Return empty result on error
+        return {
+          generatedAt: new Date().toISOString(),
+          lookbackDays,
+          suggestions: [],
+        };
+      }
+    }),
 });

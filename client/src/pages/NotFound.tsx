@@ -11,12 +11,12 @@ export default function NotFound() {
 
   return (
     <div className="min-h-screen w-full flex items-center justify-center p-4">
-      <div className="glass-card w-full max-w-2xl p-8 md:p-12 text-center animate-fade-in">
+      <div className="glass-panel w-full max-w-2xl p-8 md:p-12 text-center animate-fade-in">
         {/* Animated Illustration */}
         <div className="flex justify-center mb-8">
           <div className="relative">
-            <div className="absolute inset-0 bg-violet-500/20 rounded-full blur-xl" />
-            <Search className="relative w-24 h-24 text-violet-400 animate-float opacity-30" />
+            <div className="absolute inset-0 bg-primary-500/20 rounded-full blur-xl" />
+            <Search className="relative w-24 h-24 text-primary animate-float opacity-30" />
             <AlertCircle className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-12 h-12 text-red-400" />
           </div>
         </div>
@@ -48,7 +48,7 @@ export default function NotFound() {
           <Button
             onClick={() => window.history.back()}
             variant="outline"
-            className="px-8 py-3 rounded-lg font-semibold border-slate-700 hover:border-violet-500 hover:bg-violet-500/10 transition-all duration-300"
+            className="px-8 py-3 rounded-lg font-semibold border-slate-700 hover:border-primary-500 hover:bg-primary-500/10 transition-all duration-300"
           >
             Go Back
           </Button>
@@ -57,7 +57,7 @@ export default function NotFound() {
         {/* Decorative Elements */}
         <div className="mt-12 pt-8 border-t border-white/10">
           <p className="text-sm text-slate-500">
-            Error Code: <span className="font-mono text-violet-400">NOT_FOUND</span>
+            Error Code: <span className="font-mono text-primary">NOT_FOUND</span>
           </p>
         </div>
       </div>

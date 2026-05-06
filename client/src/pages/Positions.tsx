@@ -271,7 +271,7 @@ export default function Positions() {
   if (positionsQuery.isLoading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
-        <Loader2 className="animate-spin w-8 h-8 text-violet-400" />
+        <Loader2 className="animate-spin w-8 h-8 text-primary" />
       </div>
     );
   }
@@ -287,7 +287,7 @@ export default function Positions() {
             {summary.count} active Kalshi position{summary.count !== 1 ? "s" : ""}
           </span>
         }
-        iconGradient="from-emerald-500 to-teal-500"
+        iconColor="text-success"
         actions={
           <Button
             variant="outline"
@@ -310,10 +310,10 @@ export default function Positions() {
             animation: "fadeSlideUp 0.5s ease-out",
           }}
         >
-          <div className="glass-card p-4">
+          <div className="glass-panel p-4">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-violet-500/20 flex items-center justify-center">
-                <Briefcase className="w-5 h-5 text-violet-400" />
+              <div className="w-10 h-10 rounded-lg bg-primary-500/20 flex items-center justify-center">
+                <Briefcase className="w-5 h-5 text-primary" />
               </div>
               <div>
                 <p className="text-xs text-muted-foreground uppercase tracking-wide">
@@ -324,7 +324,7 @@ export default function Positions() {
             </div>
           </div>
 
-          <div className="glass-card p-4">
+          <div className="glass-panel p-4">
             <div className="flex items-center gap-3">
               <div
                 className={`w-10 h-10 rounded-lg flex items-center justify-center ${
@@ -356,7 +356,7 @@ export default function Positions() {
             </div>
           </div>
 
-          <div className="glass-card p-4">
+          <div className="glass-panel p-4">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center">
                 <DollarSign className="w-5 h-5 text-blue-400" />
@@ -377,7 +377,7 @@ export default function Positions() {
       {/* Positions Table */}
       {positions.length === 0 ? (
         <div
-          className="glass-card"
+          className="glass-panel"
           style={{
             animation: "fadeSlideUp 0.5s ease-out 0.1s both",
           }}
@@ -390,7 +390,7 @@ export default function Positions() {
         </div>
       ) : (
         <div
-          className="glass-card overflow-hidden"
+          className="glass-panel overflow-hidden"
           style={{
             animation: "fadeSlideUp 0.5s ease-out 0.1s both",
           }}

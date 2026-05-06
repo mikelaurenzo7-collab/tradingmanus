@@ -158,7 +158,7 @@ export default function Trades() {
           title="Trade History"
           description="Loading trade data..."
         />
-        <div className="glass-card p-8">
+        <div className="glass-panel p-8">
           <TableSkeleton rows={8} />
         </div>
       </div>
@@ -193,7 +193,7 @@ export default function Trades() {
       />
 
       {trades.length === 0 ? (
-        <div className="glass-card p-8">
+        <div className="glass-panel p-8">
           <EmptyState
             icon={Receipt}
             title="No trades recorded"
@@ -207,11 +207,11 @@ export default function Trades() {
             <StatCard label="Total Trades" value={trades.length.toString()} accent="text-white" />
             <StatCard label="Winners" value={winners.toString()} accent="text-emerald-400" />
             <StatCard label="Losers" value={losers.toString()} accent="text-rose-400" />
-            <StatCard label="Volume" value={`$${totalVolume.toFixed(0)}`} accent="text-violet-400" />
+            <StatCard label="Volume" value={`$${totalVolume.toFixed(0)}`} accent="text-primary" />
           </div>
 
           {/* Filter Bar */}
-          <div className="glass-card p-4">
+          <div className="glass-panel p-4">
             <div className="flex flex-col sm:flex-row gap-3">
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -248,7 +248,7 @@ export default function Trades() {
           </div>
 
           {/* Enhanced Table */}
-          <div className="glass-card overflow-hidden">
+          <div className="glass-panel overflow-hidden">
             {filteredTrades.length === 0 ? (
               <div className="p-8">
                 <EmptyState
@@ -276,7 +276,7 @@ export default function Trades() {
 
 function StatCard({ label, value, accent }: { label: string; value: string; accent: string }) {
   return (
-    <div className="glass-card p-4">
+    <div className="glass-panel p-4">
       <div className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">
         {label}
       </div>

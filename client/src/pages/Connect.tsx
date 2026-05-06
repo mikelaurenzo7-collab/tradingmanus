@@ -77,7 +77,7 @@ function KalshiConnectPanel() {
   };
 
   return (
-    <Card className={`glass-card animate-fade-in border-l-4 ${isAlreadyConnected ? 'glow-success border-l-indigo-500' : 'border-l-indigo-500/40'}`} style={{ animationDelay: '100ms' }}>
+    <Card className={`glass-panel animate-fade-in border-l-4 ${isAlreadyConnected ? 'glow-success border-l-indigo-500' : 'border-l-indigo-500/40'}`} style={{ animationDelay: '100ms' }}>
       <CardHeader className="pb-4">
         <div className="flex items-center justify-between">
           <CardTitle className="flex items-center gap-3 text-xl">
@@ -151,7 +151,7 @@ function KalshiConnectPanel() {
               </AlertDescription>
             </Alert>
 
-            <div className="laurenzo-card space-y-4 p-4 bg-gradient-to-br from-indigo-500/5 to-violet-500/5">
+            <div className="data-card space-y-4 p-4 bg-gradient-to-br from-indigo-500/5 to-violet-500/5">
               <div className="space-y-2">
                 <label className="text-sm font-medium">Kalshi API Key ID</label>
                 <Input
@@ -275,7 +275,7 @@ function PolymarketConnectPanel() {
   };
 
   return (
-    <Card className={`glass-card animate-fade-in border-l-4 ${isAlreadyConnected ? 'glow-success border-l-emerald-500' : 'border-l-emerald-500/40'}`} style={{ animationDelay: '200ms' }}>
+    <Card className={`glass-panel animate-fade-in border-l-4 ${isAlreadyConnected ? 'glow-success border-l-emerald-500' : 'border-l-emerald-500/40'}`} style={{ animationDelay: '200ms' }}>
       <CardHeader className="pb-4">
         <div className="flex items-center justify-between">
           <CardTitle className="flex items-center gap-3 text-xl">
@@ -348,7 +348,7 @@ function PolymarketConnectPanel() {
               </AlertDescription>
             </Alert>
 
-            <div className="laurenzo-card space-y-4 p-4 bg-gradient-to-br from-emerald-500/5 to-teal-500/5">
+            <div className="data-card space-y-4 p-4 bg-gradient-to-br from-emerald-500/5 to-teal-500/5">
               <div className="space-y-2">
                 <label className="text-sm font-medium">Polymarket API Key</label>
                 <Input
@@ -452,7 +452,7 @@ function PlatformSubscriptionCard() {
   ];
 
   return (
-    <Card className="glass-card animate-fade-in" style={{ animationDelay: '300ms' }}>
+    <Card className="glass-panel animate-fade-in" style={{ animationDelay: '300ms' }}>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           {current === "both" ? (
@@ -510,7 +510,7 @@ export default function Connect() {
         icon={Link2}
         title="Exchange Connections"
         description="API credentials and account validation for autonomous trading"
-        iconGradient="from-violet-500 to-indigo-500"
+        iconColor="text-primary"
       />
 
       {/* Connection Status Hero */}
@@ -520,7 +520,7 @@ export default function Connect() {
           value={kalshiConnected ? "Connected" : "Disconnected"}
           icon={kalshiConnected ? <Wifi className="w-5 h-5" /> : <WifiOff className="w-5 h-5" />}
           color={kalshiConnected ? "#10b981" : "#ef4444"}
-          className={`glass-card ${kalshiConnected ? 'glow-success border-indigo-500/30' : 'border-red-500/30'}`}
+          className={`glass-panel ${kalshiConnected ? 'glow-success border-indigo-500/30' : 'border-red-500/30'}`}
           loading={kalshiStatus.isLoading}
         />
         <StatCard
@@ -528,13 +528,13 @@ export default function Connect() {
           value={polymarketConnected ? "Connected" : "Disconnected"}
           icon={polymarketConnected ? <Wifi className="w-5 h-5" /> : <WifiOff className="w-5 h-5" />}
           color={polymarketConnected ? "#10b981" : "#ef4444"}
-          className={`glass-card ${polymarketConnected ? 'glow-success border-emerald-500/30' : 'border-red-500/30'}`}
+          className={`glass-panel ${polymarketConnected ? 'glow-success border-emerald-500/30' : 'border-red-500/30'}`}
           loading={polymarketStatus.isLoading}
         />
       </div>
 
-      <Alert className="border-violet-400/30 bg-violet-500/10 animate-fade-in" style={{ animationDelay: '100ms' }}>
-        <ShieldCheck className="h-4 w-4 text-violet-400" />
+      <Alert className="border-primary-400/30 bg-primary-500/10 animate-fade-in" style={{ animationDelay: '100ms' }}>
+        <ShieldCheck className="h-4 w-4 text-primary" />
         <AlertDescription className="text-violet-200 text-sm">
           Your credentials are validated live, then encrypted (AES-256-GCM) before storage. The bot trades on your behalf based on your autonomy settings.
         </AlertDescription>

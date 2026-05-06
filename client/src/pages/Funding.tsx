@@ -18,7 +18,7 @@ export default function Funding() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
-        <Loader2 className="animate-spin w-12 h-12 text-violet-400" />
+        <Loader2 className="animate-spin w-12 h-12 text-primary" />
       </div>
     );
   }
@@ -44,7 +44,7 @@ export default function Funding() {
         icon={Wallet}
         title="Account Funding"
         description="Balance and capital management for live trading"
-        iconGradient={isFunded ? "from-emerald-500 to-teal-500" : "from-amber-500 to-rose-500"}
+        iconColor={isFunded ? "text-success" : "text-warning"}
         badge={
           <Badge
             variant="outline"
@@ -65,7 +65,7 @@ export default function Funding() {
               value={`$${currentBalance.toFixed(2)}`}
               icon={<Wallet className="w-5 h-5" />}
               color="#10b981"
-              className="glass-card"
+              className="glass-panel"
             />
           </div>
           <div className="animate-fade-in" style={{ animationDelay: '100ms' }}>
@@ -74,7 +74,7 @@ export default function Funding() {
               value={`$${buyingPower.toFixed(2)}`}
               icon={<Zap className="w-5 h-5" />}
               color="#f59e0b"
-              className="glass-card"
+              className="glass-panel"
             />
           </div>
           <div className="animate-fade-in" style={{ animationDelay: '200ms' }}>
@@ -83,7 +83,7 @@ export default function Funding() {
               value={`$${lockedCapital.toFixed(2)}`}
               icon={<BarChart3 className="w-5 h-5" />}
               color="#8864ff"
-              className="glass-card"
+              className="glass-panel"
             />
           </div>
           <div className="animate-fade-in" style={{ animationDelay: '300ms' }}>
@@ -93,7 +93,7 @@ export default function Funding() {
               change={totalPnl}
               icon={<TrendingUp className="w-5 h-5" />}
               color={totalPnl >= 0 ? "#10b981" : "#ef4444"}
-              className="glass-card"
+              className="glass-panel"
             />
           </div>
         </div>
@@ -101,7 +101,7 @@ export default function Funding() {
 
       {/* Capital Utilization */}
       {isFunded && (
-        <div className="animate-fade-in glass-card p-6" style={{ animationDelay: '400ms' }}>
+        <div className="animate-fade-in glass-panel p-6" style={{ animationDelay: '400ms' }}>
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-semibold text-muted-foreground">Capital Utilization</h3>
             <span className="font-mono tabular-nums text-sm font-bold">{utilizationPercent.toFixed(1)}%</span>
@@ -117,7 +117,7 @@ export default function Funding() {
       {/* Current Status */}
       {!isFunded && (
         <div className="animate-fade-in">
-          <Card className="glass-card border-amber-400/30 bg-gradient-to-br from-amber-500/[0.07] to-rose-500/[0.04]">
+          <Card className="glass-panel border-amber-400/30 bg-gradient-to-br from-amber-500/[0.07] to-rose-500/[0.04]">
             <CardContent className="pt-6">
               <EmptyState
                 icon={AlertCircle}
@@ -142,7 +142,7 @@ export default function Funding() {
 
       {isFunded && (
         <div className="animate-fade-in" style={{ animationDelay: '500ms' }}>
-          <Card className="glass-card border-emerald-400/30 bg-gradient-to-br from-emerald-500/[0.07] to-teal-500/[0.04] glow-success">
+          <Card className="glass-panel border-emerald-400/30 bg-gradient-to-br from-emerald-500/[0.07] to-teal-500/[0.04] glow-success">
             <CardHeader>
               <div className="flex items-center gap-3">
                 <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-500 shadow-md">
@@ -184,7 +184,7 @@ export default function Funding() {
       {/* Deposit Instructions */}
       {!isFunded && (
         <div className="space-y-6 animate-fade-in" style={{ animationDelay: '100ms' }}>
-          <Card className="glass-card">
+          <Card className="glass-panel">
             <CardHeader>
               <div className="flex items-center gap-3">
                 <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-500 shadow-md">
@@ -216,7 +216,7 @@ export default function Funding() {
                 action={
                   <Button
                     onClick={() => window.open("https://kalshi.com/account/deposit", "_blank")}
-                    className="laurenzo-button gap-2 mt-3"
+                    className="bg-gradient-to-r from-primary to-accent hover:opacity-90 transition-all gap-2 mt-3"
                   >
                     Open Kalshi Deposit <ArrowRight className="w-4 h-4" />
                   </Button>
@@ -236,7 +236,7 @@ export default function Funding() {
           </Card>
 
           {/* Recommended Amounts */}
-          <Card className="glass-card">
+          <Card className="glass-panel">
             <CardHeader>
               <CardTitle className="text-lg">Recommended Starting Amounts</CardTitle>
               <CardDescription>Choose based on your risk tolerance and trading experience</CardDescription>
@@ -244,12 +244,12 @@ export default function Funding() {
             <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {[
                 { amount: "$1–$5", label: "Minimal", desc: "Test the workflow with very small size", gradient: "from-blue-500/20 to-cyan-500/20", border: "border-blue-400/30" },
-                { amount: "$10–$50", label: "Conservative", desc: "Add room for measured live testing", gradient: "from-violet-500/20 to-indigo-500/20", border: "border-violet-400/30" },
+                { amount: "$10–$50", label: "Conservative", desc: "Add room for measured live testing", gradient: "from-violet-500/20 to-indigo-500/20", border: "border-primary-400/30" },
                 { amount: "$50+", label: "Flexible", desc: "Support broader sizing and multiple positions", gradient: "from-emerald-500/20 to-teal-500/20", border: "border-emerald-400/30" },
               ].map((tier) => (
                 <div
                   key={tier.label}
-                  className={`laurenzo-card p-5 ${tier.border} bg-gradient-to-br ${tier.gradient} hover:scale-[1.02] transition-transform duration-200`}
+                  className={`data-card p-5 ${tier.border} bg-gradient-to-br ${tier.gradient} hover:scale-[1.02] transition-transform duration-200`}
                 >
                   <p className="text-2xl font-bold gradient-text mb-1 font-mono tabular-nums">{tier.amount}</p>
                   <p className="font-semibold text-sm mb-1.5 text-white/90">{tier.label}</p>
@@ -259,8 +259,8 @@ export default function Funding() {
             </CardContent>
           </Card>
 
-          <Alert className="border-violet-400/30 bg-violet-500/10">
-            <AlertCircle className="h-4 w-4 text-violet-400" />
+          <Alert className="border-primary-400/30 bg-primary-500/10">
+            <AlertCircle className="h-4 w-4 text-primary" />
             <AlertDescription className="text-violet-200 text-sm leading-relaxed">
               <strong className="text-white">Kalshi risk controls:</strong> Risk limits are enforced against your live connected Kalshi balance, including per-trade and daily loss caps. Your dashboard will only size trades from confirmed account equity.
             </AlertDescription>
@@ -271,7 +271,7 @@ export default function Funding() {
       {/* Withdrawal Options */}
       {isFunded && (
         <div className="animate-fade-in" style={{ animationDelay: '600ms' }}>
-          <Card className="glass-card">
+          <Card className="glass-panel">
             <CardHeader>
               <div className="flex items-center gap-3">
                 <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-500 shadow-md">
@@ -296,7 +296,7 @@ export default function Funding() {
                 <Button
                   onClick={() => window.open("https://kalshi.com/account/withdraw", "_blank")}
                   variant="outline"
-                  className="flex-1 gap-2 border-violet-400/30 hover:bg-violet-500/10"
+                  className="flex-1 gap-2 border-primary-400/30 hover:bg-primary-500/10"
                 >
                   <ArrowRight className="w-4 h-4" />
                   Withdraw Funds
@@ -317,7 +317,7 @@ function Step({ n, title, body, action }: { n: number; title: string; body: Reac
   return (
     <div className="flex gap-4">
       <div className="flex-shrink-0">
-        <div className="flex items-center justify-center h-10 w-10 rounded-xl bg-gradient-to-br from-violet-500/20 to-indigo-500/20 border border-violet-400/30 text-violet-300 font-bold text-sm">
+        <div className="flex items-center justify-center h-10 w-10 rounded-xl bg-gradient-to-br from-violet-500/20 to-indigo-500/20 border border-primary-400/30 text-violet-300 font-bold text-sm">
           {n}
         </div>
       </div>

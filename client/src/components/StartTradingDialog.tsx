@@ -35,7 +35,7 @@ export function StartTradingDialog({
   const canArm = equity > 0 && preferences.autonomyMode !== "manual";
 
   return (
-    <Card className="laurenzo-card border-cyan-500/30 bg-cyan-500/5">
+    <Card className="data-card border-cyan-500/30 bg-cyan-500/5">
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2">
           <AlertTriangle className="h-5 w-5 text-amber-400" />

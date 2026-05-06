@@ -70,13 +70,13 @@ function SignalSizingCard({ equity, signal, selected }: { equity: number; signal
   const sizeRatio = equity > 0 ? size / equity : 0;
 
   return (
-    <div className={`rounded-2xl border p-4 ${selected ? "border-cyan-500/40 bg-cyan-500/5" : "border-slate-800 bg-slate-950/70"}`}>
+    <div className={`rounded-2xl border p-4 ${selected ? "border-accent-500/40 bg-accent-500/5" : "border-slate-800 bg-slate-950/70"}`}>
       <div className="flex items-start justify-between gap-4">
         <div>
           <div className="text-sm font-medium text-slate-100">{signal.marketId}</div>
           <div className="mt-1 text-xs uppercase tracking-[0.2em] text-slate-500">{signal.side} signal</div>
         </div>
-        <div className={`rounded-full px-3 py-1 text-xs font-medium ${selected ? "bg-cyan-500/15 text-cyan-200" : "bg-slate-800 text-slate-300"}`}>
+        <div className={`rounded-full px-3 py-1 text-xs font-medium ${selected ? "bg-accent-500/15 text-cyan-200" : "bg-slate-800 text-slate-300"}`}>
           {selected ? "Selected" : "Reserve"}
         </div>
       </div>
@@ -182,7 +182,7 @@ export default function PortfolioOptimization() {
       header: 'Size',
       sortable: true,
       render: (_, row) => (
-        <span className="font-semibold text-cyan-400 glow-primary">
+        <span className="font-semibold text-accent glow-primary">
           {row.sizeFormatted}
         </span>
       ),
@@ -223,7 +223,7 @@ export default function PortfolioOptimization() {
     <div className="space-y-8 max-w-7xl mx-auto animate-fade-in">
       <PageHeader
         icon={Target}
-        iconGradient="from-violet-500 via-fuchsia-500 to-cyan-500"
+        iconColor="text-primary"
         title="Portfolio Optimization"
         description="Turn candidate market edges into a diversified allocation plan with Kelly sizing, correlation-aware filtering, and explicit capital constraints."
         actions={
@@ -273,7 +273,7 @@ export default function PortfolioOptimization() {
           <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
             <CardHeader className="pb-3">
               <CardTitle className="flex items-center gap-2 text-base text-slate-100">
-                <Target className="h-5 w-5 text-cyan-400" />
+                <Target className="h-5 w-5 text-accent" />
                 Kelly Fraction
               </CardTitle>
             </CardHeader>
@@ -326,7 +326,7 @@ export default function PortfolioOptimization() {
         </div>
 
             <div className="grid gap-4 xl:grid-cols-3 animate-fade-in" style={{ animationDelay: '0.2s' }}>
-              <Card className="glass-card">
+              <Card className="glass-panel">
                 <CardHeader>
                   <CardTitle>Deployment Summary</CardTitle>
               <CardDescription>Cash deployment and remaining buying power after optimization.</CardDescription>
@@ -347,7 +347,7 @@ export default function PortfolioOptimization() {
             </CardContent>
           </Card>
 
-              <Card className="glass-card">
+              <Card className="glass-panel">
                 <CardHeader>
                   <CardTitle>Selection Filter</CardTitle>
               <CardDescription>Signals retained versus excluded after diversification and max-position limits.</CardDescription>
@@ -367,7 +367,7 @@ export default function PortfolioOptimization() {
             </CardContent>
           </Card>
 
-              <Card className="glass-card">
+              <Card className="glass-panel">
                 <CardHeader>
                   <CardTitle>Risk Envelope</CardTitle>
               <CardDescription>Portfolio-level risk, diversification, and Kelly intensity in one view.</CardDescription>
@@ -391,7 +391,7 @@ export default function PortfolioOptimization() {
             </div>
 
             {allocationData.length > 0 && (
-              <Card className="glass-card animate-fade-in" style={{ animationDelay: '0.3s' }}>
+              <Card className="glass-panel animate-fade-in" style={{ animationDelay: '0.3s' }}>
                 <CardHeader>
                   <CardTitle>Allocation Breakdown</CardTitle>
                   <CardDescription>Visual distribution of capital across selected positions.</CardDescription>
@@ -407,7 +407,7 @@ export default function PortfolioOptimization() {
             )}
 
             {positionTableData.length > 0 && (
-              <Card className="glass-card animate-fade-in" style={{ animationDelay: '0.4s' }}>
+              <Card className="glass-panel animate-fade-in" style={{ animationDelay: '0.4s' }}>
                 <CardHeader>
                   <CardTitle>Position Recommendations</CardTitle>
                   <CardDescription>Detailed breakdown of each position in the optimized portfolio.</CardDescription>
@@ -425,7 +425,7 @@ export default function PortfolioOptimization() {
             )}
 
             <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr] animate-fade-in" style={{ animationDelay: '0.5s' }}>
-              <Card className="glass-card">
+              <Card className="glass-panel">
             <CardHeader>
               <CardTitle>Signal Universe</CardTitle>
               <CardDescription>
@@ -477,7 +477,7 @@ export default function PortfolioOptimization() {
             </CardContent>
           </Card>
 
-              <Card className="glass-card">
+              <Card className="glass-panel">
                 <CardHeader>
                   <CardTitle>Recommended Allocation</CardTitle>
                   <CardDescription>
@@ -528,7 +528,7 @@ export default function PortfolioOptimization() {
         </div>
 
         {portfolioQuery.error && (
-          <Card className="glass-card border-rose-900/60 bg-rose-950/30">
+          <Card className="glass-panel border-rose-900/60 bg-rose-950/30">
             <CardHeader>
               <CardTitle className="text-rose-300">Portfolio Optimization Unavailable</CardTitle>
               <CardDescription className="text-rose-200/80">

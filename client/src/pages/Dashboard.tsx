@@ -222,18 +222,18 @@ export default function Dashboard() {
           icon={Plug}
           title="Connect Your Kalshi Account"
           description="Connect your Kalshi account to start trading and see your real account balance"
-          iconGradient="from-violet-500 to-fuchsia-500"
+          iconColor="text-primary"
         />
 
-        <Card className="laurenzo-card border-violet-500/30 bg-violet-500/5">
+        <Card className="data-card border-primary/30 bg-primary/5">
           <CardContent className="pt-6">
             <div className="flex items-center gap-4 mb-6">
-              <Plug className="w-12 h-12 text-violet-400" />
+              <Plug className="w-12 h-12 text-primary" />
               <div>
                 <p className="text-sm text-muted-foreground mb-1">
                   Account Balance
                 </p>
-                <p className="text-3xl font-bold text-violet-400">$0.00</p>
+                <p className="text-3xl font-bold text-primary">$0.00</p>
               </div>
             </div>
 
@@ -245,7 +245,7 @@ export default function Dashboard() {
               </p>
               <Button
                 onClick={() => navigate("/connect")}
-                className="laurenzo-button w-full"
+                className="w-full bg-gradient-to-r from-primary to-accent hover:opacity-90 transition-all"
                 size="lg"
               >
                 <Plug className="w-4 h-4 mr-2" />
@@ -260,7 +260,7 @@ export default function Dashboard() {
 
         {/* Explicit empty-state metrics while disconnected */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 opacity-50">
-          <Card className="laurenzo-card">
+          <Card className="data-card">
             <CardContent className="pt-6">
               <div className="flex items-center justify-between mb-2">
                 <p className="text-sm text-muted-foreground">GLOBAL EQUITY</p>
@@ -273,11 +273,11 @@ export default function Dashboard() {
             </CardContent>
           </Card>
 
-          <Card className="laurenzo-card">
+          <Card className="data-card">
             <CardContent className="pt-6">
               <div className="flex items-center justify-between mb-2">
                 <p className="text-sm text-muted-foreground">TOTAL TRADES</p>
-                <TrendingUp className="w-4 h-4 text-lime-400" />
+                <TrendingUp className="w-4 h-4 stat-increase" />
               </div>
               <p className="text-3xl font-bold text-muted-foreground">—</p>
               <p className="text-xs text-muted-foreground mt-2">
@@ -286,11 +286,11 @@ export default function Dashboard() {
             </CardContent>
           </Card>
 
-          <Card className="laurenzo-card">
+          <Card className="data-card">
             <CardContent className="pt-6">
               <div className="flex items-center justify-between mb-2">
                 <p className="text-sm text-muted-foreground">WIN RATE</p>
-                <TrendingDown className="w-4 h-4 text-pink-400" />
+                <TrendingDown className="w-4 h-4 stat-decrease" />
               </div>
               <p className="text-3xl font-bold text-muted-foreground">—</p>
               <p className="text-xs text-muted-foreground mt-2">
@@ -299,7 +299,7 @@ export default function Dashboard() {
             </CardContent>
           </Card>
 
-          <Card className="laurenzo-card">
+          <Card className="data-card">
             <CardContent className="pt-6">
               <div className="flex items-center justify-between mb-2">
                 <p className="text-sm text-muted-foreground">SHARPE RATIO</p>
@@ -324,18 +324,18 @@ export default function Dashboard() {
           icon={AlertCircle}
           title="Account Funding Required"
           description="Your Kalshi account needs funds to start trading"
-          iconGradient="from-amber-500 to-rose-500"
+          iconColor="text-warning"
         />
 
-        <Card className="laurenzo-card border-pink-500/30 bg-pink-500/5">
+        <Card className="data-card border-warning/30 bg-warning/5">
           <CardContent className="pt-6">
             <div className="flex items-center gap-4 mb-6">
-              <AlertCircle className="w-12 h-12 text-pink-400" />
+              <AlertCircle className="w-12 h-12 text-warning" />
               <div>
                 <p className="text-sm text-muted-foreground mb-1">
                   Current Balance
                 </p>
-                <p className="text-3xl font-bold text-pink-400">
+                <p className="text-3xl font-bold text-warning">
                   ${equity.toFixed(2)}
                 </p>
               </div>
@@ -350,7 +350,7 @@ export default function Dashboard() {
                 onClick={() =>
                   window.open("https://kalshi.com/account/deposit", "_blank")
                 }
-                className="laurenzo-button w-full"
+                className="w-full bg-gradient-to-r from-warning to-warning/80 hover:opacity-90 transition-all"
                 size="lg"
               >
                 Deposit Funds on Kalshi
@@ -413,7 +413,7 @@ export default function Dashboard() {
             <strong className="text-foreground tabular-nums">${displayEquity.toFixed(2)}</strong>
           </>
         }
-        iconGradient="from-violet-500 to-indigo-500"
+        iconColor="text-primary"
         actions={
           <>
             <Button
@@ -451,7 +451,7 @@ export default function Dashboard() {
         }
       />
 
-      <Card className={`laurenzo-card ${isAccountDataStale ? "border-yellow-500/30 bg-yellow-500/5" : "border-cyan-500/20 bg-cyan-500/5"}`}>
+      <Card className={`glass-panel ${isAccountDataStale ? "border-warning/30 bg-warning/5" : "border-accent/20 bg-accent/5"}`}>
         <CardContent className="flex flex-col gap-3 pt-6 md:flex-row md:items-center md:justify-between">
           <div>
             <p className="text-sm font-semibold text-foreground">Live data freshness</p>
@@ -459,16 +459,16 @@ export default function Dashboard() {
               Kalshi equity synced {formatFreshnessLabel(lastAccountSyncAt)}. Dashboard refreshed {formatFreshnessLabel(dashboardRefreshedAt)}.
             </p>
           </div>
-          <div className={`rounded-full border px-3 py-1 text-xs font-semibold ${isAccountDataStale ? "border-yellow-500/40 text-yellow-300" : "border-cyan-500/40 text-cyan-300"}`}>
+          <div className={`rounded-full border px-3 py-1 text-xs font-semibold ${isAccountDataStale ? "border-warning/40 text-warning-foreground" : "border-accent/40 text-accent-foreground"}`}>
             {isAccountDataStale ? "Refresh before trading decisions" : "Fresh enough for monitoring"}
           </div>
         </CardContent>
       </Card>
 
       {activationMessage ? (
-        <Card className="laurenzo-card border-cyan-500/30 bg-cyan-500/5">
+        <Card className="glass-panel border-accent/30 bg-accent/5">
           <CardContent className="pt-6">
-            <p className="text-sm text-cyan-200">{activationMessage}</p>
+            <p className="text-sm text-accent-foreground">{activationMessage}</p>
           </CardContent>
         </Card>
       ) : null}
@@ -483,7 +483,7 @@ export default function Dashboard() {
           <div className="flex gap-2">
             <Button size="sm" variant="outline" onClick={() => navigate("/autonomy")}>Settings</Button>
             {!tradingPreferences.liveTradingEnabled && (
-              <Button size="sm" className="laurenzo-button" disabled={tradingPreferences.autonomyMode === "manual"} onClick={() => setShowStartTrading(true)}>Arm</Button>
+              <Button size="sm" className="bg-gradient-to-r from-primary to-accent hover:opacity-90" disabled={tradingPreferences.autonomyMode === "manual"} onClick={() => setShowStartTrading(true)}>Arm</Button>
             )}
           </div>
         </div>
@@ -514,42 +514,42 @@ export default function Dashboard() {
       </div>
 
       {/* Key metrics grid - 4-column StatCard layout */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-fade-in">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 animate-fade-in">
         <StatCard
           label="Total P&L"
           value={`$${realizedPnl.toFixed(2)}`}
           change={realizedPnl !== 0 ? (realizedPnl / displayEquity) * 100 : undefined}
           trend={pnlTrend}
           icon={<DollarSign size={20} />}
-          color="#22c55e"
-          className="animate-fade-in"
+          color={realizedPnl >= 0 ? "#10b981" : "#ef4444"}
+          className="data-card hover:scale-105 transition-transform"
         />
         <StatCard
           label="Account Capital"
           value={`$${displayEquity.toFixed(2)}`}
           trend={equityTrend}
           icon={<Sparkles size={20} />}
-          color="#8864ff"
-          className="animate-fade-in"
+          color="#6366f1"
+          className="data-card hover:scale-105 transition-transform"
         />
         <StatCard
           label="Open Positions"
           value={activePositions}
           icon={<Layers size={20} />}
           color="#f59e0b"
-          className="animate-fade-in"
+          className="data-card hover:scale-105 transition-transform"
         />
         <StatCard
           label="Win Rate"
           value={hasClosedTrades ? `${(winRate * 100).toFixed(1)}%` : "—"}
           icon={<Trophy size={20} />}
           color="#ec4899"
-          className="animate-fade-in"
+          className="data-card hover:scale-105 transition-transform"
         />
       </div>
 
       {/* Performance Chart */}
-      <Card className="glass-card glow-primary animate-fade-in">
+      <Card className="glass-panel animate-fade-in">
         <CardContent className="pt-6">
           <div className="mb-4">
             <h3 className="text-lg font-semibold text-foreground mb-1">Equity Curve</h3>
@@ -568,38 +568,38 @@ export default function Dashboard() {
       </Card>
 
       {/* P&L + risk metrics - Enhanced card layout */}
-      <Card className="laurenzo-card animate-fade-in">
+      <Card className="data-card animate-fade-in">
         <CardContent className="pt-6">
           <h3 className="text-lg font-semibold text-foreground mb-4">Performance Metrics</h3>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-6">
             <div>
               <p className="text-xs text-muted-foreground mb-1">Daily P&L</p>
-              <p className={`text-xl font-bold ${dailyPnl >= 0 ? "text-lime-400" : "text-pink-400"}`}>{dailyPnl >= 0 ? "+" : ""}${dailyPnl.toFixed(2)}</p>
+              <p className={`text-xl font-bold stat-${dailyPnl >= 0 ? "increase" : "decrease"}`}>{dailyPnl >= 0 ? "+" : ""}${dailyPnl.toFixed(2)}</p>
               <p className="text-xs text-muted-foreground mt-1">Closed today</p>
             </div>
             <div>
               <p className="text-xs text-muted-foreground mb-1">Realized P&L</p>
-              <p className={`text-xl font-bold ${realizedPnl >= 0 ? "text-lime-400" : "text-pink-400"}`}>{realizedPnl >= 0 ? "+" : ""}${realizedPnl.toFixed(2)}</p>
+              <p className={`text-xl font-bold stat-${realizedPnl >= 0 ? "increase" : "decrease"}`}>{realizedPnl >= 0 ? "+" : ""}${realizedPnl.toFixed(2)}</p>
               <p className="text-xs text-muted-foreground mt-1">Closed positions</p>
             </div>
             <div>
               <p className="text-xs text-muted-foreground mb-1">Unrealized P&L</p>
-              <p className={`text-xl font-bold ${unrealizedPnl >= 0 ? "text-cyan-400" : "text-pink-400"}`}>{unrealizedPnl >= 0 ? "+" : ""}${unrealizedPnl.toFixed(2)}</p>
+              <p className={`text-xl font-bold stat-${unrealizedPnl >= 0 ? "increase" : "decrease"}`}>{unrealizedPnl >= 0 ? "+" : ""}${unrealizedPnl.toFixed(2)}</p>
               <p className="text-xs text-muted-foreground mt-1">Open positions</p>
             </div>
             <div>
               <p className="text-xs text-muted-foreground mb-1">Max Drawdown</p>
-              <p className="text-xl font-bold text-pink-400">{(maxDrawdown * 100).toFixed(2)}%</p>
+              <p className="text-xl font-bold text-destructive">{(maxDrawdown * 100).toFixed(2)}%</p>
               <p className="text-xs text-muted-foreground mt-1">Peak-to-trough</p>
             </div>
             <div>
               <p className="text-xs text-muted-foreground mb-1">Sharpe Ratio</p>
-              <p className="text-xl font-bold text-cyan-400">{sharpeRatio.toFixed(2)}</p>
+              <p className="text-xl font-bold text-accent">{sharpeRatio.toFixed(2)}</p>
               <p className="text-xs text-muted-foreground mt-1">{hasClosedTrades ? "risk-adjusted" : "awaiting trades"}</p>
             </div>
             <div>
               <p className="text-xs text-muted-foreground mb-1">Recovery Factor</p>
-              <p className="text-xl font-bold text-pink-400">{(metrics?.recoveryFactor ?? 0).toFixed(2)}</p>
+              <p className="text-xl font-bold text-primary">{(metrics?.recoveryFactor ?? 0).toFixed(2)}</p>
               <p className="text-xs text-muted-foreground mt-1">Profit vs max loss</p>
             </div>
           </div>

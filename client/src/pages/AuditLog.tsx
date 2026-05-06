@@ -33,7 +33,7 @@ export default function AuditLog() {
           <StatCard label="Critical (24h)" value="-" loading />
           <StatCard label="Last Event" value="-" loading />
         </div>
-        <div className="glass-card">
+        <div className="glass-panel">
           <TableSkeleton rows={10} />
         </div>
       </div>
@@ -59,7 +59,7 @@ export default function AuditLog() {
     if (eventType.includes("kill_switch")) return "border-rose-400/40 bg-rose-500/10 text-rose-300";
     if (eventType.includes("scheduled_autonomy_order_placed")) return "border-emerald-400/40 bg-emerald-500/10 text-emerald-300";
     if (eventType.includes("scheduled_autonomy_run_blocked")) return "border-amber-400/40 bg-amber-500/10 text-amber-300";
-    if (eventType.includes("scheduled_autonomy_run_generated_only")) return "border-cyan-400/40 bg-cyan-500/10 text-cyan-300";
+    if (eventType.includes("scheduled_autonomy_run_generated_only")) return "border-accent-400/40 bg-accent-500/10 text-cyan-300";
     if (eventType.includes("scheduled_autonomy_run_skipped")) return "border-slate-400/30 bg-slate-500/10 text-slate-300";
     if (eventType.includes("position_close")) return "border-yellow-400/40 bg-yellow-500/10 text-yellow-300";
     if (eventType.includes("strategy")) return "border-blue-400/40 bg-blue-500/10 text-blue-300";
@@ -76,13 +76,13 @@ export default function AuditLog() {
 
   const getEventBadgeColor = (eventType: string): string => {
     // Order events → cyan
-    if (eventType.includes("order_placed") || eventType.includes("position")) return "border-cyan-400/40 bg-cyan-500/10 text-cyan-300";
+    if (eventType.includes("order_placed") || eventType.includes("position")) return "border-accent-400/40 bg-accent-500/10 text-cyan-300";
     // Risk/blocked → amber
     if (eventType.includes("blocked") || eventType.includes("risk")) return "border-amber-400/40 bg-amber-500/10 text-amber-300";
     // Kill switch/errors → red
     if (eventType.includes("kill_switch") || eventType.includes("error")) return "border-rose-400/40 bg-rose-500/10 text-rose-300";
     // Auth → violet
-    if (eventType.includes("auth") || eventType.includes("login")) return "border-violet-400/40 bg-violet-500/10 text-violet-300";
+    if (eventType.includes("auth") || eventType.includes("login")) return "border-primary-400/40 bg-primary-500/10 text-violet-300";
     return "border-slate-400/30 bg-slate-500/10 text-slate-300";
   };
 
@@ -159,7 +159,7 @@ export default function AuditLog() {
         icon={ScrollText}
         title="Audit Log"
         description="Immutable event log — every trade decision, risk block, and reviewer call"
-        iconGradient="from-violet-500 to-purple-500"
+        iconColor="text-primary"
       />
 
       {/* Summary metrics */}
@@ -184,7 +184,7 @@ export default function AuditLog() {
         />
       </div>
 
-      <Card className="glass-card border-emerald-400/20 bg-gradient-to-br from-emerald-500/[0.07] to-cyan-500/[0.04] backdrop-blur-sm animate-fade-in" style={{ animationDelay: '200ms' }}>
+      <Card className="glass-panel border-emerald-400/20 bg-gradient-to-br from-emerald-500/[0.07] to-cyan-500/[0.04] backdrop-blur-sm animate-fade-in" style={{ animationDelay: '200ms' }}>
         <CardHeader className="pb-3">
           <div className="flex items-center gap-3">
             <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-500 shadow-md">
@@ -235,7 +235,7 @@ export default function AuditLog() {
       </Card>
 
       {/* Filter bar */}
-      <div className="glass-card p-4 animate-fade-in" style={{ animationDelay: '300ms' }}>
+      <div className="glass-panel p-4 animate-fade-in" style={{ animationDelay: '300ms' }}>
         <div className="flex items-center gap-4">
           <label className="text-sm font-medium text-muted-foreground">Filter by event type:</label>
           <Select value={eventTypeFilter} onValueChange={setEventTypeFilter}>
@@ -255,7 +255,7 @@ export default function AuditLog() {
       </div>
 
       {/* Audit log table */}
-      <div className="glass-card p-6 animate-fade-in" style={{ animationDelay: '400ms' }}>
+      <div className="glass-panel p-6 animate-fade-in" style={{ animationDelay: '400ms' }}>
         {filteredEvents.length === 0 ? (
           <EmptyState
             icon={ScrollText}

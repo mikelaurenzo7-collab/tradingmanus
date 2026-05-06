@@ -85,7 +85,7 @@ export default function PreLiveChecklist({ checklist }: PreLiveChecklistProps) {
   const progressPercent = (overallScore / 100) * 100;
 
   return (
-    <div className="laurenzo-card space-y-6">
+    <div className="data-card space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">✅ Pre-Live Readiness Checklist</h2>
         <div className={`flex items-center gap-2 px-3 py-1 rounded-full border font-semibold text-sm ${badge.bg} ${badge.color}`}>

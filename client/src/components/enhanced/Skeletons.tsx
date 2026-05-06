@@ -10,7 +10,7 @@ export function DashboardSkeleton() {
       {/* 4-column grid of stat cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="laurenzo-card">
+          <div key={i} className="data-card">
             <div className="flex items-center justify-between mb-4">
               <div className="h-4 w-24 bg-white/5 rounded-md animate-shimmer" />
               <div className="h-4 w-4 bg-white/5 rounded-full animate-shimmer" />
@@ -27,7 +27,7 @@ export function DashboardSkeleton() {
       {/* 2-column grid: recent signals + trades table */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Recent signals list */}
-        <div className="laurenzo-card space-y-4">
+        <div className="data-card space-y-4">
           <div className="h-6 w-32 bg-white/5 rounded-md animate-shimmer mb-4" />
           {Array.from({ length: 3 }).map((_, i) => (
             <div key={i} className="space-y-2">
@@ -42,7 +42,7 @@ export function DashboardSkeleton() {
         </div>
 
         {/* Trades table */}
-        <div className="laurenzo-card">
+        <div className="data-card">
           <div className="h-6 w-32 bg-white/5 rounded-md animate-shimmer mb-4" />
           <TableSkeleton rows={5} />
         </div>
@@ -89,7 +89,7 @@ export function TableSkeleton({ rows = 5 }: { rows?: number }) {
  */
 export function SignalCardSkeleton() {
   return (
-    <div className="laurenzo-card space-y-4">
+    <div className="data-card space-y-4">
       {/* Confidence meter placeholder (circle) */}
       <div className="flex justify-center mb-4">
         <div className="h-20 w-20 bg-white/5 rounded-full animate-shimmer" />
@@ -122,7 +122,7 @@ export function ChartSkeleton({
   height?: number;
 }) {
   return (
-    <div className="laurenzo-card">
+    <div className="data-card">
       <div
         className="bg-white/5 rounded-md animate-shimmer"
         style={{ height: `${height}px` }}

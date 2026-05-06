@@ -42,7 +42,7 @@ function formatDate(dateString: string): string {
 
 export default function AutonomyMetrics({ recentRuns }: AutonomyMetricsProps) {
   return (
-    <div className="laurenzo-card space-y-4">
+    <div className="data-card space-y-4">
       <h2 className="text-xl font-semibold">⚙️ Autonomy Run Metrics</h2>
 
       {recentRuns.length === 0 ? (

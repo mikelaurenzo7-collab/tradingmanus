@@ -97,9 +97,9 @@ export default function Signals() {
           icon={Radar}
           title="Signal Registry"
           description="Real-time market signals with confidence scoring and execution readiness"
-          iconGradient="from-cyan-500 to-violet-500"
+          iconColor="text-accent"
           actions={
-            <Button disabled className="laurenzo-button gap-2 whitespace-nowrap" size="sm">
+            <Button disabled className="bg-gradient-to-r from-primary to-accent hover:opacity-90 transition-all gap-2 whitespace-nowrap" size="sm">
               <RefreshCw className="w-4 h-4" />
               Generate Signals
             </Button>
@@ -120,12 +120,12 @@ export default function Signals() {
         icon={Radar}
         title="Signal Registry"
         description="Real-time market signals with confidence scoring and execution readiness"
-        iconGradient="from-cyan-500 to-violet-500"
+        iconColor="text-accent"
         actions={
           <Button
             onClick={handleGenerateSignals}
             disabled={isGenerating || generateSignalsMutation.isPending}
-            className="laurenzo-button gap-2 whitespace-nowrap"
+            className="bg-gradient-to-r from-primary to-accent hover:opacity-90 transition-all gap-2 whitespace-nowrap"
             size="sm"
           >
             <RefreshCw className={`w-4 h-4 ${isGenerating ? "animate-spin" : ""}`} />
@@ -138,7 +138,7 @@ export default function Signals() {
       {topSignals.data && topSignals.data.length > 0 ? (
         <div className="space-y-4">
           <div className="flex items-center gap-2">
-            <Target className="w-5 h-5 text-cyan-400" />
+            <Target className="w-5 h-5 text-accent" />
             <h2 className="text-2xl font-bold gradient-text">TOP EXECUTION SIGNALS</h2>
           </div>
           <div className="grid gap-6 lg:grid-cols-3 md:grid-cols-2">
@@ -152,7 +152,7 @@ export default function Signals() {
                 reasoning={signal.reasoning}
                 side={signal.side}
                 suggestedPrice={signal.marketPrice}
-                className="glass-card"
+                className="glass-panel"
               />
             ))}
           </div>
@@ -181,13 +181,13 @@ export default function Signals() {
                   reasoning={signal.reasoning}
                   side={signal.side}
                   suggestedPrice={signal.marketPrice}
-                  className="glass-card"
+                  className="glass-panel"
                 />
               </div>
             ))}
           </div>
         ) : (
-          <div className="glass-card">
+          <div className="glass-panel">
             <EmptyState
               icon={Zap}
               title="No signals generated yet"
@@ -201,7 +201,7 @@ export default function Signals() {
       {actionableMarkets.length > 0 && (
         <div className="space-y-4">
           <div className="flex items-center gap-2">
-            <Activity className="w-5 h-5 text-violet-400" />
+            <Activity className="w-5 h-5 text-primary" />
             <h2 className="text-2xl font-bold gradient-text">ACTIONABLE MARKETS</h2>
           </div>
           <div className="grid gap-4 lg:grid-cols-3 md:grid-cols-2">

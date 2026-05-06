@@ -41,10 +41,10 @@ const KALSHI_STRATEGIES = [
     monthlyReturn: "1–3%",
     risk: "Low",
     capital: "$10k+",
-    icon: <ArrowLeftRight className="w-5 h-5 text-cyan-400" />,
-    color: "from-cyan-500/20 to-teal-500/20 border-cyan-400/30",
+    icon: <ArrowLeftRight className="w-5 h-5 text-accent" />,
+    color: "from-cyan-500/20 to-teal-500/20 border-accent-400/30",
     badge: "STABLE",
-    badgeColor: "bg-cyan-500/20 text-cyan-300 border-cyan-400/30",
+    badgeColor: "bg-accent-500/20 text-cyan-300 border-accent-400/30",
   },
   {
     id: "kalshi_cross_arb",
@@ -86,10 +86,10 @@ const KALSHI_STRATEGIES = [
     monthlyReturn: "3–7%",
     risk: "Low-Med",
     capital: "$10k+",
-    icon: <BarChart3 className="w-5 h-5 text-violet-400" />,
-    color: "from-violet-500/20 to-purple-500/20 border-violet-400/30",
+    icon: <BarChart3 className="w-5 h-5 text-primary" />,
+    color: "from-violet-500/20 to-purple-500/20 border-primary-400/30",
     badge: "MODEL EDGE",
-    badgeColor: "bg-violet-500/20 text-violet-300 border-violet-400/30",
+    badgeColor: "bg-primary-500/20 text-violet-300 border-primary-400/30",
   },
   {
     id: "kalshi_correlation",
@@ -101,10 +101,10 @@ const KALSHI_STRATEGIES = [
     monthlyReturn: "2–5%",
     risk: "Low",
     capital: "$10k+",
-    icon: <Target className="w-5 h-5 text-pink-400" />,
-    color: "from-pink-500/20 to-rose-500/20 border-pink-400/30",
+    icon: <Target className="w-5 h-5 stat-decrease" />,
+    color: "from-pink-500/20 to-rose-500/20 border-destructive-400/30",
     badge: "MATH EDGE",
-    badgeColor: "bg-pink-500/20 text-pink-300 border-pink-400/30",
+    badgeColor: "bg-destructive-500/20 text-pink-300 border-destructive-400/30",
   },
 ];
 
@@ -119,10 +119,10 @@ const POLYMARKET_STRATEGIES = [
     monthlyReturn: "1–3%",
     risk: "Low",
     capital: "$10k+",
-    icon: <ArrowLeftRight className="w-5 h-5 text-cyan-400" />,
-    color: "from-cyan-500/20 to-teal-500/20 border-cyan-400/30",
+    icon: <ArrowLeftRight className="w-5 h-5 text-accent" />,
+    color: "from-cyan-500/20 to-teal-500/20 border-accent-400/30",
     badge: "STABLE",
-    badgeColor: "bg-cyan-500/20 text-cyan-300 border-cyan-400/30",
+    badgeColor: "bg-accent-500/20 text-cyan-300 border-accent-400/30",
   },
   {
     id: "poly_arb",
@@ -149,10 +149,10 @@ const POLYMARKET_STRATEGIES = [
     monthlyReturn: "3–8%",
     risk: "Medium",
     capital: "$10k+",
-    icon: <Bot className="w-5 h-5 text-violet-400" />,
-    color: "from-violet-500/20 to-purple-500/20 border-violet-400/30",
+    icon: <Bot className="w-5 h-5 text-primary" />,
+    color: "from-violet-500/20 to-purple-500/20 border-primary-400/30",
     badge: "AI EDGE",
-    badgeColor: "bg-violet-500/20 text-violet-300 border-violet-400/30",
+    badgeColor: "bg-primary-500/20 text-violet-300 border-primary-400/30",
   },
   {
     id: "poly_correlation",
@@ -164,10 +164,10 @@ const POLYMARKET_STRATEGIES = [
     monthlyReturn: "2–5%",
     risk: "Low-Med",
     capital: "$10k+",
-    icon: <Target className="w-5 h-5 text-pink-400" />,
-    color: "from-pink-500/20 to-rose-500/20 border-pink-400/30",
+    icon: <Target className="w-5 h-5 stat-decrease" />,
+    color: "from-pink-500/20 to-rose-500/20 border-destructive-400/30",
     badge: "MATH EDGE",
-    badgeColor: "bg-pink-500/20 text-pink-300 border-pink-400/30",
+    badgeColor: "bg-destructive-500/20 text-pink-300 border-destructive-400/30",
   },
   {
     id: "poly_momentum",
@@ -190,7 +190,7 @@ const POLYMARKET_STRATEGIES = [
 
 function riskColor(risk: string) {
   if (risk.includes("Very Low")) return "text-emerald-400";
-  if (risk.includes("Low")) return "text-cyan-400";
+  if (risk.includes("Low")) return "text-accent";
   if (risk.includes("Med")) return "text-yellow-400";
   if (risk.includes("High")) return "text-red-400";
   return "text-slate-400";
@@ -201,7 +201,7 @@ function riskColor(risk: string) {
 function StrategyCard({ strategy }: { strategy: (typeof KALSHI_STRATEGIES)[number] }) {
   return (
     <Card
-      className={`laurenzo-card glass-card border bg-gradient-to-br ${strategy.color} backdrop-blur-xl transition-all duration-300`}
+      className={`data-card glass-panel border bg-gradient-to-br ${strategy.color} backdrop-blur-xl transition-all duration-300`}
     >
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between gap-3">
@@ -227,19 +227,19 @@ function StrategyCard({ strategy }: { strategy: (typeof KALSHI_STRATEGIES)[numbe
         </CardDescription>
 
         <div className="grid grid-cols-2 gap-2 text-xs">
-          <div className="glass-card bg-black/20 rounded-lg p-2">
+          <div className="glass-panel bg-black/20 rounded-lg p-2">
             <div className="text-slate-400 mb-0.5 font-semibold tracking-wide">WIN RATE</div>
             <div className="text-emerald-300 font-bold font-mono tabular-nums">{strategy.winRate}</div>
           </div>
-          <div className="glass-card bg-black/20 rounded-lg p-2">
+          <div className="glass-panel bg-black/20 rounded-lg p-2">
             <div className="text-slate-400 mb-0.5 font-semibold tracking-wide">MONTHLY</div>
             <div className="text-cyan-300 font-bold font-mono tabular-nums">{strategy.monthlyReturn}</div>
           </div>
-          <div className="glass-card bg-black/20 rounded-lg p-2">
+          <div className="glass-panel bg-black/20 rounded-lg p-2">
             <div className="text-slate-400 mb-0.5 font-semibold tracking-wide">RISK</div>
             <div className={`font-bold ${riskColor(strategy.risk)}`}>{strategy.risk}</div>
           </div>
-          <div className="glass-card bg-black/20 rounded-lg p-2">
+          <div className="glass-panel bg-black/20 rounded-lg p-2">
             <div className="text-slate-400 mb-0.5 font-semibold tracking-wide">CAPITAL</div>
             <div className="text-slate-300 font-bold font-mono tabular-nums">{strategy.capital}</div>
           </div>
@@ -380,7 +380,7 @@ function YesNoMispricePanel() {
       key: 'guaranteedProfitPct',
       header: 'Profit',
       render: (val) => (
-        <Badge variant="outline" className="text-[10px] border-cyan-400/30 text-cyan-300 font-mono tabular-nums">
+        <Badge variant="outline" className="text-[10px] border-accent-400/30 text-cyan-300 font-mono tabular-nums">
           +{(Number(val) * 100).toFixed(1)}%
         </Badge>
       ),
@@ -390,7 +390,7 @@ function YesNoMispricePanel() {
   return (
     <div className="space-y-4 animate-fade-in" style={{ animationDelay: '100ms' }}>
       <div className="flex items-center gap-2">
-        <TrendingDown className="w-4 h-4 text-cyan-400" />
+        <TrendingDown className="w-4 h-4 text-accent" />
         <span className="text-sm font-bold text-foreground">YES+NO Mispricings</span>
         {mispriceQuery.isFetching && <Loader2 className="w-3 h-3 animate-spin text-slate-400" />}
       </div>
@@ -451,11 +451,11 @@ function PolymarketAutonomyPanel() {
   return (
     <div className="space-y-4 animate-fade-in" style={{ animationDelay: '200ms' }}>
       <div className="flex items-center gap-2">
-        <Bot className="w-4 h-4 text-violet-400" />
+        <Bot className="w-4 h-4 text-primary" />
         <span className="text-sm font-bold text-foreground">Polymarket Bot — Manual Trigger</span>
       </div>
 
-      <div className="text-xs text-slate-400 leading-relaxed glass-card p-3">
+      <div className="text-xs text-slate-400 leading-relaxed glass-panel p-3">
         Runs one autonomous trading cycle: fetches live markets, generates signals, applies risk
         guardrails, and places the highest-scoring order (when live trading is armed).
       </div>
@@ -546,8 +546,8 @@ function CombinedSignalsPanel() {
             variant="outline"
             className={`text-[10px] shrink-0 ${
               String(val) === "kalshi"
-                ? "border-cyan-400/30 text-cyan-300"
-                : "border-violet-400/30 text-violet-300"
+                ? "border-accent-400/30 text-cyan-300"
+                : "border-primary-400/30 text-violet-300"
             }`}
           >
             {String(val).toUpperCase()}
@@ -599,12 +599,12 @@ function CombinedSignalsPanel() {
     <div className="space-y-4 animate-fade-in">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <GitMerge className="w-4 h-4 text-violet-400" />
+          <GitMerge className="w-4 h-4 text-primary" />
           <span className="text-sm font-bold text-foreground">Unified Signal View</span>
         </div>
         <Button
           size="sm"
-          className="laurenzo-button text-xs"
+          className="bg-gradient-to-r from-primary to-accent hover:opacity-90 transition-all text-xs"
           onClick={handleFetch}
           disabled={isRunning}
         >
@@ -619,15 +619,15 @@ function CombinedSignalsPanel() {
       {combinedMutation.data && (
         <div className="grid grid-cols-3 gap-2">
           {[
-            { label: "Kalshi", count: combinedMutation.data.kalshiCount, color: "from-cyan-500/20 to-teal-500/20 border-cyan-400/30" },
-            { label: "Polymarket", count: combinedMutation.data.polymarketCount, color: "from-violet-500/20 to-purple-500/20 border-violet-400/30" },
+            { label: "Kalshi", count: combinedMutation.data.kalshiCount, color: "from-cyan-500/20 to-teal-500/20 border-accent-400/30" },
+            { label: "Polymarket", count: combinedMutation.data.polymarketCount, color: "from-violet-500/20 to-purple-500/20 border-primary-400/30" },
             {
               label: "Consensus",
               count: combinedMutation.data.consensusCount,
               color: "from-emerald-500/20 to-teal-500/20 border-emerald-400/30",
             },
           ].map((item) => (
-            <div key={item.label} className={`glass-card border bg-gradient-to-br ${item.color} p-3 text-center`}>
+            <div key={item.label} className={`glass-panel border bg-gradient-to-br ${item.color} p-3 text-center`}>
               <div className="text-lg font-bold font-mono tabular-nums text-foreground">{item.count}</div>
               <div className="text-slate-400 text-xs">{item.label}</div>
             </div>
@@ -818,7 +818,7 @@ export default function Strategies() {
         icon={Sparkles}
         title="Bot Strategies"
         description="Organised playbooks for the Kalshi and Polymarket autonomous trading bots. Each strategy is ranked by risk-adjusted return and designed for systematic, algorithmic execution."
-        iconGradient="from-fuchsia-500 to-violet-500"
+        iconColor="text-primary"
       />
 
       {/* Tab selector */}
@@ -837,7 +837,7 @@ export default function Strategies() {
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200 ${
               tab === key
                 ? "bg-primary text-primary-foreground shadow-lg glow-primary"
-                : "glass-card bg-slate-800/50 text-slate-400 hover:text-foreground hover:bg-slate-700/50"
+                : "glass-panel bg-slate-800/50 text-slate-400 hover:text-foreground hover:bg-slate-700/50"
             }`}
           >
             {icon}
@@ -872,20 +872,20 @@ export default function Strategies() {
             ))}
           </div>
 
-          <Card className="glass-card border-0 bg-gradient-to-br from-slate-800/40 to-slate-900/40 backdrop-blur-xl border border-slate-700/50 animate-fade-in" style={{ animationDelay: '300ms' }}>
+          <Card className="glass-panel border-0 bg-gradient-to-br from-slate-800/40 to-slate-900/40 backdrop-blur-xl border border-slate-700/50 animate-fade-in" style={{ animationDelay: '300ms' }}>
             <CardHeader>
               <CardTitle className="text-base gradient-text">Portfolio Allocation</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs text-center">
                 {[
-                  { label: "MM + Arb", pct: "40%", color: "text-cyan-400" },
+                  { label: "MM + Arb", pct: "40%", color: "text-accent" },
                   { label: "Catalyst", pct: "30%", color: "text-yellow-400" },
-                  { label: "Statistical", pct: "20%", color: "text-violet-400" },
-                  { label: "Correlation", pct: "10%", color: "text-pink-400" },
+                  { label: "Statistical", pct: "20%", color: "text-primary" },
+                  { label: "Correlation", pct: "10%", color: "stat-decrease" },
                   { label: "Reserve", pct: "buffer", color: "text-slate-400" },
                 ].map((item) => (
-                  <div key={item.label} className="glass-card bg-black/20 rounded-lg p-2">
+                  <div key={item.label} className="glass-panel bg-black/20 rounded-lg p-2">
                     <div className={`text-lg font-bold font-mono tabular-nums ${item.color}`}>{item.pct}</div>
                     <div className="text-slate-400 mt-0.5">{item.label}</div>
                   </div>
@@ -922,20 +922,20 @@ export default function Strategies() {
             ))}
           </div>
 
-          <Card className="glass-card border-0 bg-gradient-to-br from-slate-800/40 to-slate-900/40 backdrop-blur-xl border border-slate-700/50 animate-fade-in" style={{ animationDelay: '300ms' }}>
+          <Card className="glass-panel border-0 bg-gradient-to-br from-slate-800/40 to-slate-900/40 backdrop-blur-xl border border-slate-700/50 animate-fade-in" style={{ animationDelay: '300ms' }}>
             <CardHeader>
               <CardTitle className="text-base gradient-text">Portfolio Allocation</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs text-center">
                 {[
-                  { label: "MM + Arb", pct: "40%", color: "text-cyan-400" },
-                  { label: "AI Prob", pct: "30%", color: "text-violet-400" },
-                  { label: "Correlation", pct: "20%", color: "text-pink-400" },
+                  { label: "MM + Arb", pct: "40%", color: "text-accent" },
+                  { label: "AI Prob", pct: "30%", color: "text-primary" },
+                  { label: "Correlation", pct: "20%", color: "stat-decrease" },
                   { label: "Momentum", pct: "10%", color: "text-orange-400" },
                   { label: "Reserve", pct: "buffer", color: "text-slate-400" },
                 ].map((item) => (
-                  <div key={item.label} className="glass-card bg-black/20 rounded-lg p-2">
+                  <div key={item.label} className="glass-panel bg-black/20 rounded-lg p-2">
                     <div className={`text-lg font-bold font-mono tabular-nums ${item.color}`}>{item.pct}</div>
                     <div className="text-slate-400 mt-0.5">{item.label}</div>
                   </div>
@@ -994,7 +994,7 @@ export default function Strategies() {
           </div>
 
           <div className="grid gap-6 md:grid-cols-2">
-            <Card className="glass-card border bg-gradient-to-br from-emerald-500/10 to-teal-500/10 border-emerald-400/20 backdrop-blur-xl">
+            <Card className="glass-panel border bg-gradient-to-br from-emerald-500/10 to-teal-500/10 border-emerald-400/20 backdrop-blur-xl">
               <CardHeader className="pb-3">
                 <CardTitle className="text-base gradient-text">Cross-Platform Arbitrage</CardTitle>
                 <CardDescription className="text-xs text-slate-400">
@@ -1006,7 +1006,7 @@ export default function Strategies() {
               </CardContent>
             </Card>
 
-            <Card className="glass-card border bg-gradient-to-br from-cyan-500/10 to-blue-500/10 border-cyan-400/20 backdrop-blur-xl">
+            <Card className="glass-panel border bg-gradient-to-br from-cyan-500/10 to-blue-500/10 border-accent-400/20 backdrop-blur-xl">
               <CardHeader className="pb-3">
                 <CardTitle className="text-base gradient-text">YES+NO Mispricing</CardTitle>
                 <CardDescription className="text-xs text-slate-400">
@@ -1018,7 +1018,7 @@ export default function Strategies() {
               </CardContent>
             </Card>
 
-            <Card className="glass-card border bg-gradient-to-br from-violet-500/10 to-purple-500/10 border-violet-400/20 backdrop-blur-xl">
+            <Card className="glass-panel border bg-gradient-to-br from-violet-500/10 to-purple-500/10 border-primary-400/20 backdrop-blur-xl">
               <CardHeader className="pb-3">
                 <CardTitle className="text-base gradient-text">Polymarket Autonomous Bot</CardTitle>
                 <CardDescription className="text-xs text-slate-400">
@@ -1030,7 +1030,7 @@ export default function Strategies() {
               </CardContent>
             </Card>
 
-            <Card className="glass-card border bg-gradient-to-br from-slate-700/20 to-slate-800/20 border-slate-600/30 backdrop-blur-xl">
+            <Card className="glass-panel border bg-gradient-to-br from-slate-700/20 to-slate-800/20 border-slate-600/30 backdrop-blur-xl">
               <CardHeader className="pb-3">
                 <CardTitle className="text-base gradient-text">Portfolio Summary</CardTitle>
                 <CardDescription className="text-xs text-slate-400">
@@ -1040,13 +1040,13 @@ export default function Strategies() {
               <CardContent>
                 <div className="space-y-3 text-xs">
                   {[
-                    { label: "Kalshi MM + Arb (base)", range: "1–6%/mo", color: "text-cyan-400" },
+                    { label: "Kalshi MM + Arb (base)", range: "1–6%/mo", color: "text-accent" },
                     { label: "Kalshi Catalyst + Statistical", range: "3–7%/mo", color: "text-yellow-400" },
-                    { label: "Polymarket MM + Arb", range: "1–6%/mo", color: "text-violet-400" },
+                    { label: "Polymarket MM + Arb", range: "1–6%/mo", color: "text-primary" },
                     { label: "Polymarket AI + Momentum", range: "3–8%/mo", color: "text-orange-400" },
                     { label: "Combined blended net (est.)", range: "2–10%/mo", color: "text-emerald-400" },
                   ].map((row) => (
-                    <div key={row.label} className="flex items-center justify-between glass-card bg-black/20 rounded-lg px-3 py-2">
+                    <div key={row.label} className="flex items-center justify-between glass-panel bg-black/20 rounded-lg px-3 py-2">
                       <span className="text-slate-400">{row.label}</span>
                       <span className={`font-bold font-mono tabular-nums ${row.color}`}>{row.range}</span>
                     </div>
@@ -1077,7 +1077,7 @@ export default function Strategies() {
           </div>
 
           {/* How it works */}
-          <Card className="glass-card border bg-gradient-to-br from-slate-800/30 to-slate-900/30 border-slate-700/40 backdrop-blur-xl animate-fade-in" style={{ animationDelay: '100ms' }}>
+          <Card className="glass-panel border bg-gradient-to-br from-slate-800/30 to-slate-900/30 border-slate-700/40 backdrop-blur-xl animate-fade-in" style={{ animationDelay: '100ms' }}>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm gradient-text">How Cross-Bot Strategies Work</CardTitle>
             </CardHeader>
@@ -1085,7 +1085,7 @@ export default function Strategies() {
               <div className="grid gap-3 md:grid-cols-3 text-xs">
                 {[
                   {
-                    icon: <GitMerge className="w-4 h-4 text-violet-400" />,
+                    icon: <GitMerge className="w-4 h-4 text-primary" />,
                     title: "Consensus Detection",
                     body: "When both bots independently fire signals on the same event in the same direction, conviction is boosted — both agree the market is mispriced.",
                   },
@@ -1095,12 +1095,12 @@ export default function Strategies() {
                     body: "Kalshi and Polymarket price identical events differently. Buy the cheap side on one platform and hedge the expensive side on the other for near risk-free edge.",
                   },
                   {
-                    icon: <Layers className="w-4 h-4 text-cyan-400" />,
+                    icon: <Layers className="w-4 h-4 text-accent" />,
                     title: "Coordinated Execution",
                     body: "The cross-bot executor places both legs of an arbitrage trade concurrently, minimising the window during which only one leg is open.",
                   },
                 ].map((item) => (
-                  <div key={item.title} className="glass-card bg-black/20 rounded-lg p-3 space-y-1.5">
+                  <div key={item.title} className="glass-panel bg-black/20 rounded-lg p-3 space-y-1.5">
                     <div className="flex items-center gap-2">
                       {item.icon}
                       <span className="font-semibold text-foreground">{item.title}</span>
@@ -1114,7 +1114,7 @@ export default function Strategies() {
 
           <div className="grid gap-6 md:grid-cols-2">
             {/* Combined signals */}
-            <Card className="glass-card border bg-gradient-to-br from-violet-500/10 to-purple-500/10 border-violet-400/20 backdrop-blur-xl animate-fade-in" style={{ animationDelay: '200ms' }}>
+            <Card className="glass-panel border bg-gradient-to-br from-violet-500/10 to-purple-500/10 border-primary-400/20 backdrop-blur-xl animate-fade-in" style={{ animationDelay: '200ms' }}>
               <CardHeader className="pb-3">
                 <CardTitle className="text-base gradient-text">Combined Signal Scan</CardTitle>
                 <CardDescription className="text-xs text-slate-400">
@@ -1127,7 +1127,7 @@ export default function Strategies() {
             </Card>
 
             {/* Cross-arb execution */}
-            <Card className="glass-card border bg-gradient-to-br from-emerald-500/10 to-teal-500/10 border-emerald-400/20 backdrop-blur-xl animate-fade-in" style={{ animationDelay: '300ms' }}>
+            <Card className="glass-panel border bg-gradient-to-br from-emerald-500/10 to-teal-500/10 border-emerald-400/20 backdrop-blur-xl animate-fade-in" style={{ animationDelay: '300ms' }}>
               <CardHeader className="pb-3">
                 <CardTitle className="text-base gradient-text">Cross-Arb Executor</CardTitle>
                 <CardDescription className="text-xs text-slate-400">
@@ -1141,7 +1141,7 @@ export default function Strategies() {
           </div>
 
           {/* Requirements */}
-          <Card className="glass-card border bg-gradient-to-br from-slate-800/40 to-slate-900/40 border-slate-700/50 backdrop-blur-xl animate-fade-in" style={{ animationDelay: '400ms' }}>
+          <Card className="glass-panel border bg-gradient-to-br from-slate-800/40 to-slate-900/40 border-slate-700/50 backdrop-blur-xl animate-fade-in" style={{ animationDelay: '400ms' }}>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm text-slate-300">Prerequisites</CardTitle>
             </CardHeader>

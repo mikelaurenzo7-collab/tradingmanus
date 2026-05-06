@@ -45,7 +45,7 @@ export default function Analytics() {
   if (feedsQuery.isLoading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
-        <Loader2 className="h-8 w-8 animate-spin text-cyan-400" />
+        <Loader2 className="h-8 w-8 animate-spin text-accent" />
       </div>
     );
   }
@@ -70,7 +70,7 @@ export default function Analytics() {
         icon={BarChart3}
         title="Market Microstructure Analytics"
         description="Monitor real-time order-book proxies, liquidity depth, spread quality, and volume imbalance so execution quality and signal selection stay grounded in tradable conditions."
-        iconGradient="from-cyan-500 to-blue-500"
+        iconColor="text-accent"
         actions={
           <div className="flex flex-wrap gap-2">
             {([
@@ -135,7 +135,7 @@ export default function Analytics() {
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr] animate-fade-in" style={{ animationDelay: '200ms' }}>
-        <Card className="glass-card border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
+        <Card className="glass-panel border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
           <CardHeader>
             <CardTitle>Order-Book and Liquidity Surface</CardTitle>
             <CardDescription>
@@ -230,7 +230,7 @@ export default function Analytics() {
         </Card>
 
         <div className="space-y-6">
-          <Card className="glass-card border border-slate-800 bg-slate-900/70 backdrop-blur-xl animate-fade-in" style={{ animationDelay: '300ms' }}>
+          <Card className="glass-panel border border-slate-800 bg-slate-900/70 backdrop-blur-xl animate-fade-in" style={{ animationDelay: '300ms' }}>
               <CardHeader>
                 <CardTitle>Liquidity-Adjusted Candidates</CardTitle>
                 <CardDescription>
@@ -268,7 +268,7 @@ export default function Analytics() {
               </CardContent>
             </Card>
 
-            <Card className="glass-card border border-slate-800 bg-slate-900/70 backdrop-blur-xl animate-fade-in" style={{ animationDelay: '400ms' }}>
+            <Card className="glass-panel border border-slate-800 bg-slate-900/70 backdrop-blur-xl animate-fade-in" style={{ animationDelay: '400ms' }}>
               <CardHeader>
                 <CardTitle>Volume Imbalance Watchlist</CardTitle>
                 <CardDescription>
@@ -306,7 +306,7 @@ export default function Analytics() {
               </CardContent>
             </Card>
 
-            <Card className="glass-card border border-slate-800 bg-slate-900/70 backdrop-blur-xl animate-fade-in" style={{ animationDelay: '500ms' }}>
+            <Card className="glass-panel border border-slate-800 bg-slate-900/70 backdrop-blur-xl animate-fade-in" style={{ animationDelay: '500ms' }}>
               <CardHeader>
                 <CardTitle>Pressure Watchlist</CardTitle>
                 <CardDescription>

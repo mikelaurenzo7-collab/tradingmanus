@@ -72,7 +72,7 @@ export default function SentimentAnalysis() {
         value: composite?.inputs.market ?? marketSentiment,
         weight: composite?.weights.market ?? 0.2,
         contribution: composite?.contributions.market ?? 0,
-        color: "text-cyan-400",
+        color: "text-accent",
       },
       {
         key: "external",
@@ -113,7 +113,7 @@ export default function SentimentAnalysis() {
         icon={Radar}
         title="Sentiment Analysis"
         description="Multi-source sentiment scoring with live feeds and attention momentum"
-        iconGradient="from-violet-500 to-pink-500"
+        iconColor="text-primary"
         actions={
           <div className="w-full max-w-xl rounded-2xl border border-slate-800 bg-slate-900/70 p-4 backdrop-blur-xl">
             <div className="flex flex-col gap-3 sm:flex-row">
@@ -141,7 +141,7 @@ export default function SentimentAnalysis() {
 
         {/* Summary Stats Row */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 animate-fade-in">
-          <div className="laurenzo-card glass-card">
+          <div className="data-card glass-panel">
             <div className="flex items-start justify-between mb-4">
               <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ backgroundColor: `${overallSentiment >= 0 ? '#10b981' : '#f43f5e'}20` }}>
                 {overallSentiment >= 0 ? <TrendingUp className="w-5 h-5 text-emerald-400" /> : <TrendingDown className="w-5 h-5 text-rose-400" />}
@@ -166,10 +166,10 @@ export default function SentimentAnalysis() {
             value={sourceCards.filter(s => s.value < -0.1).length} 
             color="#f43f5e" 
           />
-          <div className="laurenzo-card glass-card">
+          <div className="data-card glass-panel">
             <div className="flex items-start justify-between mb-4">
               <div className="w-10 h-10 rounded-full flex items-center justify-between" style={{ backgroundColor: '#06b6d420' }}>
-                <Activity className="w-5 h-5 text-cyan-400" />
+                <Activity className="w-5 h-5 text-accent" />
               </div>
               <div className="live-dot" />
             </div>
@@ -182,10 +182,10 @@ export default function SentimentAnalysis() {
           </div>
         </div>
 
-        <Card className="laurenzo-card glass-card border border-slate-800 bg-gradient-to-br from-slate-900/90 to-slate-950/90 backdrop-blur-xl animate-fade-in">
+        <Card className="data-card glass-panel border border-slate-800 bg-gradient-to-br from-slate-900/90 to-slate-950/90 backdrop-blur-xl animate-fade-in">
           <CardHeader>
             <div className="flex items-center gap-2">
-              <TrendingUp className="w-5 h-5 text-violet-400" />
+              <TrendingUp className="w-5 h-5 text-primary" />
               <CardTitle>Sentiment Distribution</CardTitle>
             </div>
             <CardDescription>
@@ -205,7 +205,7 @@ export default function SentimentAnalysis() {
         </Card>
 
         <div className="grid gap-6 lg:grid-cols-3 animate-fade-in">
-          <Card className="laurenzo-card glass-card border border-slate-800 bg-slate-900/70 backdrop-blur-xl lg:col-span-2">
+          <Card className="data-card glass-panel border border-slate-800 bg-slate-900/70 backdrop-blur-xl lg:col-span-2">
             <CardHeader>
               <CardTitle>Manual Source Controls</CardTitle>
               <CardDescription>Adjust the in-house view and compare it with the external topic signal.</CardDescription>
@@ -228,7 +228,7 @@ export default function SentimentAnalysis() {
                   label: "Market Sentiment",
                   value: marketSentiment,
                   onChange: setMarketSentiment,
-                  color: "text-cyan-400",
+                  color: "text-accent",
                 },
               ].map((source) => (
                 <div key={source.label}>
@@ -252,7 +252,7 @@ export default function SentimentAnalysis() {
             </CardContent>
           </Card>
 
-          <Card className="laurenzo-card glass-card border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
+          <Card className="data-card glass-panel border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
             <CardHeader>
               <div className="flex items-center gap-2">
                 <div className="live-dot" />
@@ -320,7 +320,7 @@ export default function SentimentAnalysis() {
                         href={headline.url}
                         target="_blank"
                         rel="noreferrer"
-                        className="block rounded-xl border border-slate-800 bg-slate-900/60 p-3 transition hover:border-cyan-500/50 hover:bg-slate-900"
+                        className="block rounded-xl border border-slate-800 bg-slate-900/60 p-3 transition hover:border-accent-500/50 hover:bg-slate-900"
                       >
                         <div className="text-sm font-medium text-slate-100">{headline.title}</div>
                         <div className="mt-1 text-xs text-slate-500">{headline.source} · {new Date(headline.publishedAt).toLocaleString()}</div>
@@ -360,7 +360,7 @@ export default function SentimentAnalysis() {
           </Card>
         </div>
 
-        <Card className="laurenzo-card glass-card border border-slate-800 bg-slate-900/70 backdrop-blur-xl animate-fade-in">
+        <Card className="data-card glass-panel border border-slate-800 bg-slate-900/70 backdrop-blur-xl animate-fade-in">
           <CardHeader>
             <CardTitle>Weighted Contribution Breakdown</CardTitle>
             <CardDescription>See exactly how each source contributes to the final score.</CardDescription>
@@ -395,7 +395,7 @@ export default function SentimentAnalysis() {
         {sentimentQuery.isLoading && (
           <Card className="border border-slate-800 bg-slate-900/70 backdrop-blur-xl">
             <CardContent className="flex items-center justify-center gap-3 py-10 text-slate-400">
-              <Zap className="h-5 w-5 animate-spin text-cyan-400" />
+              <Zap className="h-5 w-5 animate-spin text-accent" />
               Refreshing composite sentiment, live headlines, crowd pulse, and external attention…
             </CardContent>
           </Card>

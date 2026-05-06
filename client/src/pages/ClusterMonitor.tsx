@@ -26,8 +26,8 @@ const CLUSTER_COLORS: Record<number, string> = {
   1: "from-orange-500/20 to-red-500/20 border-orange-400/40",
   2: "from-yellow-500/20 to-orange-500/20 border-yellow-400/40",
   3: "from-emerald-500/20 to-teal-500/20 border-emerald-400/40",
-  4: "from-pink-500/20 to-rose-500/20 border-pink-400/40",
-  5: "from-violet-500/20 to-purple-500/20 border-violet-400/40",
+  4: "from-pink-500/20 to-rose-500/20 border-destructive-400/40",
+  5: "from-violet-500/20 to-purple-500/20 border-primary-400/40",
   6: "from-red-500/20 to-rose-600/20 border-red-400/40",
   7: "from-slate-500/20 to-slate-600/20 border-slate-400/40",
 };
@@ -95,7 +95,7 @@ export default function ClusterMonitor() {
         icon={Network}
         title="Cluster Monitor"
         description="Wash-trading detection and cluster analysis · Fade strategies · Combinatorial arbitrage"
-        iconGradient="from-rose-500 to-orange-500"
+        iconColor="text-destructive"
         actions={
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 text-sm text-slate-400">
@@ -122,7 +122,7 @@ export default function ClusterMonitor() {
             onClick={() => setActiveTab(tab)}
             className={`px-4 py-2 rounded-t-lg text-sm font-semibold capitalize transition-colors ${
               activeTab === tab
-                ? "bg-violet-500/20 text-violet-300 border border-violet-400/40 border-b-0"
+                ? "bg-primary-500/20 text-violet-300 border border-primary-400/40 border-b-0"
                 : "text-slate-400 hover:text-slate-200"
             }`}
           >
@@ -163,7 +163,7 @@ export default function ClusterMonitor() {
               value={clusters.reduce((sum: number, c: any) => sum + (c.marketCategories?.length ?? 0), 0)} 
               color="#fbbf24" 
             />
-            <div className="laurenzo-card glass-card">
+            <div className="data-card glass-panel">
               <div className="flex items-start justify-between mb-4">
                 <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ backgroundColor: '#10b98120' }}>
                   <Eye className="w-5 h-5 text-emerald-400" />
@@ -180,7 +180,7 @@ export default function ClusterMonitor() {
           </div>
 
           <p className="text-slate-400 text-sm">
-            Seven documented wash-trading clusters on Polymarket. Cluster strategies: <strong className="text-red-400">Fade</strong> (pump then retrace), <strong className="text-emerald-400">Copy</strong> (mirror entries), <strong className="text-pink-400">Warning</strong> (skip market), <strong className="text-slate-400">Skip</strong> (legitimate actors).
+            Seven documented wash-trading clusters on Polymarket. Cluster strategies: <strong className="text-red-400">Fade</strong> (pump then retrace), <strong className="text-emerald-400">Copy</strong> (mirror entries), <strong className="stat-decrease">Warning</strong> (skip market), <strong className="text-slate-400">Skip</strong> (legitimate actors).
           </p>
           <div className="grid md:grid-cols-2 gap-4">
             {visibleClusters.map((c: any) => {
@@ -188,7 +188,7 @@ export default function ClusterMonitor() {
               const colors = CLUSTER_COLORS[c.id] ?? CLUSTER_COLORS[7]!;
               const isHighSeverity = c.strategy === 'fade' || c.strategy === 'warning';
               return (
-                <Card key={c.id} className={`laurenzo-card glass-card border bg-gradient-to-br ${colors} backdrop-blur-xl ${isHighSeverity ? 'glow-destructive' : ''} animate-fade-in`} style={{ animationDelay: `${visibleClusters.indexOf(c) * 50}ms` }}>
+                <Card key={c.id} className={`data-card glass-panel border bg-gradient-to-br ${colors} backdrop-blur-xl ${isHighSeverity ? 'glow-destructive' : ''} animate-fade-in`} style={{ animationDelay: `${visibleClusters.indexOf(c) * 50}ms` }}>
                   <CardHeader className="pb-2">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
@@ -209,7 +209,7 @@ export default function ClusterMonitor() {
                         </span>
                       )}
                       {c.shortWindow && (
-                        <span className="bg-cyan-500/20 text-cyan-300 px-2 py-0.5 rounded-full border border-cyan-500/30">
+                        <span className="bg-accent-500/20 text-cyan-300 px-2 py-0.5 rounded-full border border-accent-500/30">
                           ≤ 5-min markets
                         </span>
                       )}
@@ -269,7 +269,7 @@ export default function ClusterMonitor() {
                 <h2 className="text-xl font-bold gradient-text">ACTIONABLE SIGNALS</h2>
               </div>
               {actionableRecs.map((rec: any, idx: number) => (
-                <Card key={`${rec.marketId}-${idx}`} className="laurenzo-card glass-card glow-primary border-slate-700/50 animate-fade-in" style={{ animationDelay: `${idx * 75}ms` }}>
+                <Card key={`${rec.marketId}-${idx}`} className="data-card glass-panel glow-primary border-slate-700/50 animate-fade-in" style={{ animationDelay: `${idx * 75}ms` }}>
                   <CardContent className="pt-4">
                     <div className="flex items-start justify-between gap-4 flex-wrap">
                       <div className="flex items-center gap-3">
@@ -280,7 +280,7 @@ export default function ClusterMonitor() {
                         </div>
                       </div>
                       <div className="flex items-center gap-3">
-                        <Badge className={`${rec.side === "yes" ? "bg-cyan-500/20 text-cyan-300 border-cyan-500/40" : "bg-pink-500/20 text-pink-300 border-pink-500/40"} border px-2 py-0.5 text-xs`}>
+                        <Badge className={`${rec.side === "yes" ? "bg-accent-500/20 text-cyan-300 border-accent-500/40" : "bg-destructive-500/20 text-pink-300 border-destructive-500/40"} border px-2 py-0.5 text-xs`}>
                           {rec.side.toUpperCase()}
                         </Badge>
                         {rec.suggestedLimitPrice > 0 && (
@@ -306,14 +306,14 @@ export default function ClusterMonitor() {
           {warnings.length > 0 && (
             <div className="space-y-3">
               <div className="flex items-center gap-2">
-                <ShieldAlert className="w-5 h-5 text-pink-400" />
+                <ShieldAlert className="w-5 h-5 stat-decrease" />
                 <h2 className="text-xl font-bold text-pink-300">VOLUME WARNINGS</h2>
               </div>
               {warnings.map((rec: any, idx: number) => (
-                <Card key={`warn-${rec.marketId}-${idx}`} className="laurenzo-card glass-card glow-destructive border-pink-400/30 animate-fade-in" style={{ animationDelay: `${idx * 75}ms` }}>
+                <Card key={`warn-${rec.marketId}-${idx}`} className="data-card glass-panel glow-destructive border-destructive-400/30 animate-fade-in" style={{ animationDelay: `${idx * 75}ms` }}>
                   <CardContent className="pt-4">
                     <div className="flex items-start gap-3">
-                      <AlertTriangle className="w-5 h-5 text-pink-400 flex-shrink-0 mt-0.5" />
+                      <AlertTriangle className="w-5 h-5 stat-decrease flex-shrink-0 mt-0.5" />
                       <div>
                         <p className="font-semibold text-pink-200">Skip Market – Fake Volume</p>
                         <p className="text-sm text-slate-400 mt-0.5 truncate max-w-md">{rec.question}</p>
@@ -360,7 +360,7 @@ export default function ClusterMonitor() {
           {allArb.map((opp: any, idx: number) => {
             const typeBadge = ARB_TYPE_BADGE[opp.type] ?? ARB_TYPE_BADGE.sum_exceeds_one!;
             return (
-              <Card key={idx} className="laurenzo-card glass-card glow-primary border-emerald-400/30 animate-fade-in" style={{ animationDelay: `${idx * 100}ms` }}>
+              <Card key={idx} className="data-card glass-panel glow-primary border-emerald-400/30 animate-fade-in" style={{ animationDelay: `${idx * 100}ms` }}>
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between flex-wrap gap-3">
                     <div className="flex items-center gap-3">
@@ -390,7 +390,7 @@ export default function ClusterMonitor() {
                         <p className="text-xs text-slate-400 font-semibold uppercase tracking-wide">Trade {ti + 1}</p>
                         <p className="text-sm text-slate-200 truncate">{trade.title}</p>
                         <div className="flex items-center gap-2">
-                          <Badge className={`${trade.side === "yes" ? "bg-cyan-500/20 text-cyan-300 border-cyan-500/40" : "bg-pink-500/20 text-pink-300 border-pink-500/40"} border text-xs px-2 py-0.5`}>
+                          <Badge className={`${trade.side === "yes" ? "bg-accent-500/20 text-cyan-300 border-accent-500/40" : "bg-destructive-500/20 text-pink-300 border-destructive-500/40"} border text-xs px-2 py-0.5`}>
                             {trade.side.toUpperCase()}
                           </Badge>
                           <span className="text-sm font-mono text-slate-200">

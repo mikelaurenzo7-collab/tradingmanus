@@ -655,3 +655,134 @@ export async function getInstructionEffectivenessFromAudit(
     };
   }
 }
+
+export interface InstructionSuggestion {
+  instructionId: number;
+  instructionTitle: string;
+  suggestionType: "high_performer" | "low_performer" | "common_failure_rule";
+  message: string;
+  confidence: number;
+  supportingStats: Record<string, number | string>;
+}
+
+/**
+ * Generates actionable instruction suggestions from audit effectiveness analytics
+ * 
+ * Rules:
+ * - high_performer: passRate >= 0.7 and evaluatedSignals >= 10
+ * - low_performer: passRate <= 0.35 and evaluatedSignals >= 10
+ * - common_failure_rule: any rule with failedRuleCounts count >= 5
+ * 
+ * Confidence is a function of sample size and effect magnitude.
+ * 
+ * @param triggeredByOpenId - User openId to filter audit events
+ * @param lookbackDays - Number of days to look back (default 30)
+ */
+export async function getInstructionSuggestionsFromAudit(
+  triggeredByOpenId: string,
+  lookbackDays: number = 30
+): Promise<{
+  generatedAt: string;
+  lookbackDays: number;
+  suggestions: InstructionSuggestion[];
+}> {
+  try {
+    // Reuse existing effectiveness analytics to avoid duplicate parsing
+    const effectiveness = await getInstructionEffectivenessFromAudit(
+      triggeredByOpenId,
+      lookbackDays
+    );
+
+    const suggestions: InstructionSuggestion[] = [];
+
+    // Process each instruction for suggestions
+    for (const instruction of effectiveness.instructions) {
+      const { instructionId, instructionTitle, evaluatedSignals, passRate, failedRuleCounts } = instruction;
+
+      // Suggestion 1: High performer (passes frequently)
+      if (passRate >= 0.7 && evaluatedSignals >= 10) {
+        // Confidence increases with sample size and pass rate
+        // Bounded between 0.5 (baseline for meeting threshold) and 1.0 (very high confidence)
+        const sampleBonus = Math.min((evaluatedSignals - 10) / 40, 0.3); // Up to +0.3 for 50+ samples
+        const passRateBonus = Math.min((passRate - 0.7) / 0.3, 0.2); // Up to +0.2 for 100% pass rate
+        const confidence = Math.min(0.5 + sampleBonus + passRateBonus, 1.0);
+
+        suggestions.push({
+          instructionId,
+          instructionTitle,
+          suggestionType: "high_performer",
+          message: `Instruction "${instructionTitle}" passes ${Math.round(passRate * 100)}% over ${evaluatedSignals} signals — consider expanding this pattern.`,
+          confidence: Math.round(confidence * 100) / 100, // Round to 2 decimals
+          supportingStats: {
+            passRate: Math.round(passRate * 100) / 100,
+            evaluatedSignals,
+          },
+        });
+      }
+
+      // Suggestion 2: Low performer (rejects frequently)
+      if (passRate <= 0.35 && evaluatedSignals >= 10) {
+        // Similar confidence calculation
+        const sampleBonus = Math.min((evaluatedSignals - 10) / 40, 0.3);
+        const lowRateBonus = Math.min((0.35 - passRate) / 0.35, 0.2); // Lower pass rate = higher confidence in issue
+        const confidence = Math.min(0.5 + sampleBonus + lowRateBonus, 1.0);
+
+        suggestions.push({
+          instructionId,
+          instructionTitle,
+          suggestionType: "low_performer",
+          message: `Instruction "${instructionTitle}" passes only ${Math.round(passRate * 100)}% over ${evaluatedSignals} signals — consider relaxing or revising rules.`,
+          confidence: Math.round(confidence * 100) / 100,
+          supportingStats: {
+            passRate: Math.round(passRate * 100) / 100,
+            evaluatedSignals,
+          },
+        });
+      }
+
+      // Suggestion 3: Common failure rules (specific rules block often)
+      for (const failedRule of failedRuleCounts) {
+        if (failedRule.count >= 5) {
+          // Confidence based on failure frequency relative to total evaluations
+          const failureRatio = failedRule.count / evaluatedSignals;
+          const countBonus = Math.min((failedRule.count - 5) / 20, 0.3); // Up to +0.3 for 25+ failures
+          const ratioBonus = Math.min(failureRatio, 0.2); // Up to +0.2 if rule fails often
+          const confidence = Math.min(0.5 + countBonus + ratioBonus, 1.0);
+
+          suggestions.push({
+            instructionId,
+            instructionTitle,
+            suggestionType: "common_failure_rule",
+            message: `Rule "${failedRule.ruleKey}" in "${instructionTitle}" frequently rejects signals (${failedRule.count} times) — consider tuning threshold.`,
+            confidence: Math.round(confidence * 100) / 100,
+            supportingStats: {
+              ruleKey: failedRule.ruleKey,
+              failureCount: failedRule.count,
+              evaluatedSignals,
+            },
+          });
+        }
+      }
+    }
+
+    // Sort suggestions by confidence descending
+    suggestions.sort((a, b) => b.confidence - a.confidence);
+
+    return {
+      generatedAt: new Date().toISOString(),
+      lookbackDays,
+      suggestions,
+    };
+  } catch (error) {
+    logger.error(
+      { err: error },
+      "[Training] Get instruction suggestions from audit failed"
+    );
+    // Return empty result on error
+    return {
+      generatedAt: new Date().toISOString(),
+      lookbackDays,
+      suggestions: [],
+    };
+  }
+}
