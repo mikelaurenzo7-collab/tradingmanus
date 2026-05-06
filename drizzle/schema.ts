@@ -1,5 +1,6 @@
 import {
   doublePrecision,
+  index,
   integer,
   pgEnum,
   pgTable,
@@ -20,8 +21,10 @@ export const kalshiSideEnum = pgEnum("kalshi_side", ["yes", "no"]);
 export const kalshiOrderActionEnum = pgEnum("kalshi_order_action", ["buy", "sell"]);
 export const kalshiOrderStatusEnum = pgEnum("kalshi_order_status", ["pending", "filled", "cancelled", "rejected"]);
 export const kalshiPositionStatusEnum = pgEnum("kalshi_position_status", ["open", "closing", "closed"]);
-export const kalshiSignalTypeEnum = pgEnum("kalshi_signal_type", ["value_play", "momentum", "contrarian", "arbitrage", "sentiment"]);
+export const kalshiSignalTypeEnum = pgEnum("kalshi_signal_type", ["value_play", "momentum", "contrarian", "arbitrage", "sentiment", "multi_timeframe"]);
 export const kalshiOutcomeEnum = pgEnum("kalshi_outcome", ["win", "loss", "partial"]);
+export const evidenceTypeEnum = pgEnum("evidence_type", ["price_move", "volume_spike", "sentiment_shift", "news_item", "market_close", "fundamental"]);
+export const evidenceDirectionEnum = pgEnum("evidence_direction", ["bullish", "bearish", "neutral"]);
 export const autonomyModeEnum = pgEnum("autonomy_mode", ["manual", "approval_required", "semi_autonomous", "fully_autonomous"]);
 export const executionCadenceEnum = pgEnum("execution_cadence", ["manual_only", "session_assisted", "hourly_watch", "continuous_watch"]);
 export const riskPostureEnum = pgEnum("risk_posture", ["conservative", "balanced", "aggressive"]);
@@ -198,6 +201,7 @@ export const kalshiSignals = pgTable("kalshiSignals", {
   signalType: kalshiSignalTypeEnum("signalType").notNull(),
   side: kalshiSideEnum("side").notNull(),
   confidence: doublePrecision("confidence").notNull(),
+  bayesianProbability: doublePrecision("bayesianProbability"), // Bayesian posterior probability
   reasoning: text("reasoning").notNull(),
   impliedProbability: doublePrecision("impliedProbability").notNull(),
   marketPrice: doublePrecision("marketPrice").notNull(),
@@ -217,6 +221,24 @@ export const kalshiPerformance = pgTable("kalshiPerformance", {
   executionQuality: doublePrecision("executionQuality").notNull(),
   resolvedAt: createdAt(),
 });
+
+export const signalBayesianUpdates = pgTable("signalBayesianUpdates", {
+  id: serial("id").primaryKey(),
+  signalId: integer("signalId").notNull(),
+  userId: integer("userId").notNull(),
+  prior: doublePrecision("prior").notNull(),
+  likelihood: doublePrecision("likelihood").notNull(),
+  evidenceProb: doublePrecision("evidenceProb").notNull(),
+  posterior: doublePrecision("posterior").notNull(),
+  evidenceType: evidenceTypeEnum("evidenceType").notNull(),
+  evidenceValue: doublePrecision("evidenceValue").notNull(),
+  evidenceDirection: evidenceDirectionEnum("evidenceDirection").notNull(),
+  evidenceMetadata: text("evidenceMetadata"),
+  weight: doublePrecision("weight").notNull(), // Time-decay weight
+  updatedAt: createdAt(),
+}, (table) => ({
+  signalLookupIdx: index("signal_bayesian_lookup_idx").on(table.signalId, table.updatedAt),
+}));
 
 export const kalshiCapital = pgTable("kalshiCapital", {
   id: serial("id").primaryKey(),
@@ -382,6 +404,28 @@ export const deskMemory = pgTable("deskMemory", {
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
+
+// ── Multi-Timeframe Analysis ──────────────────────────────────────────────────
+
+/**
+ * Multi-timeframe analysis data for markets with feed data.
+ * Stores momentum, volatility, volume, and trend strength calculations
+ * for 5min/15min/1hour/4hour/24hour timeframes.
+ */
+export const marketTimeframeAnalysis = pgTable("market_timeframe_analysis", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  marketId: text("market_id").notNull(),
+  platform: text("platform").notNull(), // 'kalshi' | 'polymarket'
+  timeframe: text("timeframe").notNull(), // timeframe in milliseconds as string
+  momentum: doublePrecision("momentum").notNull(),
+  volatility: doublePrecision("volatility").notNull(),
+  volume: doublePrecision("volume").notNull(),
+  trendStrength: doublePrecision("trend_strength").notNull(),
+  analyzedAt: timestamp("analyzed_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => ({
+  marketLookupIdx: index("market_tf_lookup_idx").on(table.marketId, table.platform, table.analyzedAt),
+}));
 
 // ── Chatbot ────────────────────────────────────────────────────────────────────
 

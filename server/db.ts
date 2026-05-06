@@ -11,6 +11,8 @@ import {
   kalshiCapital,
   kalshiCredentials,
   tradingPreferences,
+  marketTimeframeAnalysis,
+  signalBayesianUpdates,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 import { eq, and, desc, gte, inArray, ne, sql } from "drizzle-orm";
@@ -621,6 +623,7 @@ export async function createKalshiSignal(signal: any) {
     signalType: signal.signalType,
     side: signal.side,
     confidence: signal.confidence,
+    bayesianProbability: signal.bayesianProbability ?? null,
     reasoning: signal.reasoning,
     impliedProbability: signal.impliedProbability,
     marketPrice: signal.marketPrice,
@@ -662,6 +665,121 @@ export async function getRecentSignals(limit: number, userId: number) {
       );
     })
     .slice(0, limit);
+}
+
+// Multi-Timeframe Analysis
+export async function saveTimeframeAnalysis(payload: {
+  userId: number;
+  marketId: string;
+  platform: string;
+  timeframeAnalyses: Array<{
+    timeframe: number;
+    momentum: number;
+    volatility: number;
+    volume: number;
+    trendStrength: number;
+  }>;
+}) {
+  const database = await getDb();
+  if (!database) return;
+  
+  const scopedUserId = assertPositiveIntegerUserId(payload.userId, "saveTimeframeAnalysis userId");
+
+  // Insert each timeframe analysis as a separate row
+  for (const analysis of payload.timeframeAnalyses) {
+    try {
+      await database.insert(marketTimeframeAnalysis).values({
+        userId: scopedUserId,
+        marketId: payload.marketId,
+        platform: payload.platform,
+        timeframe: analysis.timeframe.toString(),
+        momentum: analysis.momentum,
+        volatility: analysis.volatility,
+        volume: analysis.volume,
+        trendStrength: analysis.trendStrength,
+        analyzedAt: new Date(),
+      });
+    } catch (error) {
+      logger.error({ error, marketId: payload.marketId, timeframe: analysis.timeframe }, "Failed to save timeframe analysis");
+    }
+  }
+}
+
+// Bayesian Signal Updates
+export async function getSignalById(signalId: number, dbInstance?: Awaited<ReturnType<typeof getDb>>) {
+  const database = dbInstance || await getDb();
+  if (!database) return null;
+  
+  const result = await database
+    .select()
+    .from(kalshiSignals)
+    .where(eq(kalshiSignals.id, signalId))
+    .limit(1);
+  
+  return result[0] || null;
+}
+
+export async function insertBayesianUpdate(
+  update: {
+    signalId: number;
+    userId: number;
+    prior: number;
+    likelihood: number;
+    evidenceProb: number;
+    posterior: number;
+    evidenceType: string;
+    evidenceValue: number;
+    evidenceDirection: string;
+    evidenceMetadata: string | null;
+    weight: number;
+  },
+  dbInstance?: Awaited<ReturnType<typeof getDb>>
+) {
+  const database = dbInstance || await getDb();
+  if (!database) return;
+  
+  const scopedUserId = assertPositiveIntegerUserId(update.userId, "insertBayesianUpdate userId");
+
+  await database.insert(signalBayesianUpdates).values({
+    signalId: update.signalId,
+    userId: scopedUserId,
+    prior: update.prior,
+    likelihood: update.likelihood,
+    evidenceProb: update.evidenceProb,
+    posterior: update.posterior,
+    evidenceType: update.evidenceType as any,
+    evidenceValue: update.evidenceValue,
+    evidenceDirection: update.evidenceDirection as any,
+    evidenceMetadata: update.evidenceMetadata,
+    weight: update.weight,
+  });
+}
+
+export async function updateSignalBayesianProbability(
+  signalId: number,
+  bayesianProbability: number,
+  dbInstance?: Awaited<ReturnType<typeof getDb>>
+) {
+  const database = dbInstance || await getDb();
+  if (!database) return;
+
+  await database
+    .update(kalshiSignals)
+    .set({ bayesianProbability })
+    .where(eq(kalshiSignals.id, signalId));
+}
+
+export async function getBayesianUpdatesForSignal(signalId: number, dbInstance?: Awaited<ReturnType<typeof getDb>>) {
+  const database = dbInstance || await getDb();
+  if (!database) return [];
+
+  const updates = await database
+    .select()
+    .from(signalBayesianUpdates)
+    .where(eq(signalBayesianUpdates.signalId, signalId))
+    .orderBy(signalBayesianUpdates.updatedAt);
+
+  return updates;
 }
 
 // Kalshi capital queries

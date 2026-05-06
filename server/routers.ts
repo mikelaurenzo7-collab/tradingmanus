@@ -1132,6 +1132,7 @@ export const appRouter = router({
         })
       )
       .mutation(async ({ input, ctx }) => {
+        const userId = getRequiredUserId(ctx);
         try {
           const markets = await Promise.all(
             input.marketIds.map(id => db.getKalshiMarket(id))
@@ -1186,7 +1187,8 @@ export const appRouter = router({
             validMarkets,
             feeds,
             fundamentalProbs,
-            sentimentContexts
+            sentimentContexts,
+            userId
           );
           const confidenceFilteredSignals = filterSignalsByConfidence(
             allSignals,
@@ -1982,6 +1984,7 @@ export const appRouter = router({
           const signals = generatePolymarketSignals(markets, {
             minConfidence: input?.minConfidence ?? 0.55,
             minLiquidity: input?.minLiquidity ?? 100,
+            userId,
           });
 
           await db.logAuditEvent(
@@ -2182,6 +2185,7 @@ export const appRouter = router({
           const signals = generatePolymarketSignals(markets, {
             minConfidence: input?.minConfidence ?? 0.55,
             minLiquidity: input?.minLiquidity ?? 100,
+            userId,
             recentVolumes: input?.recentVolumes
               ? new Map(Object.entries(input.recentVolumes))
               : undefined,
@@ -2545,9 +2549,14 @@ export const appRouter = router({
           // Generate signals from both platforms concurrently
           const [kalshiRaw, polymarketRaw] = await Promise.all([
             validKalshiMarkets.length > 0
-              ? generateSignalsForMarkets(validKalshiMarkets, feeds, undefined, undefined)
+              ? generateSignalsForMarkets(validKalshiMarkets, feeds, undefined, undefined, getRequiredUserId(ctx))
               : Promise.resolve([]),
-            Promise.resolve(generatePolymarketSignals(polymarketMarkets, { minConfidence })),
+            Promise.resolve(
+              generatePolymarketSignals(polymarketMarkets, {
+                minConfidence,
+                userId: getRequiredUserId(ctx),
+              })
+            ),
           ]);
 
           // Build a title map so Kalshi signals can show human-readable questions

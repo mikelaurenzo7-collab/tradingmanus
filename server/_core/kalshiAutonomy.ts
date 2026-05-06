@@ -522,7 +522,8 @@ async function generateScheduledSignals(userId: number, minConfidence: number, a
     actionableMarkets,
     feeds,
     undefined,
-    sentimentContexts
+    sentimentContexts,
+    userId
   );
   const confidenceFilteredSignals = filterSignalsByConfidence(allSignals, minConfidence);
   const conditionFilteredSignals = filterSignalsByMarketConditions(

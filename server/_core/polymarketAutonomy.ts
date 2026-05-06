@@ -273,6 +273,7 @@ export async function runPolymarketAutonomousTrading(
   const allSignals = generatePolymarketSignals(filteredMarkets, {
     minConfidence: effectiveMinConfidence,
     minLiquidity: 200,
+    userId,
   });
 
   // Filter out wash-volume warnings (not executable)

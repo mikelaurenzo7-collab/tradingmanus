@@ -7,16 +7,29 @@ import { KalshiMarket, calculateExpectedValue, detectValueOpportunity, detectMom
 import { MarketFeed, calculatePriceMomentum, calculateVolumeMomentum, detectVolatility } from "./kalshiMarketFeed";
 import { detectMispricingArbitrage } from "./kalshiArbitrage";
 import { applySentimentBoost, calculateCompositeSentiment, fetchGdeltTopicSignal, fetchLiveNewsSummary } from "./kalshiSentiment";
+import {
+  analyzeMultipleTimeframes,
+  calculateConfidenceBoost,
+  shouldGenerateMultiTimeframeSignal,
+  calculateAverageConfidence,
+  getMomentumDirection,
+  timeframeToLabel,
+  Timeframe,
+  type MultiTimeframeAnalysis,
+} from "./multiTimeframeAnalysis";
+import { initializeBayesianProbability } from "./bayesianUpdater";
 import * as db from "../db";
 import { assertPositiveIntegerUserId } from "./userScope";
+import { logger } from "./logger";
 
-export type SignalType = "value_play" | "momentum" | "contrarian" | "arbitrage" | "sentiment" | "confluence";
+export type SignalType = "value_play" | "momentum" | "contrarian" | "arbitrage" | "sentiment" | "confluence" | "multi_timeframe";
 
 export interface KalshiSignal {
   marketId: string;
   signalType: SignalType;
   side: "yes" | "no";
   confidence: number; // 0-1
+  bayesianProbability?: number; // Bayesian posterior probability (separate from confidence)
   reasoning: string;
   impliedProbability: number;
   marketPrice: number;
@@ -52,6 +65,10 @@ export interface KalshiSignal {
       passed: boolean;
       failedRules?: Array<{ ruleId: number; ruleKey: string; ruleType: string; reason: string }>;
     }>;
+    /** Multi-timeframe analysis fields */
+    timeframeAlignment?: number[];      // Array of timeframe values (in ms) that agree
+    confluenceScore?: number;            // 0-1 score of how well timeframes align
+    trendStrengthPerTimeframe?: Record<string, number>; // TSI values for each timeframe
   };
 }
 
@@ -313,7 +330,8 @@ export async function generateSignalsForMarket(
   market: KalshiMarket,
   feed?: MarketFeed,
   fundamentalProbability?: number,
-  sentimentContext?: MarketSentimentContext
+  sentimentContext?: MarketSentimentContext,
+  userId?: number
 ): Promise<KalshiSignal[]> {
   const signals: KalshiSignal[] = [];
   const strategyProfile = resolveStrategyProfile(market);
@@ -347,6 +365,30 @@ export async function generateSignalsForMarket(
     fundamentalProbability = undefined; // Skip invalid fundamental probability
   }
 
+  // Multi-timeframe analysis (if feed data available)
+  let multiTimeframeAnalysis: MultiTimeframeAnalysis | null = null;
+  if (feed) {
+    multiTimeframeAnalysis = analyzeMultipleTimeframes(feed);
+    
+    // Persist timeframe analysis data (non-blocking, best-effort)
+    if (multiTimeframeAnalysis && userId) {
+      db.saveTimeframeAnalysis({
+        userId,
+        marketId: market.id,
+        platform: "kalshi",
+        timeframeAnalyses: multiTimeframeAnalysis.analyses.map((a) => ({
+          timeframe: a.timeframe,
+          momentum: a.momentum,
+          volatility: a.volatility,
+          volume: a.volume,
+          trendStrength: a.trendStrength,
+        })),
+      }).catch((err) => {
+        logger.debug({ err, marketId: market.id }, "Failed to persist timeframe analysis (non-critical)");
+      });
+    }
+  }
+
   // Value play: detect mispriced markets.
   // Use category-aware prior instead of universal 0.5 fallback so value
   // signals reflect genuine mispricing rather than arbitrary baseline noise.
@@ -367,11 +409,20 @@ export async function generateSignalsForMarket(
           : "Market mispriced (heuristic baseline)";
     const reasoning = `${reasoningPrefix}: ${valueOpportunity.side.toUpperCase()} probability ${(market.impliedProbability * 100).toFixed(1)}% vs ${resolvedFundamental.source === "explicit" ? "fundamental" : resolvedFundamental.source === "category_prior" ? "category prior" : "neutral baseline"} ${(baselineFundamentalProbability * 100).toFixed(1)}%`;
     if (isFinite(confidence) && isFinite(valueOpportunity.expectedValue)) {
+      const category = resolveStrategyProfile(market);
+      const bayesianProbability = initializeBayesianProbability(
+        category,
+        confidence,
+        baselineFundamentalProbability,
+        market.impliedProbability
+      );
+      
       signals.push({
         marketId: market.id,
         signalType: "value_play",
         side: valueOpportunity.side,
         confidence,
+        bayesianProbability,
         reasoning,
         impliedProbability: market.impliedProbability,
         marketPrice: valueOpportunity.side === "yes" ? market.yesPrice : market.noPrice,
@@ -379,6 +430,7 @@ export async function generateSignalsForMarket(
         metadata: {
           fundamentalProbability: baselineFundamentalProbability,
           fundamentalSource: resolvedFundamental.source === "neutral_fallback" ? "neutral_fallback" : "explicit",
+          marketCategory: category,
         },
       });
     }
@@ -512,6 +564,43 @@ export async function generateSignalsForMarket(
     });
   }
 
+  // Multi-timeframe signal: generate dedicated signal when 3+ timeframes align
+  if (multiTimeframeAnalysis && shouldGenerateMultiTimeframeSignal(multiTimeframeAnalysis)) {
+    const side = getMomentumDirection(multiTimeframeAnalysis);
+    const confidence = calculateAverageConfidence(
+      multiTimeframeAnalysis,
+      multiTimeframeAnalysis.timeframeAlignment
+    );
+    const marketPrice = side === "yes" ? market.yesPrice : market.noPrice;
+    
+    // Project forward based on combined trend strength
+    const forecastBias = multiTimeframeAnalysis.combinedTrendStrength * 0.05 * (side === "yes" ? 1 : -1);
+    const yesForecast = clampProbability(market.impliedProbability + forecastBias);
+    const expectedVal = calculateExpectedValue(side, marketPrice, 1, 1, yesForecast);
+
+    if (Number.isFinite(expectedVal)) {
+      const timeframeLabels = multiTimeframeAnalysis.timeframeAlignment
+        .map((tf) => timeframeToLabel(tf as Timeframe))
+        .join(", ");
+
+      signals.push({
+        marketId: market.id,
+        signalType: "multi_timeframe",
+        side,
+        confidence,
+        reasoning: `Multi-timeframe confluence: ${multiTimeframeAnalysis.timeframeAlignment.length} timeframes (${timeframeLabels}) align on ${side.toUpperCase()} with ${(multiTimeframeAnalysis.confluenceScore * 100).toFixed(0)}% correlation and combined TSI of ${multiTimeframeAnalysis.combinedTrendStrength.toFixed(2)}`,
+        impliedProbability: market.impliedProbability,
+        marketPrice,
+        expectedValue: expectedVal,
+        metadata: {
+          timeframeAlignment: multiTimeframeAnalysis.timeframeAlignment,
+          confluenceScore: multiTimeframeAnalysis.confluenceScore,
+          trendStrengthPerTimeframe: multiTimeframeAnalysis.trendStrengthPerTimeframe,
+        },
+      });
+    }
+  }
+
 
   const sentimentAdjustedSignals = sentimentOverlay
     ? signals.map((signal) =>
@@ -524,7 +613,35 @@ export async function generateSignalsForMarket(
       )
     : signals;
 
-  const withLiquidity = sentimentAdjustedSignals
+  // Apply multi-timeframe confidence boost when confluence detected
+  const multiTimeframeBoostedSignals = multiTimeframeAnalysis?.hasConfluence
+    ? sentimentAdjustedSignals.map((signal) => {
+        // Only boost non-multi_timeframe signals
+        if (signal.signalType === "multi_timeframe") {
+          return signal;
+        }
+
+        const boostedConfidence = calculateConfidenceBoost(
+          signal.confidence,
+          multiTimeframeAnalysis.confluenceScore,
+          true
+        );
+
+        return {
+          ...signal,
+          confidence: boostedConfidence,
+          reasoning: `${signal.reasoning} | Multi-timeframe confluence boost: ${multiTimeframeAnalysis.timeframeAlignment.length} aligned timeframes increase confidence`,
+          metadata: {
+            ...signal.metadata,
+            timeframeAlignment: multiTimeframeAnalysis.timeframeAlignment,
+            confluenceScore: multiTimeframeAnalysis.confluenceScore,
+            trendStrengthPerTimeframe: multiTimeframeAnalysis.trendStrengthPerTimeframe,
+          },
+        };
+      })
+    : sentimentAdjustedSignals;
+
+  const withLiquidity = multiTimeframeBoostedSignals
     .map((signal) => ({
       ...signal,
       metadata: {
@@ -549,7 +666,8 @@ export async function generateSignalsForMarkets(
   markets: KalshiMarket[],
   feeds?: Map<string, MarketFeed>,
   fundamentalProbabilities?: Map<string, number>,
-  sentimentContexts?: Map<string, MarketSentimentContext>
+  sentimentContexts?: Map<string, MarketSentimentContext>,
+  userId?: number
 ): Promise<KalshiSignal[]> {
   const allSignals: KalshiSignal[] = [];
 
@@ -557,7 +675,7 @@ export async function generateSignalsForMarkets(
     const feed = feeds?.get(market.id);
     const fundamentalProb = fundamentalProbabilities?.get(market.id);
     const sentimentContext = sentimentContexts?.get(market.id);
-    const signals = await generateSignalsForMarket(market, feed, fundamentalProb, sentimentContext);
+    const signals = await generateSignalsForMarket(market, feed, fundamentalProb, sentimentContext, userId);
     allSignals.push(...signals);
   }
 

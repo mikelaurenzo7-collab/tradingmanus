@@ -35,7 +35,8 @@ describe("Training Instruction Suggestions", () => {
 
   describe("getInstructionSuggestionsFromAudit", () => {
     it("should generate high_performer suggestion when passRate >= 0.7 and evaluatedSignals >= 10", async () => {
-      // Create audit events that will result in a high performer
+      // Create audit events with all passing signals to achieve passRate = 1.0 (>= 0.7)
+      // and no failing rules to avoid triggering common_failure_rule
       const mockAuditEvents = Array.from({ length: 5 }, (_, i) => ({
         id: i + 1,
         eventType: "instruction_matches_evaluated",
@@ -68,20 +69,12 @@ describe("Training Instruction Suggestions", () => {
             {
               marketId: `MARKET-${i * 3 + 3}`,
               signalType: "contrarian",
-              filterOutcome: "rejected",
+              filterOutcome: "passed",
               instructionMatches: [
                 {
                   instructionId: 1,
                   instructionTitle: "High Performer Instruction",
-                  passed: false,
-                  failedRules: [
-                    {
-                      ruleId: 1,
-                      ruleKey: "min_confidence",
-                      ruleType: "require",
-                      reason: "Confidence too low",
-                    },
-                  ],
+                  passed: true,
                 },
               ],
             },

@@ -12,6 +12,7 @@
  *   - cluster_fade:         coordinated pump detected → fade the retracement
  *   - cluster_copy:         cluster #3 low-prob political entry to mirror
  *   - wash_volume_warning:  cluster #4 airdrop farmers inflating volume
+ *   - multi_timeframe:      multiple timeframes align on direction (requires feed)
  */
 
 import type { PolymarketMarket } from "./polymarketAuth";
@@ -20,6 +21,18 @@ import {
   buildFadeRecommendations,
   type MarketSnapshot,
 } from "./polymarketClusterMonitor";
+import {
+  analyzeMultipleTimeframes,
+  calculateConfidenceBoost,
+  shouldGenerateMultiTimeframeSignal,
+  calculateAverageConfidence,
+  getMomentumDirection,
+  Timeframe,
+  type MultiTimeframeAnalysis,
+} from "./multiTimeframeAnalysis";
+import type { MarketFeed } from "./kalshiMarketFeed";
+import * as db from "../db";
+import { logger } from "./logger";
 
 export type PolymarketSignalType =
   | "value_play"
@@ -30,7 +43,8 @@ export type PolymarketSignalType =
   | "cluster_fade"
   | "cluster_copy"
   | "wash_volume_warning"
-  | "confluence";
+  | "confluence"
+  | "multi_timeframe";
 
 export interface PolymarketSignal {
   marketId: string;
@@ -41,6 +55,7 @@ export interface PolymarketSignal {
   side: "yes" | "no";
   /** Confidence 0-1 */
   confidence: number;
+  bayesianProbability?: number; // Bayesian posterior probability (separate from confidence)
   reasoning: string;
   impliedProbabilityYes: number;
   /** Fair-value estimate used for the trade thesis */
@@ -66,6 +81,10 @@ export interface PolymarketSignal {
       passed: boolean;
       failedRules?: Array<{ ruleId: number; ruleKey: string; ruleType: string; reason: string }>;
     }>;
+    /** Multi-timeframe analysis fields */
+    timeframeAlignment?: number[];      // Array of timeframe values (in ms) that agree
+    confluenceScore?: number;            // 0-1 score of how well timeframes align
+    trendStrengthPerTimeframe?: Record<string, number>; // TSI values for each timeframe
   };
 }
 
@@ -99,6 +118,11 @@ function estimateFairValue(market: PolymarketMarket): number {
 
 /**
  * Generate trading signals for a list of Polymarket markets.
+ * 
+ * NOTE: Multi-timeframe analysis requires a MarketFeed with historical price/volume data.
+ * Polymarket currently does not have feed infrastructure (unlike Kalshi's real-time
+ * market feed polling). When feeds are provided, multi-timeframe analysis will be
+ * performed, but currently this parameter will typically be undefined/empty.
  */
 export function generatePolymarketSignals(
   markets: PolymarketMarket[],
@@ -123,6 +147,15 @@ export function generatePolymarketSignals(
     resolvingWithin5Min?: Set<string>;
     /** Markets resolving within the next 4 hours (set of marketIds). */
     resolvingWithin4Hours?: Set<string>;
+    /**
+     * Optional: per-market historical feed data for multi-timeframe analysis.
+     * Currently not available for Polymarket (no feed infrastructure).
+     */
+    feeds?: Map<string, MarketFeed>;
+    /**
+     * Optional: userId for persisting timeframe analysis to DB.
+     */
+    userId?: number;
   } = {},
 ): PolymarketSignal[] {
   const {
@@ -134,9 +167,14 @@ export function generatePolymarketSignals(
     recentDistinctMakers,
     resolvingWithin5Min,
     resolvingWithin4Hours,
+    feeds,
+    userId,
   } = options;
 
   const signals: PolymarketSignal[] = [];
+  
+  // Track multi-timeframe analysis per market for later use
+  const multiTimeframeAnalyses = new Map<string, MultiTimeframeAnalysis>();
 
   for (const market of markets) {
     if (market.closed || !market.active) continue;
@@ -150,6 +188,35 @@ export function generatePolymarketSignals(
 
     const yesToken = market.tokens.find((t) => t.outcome.toLowerCase() === "yes");
     const noToken = market.tokens.find((t) => t.outcome.toLowerCase() === "no");
+    
+    // Multi-timeframe analysis (if feed data available)
+    const feed = feeds?.get(market.marketId);
+    let multiTimeframeAnalysis: MultiTimeframeAnalysis | null = null;
+    if (feed) {
+      multiTimeframeAnalysis = analyzeMultipleTimeframes(feed);
+      
+      // Persist timeframe analysis data (non-blocking, best-effort)
+      if (multiTimeframeAnalysis && userId) {
+        db.saveTimeframeAnalysis({
+          userId,
+          marketId: market.marketId,
+          platform: "polymarket",
+          timeframeAnalyses: multiTimeframeAnalysis.analyses.map((a) => ({
+            timeframe: a.timeframe,
+            momentum: a.momentum,
+            volatility: a.volatility,
+            volume: a.volume,
+            trendStrength: a.trendStrength,
+          })),
+        }).catch((err) => {
+          logger.debug({ err, marketId: market.marketId }, "Failed to persist Polymarket timeframe analysis (non-critical)");
+        });
+      }
+      
+      if (multiTimeframeAnalysis) {
+        multiTimeframeAnalyses.set(market.marketId, multiTimeframeAnalysis);
+      }
+    }
 
     // --- 1. Value-play signal ---
     const valueDiff = fairValue - p;
@@ -430,6 +497,93 @@ export function generatePolymarketSignals(
         expectedValue: clamp(ev, -1, 5),
       });
     }
+  }
+  
+  // Apply multi-timeframe confidence boosts to all generated signals
+  for (const signal of signals) {
+    const analysis = multiTimeframeAnalyses.get(signal.marketId);
+    if (analysis && analysis.hasConfluence) {
+      signal.confidence = calculateConfidenceBoost(
+        signal.confidence,
+        analysis.confluenceScore,
+        analysis.hasConfluence
+      );
+      
+      // Attach timeframe metadata
+      if (!signal.metadata) {
+        signal.metadata = {};
+      }
+      signal.metadata.timeframeAlignment = analysis.timeframeAlignment;
+      signal.metadata.confluenceScore = analysis.confluenceScore;
+      signal.metadata.trendStrengthPerTimeframe = analysis.trendStrengthPerTimeframe;
+    }
+  }
+  
+  // Generate standalone multi_timeframe signals when >=3 timeframes align
+  for (const [marketId, analysis] of multiTimeframeAnalyses.entries()) {
+    if (!shouldGenerateMultiTimeframeSignal(analysis)) continue;
+    
+    // Don't generate duplicate multi_timeframe signal if one already exists
+    if (signals.some((s) => s.marketId === marketId && s.signalType === "multi_timeframe")) {
+      continue;
+    }
+    
+    const market = markets.find((m) => m.marketId === marketId);
+    if (!market) continue;
+    
+    const side = getMomentumDirection(analysis);
+    const token = market.tokens.find((t) => t.outcome.toLowerCase() === side);
+    if (!token || !token.token_id) continue;
+    
+    const baseConfidence = calculateAverageConfidence(analysis, analysis.timeframeAlignment);
+    const boostedConfidence = calculateConfidenceBoost(
+      baseConfidence,
+      analysis.confluenceScore,
+      analysis.hasConfluence
+    );
+    
+    // Calculate limit price with small forecast bias from trend strength
+    const p = market.impliedProbabilityYes;
+    const forecastBias = analysis.combinedTrendStrength * 0.05 * (side === "yes" ? 1 : -1);
+    const limitPrice = clamp(
+      (side === "yes" ? p : 1 - p) + forecastBias,
+      0.02,
+      0.98
+    );
+    
+    const fairValue = fairValues?.get(marketId) ?? estimateFairValue(market);
+    const ev = side === "yes" ? (fairValue - p) / p : (p - fairValue) / (1 - p);
+    
+    const timeframeLabels = analysis.timeframeAlignment
+      .map((tf) => {
+        if (tf === Timeframe.M5) return "5m";
+        if (tf === Timeframe.M15) return "15m";
+        if (tf === Timeframe.H1) return "1h";
+        if (tf === Timeframe.H4) return "4h";
+        if (tf === Timeframe.D1) return "24h";
+        return "?";
+      })
+      .join(", ");
+    
+    signals.push({
+      marketId,
+      conditionId: market.conditionId,
+      question: market.question,
+      signalType: "multi_timeframe",
+      side,
+      confidence: boostedConfidence,
+      reasoning: `Multi-timeframe confluence: ${analysis.timeframeAlignment.length} timeframes (${timeframeLabels}) align on ${side.toUpperCase()} with ${(analysis.confluenceScore * 100).toFixed(0)}% correlation and combined TSI of ${analysis.combinedTrendStrength.toFixed(2)}`,
+      impliedProbabilityYes: p,
+      fairValueEstimate: fairValue,
+      tokenId: token.token_id,
+      limitPrice,
+      expectedValue: clamp(ev, -1, 5),
+      metadata: {
+        timeframeAlignment: analysis.timeframeAlignment,
+        confluenceScore: analysis.confluenceScore,
+        trendStrengthPerTimeframe: analysis.trendStrengthPerTimeframe,
+      },
+    });
   }
 
   return signals.filter((s) => s.confidence >= minConfidence);

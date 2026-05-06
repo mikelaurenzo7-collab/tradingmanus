@@ -210,7 +210,7 @@ async function executeTool(
       try {
         const markets = await fetchKalshiMarkets({ status: "open" });
         const slice = markets.slice(0, 30);
-        const signals = await generateSignalsForMarkets(slice);
+        const signals = await generateSignalsForMarkets(slice, undefined, undefined, undefined, userId);
         const top = filterSignalsByConfidence(signals, 0.65).slice(0, 10);
         return { result: { signalsGenerated: signals.length, topSignals: top }, actionType: "run_signals" };
       } catch (err) {
@@ -221,7 +221,7 @@ async function executeTool(
     if (platform === "polymarket") {
       try {
         const markets = await fetchPolymarketMarkets({ limit: 40 });
-        const signals = await generatePolymarketSignals(markets.slice(0, 30));
+        const signals = await generatePolymarketSignals(markets.slice(0, 30), { userId });
         const top = signals.filter((s: { confidence?: number }) => (s.confidence ?? 0) >= 0.65).slice(0, 10);
         return { result: { signalsGenerated: signals.length, topSignals: top }, actionType: "run_signals" };
       } catch (err) {
