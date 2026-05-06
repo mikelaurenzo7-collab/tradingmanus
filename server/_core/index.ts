@@ -8,6 +8,12 @@ import { runScheduledAutonomousTradingBatch } from "./kalshiAutonomy";
 import { syncPendingOrders, syncLivePositions } from "./kalshiOrderSync";
 import { createAutonomousTradingLock, createOrderSyncLock } from "./distributedLock";
 import { logger } from "./logger";
+import { fetchKalshiMarkets } from "./kalshiMarketData";
+import { fetchPolymarketMarkets } from "./polymarketAuth";
+import {
+  detectCrossPlatformArbitrage,
+  summariseCrossPlatformOpportunities,
+} from "./crossPlatformArbitrage";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -82,6 +88,8 @@ async function startServer() {
 
 const AUTONOMOUS_TRADING_INTERVAL_MS = 15 * 60 * 1000;
 const ORDER_SYNC_INTERVAL_MS = 30 * 1000;
+const CROSS_PLATFORM_ARB_INTERVAL_MS = 10 * 1000;
+const POLYMARKET_MARKET_LIMIT = 80;
 
 async function runAutonomousScheduler() {
   try {
@@ -143,13 +151,66 @@ async function runOrderSync() {
   }
 }
 
+async function runRealtimeCrossPlatformArbScan() {
+  try {
+    const [rawKalshi, rawPolymarket] = await Promise.all([
+      fetchKalshiMarkets({ status: "open" }),
+      fetchPolymarketMarkets({ limit: POLYMARKET_MARKET_LIMIT }),
+    ]);
+
+    const kalshiMarkets = rawKalshi
+      .filter((m) => m.status === "open")
+      .map((m) => ({
+        marketId: m.id,
+        title: m.title,
+        category: m.category,
+        yesPrice: Number(m.yesPrice ?? 0),
+        noPrice: Number(m.noPrice ?? 0),
+        liquidity: Number(m.yesVolume ?? 0) + Number(m.noVolume ?? 0),
+      }));
+
+    const polymarketMarkets = rawPolymarket.map((m) => ({
+      marketId: m.marketId,
+      question: m.question,
+      category: m.category,
+      yesPrice: m.tokens.find((t) => t.outcome.toLowerCase() === "yes")?.price ?? m.impliedProbabilityYes,
+      noPrice: m.tokens.find((t) => t.outcome.toLowerCase() === "no")?.price ?? (1 - m.impliedProbabilityYes),
+      liquidity: m.liquidity,
+    }));
+
+    const opportunities = detectCrossPlatformArbitrage(kalshiMarkets, polymarketMarkets, {
+      minSimilarity: 0.35,
+      minSpread: 0.03,
+      minLiquidity: 100,
+      minNetEdge: 0.05,
+    });
+
+    if (opportunities.length > 0) {
+      const summary = summariseCrossPlatformOpportunities(opportunities);
+      logger.info(
+        {
+          opportunities: summary.total,
+          topNetEdge: summary.topNetEdge,
+          avgConfidence: summary.avgConfidence,
+        },
+        "[CrossArb] realtime scan found %d opportunity(ies)",
+        summary.total,
+      );
+    }
+  } catch (error) {
+    logger.warn({ err: error }, "[CrossArb] realtime scan failed");
+  }
+}
+
 startServer()
   .then(() => {
     setInterval(runAutonomousScheduler, AUTONOMOUS_TRADING_INTERVAL_MS);
     setInterval(runOrderSync, ORDER_SYNC_INTERVAL_MS);
+    setInterval(runRealtimeCrossPlatformArbScan, CROSS_PLATFORM_ARB_INTERVAL_MS);
     setTimeout(runAutonomousScheduler, 2 * 60 * 1000);
     logger.info("[Scheduler] Autonomous trading scheduler started (15-min interval)");
     logger.info("[OrderSync] Order sync started (30-sec interval)");
+    logger.info("[CrossArb] Realtime scanner started (10-sec interval)");
   })
   .catch((error) => {
     // Crash hard so the platform's restart policy kicks in. Logging only and

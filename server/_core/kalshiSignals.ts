@@ -76,7 +76,21 @@ export interface KalshiSignal {
     /** Microstructure fields */
     microstructureScore?: number;        // 0-1 composite microstructure quality
     spreadPct?: number;                  // bid-ask spread as fraction of bid price
+    platformBehaviorProfile?: {
+      platform: "kalshi";
+      sampleSize: number;
+      adaptationEpoch: number;
+      hasSufficientData: boolean;
+      signalAdjustments: Partial<Record<SignalType, number>>;
+      categoryAdjustment?: number;
+    };
   };
+}
+
+export interface KalshiPlatformPerformanceSnapshot {
+  totalClosedTrades: number;
+  signalWinRates?: Partial<Record<SignalType, number>>;
+  categoryEdge?: Partial<Record<string, number>>;
 }
 
 type StrategyProfileKey =
@@ -111,6 +125,96 @@ export interface MarketSentimentContext {
 function clampProbability(value: number): number {
   if (!Number.isFinite(value)) return 0.5;
   return Math.max(0.01, Math.min(0.99, value));
+}
+
+function clampAdjustment(value: number, min: number = -0.2, max: number = 0.25): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(min, Math.min(max, value));
+}
+
+function buildKalshiBehaviorProfile(
+  signalType: SignalType,
+  category: string | undefined,
+  performance?: KalshiPlatformPerformanceSnapshot
+): {
+  multiplier: number;
+  sampleSize: number;
+  adaptationEpoch: number;
+  hasSufficientData: boolean;
+  signalAdjustments: Partial<Record<SignalType, number>>;
+  categoryAdjustment: number;
+} {
+  const baseAdjustments: Partial<Record<SignalType, number>> = {
+    momentum: -0.1,
+    sentiment: -0.02,
+    value_play: 0.03,
+    arbitrage: 0.02,
+    contrarian: -0.04,
+  };
+
+  const sampleSize = Math.max(0, Math.floor(Number(performance?.totalClosedTrades ?? 0)));
+  const hasSufficientData = sampleSize >= 100;
+  const adaptationEpoch = Math.floor(sampleSize / 100);
+
+  let adaptiveSignalAdjustment = 0;
+  if (hasSufficientData) {
+    const winRate = performance?.signalWinRates?.[signalType];
+    if (Number.isFinite(winRate)) {
+      adaptiveSignalAdjustment = clampAdjustment((Number(winRate) - 0.5) * 0.4, -0.08, 0.08);
+    }
+  }
+
+  const normalizedCategory = (category ?? "").trim().toLowerCase();
+  let categoryAdjustment = 0;
+  if (hasSufficientData && normalizedCategory.length > 0) {
+    const categoryEdge = performance?.categoryEdge?.[normalizedCategory];
+    if (Number.isFinite(categoryEdge)) {
+      categoryAdjustment = clampAdjustment(Number(categoryEdge), -0.05, 0.05);
+    }
+  }
+
+  const totalAdjustment = clampAdjustment(
+    (baseAdjustments[signalType] ?? 0) + adaptiveSignalAdjustment + categoryAdjustment,
+    -0.2,
+    0.25
+  );
+
+  return {
+    multiplier: 1 + totalAdjustment,
+    sampleSize,
+    adaptationEpoch,
+    hasSufficientData,
+    signalAdjustments: {
+      ...baseAdjustments,
+      [signalType]: clampAdjustment((baseAdjustments[signalType] ?? 0) + adaptiveSignalAdjustment, -0.2, 0.25),
+    },
+    categoryAdjustment,
+  };
+}
+
+function applyKalshiPlatformBehaviorAdjustment(
+  signal: KalshiSignal,
+  marketCategory: string | undefined,
+  performance?: KalshiPlatformPerformanceSnapshot
+): KalshiSignal {
+  const profile = buildKalshiBehaviorProfile(signal.signalType, marketCategory, performance);
+  const adjustedConfidence = Math.max(0.05, Math.min(0.99, signal.confidence * profile.multiplier));
+
+  return {
+    ...signal,
+    confidence: adjustedConfidence,
+    metadata: {
+      ...signal.metadata,
+      platformBehaviorProfile: {
+        platform: "kalshi",
+        sampleSize: profile.sampleSize,
+        adaptationEpoch: profile.adaptationEpoch,
+        hasSufficientData: profile.hasSufficientData,
+        signalAdjustments: profile.signalAdjustments,
+        categoryAdjustment: profile.categoryAdjustment,
+      },
+    },
+  };
 }
 
 function getLiquidityProfile(feed?: MarketFeed) {
@@ -338,7 +442,8 @@ export async function generateSignalsForMarket(
   feed?: MarketFeed,
   fundamentalProbability?: number,
   sentimentContext?: MarketSentimentContext,
-  userId?: number
+  userId?: number,
+  platformPerformance?: KalshiPlatformPerformanceSnapshot
 ): Promise<KalshiSignal[]> {
   const signals: KalshiSignal[] = [];
   const strategyProfile = resolveStrategyProfile(market);
@@ -698,10 +803,14 @@ export async function generateSignalsForMarket(
     });
   }
 
+  const withPlatformProfile = withMicrostructure.map((signal) =>
+    applyKalshiPlatformBehaviorAdjustment(signal, market.category, platformPerformance)
+  );
+
   // Apply confluence combining: when multiple independent signal types agree on
   // direction, merge them into a single higher-conviction signal so the execution
   // scorer can concentrate capital on the strongest opportunities.
-  return consolidateSignalsForMarket(withMicrostructure);
+  return consolidateSignalsForMarket(withPlatformProfile);
 }
 
 /**
@@ -713,7 +822,8 @@ export async function generateSignalsForMarkets(
   fundamentalProbabilities?: Map<string, number>,
   sentimentContexts?: Map<string, MarketSentimentContext>,
   userId?: number,
-  ensembleModel?: EnsembleModel
+  ensembleModel?: EnsembleModel,
+  platformPerformance?: KalshiPlatformPerformanceSnapshot
 ): Promise<KalshiSignal[]> {
   const allSignals: KalshiSignal[] = [];
 
@@ -721,7 +831,14 @@ export async function generateSignalsForMarkets(
     const feed = feeds?.get(market.id);
     const fundamentalProb = fundamentalProbabilities?.get(market.id);
     const sentimentContext = sentimentContexts?.get(market.id);
-    const signals = await generateSignalsForMarket(market, feed, fundamentalProb, sentimentContext, userId);
+    const signals = await generateSignalsForMarket(
+      market,
+      feed,
+      fundamentalProb,
+      sentimentContext,
+      userId,
+      platformPerformance
+    );
 
     if (ensembleModel) {
       for (const signal of signals) {

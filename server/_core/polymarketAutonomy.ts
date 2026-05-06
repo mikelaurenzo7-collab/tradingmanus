@@ -270,10 +270,63 @@ export async function runPolymarketAutonomousTrading(
     0.99
   );
 
+  let platformPerformance:
+    | {
+        totalClosedTrades: number;
+        adaptationEpoch: number;
+        hasSufficientData: boolean;
+        signalWinRates: Record<string, number>;
+        categoryEdge: Record<string, number>;
+      }
+    | undefined;
+  try {
+    const learningModule = await import("./polymarketLearning");
+    const learningExports = new Set(Object.keys(learningModule));
+    if (
+      !learningExports.has("getPolymarketPerformanceOverview") ||
+      !learningExports.has("buildPolymarketPlatformBehaviorSnapshot")
+    ) {
+      throw new Error("Polymarket learning snapshot helpers unavailable");
+    }
+
+    const getPolymarketPerformanceOverview = (learningModule as {
+      getPolymarketPerformanceOverview: (userId: number) => Promise<{
+        metrics: unknown;
+        signalPerformance: unknown;
+      }>;
+    }).getPolymarketPerformanceOverview;
+    const buildPolymarketPlatformBehaviorSnapshot = (learningModule as {
+      buildPolymarketPlatformBehaviorSnapshot: (
+        metrics: unknown,
+        signalPerformance: unknown,
+        signals: Array<{ metadata?: { marketCategory?: string | null } | null; expectedValue?: number | null }>
+      ) => {
+        totalClosedTrades: number;
+        adaptationEpoch: number;
+        hasSufficientData: boolean;
+        signalWinRates: Record<string, number>;
+        categoryEdge: Record<string, number>;
+      };
+    }).buildPolymarketPlatformBehaviorSnapshot;
+
+    const [performanceOverview, recentSignals] = await Promise.all([
+      getPolymarketPerformanceOverview(userId),
+      db.getRecentSignals(600, userId),
+    ]);
+    platformPerformance = buildPolymarketPlatformBehaviorSnapshot(
+      performanceOverview.metrics,
+      performanceOverview.signalPerformance,
+      recentSignals as Array<{ metadata?: { marketCategory?: string | null } | null; expectedValue?: number | null }>
+    );
+  } catch (err) {
+    logger.debug({ err, userId }, "Polymarket platform performance snapshot unavailable; continuing with baseline signal profile");
+  }
+
   const allSignals = generatePolymarketSignals(filteredMarkets, {
     minConfidence: effectiveMinConfidence,
     minLiquidity: 200,
     userId,
+    platformPerformance,
   });
 
   // Filter out wash-volume warnings (not executable)

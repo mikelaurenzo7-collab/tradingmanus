@@ -213,8 +213,8 @@
 - [ ] Live P&L tracking
 - [ ] Real-time performance metrics
 - [ ] Adaptive learning from outcomes
-- [ ] Strategy performance attribution
-- [ ] Automated strategy adjustment
+- [x] Strategy performance attribution
+- [x] Automated strategy adjustment
 
 ### Phase 5: Risk Management
 - [ ] Dynamic position sizing
@@ -234,7 +234,7 @@
 - [x] Real-time sentiment dashboard
 - [ ] Order-book visualization
 - [ ] Portfolio optimization UI
-- [ ] Performance attribution charts
+- [x] Performance attribution charts
 - [ ] Add router/UI tests and browser verification for Analytics covering loading, error, empty, and success states
 - [x] Implement true liquidity-adjusted filtering in the signal pipeline instead of Analytics-only tradability scoring
 - [ ] Narrow or complete spread optimization beyond spread monitoring proxies

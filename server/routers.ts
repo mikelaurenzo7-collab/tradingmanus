@@ -49,6 +49,10 @@ import {
 } from "./_core/kalshiAuth";
 import { getPerformanceOverview } from "./_core/kalshiLearning";
 import {
+  calculateSharpeBySource,
+  identifyLosingPatterns,
+} from "./_core/performanceAttribution";
+import {
   validateRiskParameters,
   estimateImpactOnRecentRuns,
   applyRiskParameters,
@@ -65,6 +69,7 @@ import {
   placePolymarketOrder,
 } from "./_core/polymarketAuth";
 import { generatePolymarketSignals } from "./_core/polymarketSignals";
+import { validatePolymarketOrderRisk } from "./_core/polymarketRisk";
 import {
   KNOWN_CLUSTERS,
   detectClusterActivityBatch,
@@ -78,13 +83,21 @@ import {
 import { trainingRouter } from "./training.router";
 import { advancedRouter } from "./advanced.router";
 import { chatRouter } from "./chat.router";
-import { calculateKalshiBuyOrderRisk, MAX_KALSHI_ORDER_CONTRACTS } from "./_core/kalshiRisk";
+import {
+  applyMarketImpactGuardrails,
+  calculateKalshiBuyOrderRisk,
+  MAX_KALSHI_ORDER_CONTRACTS,
+} from "./_core/kalshiRisk";
 import { withUserLock } from "./_core/userMutex";
 import {
   generateMMQuotePairs,
   detectYesNoMispricings,
 } from "./_core/polymarketMarketMaking";
-import { detectCrossPlatformArbitrage } from "./_core/crossPlatformArbitrage";
+import {
+  calculateDynamicHedgeRatio,
+  detectCrossPlatformArbitrage,
+  estimateLatencyRisk,
+} from "./_core/crossPlatformArbitrage";
 import { runPolymarketAutonomousTrading } from "./_core/polymarketAutonomy";
 import {
   mergePlatformSignals,
@@ -690,7 +703,75 @@ export const appRouter = router({
             tradingPreferencesDb.getTradingPreferences(userId),
             db.getTodayKalshiOrderCount(userId),
           ]);
-          const orderRisk = calculateKalshiBuyOrderRisk(input);
+          let marketDetails: Awaited<ReturnType<typeof fetchKalshiMarketDetails>> = null;
+          try {
+            marketDetails = await fetchKalshiMarketDetails(input.marketId);
+          } catch (marketErr) {
+            logger.warn(
+              { err: marketErr, marketId: input.marketId },
+              "[Kalshi] market detail lookup failed for market-impact sizing; proceeding with default liquidity assumptions"
+            );
+          }
+
+          const totalVolumeContracts = Math.max(
+            0,
+            Number(marketDetails?.yesVolume ?? 0) + Number(marketDetails?.noVolume ?? 0),
+          );
+          const liquidityUnavailable = totalVolumeContracts <= 0;
+          const dailyVolumeUsd = liquidityUnavailable
+            ? Math.max(input.limitPrice * 50, 1)
+            : totalVolumeContracts * input.limitPrice;
+          const marketImpact = applyMarketImpactGuardrails({
+            quantity: input.quantity,
+            limitPrice: input.limitPrice,
+            side: input.side,
+            dailyVolumeUsd,
+            expectedValue: 0,
+          });
+          const impactAdjustedQuantity = marketImpact.shouldBlockOrder
+            ? 0
+            : marketImpact.recommendedQuantity;
+
+          if (impactAdjustedQuantity < 1) {
+            await db.logAuditEvent(
+              "kalshi_order_blocked_market_impact",
+              JSON.stringify({
+                ...input,
+                impactAdjustedQuantity,
+                estimatedMarketImpact: marketImpact.estimatedMarketImpact,
+                impactBps: marketImpact.impactBps,
+                expectedSlippageUsd: marketImpact.expectedSlippageUsd,
+                simulated: ctx.paperTradeMode,
+              }),
+              ctx.user!.openId
+            );
+
+            return {
+              success: false,
+              error: "Order blocked by market-impact guardrail",
+            };
+          }
+
+          if (impactAdjustedQuantity < input.quantity) {
+            await db.logAuditEvent(
+              "kalshi_order_sized_by_market_impact",
+              JSON.stringify({
+                ...input,
+                liquidityUnavailable,
+                impactAdjustedQuantity,
+                estimatedMarketImpact: marketImpact.estimatedMarketImpact,
+                impactBps: marketImpact.impactBps,
+                expectedSlippageUsd: marketImpact.expectedSlippageUsd,
+                simulated: ctx.paperTradeMode,
+              }),
+              ctx.user!.openId
+            );
+          }
+
+          const orderRisk = calculateKalshiBuyOrderRisk({
+            ...input,
+            quantity: impactAdjustedQuantity,
+          });
           const orderExposure = orderRisk.orderExposure;
           const maxLossOnTrade = orderRisk.maxLossOnTrade;
 
@@ -756,13 +837,30 @@ export const appRouter = router({
           if (result.success) {
             await db.logAuditEvent(
               "kalshi_order_placed",
-              JSON.stringify({ ...input, orderExposure, maxLossOnTrade, simulated: ctx.paperTradeMode }),
+              JSON.stringify({
+                marketId: input.marketId,
+                side: input.side,
+                quantity: orderRisk.quantity,
+                limitPrice: orderRisk.limitPrice,
+                orderExposure,
+                maxLossOnTrade,
+                simulated: ctx.paperTradeMode,
+              }),
               ctx.user!.openId
             );
           } else {
             await db.logAuditEvent(
               "kalshi_order_blocked_or_failed",
-              JSON.stringify({ ...input, orderExposure, maxLossOnTrade, reason: result.error ?? "unknown", simulated: ctx.paperTradeMode }),
+              JSON.stringify({
+                marketId: input.marketId,
+                side: input.side,
+                quantity: orderRisk.quantity,
+                limitPrice: orderRisk.limitPrice,
+                orderExposure,
+                maxLossOnTrade,
+                reason: result.error ?? "unknown",
+                simulated: ctx.paperTradeMode,
+              }),
               ctx.user!.openId
             );
           }
@@ -1271,6 +1369,61 @@ export const appRouter = router({
         });
       }
     }),
+
+    getAttributionAnalysis: protectedProcedure
+      .input(z.object({ limit: z.number().min(10).max(1000).optional().default(250) }).optional())
+      .query(async ({ input, ctx }) => {
+        try {
+          const rows = await db.getPerformanceAttributionHistory(
+            getRequiredUserId(ctx),
+            "kalshi",
+            input?.limit ?? 250
+          );
+          const normalized = rows.map((row: any) => ({
+            totalPnl: Number(row.totalPnl ?? 0),
+            signalAlpha: Number(row.signalAlpha ?? 0),
+            execution: Number(row.execution ?? 0),
+            timing: Number(row.timing ?? 0),
+            luck: Number(row.luck ?? 0),
+            signalType: String(row.signalType ?? "unknown"),
+            category: String(row.category ?? "unknown"),
+          }));
+
+          const sharpeBySource = calculateSharpeBySource(normalized);
+          const losingPatterns = identifyLosingPatterns(normalized);
+
+          return {
+            count: normalized.length,
+            totals: normalized.reduce(
+              (acc: { totalPnl: number; signalAlpha: number; execution: number; timing: number; luck: number }, row: {
+                totalPnl: number;
+                signalAlpha: number;
+                execution: number;
+                timing: number;
+                luck: number;
+              }) => {
+                acc.totalPnl += row.totalPnl;
+                acc.signalAlpha += row.signalAlpha;
+                acc.execution += row.execution;
+                acc.timing += row.timing;
+                acc.luck += row.luck;
+                return acc;
+              },
+              { totalPnl: 0, signalAlpha: 0, execution: 0, timing: 0, luck: 0 }
+            ),
+            sharpeBySource,
+            losingPatterns,
+            rows: normalized,
+          };
+        } catch (error) {
+          logger.error({ err: error }, "[Kalshi] Get attribution analysis error");
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Unable to load attribution analysis",
+            cause: error,
+          });
+        }
+      }),
 
     // Kalshi account connection
     connectKalshiAccount: protectedProcedure
@@ -2029,6 +2182,37 @@ export const appRouter = router({
             };
           }
 
+          const [preferences, capital] = await Promise.all([
+            tradingPreferencesDb.getTradingPreferences(userId),
+            db.getKalshiCapital(userId),
+          ]);
+
+          if (!preferences.liveTradingEnabled) {
+            return {
+              success: false,
+              error: "Arm live trading before placing Polymarket orders.",
+            };
+          }
+
+          const riskValidation = validatePolymarketOrderRisk(
+            {
+              price: input.price,
+              size: input.size,
+            },
+            {
+              maxOrderUsdc: Math.max(1, Math.min(500, preferences.maxOrderNotional)),
+              maxExposurePercent: 0.05,
+              bankroll: Math.max(0, Number(capital?.currentBalance ?? 0)),
+            },
+          );
+
+          if (!riskValidation.valid) {
+            return {
+              success: false,
+              error: riskValidation.reason ?? "Polymarket order blocked by risk policy",
+            };
+          }
+
           const result = await placePolymarketOrder(
             creds.apiKey,
             creds.apiSecret,
@@ -2436,6 +2620,7 @@ export const appRouter = router({
             minSimilarity: z.number().min(0.1).max(1).optional().default(0.35),
             minSpread: z.number().min(0.01).max(0.5).optional().default(0.03),
             minLiquidity: z.number().min(0).optional().default(100),
+            minNetEdge: z.number().min(0.01).max(0.5).optional().default(0.05),
           })
           .optional(),
       )
@@ -2477,6 +2662,7 @@ export const appRouter = router({
               minSimilarity: input?.minSimilarity ?? 0.35,
               minSpread: input?.minSpread ?? 0.03,
               minLiquidity: input?.minLiquidity ?? 100,
+              minNetEdge: input?.minNetEdge ?? 0.05,
             },
           );
 
@@ -2618,6 +2804,9 @@ export const appRouter = router({
           polymarketYesPrice: z.number().min(0.01).max(0.99),
           buyPlatform: z.enum(["kalshi", "polymarket"]),
           netEdge: z.number(),
+          feeBurden: z.number().min(0).max(1).optional(),
+          executionRisk: z.number().min(0).max(1).optional(),
+          hedgeRatio: z.number().min(0.5).max(1).optional(),
           /** Size for the Kalshi leg in contracts */
           kalshiContracts: z.number().int().min(1).max(MAX_KALSHI_ORDER_CONTRACTS),
           /** Size for the Polymarket leg in USDC */
@@ -2628,15 +2817,10 @@ export const appRouter = router({
         try {
           const userId = getRequiredUserId(ctx);
 
+          return await withUserLock(userId, async () => {
+
           if (!(await polymarketCredDb.isUserSubscribedToPolymarket(userId))) {
             throw new TRPCError({ code: "FORBIDDEN", message: "Not subscribed to Polymarket" });
-          }
-
-          if (input.netEdge <= 0) {
-            return {
-              success: false,
-              error: "Net edge must be positive to execute cross-arb",
-            };
           }
 
           // Verify both platform credentials
@@ -2664,13 +2848,30 @@ export const appRouter = router({
             return { success: false, error: "Arm live trading before executing cross-arb orders." };
           }
 
-          // Fetch live Polymarket market data to resolve actual token IDs
-          const pmMarkets = await fetchPolymarketMarkets({ limit: POLYMARKET_SIGNAL_GENERATION_MARKET_LIMIT });
+          const [capital, openPositions, todayRealizedLoss, riskLimits, todayOrderCount] = await Promise.all([
+            db.getKalshiCapital(userId),
+            db.getOpenKalshiPositions(userId),
+            db.getTodayRealizedLoss(userId),
+            getDynamicRiskLimits(userId),
+            db.getTodayKalshiOrderCount(userId),
+          ]);
+
+          // Fetch live market data and recompute edge server-side.
+          const [pmMarkets, liveKalshiMarket] = await Promise.all([
+            fetchPolymarketMarkets({ limit: POLYMARKET_SIGNAL_GENERATION_MARKET_LIMIT }),
+            fetchKalshiMarketDetails(input.kalshiMarketId),
+          ]);
           const pmMarket = pmMarkets.find((m) => m.marketId === input.polymarketMarketId);
           if (!pmMarket) {
             return {
               success: false,
               error: `Polymarket market ${input.polymarketMarketId} not found in current market data.`,
+            };
+          }
+          if (!liveKalshiMarket) {
+            return {
+              success: false,
+              error: `Kalshi market ${input.kalshiMarketId} not found in current market data.`,
             };
           }
           const tokenIdYes = pmMarket.tokens.find((t) => t.outcome.toLowerCase() === "yes")?.token_id;
@@ -2682,6 +2883,116 @@ export const appRouter = router({
             };
           }
 
+          const liveKalshiYesPrice = Number(liveKalshiMarket.yesPrice ?? input.kalshiYesPrice);
+          const livePolymarketYesPrice =
+            pmMarket.tokens.find((t) => t.outcome.toLowerCase() === "yes")?.price
+            ?? pmMarket.impliedProbabilityYes;
+          const spread = Math.abs(liveKalshiYesPrice - livePolymarketYesPrice);
+          const feeBurden = 0.05;
+          const latencyRisk =
+            estimateLatencyRisk(0.1, 500) +
+            estimateLatencyRisk(0.1, 3000);
+          const slippageRisk = Math.min(0.02, 0.5 / Math.max(pmMarket.liquidity ?? 1, 1));
+          const executionRisk = latencyRisk + slippageRisk;
+          const netEdge = spread - feeBurden - executionRisk;
+
+          const kalshiSide = input.buyPlatform === "kalshi" ? "yes" : "no";
+          const kalshiLimitPrice = input.buyPlatform === "kalshi"
+            ? liveKalshiYesPrice
+            : 1 - liveKalshiYesPrice;
+          const kalshiOrderRisk = calculateKalshiBuyOrderRisk({
+            quantity: input.kalshiContracts,
+            limitPrice: kalshiLimitPrice,
+          });
+
+          if (todayOrderCount >= preferences.maxDailyOrders) {
+            return {
+              success: false,
+              error: `Daily order cap reached (${preferences.maxDailyOrders})`,
+            };
+          }
+
+          if (kalshiOrderRisk.orderExposure > preferences.maxOrderNotional) {
+            return {
+              success: false,
+              error: `Kalshi leg exposure of $${kalshiOrderRisk.orderExposure.toFixed(2)} exceeds max order notional of $${preferences.maxOrderNotional}`,
+            };
+          }
+
+          if (openPositions.length >= riskLimits.maxOpenPositions) {
+            return {
+              success: false,
+              error: `Open position limit reached (${riskLimits.maxOpenPositions})`,
+            };
+          }
+
+          if (kalshiOrderRisk.orderExposure > riskLimits.maxPositionSize) {
+            return {
+              success: false,
+              error: `Kalshi leg exposure exceeds max position size of $${riskLimits.maxPositionSize}`,
+            };
+          }
+
+          if (kalshiOrderRisk.maxLossOnTrade > riskLimits.maxLossPerTrade) {
+            return {
+              success: false,
+              error: `Kalshi leg max loss of $${kalshiOrderRisk.maxLossOnTrade.toFixed(2)} exceeds max per-trade risk of $${riskLimits.maxLossPerTrade}`,
+            };
+          }
+
+          if (todayRealizedLoss >= riskLimits.maxLossPerDay) {
+            return {
+              success: false,
+              error: `Daily loss limit reached ($${riskLimits.maxLossPerDay})`,
+            };
+          }
+
+          const bankroll = Math.max(
+            0,
+            Number(capital?.currentBalance ?? capital?.startingBalance ?? 0),
+          );
+          if (bankroll <= 0 || kalshiOrderRisk.orderExposure > bankroll) {
+            return {
+              success: false,
+              error: "Cross-arb order exceeds available capital",
+            };
+          }
+
+          const polymarketPrice =
+            input.buyPlatform === "polymarket"
+              ? livePolymarketYesPrice
+              : 1 - livePolymarketYesPrice;
+          const maxExposurePercent =
+            riskLimits.maxCapital > 0
+              ? Math.max(0.01, Math.min(1, riskLimits.maxPositionSize / riskLimits.maxCapital))
+              : 0.01;
+          const polymarketRisk = validatePolymarketOrderRisk(
+            { price: polymarketPrice, size: input.polymarketSizeUsdc },
+            {
+              maxOrderUsdc: Math.max(1, Math.min(500, preferences.maxOrderNotional)),
+              maxExposurePercent,
+              bankroll,
+            },
+          );
+          if (!polymarketRisk.valid) {
+            return {
+              success: false,
+              error: `Polymarket risk check failed: ${polymarketRisk.reason ?? "unknown reason"}`,
+            };
+          }
+
+          if (netEdge <= 0.05) {
+            return {
+              success: false,
+              error: "Net edge must exceed 5% after fees and execution risk",
+            };
+          }
+
+          const hedgeRatio = calculateDynamicHedgeRatio({
+            latencyRisk,
+            slippageRisk,
+          });
+
           const opportunity = {
             type: (input.buyPlatform === "kalshi"
               ? "buy_kalshi_yes_sell_polymarket_yes"
@@ -2692,10 +3003,10 @@ export const appRouter = router({
             kalshiTitle: input.kalshiMarketId,
             polymarketMarketId: input.polymarketMarketId,
             polymarketQuestion: pmMarket.question,
-            kalshiYesPrice: input.kalshiYesPrice,
-            polymarketYesPrice: input.polymarketYesPrice,
-            spread: Math.abs(input.kalshiYesPrice - input.polymarketYesPrice),
-            netEdge: input.netEdge,
+            kalshiYesPrice: liveKalshiYesPrice,
+            polymarketYesPrice: livePolymarketYesPrice,
+            spread,
+            netEdge,
             buyPlatform: input.buyPlatform,
             sellPlatform: (input.buyPlatform === "kalshi" ? "polymarket" : "kalshi") as
               | "kalshi"
@@ -2703,6 +3014,9 @@ export const appRouter = router({
             confidence: 0,
             reasoning: "",
             minLiquidity: 0,
+            feeBurden,
+            executionRisk,
+            hedgeRatio,
           };
 
           const {
@@ -2740,14 +3054,39 @@ export const appRouter = router({
               kalshiMarketId: input.kalshiMarketId,
               polymarketMarketId: input.polymarketMarketId,
               buyPlatform: input.buyPlatform,
-              netEdge: input.netEdge,
+              netEdge,
               kalshiSuccess: result.kalshiLeg.success,
               polymarketSuccess: result.polymarketLeg.success,
             }),
             ctx.user!.openId,
           );
 
-          return result;
+          try {
+            await db.saveCrossPlatformArbitrageExecution({
+              userId,
+              kalshiMarketId: input.kalshiMarketId,
+              polymarketMarketId: input.polymarketMarketId,
+              buyPlatform: input.buyPlatform,
+              netEdge,
+              feeBurden: opportunity.feeBurden,
+              executionRisk: opportunity.executionRisk,
+              hedgeRatio: opportunity.hedgeRatio,
+              bothLegsExecuted: result.bothLegsExecuted,
+              kalshiOrderId: result.kalshiLeg.orderId ?? null,
+              polymarketOrderId: result.polymarketLeg.orderId ?? null,
+              partialLegAction: result.partialLegAction ?? null,
+              pnlAttributionArb: netEdge,
+              pnlAttributionMarketMove: 0,
+            });
+            return result;
+          } catch (persistErr) {
+            logger.error({ err: persistErr }, "[CrossBot] Failed to persist cross-arb execution details");
+            return {
+              ...result,
+              reasoning: `${result.reasoning} Persistence warning: execution history write failed.`,
+            };
+          }
+          });
         } catch (error) {
           logger.error({ err: error }, "[CrossBot] Execute cross-arb error");
           return { success: false, error: String(error) };

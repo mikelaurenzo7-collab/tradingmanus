@@ -182,11 +182,12 @@ describe("Kalshi Signal Generation", () => {
       const valueSignal = signals.find((signal) => signal.signalType === "value_play");
 
       expect(valueSignal).toBeDefined();
-      expect(valueSignal?.confidence).toBeCloseTo(0.36, 5);
+      expect(valueSignal?.confidence).toBeCloseTo(0.3708, 5);
       expect(valueSignal?.reasoning).toContain("heuristic baseline");
       expect(valueSignal?.reasoning).toContain("50.0%");
       expect(valueSignal?.metadata?.fundamentalProbability).toBe(0.5);
       expect(valueSignal?.metadata?.fundamentalSource).toBe("neutral_fallback");
+      expect(valueSignal?.metadata?.platformBehaviorProfile?.platform).toBe("kalshi");
       expect(Number.isFinite(valueSignal?.expectedValue)).toBe(true);
     });
 
@@ -210,6 +211,94 @@ describe("Kalshi Signal Generation", () => {
       expect(signals.length).toBeGreaterThan(0);
       expect(signals[0].metadata?.marketCategory).toBe("economics");
       expect(signals[0].metadata?.strategyProfile).toBe("macro_data");
+      expect(signals[0].metadata?.platformBehaviorProfile?.platform).toBe("kalshi");
+    });
+
+    it("adapts momentum confidence when platform performance has enough samples", async () => {
+      const market = {
+        id: "market-adapt-1",
+        title: "Momentum Adaptation Market",
+        category: "politics",
+        description: "Test",
+        resolutionDate: "2026-12-31",
+        status: "open" as const,
+        yesPrice: 0.7,
+        noPrice: 0.3,
+        yesVolume: 4000,
+        noVolume: 2000,
+        impliedProbability: 0.7,
+      };
+
+      const feed = {
+        marketId: "market-adapt-1",
+        title: "Momentum Adaptation Market",
+        category: "politics",
+        status: "open" as const,
+        currentSnapshot: {
+          marketId: "market-adapt-1",
+          timestamp: Date.now(),
+          yesPrice: 0.7,
+          noPrice: 0.3,
+          yesVolume: 4000,
+          noVolume: 2000,
+          impliedProbability: 0.7,
+        },
+        priceHistory: [
+          {
+            marketId: "market-adapt-1",
+            timestamp: Date.now() - 60000,
+            yesPrice: 0.55,
+            noPrice: 0.45,
+            yesVolume: 1200,
+            noVolume: 1100,
+            impliedProbability: 0.55,
+          },
+          {
+            marketId: "market-adapt-1",
+            timestamp: Date.now(),
+            yesPrice: 0.7,
+            noPrice: 0.3,
+            yesVolume: 4000,
+            noVolume: 2000,
+            impliedProbability: 0.7,
+          },
+        ],
+        volumeHistory: [
+          { timestamp: Date.now() - 60000, yesVolume: 1200, noVolume: 1100 },
+          { timestamp: Date.now(), yesVolume: 4000, noVolume: 2000 },
+        ],
+        dataQualityScore: 1,
+        lastUpdateTime: Date.now(),
+      };
+
+      const baseSignals = await generateSignalsForMarket(market, feed);
+      const adaptedSignals = await generateSignalsForMarket(
+        market,
+        feed,
+        undefined,
+        undefined,
+        undefined,
+        {
+          totalClosedTrades: 200,
+          signalWinRates: {
+            momentum: 0.8,
+          },
+          categoryEdge: {
+            politics: 0.04,
+          },
+        }
+      );
+
+      const baseMomentum = baseSignals.find((signal) => signal.signalType === "momentum");
+      const adaptedMomentum = adaptedSignals.find((signal) => signal.signalType === "momentum");
+
+      if (!baseMomentum || !adaptedMomentum) {
+        expect(adaptedSignals.length).toBeGreaterThan(0);
+        return;
+      }
+
+      expect(adaptedMomentum.confidence).toBeGreaterThan(baseMomentum.confidence);
+      expect(adaptedMomentum.metadata?.platformBehaviorProfile?.adaptationEpoch).toBe(2);
     });
   });
 

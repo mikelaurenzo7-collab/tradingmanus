@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => ({
   generatePolymarketSignals: vi.fn(),
   reviewPolymarketSignalsWithTrader: vi.fn(),
   recordPolymarketTradeEntry: vi.fn(),
+  getPolymarketPerformanceOverview: vi.fn(),
+  buildPolymarketPlatformBehaviorSnapshot: vi.fn(),
   logAuditEvent: vi.fn(),
   getKalshiCapital: vi.fn(),
   getUserTrainingInstructions: vi.fn(),
@@ -41,6 +43,7 @@ vi.mock("./db.polymarket-credentials", () => ({
 vi.mock("./db", () => ({
   logAuditEvent: mocks.logAuditEvent,
   getKalshiCapital: mocks.getKalshiCapital,
+  getRecentSignals: vi.fn(async () => []),
 }));
 
 vi.mock("./_core/polymarketAuth", () => ({
@@ -58,6 +61,8 @@ vi.mock("./_core/polymarketSignalReviewer", () => ({
 
 vi.mock("./_core/polymarketLearning", () => ({
   recordPolymarketTradeEntry: mocks.recordPolymarketTradeEntry,
+  getPolymarketPerformanceOverview: mocks.getPolymarketPerformanceOverview,
+  buildPolymarketPlatformBehaviorSnapshot: mocks.buildPolymarketPlatformBehaviorSnapshot,
 }));
 
 vi.mock("./_core/polymarketRisk", () => ({
@@ -122,6 +127,17 @@ describe("Polymarket autonomy E2E — full cycle", () => {
     mocks.getKalshiCapital.mockResolvedValue({
       currentBalance: 500,
       startingBalance: 500,
+    });
+    mocks.getPolymarketPerformanceOverview.mockResolvedValue({
+      metrics: { totalTrades: 120 },
+      signalPerformance: [{ signalType: "sentiment", successRate: 0.65 }],
+    });
+    mocks.buildPolymarketPlatformBehaviorSnapshot.mockReturnValue({
+      totalClosedTrades: 120,
+      adaptationEpoch: 1,
+      hasSufficientData: true,
+      signalWinRates: { sentiment: 0.65 },
+      categoryEdge: { crypto: 0.02 },
     });
     mocks.fetchPolymarketMarkets.mockResolvedValue([
       {
@@ -257,6 +273,12 @@ describe("Polymarket autonomy E2E — full cycle", () => {
 
     // Verify signal generation happened
     expect(mocks.generatePolymarketSignals).toHaveBeenCalled();
+    expect(mocks.generatePolymarketSignals).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.objectContaining({
+        platformPerformance: expect.objectContaining({ hasSufficientData: true }),
+      })
+    );
 
     // Verify AI review was called
     expect(mocks.reviewPolymarketSignalsWithTrader).toHaveBeenCalled();

@@ -19,6 +19,9 @@ import {
   mlEnsembleModels,
   marketSentimentHistory,
   executionQualityMetrics,
+  crossPlatformArbitrageExecutions,
+  onlineLearningUpdates,
+  performanceAttribution,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 import { eq, and, desc, gte, inArray, ne, sql } from "drizzle-orm";
@@ -26,6 +29,12 @@ import { neon } from "@neondatabase/serverless";
 import { drizzle as drizzleInit } from "drizzle-orm/neon-http";
 import { assertPositiveIntegerUserId } from "./_core/userScope";
 import { logger } from "./_core/logger";
+import {
+  applyOnlineLearningUpdate,
+  deriveModelFromUpdates,
+  type TradeOutcome,
+} from "./_core/onlineLearning";
+import { calculateAttributionBreakdown } from "./_core/performanceAttribution";
 
 let _db: any = null;
 let _dbInitPromise: Promise<any> | null = null;
@@ -532,6 +541,80 @@ export async function closeKalshiPosition(positionId: number, exitPrice: number,
     .where(
       and(eq(kalshiPositions.id, positionId), eq(kalshiPositions.userId, scopedUserId))
     );
+
+  // Best-effort online learning + attribution updates.
+  // These side-effects are non-critical and must never block position closure.
+  try {
+    const [latestSignal] = await database
+      .select()
+      .from(kalshiSignals)
+      .where(
+        and(
+          eq(kalshiSignals.userId, scopedUserId),
+          eq(kalshiSignals.marketId, position.marketId)
+        )
+      )
+      .orderBy(desc(kalshiSignals.createdAt))
+      .limit(1);
+
+    const signalType = String(latestSignal?.signalType ?? "unknown");
+    const category = String(latestSignal?.metadata?.marketCategory ?? "unknown");
+    const outcome: TradeOutcome = realizedPnl > 0 ? "win" : realizedPnl < 0 ? "loss" : "breakeven";
+
+    const recentLearning = await getRecentOnlineLearningUpdates(scopedUserId, "kalshi", 200);
+    const model = deriveModelFromUpdates({
+      userId: scopedUserId,
+      platform: "kalshi",
+      updates: recentLearning.map((row: any) => ({
+        signalType: String(row.signalType),
+        outcome: row.outcome as TradeOutcome,
+        pnl: Number(row.pnl),
+      })),
+    });
+
+    const learningUpdate = applyOnlineLearningUpdate(model, {
+      signalType,
+      outcome,
+      pnl: realizedPnl,
+    });
+
+    await saveOnlineLearningUpdate({
+      userId: scopedUserId,
+      platform: "kalshi",
+      signalType,
+      outcome,
+      pnl: realizedPnl,
+      weightBefore: learningUpdate.weightBefore,
+      weightAfter: learningUpdate.weightAfter,
+      emaPnl: learningUpdate.nextModel.emaPnl,
+      driftDetected: learningUpdate.driftDetected,
+      explorationTaken: learningUpdate.explorationTaken,
+      confidenceLower: learningUpdate.confidenceLower,
+      confidenceUpper: learningUpdate.confidenceUpper,
+      modelVersion: learningUpdate.nextModel.modelVersion,
+    });
+
+    const attribution = calculateAttributionBreakdown({
+      side: position.side,
+      entryPrice: Number(position.entryPrice),
+      exitPrice,
+      quantity: Number(position.quantity),
+      signalConfidence: Number(latestSignal?.confidence ?? 0.5),
+      benchmarkWinRate: 0.5,
+      expectedSlippagePct: 0.005,
+    });
+
+    await savePerformanceAttribution({
+      userId: scopedUserId,
+      platform: "kalshi",
+      marketId: position.marketId,
+      signalType,
+      category,
+      ...attribution,
+    });
+  } catch (err) {
+    logger.debug({ err, userId: scopedUserId, positionId }, "non-critical learning/attribution update failed");
+  }
 
   // Side-effect: grow the desk's learning tape with what just happened.
   // Wrapped + swallowed inside tryRecordKalshiCloseToDeskMemory so a memory
@@ -1382,4 +1465,139 @@ export async function saveExecutionQuality(data: {
     slippagePct: data.slippagePct ?? null,
     targetBudgetUsd: data.targetBudgetUsd,
   });
+}
+
+export async function saveCrossPlatformArbitrageExecution(data: {
+  userId: number;
+  kalshiMarketId: string;
+  polymarketMarketId: string;
+  buyPlatform: "kalshi" | "polymarket";
+  netEdge: number;
+  feeBurden: number;
+  executionRisk: number;
+  hedgeRatio: number;
+  bothLegsExecuted: boolean;
+  kalshiOrderId?: string | null;
+  polymarketOrderId?: string | null;
+  partialLegAction?: "hold" | "hedge" | "exit" | null;
+  pnlAttributionArb?: number;
+  pnlAttributionMarketMove?: number;
+}): Promise<void> {
+  const database = await getDb();
+  if (!database) return;
+
+  await database.insert(crossPlatformArbitrageExecutions).values({
+    userId: data.userId,
+    kalshiMarketId: data.kalshiMarketId,
+    polymarketMarketId: data.polymarketMarketId,
+    buyPlatform: data.buyPlatform,
+    netEdge: data.netEdge,
+    feeBurden: data.feeBurden,
+    executionRisk: data.executionRisk,
+    hedgeRatio: data.hedgeRatio,
+    bothLegsExecuted: data.bothLegsExecuted ? 1 : 0,
+    kalshiOrderId: data.kalshiOrderId ?? null,
+    polymarketOrderId: data.polymarketOrderId ?? null,
+    partialLegAction: data.partialLegAction ?? null,
+    pnlAttributionArb: data.pnlAttributionArb ?? data.netEdge,
+    pnlAttributionMarketMove: data.pnlAttributionMarketMove ?? 0,
+  });
+}
+
+export async function saveOnlineLearningUpdate(data: {
+  userId: number;
+  platform: "kalshi" | "polymarket";
+  signalType: string;
+  outcome: "win" | "loss" | "breakeven";
+  pnl: number;
+  weightBefore: number;
+  weightAfter: number;
+  emaPnl: number;
+  driftDetected: boolean;
+  explorationTaken: boolean;
+  confidenceLower: number;
+  confidenceUpper: number;
+  modelVersion: number;
+}): Promise<void> {
+  const database = await getDb();
+  if (!database) return;
+
+  await database.insert(onlineLearningUpdates).values({
+    userId: data.userId,
+    platform: data.platform,
+    signalType: data.signalType,
+    outcome: data.outcome,
+    pnl: data.pnl,
+    weightBefore: data.weightBefore,
+    weightAfter: data.weightAfter,
+    emaPnl: data.emaPnl,
+    driftDetected: data.driftDetected ? 1 : 0,
+    explorationTaken: data.explorationTaken ? 1 : 0,
+    confidenceLower: data.confidenceLower,
+    confidenceUpper: data.confidenceUpper,
+    modelVersion: data.modelVersion,
+  });
+}
+
+export async function getRecentOnlineLearningUpdates(
+  userId: number,
+  platform: "kalshi" | "polymarket",
+  limit: number = 200
+) {
+  const scopedUserId = assertPositiveIntegerUserId(userId, "getRecentOnlineLearningUpdates userId");
+  const database = await getDb();
+  if (!database) return [];
+
+  return await database
+    .select()
+    .from(onlineLearningUpdates)
+    .where(and(eq(onlineLearningUpdates.userId, scopedUserId), eq(onlineLearningUpdates.platform, platform)))
+    .orderBy(desc(onlineLearningUpdates.createdAt))
+    .limit(limit);
+}
+
+export async function savePerformanceAttribution(data: {
+  userId: number;
+  platform: "kalshi" | "polymarket";
+  marketId: string;
+  signalType: string;
+  category: string;
+  totalPnl: number;
+  signalAlpha: number;
+  execution: number;
+  timing: number;
+  luck: number;
+}): Promise<void> {
+  const database = await getDb();
+  if (!database) return;
+
+  await database.insert(performanceAttribution).values({
+    userId: data.userId,
+    platform: data.platform,
+    marketId: data.marketId,
+    signalType: data.signalType,
+    category: data.category,
+    totalPnl: data.totalPnl,
+    signalAlpha: data.signalAlpha,
+    execution: data.execution,
+    timing: data.timing,
+    luck: data.luck,
+  });
+}
+
+export async function getPerformanceAttributionHistory(
+  userId: number,
+  platform: "kalshi" | "polymarket",
+  limit: number = 200
+) {
+  const scopedUserId = assertPositiveIntegerUserId(userId, "getPerformanceAttributionHistory userId");
+  const database = await getDb();
+  if (!database) return [];
+
+  return await database
+    .select()
+    .from(performanceAttribution)
+    .where(and(eq(performanceAttribution.userId, scopedUserId), eq(performanceAttribution.platform, platform)))
+    .orderBy(desc(performanceAttribution.createdAt))
+    .limit(limit);
 }

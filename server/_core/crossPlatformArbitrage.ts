@@ -63,10 +63,82 @@ export interface CrossPlatformArbitrageOpportunity {
   reasoning: string;
   /** Liquidity bottleneck: minimum of both sides */
   minLiquidity: number;
+  /** Combined fee burden used in net-edge calc */
+  feeBurden: number;
+  /** Estimated slippage + latency risk deducted from spread */
+  executionRisk: number;
+  /** Hedge ratio [0.5, 1.0] to size second leg under latency risk */
+  hedgeRatio: number;
 }
 
-/** Rough per-leg fee estimate (taker fee + gas/settlement buffer) */
-const FEE_PER_LEG = 0.005;
+/** Platform fee assumptions from the task spec. */
+const KALSHI_FEE = 0.03;
+const POLYMARKET_FEE = 0.02;
+const KALSHI_LATENCY_MS = 500;
+const POLYMARKET_LATENCY_MS = 3_000;
+const DEFAULT_DAILY_VOLATILITY = 0.10;
+const DEFAULT_MIN_NET_EDGE = 0.05;
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+/**
+ * Latency-risk proxy in probability points.
+ * Uses a sqrt-time scaling from a daily volatility estimate.
+ */
+export function estimateLatencyRisk(
+  dailyVolatility: number,
+  latencyMs: number,
+): number {
+  const vol = Number.isFinite(dailyVolatility) && dailyVolatility > 0
+    ? dailyVolatility
+    : DEFAULT_DAILY_VOLATILITY;
+  const dayMs = 24 * 60 * 60 * 1000;
+  const scaled = vol * Math.sqrt(Math.max(latencyMs, 0) / dayMs);
+  return clamp(scaled, 0, 0.25);
+}
+
+/**
+ * Dynamic hedge ratio: reduce second-leg size when latency/execution risk is high.
+ */
+export function calculateDynamicHedgeRatio(input: {
+  baseRatio?: number;
+  latencyRisk: number;
+  slippageRisk: number;
+}): number {
+  const baseRatio = Number.isFinite(input.baseRatio ?? 1)
+    ? Number(input.baseRatio ?? 1)
+    : 1;
+  const riskPenalty = clamp((input.latencyRisk + input.slippageRisk) * 2, 0, 0.5);
+  return clamp(baseRatio - riskPenalty, 0.5, 1);
+}
+
+export function assessPartialLegRisk(input: {
+  firstLegFilled: number;
+  secondLegFilled: number;
+  hedgeRatio: number;
+}): {
+  unhedgedFraction: number;
+  action: "hold" | "hedge" | "exit";
+} {
+  const first = Math.max(0, input.firstLegFilled);
+  const second = Math.max(0, input.secondLegFilled);
+  if (first <= 0) {
+    return { unhedgedFraction: 0, action: "hold" };
+  }
+
+  const targetSecond = first * clamp(input.hedgeRatio, 0.5, 1);
+  const unhedged = clamp((targetSecond - second) / targetSecond, 0, 1);
+
+  if (unhedged >= 0.6) {
+    return { unhedgedFraction: unhedged, action: "exit" };
+  }
+  if (unhedged >= 0.15) {
+    return { unhedgedFraction: unhedged, action: "hedge" };
+  }
+  return { unhedgedFraction: unhedged, action: "hold" };
+}
 
 /**
  * Normalise a question string for comparison:
@@ -159,12 +231,15 @@ export function detectCrossPlatformArbitrage(
     minSpread?: number;
     /** Minimum liquidity (in respective platform units) on each side */
     minLiquidity?: number;
+    /** Minimum net edge after fees+execution risk to consider actionable */
+    minNetEdge?: number;
   } = {},
 ): CrossPlatformArbitrageOpportunity[] {
   const {
     minSimilarity = 0.35,
     minSpread = 0.03,
     minLiquidity = 100,
+    minNetEdge = DEFAULT_MIN_NET_EDGE,
   } = options;
 
   const opportunities: CrossPlatformArbitrageOpportunity[] = [];
@@ -188,8 +263,14 @@ export function detectCrossPlatformArbitrage(
     const spread = Math.abs(kalshi.yesPrice - pm.yesPrice);
     if (spread < minSpread) continue;
 
-    const netEdge = spread - 2 * FEE_PER_LEG;
-    if (netEdge <= 0) continue;
+    const feeBurden = KALSHI_FEE + POLYMARKET_FEE;
+    const kalshiLatencyRisk = estimateLatencyRisk(DEFAULT_DAILY_VOLATILITY, KALSHI_LATENCY_MS);
+    const polymarketLatencyRisk = estimateLatencyRisk(DEFAULT_DAILY_VOLATILITY, POLYMARKET_LATENCY_MS);
+    const latencyRisk = kalshiLatencyRisk + polymarketLatencyRisk;
+    const slippageRisk = clamp(0.5 / Math.max(Math.min(kalshi.liquidity, pm.liquidity), 1), 0, 0.02);
+    const executionRisk = latencyRisk + slippageRisk;
+    const netEdge = spread - feeBurden - executionRisk;
+    if (netEdge <= minNetEdge) continue;
 
     const buyPlatform: "kalshi" | "polymarket" = kalshi.yesPrice < pm.yesPrice ? "kalshi" : "polymarket";
     const sellPlatform: "kalshi" | "polymarket" = buyPlatform === "kalshi" ? "polymarket" : "kalshi";
@@ -206,6 +287,12 @@ export function detectCrossPlatformArbitrage(
 
     const buyPrice = buyPlatform === "kalshi" ? kalshi.yesPrice : pm.yesPrice;
     const sellPrice = sellPlatform === "kalshi" ? kalshi.yesPrice : pm.yesPrice;
+
+    const hedgeRatio = calculateDynamicHedgeRatio({
+      baseRatio: 1,
+      latencyRisk,
+      slippageRisk,
+    });
 
     opportunities.push({
       type,
@@ -226,6 +313,9 @@ export function detectCrossPlatformArbitrage(
         `Gross spread ${(spread * 100).toFixed(1)}pp → net edge ${(netEdge * 100).toFixed(1)}pp after fees. ` +
         `Question similarity ${(match.similarity * 100).toFixed(0)}%.`,
       minLiquidity: Math.min(kalshi.liquidity, pm.liquidity),
+      feeBurden,
+      executionRisk,
+      hedgeRatio,
     });
   }
 

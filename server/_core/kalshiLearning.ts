@@ -76,7 +76,18 @@ type SignalLike = {
   signalType?: string | null;
   confidence?: number | null;
   expectedValue?: number | null;
+  metadata?: {
+    marketCategory?: string | null;
+  } | null;
 };
+
+export interface KalshiPlatformBehaviorSnapshot {
+  totalClosedTrades: number;
+  adaptationEpoch: number;
+  hasSufficientData: boolean;
+  signalWinRates: Record<string, number>;
+  categoryEdge: Record<string, number>;
+}
 
 export interface PerformanceOverview {
   startingBalance: number;
@@ -351,6 +362,46 @@ export function analyzeSignalPerformanceFromData(
       (left, right) =>
         right.totalSignals - left.totalSignals || right.totalPnL - left.totalPnL
     );
+}
+
+export function buildKalshiPlatformBehaviorSnapshot(
+  metrics: PerformanceMetrics,
+  signalPerformance: SignalPerformance[],
+  signals: SignalLike[] = []
+): KalshiPlatformBehaviorSnapshot {
+  const signalWinRates: Record<string, number> = {};
+  for (const item of signalPerformance) {
+    signalWinRates[item.signalType] = item.successRate;
+  }
+
+  const categoryEdge: Record<string, number> = {};
+  const categoryCounts = new Map<string, number>();
+  const categoryExpectedValues = new Map<string, number>();
+
+  for (const signal of signals) {
+    const category = signal.metadata?.marketCategory?.trim().toLowerCase();
+    if (!category) continue;
+    const ev = Number(signal.expectedValue ?? 0);
+    if (!Number.isFinite(ev)) continue;
+
+    categoryCounts.set(category, (categoryCounts.get(category) ?? 0) + 1);
+    categoryExpectedValues.set(category, (categoryExpectedValues.get(category) ?? 0) + ev);
+  }
+
+  for (const [category, count] of categoryCounts.entries()) {
+    if (count < 5) continue;
+    const avgEv = (categoryExpectedValues.get(category) ?? 0) / count;
+    categoryEdge[category] = Math.max(-0.05, Math.min(0.05, avgEv * 0.25));
+  }
+
+  const totalClosedTrades = metrics.totalTrades;
+  return {
+    totalClosedTrades,
+    adaptationEpoch: Math.floor(totalClosedTrades / 100),
+    hasSufficientData: totalClosedTrades >= 100,
+    signalWinRates,
+    categoryEdge,
+  };
 }
 
 export async function getPerformanceOverview(userId: number): Promise<PerformanceOverview> {

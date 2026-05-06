@@ -17,9 +17,17 @@ import {
   computeKellyFraction,
   type KalshiSignal,
 } from "./kalshiSignals";
+import {
+  buildKalshiPlatformBehaviorSnapshot,
+  getPerformanceOverview,
+} from "./kalshiLearning";
 import { placeKalshiOrder } from "./kalshiExecution";
 import { syncPendingOrders } from "./kalshiOrderSync";
-import { calculateKalshiBuyOrderRisk, estimateContractsForRiskBudget } from "./kalshiRisk";
+import {
+  applyMarketImpactGuardrails,
+  calculateKalshiBuyOrderRisk,
+  estimateContractsForRiskBudget,
+} from "./kalshiRisk";
 import { calculateKelly, applyKellyToPositionSize } from "./kellyCriterion";
 import { assertPositiveIntegerUserId } from "./userScope";
 import { withUserLock } from "./userMutex";
@@ -519,12 +527,39 @@ async function generateScheduledSignals(userId: number, minConfidence: number, a
     ])
   );
 
+  let platformPerformance:
+    | ReturnType<typeof buildKalshiPlatformBehaviorSnapshot>
+    | undefined;
+  const canLoadPerformanceSnapshot =
+    Object.prototype.hasOwnProperty.call(db, "getKalshiTradeHistory") &&
+    Object.prototype.hasOwnProperty.call(db, "getRecentSignals") &&
+    Object.prototype.hasOwnProperty.call(db, "getOpenKalshiPositions") &&
+    Object.prototype.hasOwnProperty.call(db, "getKalshiCapital");
+
+  if (canLoadPerformanceSnapshot) {
+    try {
+      const [performanceOverview, recentSignals] = await Promise.all([
+        getPerformanceOverview(userId),
+        db.getRecentSignals(600, userId),
+      ]);
+      platformPerformance = buildKalshiPlatformBehaviorSnapshot(
+        performanceOverview.metrics,
+        performanceOverview.signalPerformance,
+        recentSignals as Array<{ metadata?: { marketCategory?: string | null } | null; expectedValue?: number | null }>
+      );
+    } catch (err) {
+      logger.debug({ err, userId }, "Platform performance snapshot unavailable; continuing with baseline signal profile");
+    }
+  }
+
   const allSignals = await generateSignalsForMarkets(
     actionableMarkets,
     feeds,
     undefined,
     sentimentContexts,
-    userId
+    userId,
+    undefined,
+    platformPerformance
   );
   const confidenceFilteredSignals = filterSignalsByConfidence(allSignals, minConfidence);
   const conditionFilteredSignals = filterSignalsByMarketConditions(
@@ -1236,12 +1271,75 @@ export async function runScheduledAutonomousTrading(
   const availableCapital = Number(capital?.currentBalance ?? equityResult.equity ?? 0);
   const maxBudget = Math.min(eligibleMaxBudget ?? Number.POSITIVE_INFINITY, availableCapital);
   const limitPrice = Number(eligibleSignal.marketPrice);
-  const quantity = estimateContractsForRiskBudget(maxBudget, limitPrice);
+  const requestedQuantity = estimateContractsForRiskBudget(maxBudget, limitPrice);
 
-  if (quantity < 1) {
+  if (requestedQuantity < 1) {
     return finalize({
       status: "blocked",
-      reason: "candidate price is above the allowed risk budget",
+      reason: "the current budget cannot fund even one contract at this price",
+      signalsGenerated: savedSignals.length,
+      executionCandidates: executionCandidates.length,
+      orderPlaced: false,
+      candidateMarketId: eligibleSignal.marketId,
+      autonomyMode: preferences.autonomyMode,
+      executionCadence: preferences.executionCadence,
+      candidateSet,
+      rejectedCandidates,
+      decision: buildDecisionDetails(eligibleSignal, {
+        quantity: 0,
+        availableCapital,
+        maxBudget,
+        orderExposure: 0,
+        maxLossOnTrade: 0,
+        blockedBy: "risk_budget_below_one_contract",
+      }),
+    }, {
+      appliedGuardrails: safeJsonStringify(buildAppliedGuardrails(preferences, riskLimits)),
+    });
+  }
+
+  // Market-impact guardrail: downsize or block if expected slippage is excessive.
+  // This runs before core risk checks so all downstream exposure checks use the
+  // impact-adjusted quantity.
+  const estimatedDailyVolumeUsd = Math.max(
+    0,
+    Number(eligibleSignal.metadata?.totalVolume ?? 0) * Math.max(limitPrice, 0.01),
+  );
+  const effectiveDailyVolumeUsd = estimatedDailyVolumeUsd > 0
+    ? estimatedDailyVolumeUsd
+    : Math.max(limitPrice * 500, 1);
+  const impactGuardrail = applyMarketImpactGuardrails({
+    quantity: requestedQuantity,
+    limitPrice,
+    side: eligibleSignal.side,
+    dailyVolumeUsd: effectiveDailyVolumeUsd,
+    dailyVolatility: Number(eligibleSignal.metadata?.volatility ?? Number.NaN),
+    expectedValue: Number(eligibleSignal.expectedValue ?? 0),
+  });
+  const quantity = impactGuardrail.shouldBlockOrder
+    ? 0
+    : impactGuardrail.recommendedQuantity;
+
+  if (quantity < 1) {
+    await db.logAuditEvent(
+      "scheduled_autonomy_order_blocked_market_impact",
+      JSON.stringify({
+        runId,
+        marketId: eligibleSignal.marketId,
+        side: eligibleSignal.side,
+        requestedQuantity,
+        impactAdjustedQuantity: quantity,
+        estimatedMarketImpact: impactGuardrail.estimatedMarketImpact,
+        impactBps: impactGuardrail.impactBps,
+        expectedSlippageUsd: impactGuardrail.expectedSlippageUsd,
+        reason: "market impact model blocked or reduced order below one contract",
+      }),
+      triggeredByOpenId,
+    );
+
+    return finalize({
+      status: "blocked",
+      reason: "candidate blocked by market impact guardrail",
       signalsGenerated: savedSignals.length,
       executionCandidates: executionCandidates.length,
       orderPlaced: false,
@@ -1256,11 +1354,28 @@ export async function runScheduledAutonomousTrading(
         maxBudget,
         orderExposure: 0,
         maxLossOnTrade: 0,
-        blockedBy: "risk_budget_below_one_contract",
+        blockedBy: "market_impact_guardrail",
       }),
     }, {
       appliedGuardrails: safeJsonStringify(buildAppliedGuardrails(preferences, riskLimits)),
     });
+  }
+
+  if (quantity < requestedQuantity) {
+    await db.logAuditEvent(
+      "scheduled_autonomy_order_sized_by_market_impact",
+      JSON.stringify({
+        runId,
+        marketId: eligibleSignal.marketId,
+        side: eligibleSignal.side,
+        requestedQuantity,
+        impactAdjustedQuantity: quantity,
+        estimatedMarketImpact: impactGuardrail.estimatedMarketImpact,
+        impactBps: impactGuardrail.impactBps,
+        expectedSlippageUsd: impactGuardrail.expectedSlippageUsd,
+      }),
+      triggeredByOpenId,
+    );
   }
 
   const orderRisk = calculateKalshiBuyOrderRisk({ quantity, limitPrice });
@@ -1421,10 +1536,14 @@ export async function runScheduledAutonomousTrading(
         marketId: eligibleSignal.marketId,
         side: eligibleSignal.side,
         quantity,
+        requestedQuantity,
         limitPrice,
         confidence: eligibleSignal.confidence,
         executionScore: eligibleSignal.executionScore,
         expectedValue: eligibleSignal.expectedValue,
+        estimatedMarketImpact: impactGuardrail.estimatedMarketImpact,
+        impactBps: impactGuardrail.impactBps,
+        expectedSlippageUsd: impactGuardrail.expectedSlippageUsd,
         reasoning: eligibleSignal.reasoning,
         availableCapital,
         maxBudget,
@@ -1480,10 +1599,14 @@ export async function runScheduledAutonomousTrading(
       marketId: eligibleSignal.marketId,
       side: eligibleSignal.side,
       quantity,
+      requestedQuantity,
       limitPrice,
       confidence: eligibleSignal.confidence,
       executionScore: eligibleSignal.executionScore,
       expectedValue: eligibleSignal.expectedValue,
+      estimatedMarketImpact: impactGuardrail.estimatedMarketImpact,
+      impactBps: impactGuardrail.impactBps,
+      expectedSlippageUsd: impactGuardrail.expectedSlippageUsd,
       reasoning: eligibleSignal.reasoning,
       availableCapital,
       maxBudget,

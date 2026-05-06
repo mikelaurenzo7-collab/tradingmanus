@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   calculatePerformanceMetricsFromTrades,
   analyzeSignalPerformanceFromData,
+  buildPolymarketPlatformBehaviorSnapshot,
   type PolymarketPerformanceMetrics,
   type PolymarketSignalPerformance,
 } from "./_core/polymarketLearning";
@@ -495,5 +496,37 @@ describe("analyzeSignalPerformanceFromData", () => {
     // Should count as a win (latest outcome is positive)
     expect(performance[0].successfulSignals).toBe(1);
     expect(performance[0].totalPnL).toBe(10);
+  });
+
+  it("builds platform behavior snapshot with adaptive epoch after 100 closed trades", () => {
+    const trades = Array.from({ length: 120 }, (_, index) => ({
+      marketId: `pm-${index}`,
+      entryPrice: 0.5,
+      sizeUsdc: 10,
+      realizedPnL: index % 3 === 0 ? 2 : -0.5,
+      closedAt: new Date(`2026-04-24T11:${String(index % 60).padStart(2, "0")}:00Z`),
+      positionStatus: "closed",
+    }));
+
+    const metrics = calculatePerformanceMetricsFromTrades(trades);
+    const signalPerformance = analyzeSignalPerformanceFromData(
+      [
+        { marketId: "pm-1", signalType: "sentiment", confidence: 0.8, expectedValue: 0.2 },
+        { marketId: "pm-2", signalType: "sentiment", confidence: 0.7, expectedValue: 0.18 },
+        { marketId: "pm-3", signalType: "momentum", confidence: 0.6, expectedValue: 0.1 },
+      ],
+      [
+        { marketId: "pm-1", realizedPnL: 1.5, closedAt: new Date(), positionStatus: "closed" },
+        { marketId: "pm-2", realizedPnL: 1.2, closedAt: new Date(), positionStatus: "closed" },
+        { marketId: "pm-3", realizedPnL: -1.0, closedAt: new Date(), positionStatus: "closed" },
+      ]
+    );
+
+    const snapshot = buildPolymarketPlatformBehaviorSnapshot(metrics, signalPerformance);
+
+    expect(snapshot.totalClosedTrades).toBe(120);
+    expect(snapshot.adaptationEpoch).toBe(1);
+    expect(snapshot.hasSufficientData).toBe(true);
+    expect(snapshot.signalWinRates.sentiment).toBeGreaterThan(snapshot.signalWinRates.momentum);
   });
 });

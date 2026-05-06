@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  applyMarketImpactGuardrails,
   calculateKalshiBuyOrderRisk,
   estimateContractsForRiskBudget,
   normalizeLimitPrice,
@@ -41,6 +42,65 @@ describe("Risk Calculations - Kalshi Pricing Units", () => {
       expect(() => normalizeLimitPrice(1)).toThrow(/between/);
       expect(() => normalizeOrderQuantity(0)).toThrow(/at least 1/);
       expect(() => normalizeOrderQuantity(251)).toThrow(/cannot exceed/);
+    });
+
+    it("reduces quantity when estimated impact is high", () => {
+      const result = applyMarketImpactGuardrails({
+        quantity: 200,
+        limitPrice: 0.6,
+        side: "yes",
+        dailyVolumeUsd: 2_000,
+        expectedValue: 0.12,
+        dailyVolatility: 0.2,
+      });
+
+      expect(result.shouldReduceSize).toBe(true);
+      expect(result.recommendedQuantity).toBeLessThan(200);
+      expect(result.estimatedMarketImpact).toBeGreaterThan(0);
+    });
+
+    it("applies extra reduction when impact consumes too much expected value", () => {
+      const result = applyMarketImpactGuardrails({
+        quantity: 200,
+        limitPrice: 0.6,
+        side: "yes",
+        dailyVolumeUsd: 2_000,
+        expectedValue: 0.02,
+        dailyVolatility: 0.2,
+      });
+
+      expect(result.shouldReduceSize).toBe(true);
+      expect(result.shouldBlockOrder).toBe(false);
+      expect(result.recommendedQuantity).toBe(50);
+    });
+
+    it("skips extra EV reduction when expected value comfortably exceeds impact", () => {
+      const result = applyMarketImpactGuardrails({
+        quantity: 200,
+        limitPrice: 0.6,
+        side: "yes",
+        dailyVolumeUsd: 2_000,
+        expectedValue: 2,
+        dailyVolatility: 0.2,
+      });
+
+      expect(result.shouldReduceSize).toBe(true);
+      expect(result.shouldBlockOrder).toBe(false);
+      expect(result.recommendedQuantity).toBe(100);
+    });
+
+    it("blocks quantity when market impact is extreme", () => {
+      const result = applyMarketImpactGuardrails({
+        quantity: 250,
+        limitPrice: 0.95,
+        side: "yes",
+        dailyVolumeUsd: 50,
+        expectedValue: 0.1,
+        dailyVolatility: 0.5,
+      });
+
+      expect(result.shouldBlockOrder).toBe(true);
+      expect(result.recommendedQuantity).toBe(0);
     });
   });
 

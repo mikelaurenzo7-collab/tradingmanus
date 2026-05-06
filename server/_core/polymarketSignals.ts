@@ -85,11 +85,115 @@ export interface PolymarketSignal {
     timeframeAlignment?: number[];      // Array of timeframe values (in ms) that agree
     confluenceScore?: number;            // 0-1 score of how well timeframes align
     trendStrengthPerTimeframe?: Record<string, number>; // TSI values for each timeframe
+    platformBehaviorProfile?: {
+      platform: "polymarket";
+      sampleSize: number;
+      adaptationEpoch: number;
+      hasSufficientData: boolean;
+      signalAdjustments: Partial<Record<PolymarketSignalType, number>>;
+      categoryAdjustment?: number;
+    };
   };
+}
+
+export interface PolymarketPlatformPerformanceSnapshot {
+  totalClosedTrades: number;
+  signalWinRates?: Partial<Record<PolymarketSignalType, number>>;
+  categoryEdge?: Partial<Record<string, number>>;
 }
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, Number.isFinite(value) ? value : min));
+}
+
+function clampAdjustment(value: number, min: number = -0.2, max: number = 0.25): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(min, Math.min(max, value));
+}
+
+function buildPolymarketBehaviorProfile(
+  signalType: PolymarketSignalType,
+  category: string | undefined,
+  performance?: PolymarketPlatformPerformanceSnapshot
+): {
+  multiplier: number;
+  sampleSize: number;
+  adaptationEpoch: number;
+  hasSufficientData: boolean;
+  signalAdjustments: Partial<Record<PolymarketSignalType, number>>;
+  categoryAdjustment: number;
+} {
+  const baseAdjustments: Partial<Record<PolymarketSignalType, number>> = {
+    sentiment: 0.15,
+    momentum: 0.08,
+    cluster_fade: 0.06,
+    cluster_copy: 0.04,
+    contrarian: -0.03,
+  };
+
+  const sampleSize = Math.max(0, Math.floor(Number(performance?.totalClosedTrades ?? 0)));
+  const hasSufficientData = sampleSize >= 100;
+  const adaptationEpoch = Math.floor(sampleSize / 100);
+
+  let adaptiveSignalAdjustment = 0;
+  if (hasSufficientData) {
+    const winRate = performance?.signalWinRates?.[signalType];
+    if (Number.isFinite(winRate)) {
+      adaptiveSignalAdjustment = clampAdjustment((Number(winRate) - 0.5) * 0.4, -0.08, 0.08);
+    }
+  }
+
+  const normalizedCategory = (category ?? "").trim().toLowerCase();
+  let categoryAdjustment = 0;
+  if (hasSufficientData && normalizedCategory.length > 0) {
+    const categoryEdge = performance?.categoryEdge?.[normalizedCategory];
+    if (Number.isFinite(categoryEdge)) {
+      categoryAdjustment = clampAdjustment(Number(categoryEdge), -0.05, 0.05);
+    }
+  }
+
+  const totalAdjustment = clampAdjustment(
+    (baseAdjustments[signalType] ?? 0) + adaptiveSignalAdjustment + categoryAdjustment,
+    -0.2,
+    0.25
+  );
+
+  return {
+    multiplier: 1 + totalAdjustment,
+    sampleSize,
+    adaptationEpoch,
+    hasSufficientData,
+    signalAdjustments: {
+      ...baseAdjustments,
+      [signalType]: clampAdjustment((baseAdjustments[signalType] ?? 0) + adaptiveSignalAdjustment, -0.2, 0.25),
+    },
+    categoryAdjustment,
+  };
+}
+
+function applyPolymarketPlatformBehaviorAdjustment(
+  signal: PolymarketSignal,
+  category: string | undefined,
+  performance?: PolymarketPlatformPerformanceSnapshot
+): PolymarketSignal {
+  const profile = buildPolymarketBehaviorProfile(signal.signalType, category, performance);
+  const adjustedConfidence = clamp(signal.confidence * profile.multiplier, 0.05, 0.99);
+
+  return {
+    ...signal,
+    confidence: adjustedConfidence,
+    metadata: {
+      ...signal.metadata,
+      platformBehaviorProfile: {
+        platform: "polymarket",
+        sampleSize: profile.sampleSize,
+        adaptationEpoch: profile.adaptationEpoch,
+        hasSufficientData: profile.hasSufficientData,
+        signalAdjustments: profile.signalAdjustments,
+        categoryAdjustment: profile.categoryAdjustment,
+      },
+    },
+  };
 }
 
 /**
@@ -156,6 +260,8 @@ export function generatePolymarketSignals(
      * Optional: userId for persisting timeframe analysis to DB.
      */
     userId?: number;
+    /** Optional platform adaptation snapshot, usually sourced from learning loop. */
+    platformPerformance?: PolymarketPlatformPerformanceSnapshot;
   } = {},
 ): PolymarketSignal[] {
   const {
@@ -169,6 +275,7 @@ export function generatePolymarketSignals(
     resolvingWithin4Hours,
     feeds,
     userId,
+    platformPerformance,
   } = options;
 
   const signals: PolymarketSignal[] = [];
@@ -586,5 +693,14 @@ export function generatePolymarketSignals(
     });
   }
 
-  return signals.filter((s) => s.confidence >= minConfidence);
+  const categoryByMarketId = new Map(markets.map((market) => [market.marketId, market.category]));
+  const withPlatformBehavior = signals.map((signal) =>
+    applyPolymarketPlatformBehaviorAdjustment(
+      signal,
+      categoryByMarketId.get(signal.marketId),
+      platformPerformance
+    )
+  );
+
+  return withPlatformBehavior.filter((s) => s.confidence >= minConfidence);
 }

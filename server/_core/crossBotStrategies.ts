@@ -12,6 +12,7 @@
 import type { KalshiSignal } from "./kalshiSignals";
 import type { PolymarketSignal } from "./polymarketSignals";
 import type { CrossPlatformArbitrageOpportunity } from "./crossPlatformArbitrage";
+import { assessPartialLegRisk } from "./crossPlatformArbitrage";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -63,6 +64,8 @@ export type CrossArbExecutionResult = {
     error?: string;
   };
   bothLegsExecuted: boolean;
+  partialLegAction?: "hold" | "hedge" | "exit";
+  unhedgedFraction?: number;
   reasoning: string;
 };
 
@@ -234,6 +237,11 @@ export async function executeCrossArbLegs(
     polymarketTokenIdYes: string;
     /** Polymarket NO token ID for the target market */
     polymarketTokenIdNo: string;
+    /** Optional fill fractions for post-trade partial-leg risk evaluation. */
+    fillFractions?: {
+      kalshi?: number;
+      polymarket?: number;
+    };
   },
   executors: {
     placeKalshiOrder: (
@@ -255,6 +263,7 @@ export async function executeCrossArbLegs(
     polymarketSizeUsdc,
     polymarketTokenIdYes,
     polymarketTokenIdNo,
+    fillFractions,
   } = params;
 
   const { buyPlatform, kalshiYesPrice, polymarketYesPrice } = opportunity;
@@ -314,16 +323,33 @@ export async function executeCrossArbLegs(
 
   const bothLegsExecuted = kalshiLeg.success && polymarketLeg.success;
 
+  const kalshiFill = kalshiLeg.success ? clamp01(fillFractions?.kalshi ?? 1) : 0;
+  const polymarketFill = polymarketLeg.success ? clamp01(fillFractions?.polymarket ?? 1) : 0;
+
+  const partialRisk = assessPartialLegRisk({
+    firstLegFilled: Math.max(kalshiFill, polymarketFill),
+    secondLegFilled: Math.min(kalshiFill, polymarketFill),
+    hedgeRatio: opportunity.hedgeRatio,
+  });
+  const fullyHedged = bothLegsExecuted && partialRisk.unhedgedFraction <= 0.0001;
+
   const reasoning =
-    bothLegsExecuted
+    fullyHedged
       ? `Both legs executed. Kalshi ${kalshiSide.toUpperCase()} @ ${(kalshiPrice * 100).toFixed(1)}¢ (order ${kalshiLeg.orderId ?? "?"}), Polymarket ${buyPlatform === "polymarket" ? "YES" : "NO"} @ ${(polymarketPrice * 100).toFixed(1)}¢ (order ${polymarketLeg.orderId ?? "?"}).  Net edge: ${(opportunity.netEdge * 100).toFixed(1)}pp.`
-      : `Partial execution. Kalshi: ${kalshiLeg.success ? "OK" : `FAIL – ${kalshiLeg.error}`}. Polymarket: ${polymarketLeg.success ? "OK" : `FAIL – ${polymarketLeg.error}`}.`;
+      : `Partial execution. Kalshi: ${kalshiLeg.success ? "OK" : `FAIL – ${kalshiLeg.error}`}. Polymarket: ${polymarketLeg.success ? "OK" : `FAIL – ${polymarketLeg.error}`}. Recommended action: ${partialRisk.action.toUpperCase()} (${(partialRisk.unhedgedFraction * 100).toFixed(0)}% unhedged).`;
 
   return {
     success: bothLegsExecuted,
     kalshiLeg,
     polymarketLeg,
     bothLegsExecuted,
+    partialLegAction: fullyHedged ? "hold" : partialRisk.action,
+    unhedgedFraction: fullyHedged ? 0 : partialRisk.unhedgedFraction,
     reasoning,
   };
+}
+
+function clamp01(value: number) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(1, Math.max(0, value));
 }

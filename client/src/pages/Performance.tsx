@@ -21,6 +21,7 @@ export default function Performance() {
   const [timeRange, setTimeRange] = useState<TimeRange>('All');
   
   const performanceOverviewQuery = trpc.kalshi.getPerformanceOverview.useQuery();
+  const attributionQuery = trpc.kalshi.getAttributionAnalysis.useQuery({ limit: 250 });
 
   const performanceOverview = performanceOverviewQuery.data;
   const performanceMetrics = performanceOverview?.metrics;
@@ -86,6 +87,32 @@ export default function Performance() {
 
   const heatmapRows = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   const heatmapCols = Array.from({ length: 24 }, (_, i) => i);
+
+  const attributionBreakdownData = useMemo(() => {
+    const totals = attributionQuery.data?.totals;
+    if (!totals) return [];
+
+    return [
+      { label: 'Signal Alpha', value: totals.signalAlpha, color: '#34d399' },
+      { label: 'Execution', value: totals.execution, color: '#60a5fa' },
+      { label: 'Timing', value: totals.timing, color: '#fbbf24' },
+      { label: 'Luck', value: totals.luck, color: '#f87171' },
+    ];
+  }, [attributionQuery.data]);
+
+  const sharpeSourceData = useMemo(() => {
+    const sharpeBySource = attributionQuery.data?.sharpeBySource;
+    if (!sharpeBySource) return [];
+
+    return [
+      { label: 'Signal Alpha', value: sharpeBySource.signalAlpha, color: '#34d399' },
+      { label: 'Execution', value: sharpeBySource.execution, color: '#60a5fa' },
+      { label: 'Timing', value: sharpeBySource.timing, color: '#fbbf24' },
+      { label: 'Luck', value: sharpeBySource.luck, color: '#f87171' },
+    ];
+  }, [attributionQuery.data]);
+
+  const losingPatterns = attributionQuery.data?.losingPatterns ?? [];
 
   if (performanceOverviewQuery.isLoading) {
     return <DashboardSkeleton />;
@@ -226,6 +253,69 @@ export default function Performance() {
           showValues={false}
         />
       </div>
+
+      {/* Attribution Charts */}
+      {attributionQuery.isError && (
+        <div className="glass-panel p-6">
+          <ErrorState
+            error="Failed to load attribution analysis"
+            onRetry={() => attributionQuery.refetch()}
+          />
+        </div>
+      )}
+
+      {attributionQuery.isSuccess && attributionBreakdownData.length > 0 && (
+        <div className="grid gap-6 lg:grid-cols-2">
+          <div className="glass-panel p-6 glow-subtle">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-foreground">P&L Attribution Breakdown</h3>
+              <span className="text-xs text-muted-foreground">
+                {attributionQuery.data.count} records
+              </span>
+            </div>
+            <DistributionChart
+              data={attributionBreakdownData}
+              formatValue={(v: number) => formatCurrency(v)}
+              colorByIndex={false}
+            />
+          </div>
+
+          <div className="glass-panel p-6 glow-subtle">
+            <h3 className="text-lg font-semibold mb-4 text-foreground">Sharpe by Attribution Source</h3>
+            <DistributionChart
+              data={sharpeSourceData}
+              formatValue={(v: number) => v.toFixed(2)}
+              colorByIndex={false}
+            />
+          </div>
+        </div>
+      )}
+
+      {attributionQuery.isSuccess && losingPatterns.length > 0 && (
+        <div className="glass-panel p-6 glow-subtle">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-foreground">Losing Patterns</h3>
+            <span className="text-xs text-muted-foreground">Most negative average P&L buckets</span>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+            {losingPatterns.slice(0, 6).map((pattern) => (
+              <div
+                key={`${pattern.signalType}-${pattern.category}`}
+                className="rounded-xl border border-red-400/20 bg-red-500/5 px-4 py-3"
+              >
+                <div className="text-sm font-medium text-foreground">
+                  {pattern.signalType.replaceAll('_', ' ')}
+                </div>
+                <div className="text-xs text-muted-foreground">{pattern.category}</div>
+                <div className="mt-2 text-sm text-red-300">
+                  Avg P&L: {formatCurrency(pattern.avgPnl)}
+                </div>
+                <div className="text-xs text-muted-foreground">Trades: {pattern.trades}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

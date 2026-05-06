@@ -63,6 +63,9 @@ const sampleArbitrageOpp: CrossPlatformArbitrageOpportunity = {
   confidence: 0.8,
   reasoning: "Strong arb",
   minLiquidity: 1000,
+  feeBurden: 0.05,
+  executionRisk: 0.01,
+  hedgeRatio: 0.95,
 };
 
 // ---------------------------------------------------------------------------
@@ -281,6 +284,52 @@ describe("executeCrossArbLegs", () => {
     expect(result.polymarketLeg.success).toBe(false);
     expect(result.reasoning).toContain("Polymarket order rejected");
   });
+
+    it("classifies partial-leg risk using fill fractions", async () => {
+      const baseExecutors = {
+        placeKalshiOrder: async () => ({ success: true, orderId: "k-order-1" }),
+        placePolymarketOrder: async () => ({ success: true, orderId: "p-order-1" }),
+      };
+
+      const hold = await executeCrossArbLegs(
+        sampleArbitrageOpp,
+        {
+          kalshiContracts: 5,
+          polymarketSizeUsdc: 10,
+          polymarketTokenIdYes: "token-yes-123",
+          polymarketTokenIdNo: "token-no-123",
+          fillFractions: { kalshi: 1, polymarket: 0.95 },
+        },
+        baseExecutors,
+      );
+      expect(hold.partialLegAction).toBe("hold");
+
+      const hedge = await executeCrossArbLegs(
+        sampleArbitrageOpp,
+        {
+          kalshiContracts: 5,
+          polymarketSizeUsdc: 10,
+          polymarketTokenIdYes: "token-yes-123",
+          polymarketTokenIdNo: "token-no-123",
+          fillFractions: { kalshi: 1, polymarket: 0.7 },
+        },
+        baseExecutors,
+      );
+      expect(hedge.partialLegAction).toBe("hedge");
+
+      const exit = await executeCrossArbLegs(
+        sampleArbitrageOpp,
+        {
+          kalshiContracts: 5,
+          polymarketSizeUsdc: 10,
+          polymarketTokenIdYes: "token-yes-123",
+          polymarketTokenIdNo: "token-no-123",
+          fillFractions: { kalshi: 1, polymarket: 0.2 },
+        },
+        baseExecutors,
+      );
+      expect(exit.partialLegAction).toBe("exit");
+    });
 
   it("handles executor exceptions gracefully", async () => {
     const result = await executeCrossArbLegs(

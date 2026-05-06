@@ -13,6 +13,12 @@ import * as db from "../db";
 import * as polyDb from "../db.polymarket";
 import { assertPositiveIntegerUserId } from "./userScope";
 import { logger } from "./logger";
+import {
+  applyOnlineLearningUpdate,
+  deriveModelFromUpdates,
+  type TradeOutcome,
+} from "./onlineLearning";
+import { calculateAttributionBreakdown } from "./performanceAttribution";
 
 export interface PolymarketTradeRecord {
   id: string;
@@ -84,7 +90,18 @@ type SignalLike = {
   signalType?: string | null;
   confidence?: number | null;
   expectedValue?: number | null;
+  metadata?: {
+    marketCategory?: string | null;
+  } | null;
 };
+
+export interface PolymarketPlatformBehaviorSnapshot {
+  totalClosedTrades: number;
+  adaptationEpoch: number;
+  hasSufficientData: boolean;
+  signalWinRates: Record<string, number>;
+  categoryEdge: Record<string, number>;
+}
 
 export interface PolymarketPerformanceOverview {
   startingBalance: number;
@@ -361,6 +378,46 @@ export function analyzeSignalPerformanceFromData(
     );
 }
 
+export function buildPolymarketPlatformBehaviorSnapshot(
+  metrics: PolymarketPerformanceMetrics,
+  signalPerformance: PolymarketSignalPerformance[],
+  signals: SignalLike[] = []
+): PolymarketPlatformBehaviorSnapshot {
+  const signalWinRates: Record<string, number> = {};
+  for (const item of signalPerformance) {
+    signalWinRates[item.signalType] = item.successRate;
+  }
+
+  const categoryEdge: Record<string, number> = {};
+  const categoryCounts = new Map<string, number>();
+  const categoryExpectedValues = new Map<string, number>();
+
+  for (const signal of signals) {
+    const category = signal.metadata?.marketCategory?.trim().toLowerCase();
+    if (!category) continue;
+    const ev = Number(signal.expectedValue ?? 0);
+    if (!Number.isFinite(ev)) continue;
+
+    categoryCounts.set(category, (categoryCounts.get(category) ?? 0) + 1);
+    categoryExpectedValues.set(category, (categoryExpectedValues.get(category) ?? 0) + ev);
+  }
+
+  for (const [category, count] of categoryCounts.entries()) {
+    if (count < 5) continue;
+    const avgEv = (categoryExpectedValues.get(category) ?? 0) / count;
+    categoryEdge[category] = Math.max(-0.05, Math.min(0.05, avgEv * 0.25));
+  }
+
+  const totalClosedTrades = metrics.totalTrades;
+  return {
+    totalClosedTrades,
+    adaptationEpoch: Math.floor(totalClosedTrades / 100),
+    hasSufficientData: totalClosedTrades >= 100,
+    signalWinRates,
+    categoryEdge,
+  };
+}
+
 /**
  * Get comprehensive performance overview for a user's Polymarket trading
  */
@@ -523,6 +580,61 @@ export async function recordPolymarketTradeExit(
       sizeUsdc: exitSizeUsdc,
       realizedPnl: tradeContext.realizedPnl,
     });
+
+    try {
+      const outcome: TradeOutcome = tradeContext.realizedPnl > 0 ? "win" : tradeContext.realizedPnl < 0 ? "loss" : "breakeven";
+      const recentLearning = await db.getRecentOnlineLearningUpdates(scopedUserId, "polymarket", 200);
+      const model = deriveModelFromUpdates({
+        userId: scopedUserId,
+        platform: "polymarket",
+        updates: recentLearning.map((row: any) => ({
+          signalType: String(row.signalType),
+          outcome: row.outcome as TradeOutcome,
+          pnl: Number(row.pnl),
+        })),
+      });
+      const learningUpdate = applyOnlineLearningUpdate(model, {
+        signalType: "polymarket",
+        outcome,
+        pnl: tradeContext.realizedPnl,
+      });
+
+      await db.saveOnlineLearningUpdate({
+        userId: scopedUserId,
+        platform: "polymarket",
+        signalType: "polymarket",
+        outcome,
+        pnl: tradeContext.realizedPnl,
+        weightBefore: learningUpdate.weightBefore,
+        weightAfter: learningUpdate.weightAfter,
+        emaPnl: learningUpdate.nextModel.emaPnl,
+        driftDetected: learningUpdate.driftDetected,
+        explorationTaken: learningUpdate.explorationTaken,
+        confidenceLower: learningUpdate.confidenceLower,
+        confidenceUpper: learningUpdate.confidenceUpper,
+        modelVersion: learningUpdate.nextModel.modelVersion,
+      });
+
+      const attribution = calculateAttributionBreakdown({
+        side: tradeContext.side,
+        entryPrice: tradeContext.entryPrice,
+        exitPrice,
+        quantity: exitSizeUsdc,
+        signalConfidence: 0.5,
+        benchmarkWinRate: 0.5,
+      });
+
+      await db.savePerformanceAttribution({
+        userId: scopedUserId,
+        platform: "polymarket",
+        marketId: tradeContext.marketId,
+        signalType: "polymarket",
+        category: String(tradeContext.marketCategoryTag ?? "unknown"),
+        ...attribution,
+      });
+    } catch (err) {
+      logger.debug({ err, tradeId }, "non-critical polymarket learning/attribution update failed");
+    }
   }
 
   logger.info(

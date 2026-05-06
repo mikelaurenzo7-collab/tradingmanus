@@ -609,6 +609,76 @@ export const executionQualityMetrics = pgTable("execution_quality_metrics", {
 
 export type ExecutionQualityMetric = typeof executionQualityMetrics.$inferSelect;
 
+// ── Cross-Platform Arbitrage Execution History ───────────────────────────────
+
+export const crossPlatformArbitrageExecutions = pgTable("cross_platform_arbitrage_executions", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull(),
+  kalshiMarketId: varchar("kalshiMarketId", { length: 128 }).notNull(),
+  polymarketMarketId: varchar("polymarketMarketId", { length: 128 }).notNull(),
+  buyPlatform: varchar("buyPlatform", { length: 32 }).notNull(),
+  netEdge: doublePrecision("netEdge").notNull(),
+  feeBurden: doublePrecision("feeBurden").notNull(),
+  executionRisk: doublePrecision("executionRisk").notNull(),
+  hedgeRatio: doublePrecision("hedgeRatio").notNull(),
+  bothLegsExecuted: integer("bothLegsExecuted").notNull(),
+  kalshiOrderId: varchar("kalshiOrderId", { length: 128 }),
+  polymarketOrderId: varchar("polymarketOrderId", { length: 128 }),
+  partialLegAction: varchar("partialLegAction", { length: 32 }),
+  pnlAttributionArb: doublePrecision("pnlAttributionArb").default(0).notNull(),
+  pnlAttributionMarketMove: doublePrecision("pnlAttributionMarketMove").default(0).notNull(),
+  executedAt: timestamp("executedAt", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  crossArbExecIdx: index("cross_arb_exec_idx").on(t.userId, t.executedAt),
+}));
+
+export type CrossPlatformArbitrageExecution = typeof crossPlatformArbitrageExecutions.$inferSelect;
+
+// ── Online Learning Updates ──────────────────────────────────────────────────
+
+export const onlineLearningUpdates = pgTable("online_learning_updates", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull(),
+  platform: varchar("platform", { length: 32 }).notNull().default("kalshi"),
+  signalType: varchar("signalType", { length: 64 }).notNull(),
+  outcome: varchar("outcome", { length: 16 }).notNull(),
+  pnl: doublePrecision("pnl").notNull(),
+  weightBefore: doublePrecision("weightBefore").notNull(),
+  weightAfter: doublePrecision("weightAfter").notNull(),
+  emaPnl: doublePrecision("emaPnl").notNull(),
+  driftDetected: integer("driftDetected").default(0).notNull(),
+  explorationTaken: integer("explorationTaken").default(0).notNull(),
+  confidenceLower: doublePrecision("confidenceLower").notNull(),
+  confidenceUpper: doublePrecision("confidenceUpper").notNull(),
+  modelVersion: integer("modelVersion").notNull(),
+  createdAt: timestamp("createdAt", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  onlineLearningIdx: index("online_learning_idx").on(t.userId, t.platform, t.createdAt),
+}));
+
+export type OnlineLearningUpdate = typeof onlineLearningUpdates.$inferSelect;
+
+// ── Performance Attribution History ─────────────────────────────────────────
+
+export const performanceAttribution = pgTable("performance_attribution", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull(),
+  platform: varchar("platform", { length: 32 }).notNull().default("kalshi"),
+  marketId: varchar("marketId", { length: 128 }).notNull(),
+  signalType: varchar("signalType", { length: 64 }).notNull(),
+  category: varchar("category", { length: 64 }).notNull().default("unknown"),
+  totalPnl: doublePrecision("totalPnl").notNull(),
+  signalAlpha: doublePrecision("signalAlpha").notNull(),
+  execution: doublePrecision("execution").notNull(),
+  timing: doublePrecision("timing").notNull(),
+  luck: doublePrecision("luck").notNull(),
+  createdAt: timestamp("createdAt", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  performanceAttributionIdx: index("performance_attribution_idx").on(t.userId, t.platform, t.createdAt),
+}));
+
+export type PerformanceAttributionRecord = typeof performanceAttribution.$inferSelect;
+
 export type User = typeof users.$inferSelect;
 export type BotConfig = typeof botConfigs.$inferSelect;
 export type ChatMessage = typeof chatMessages.$inferSelect;

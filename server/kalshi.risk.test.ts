@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   getTodayRealizedLoss: vi.fn(),
   getTodayKalshiOrderCount: vi.fn(),
   placeKalshiOrder: vi.fn(),
+  fetchKalshiMarketDetails: vi.fn(),
   getTradingPreferences: vi.fn(),
   saveTradingPreferences: vi.fn(),
 }));
@@ -42,6 +43,7 @@ vi.mock("./db.trading-preferences", () => ({
 
 vi.mock("./_core/kalshiMarketData", () => ({
   fetchKalshiMarkets: mocks.fetchKalshiMarkets,
+  fetchKalshiMarketDetails: mocks.fetchKalshiMarketDetails,
 }));
 
 vi.mock("./_core/kalshiExecution", () => ({
@@ -90,6 +92,7 @@ describe("kalshi risk controls", () => {
     mocks.getOpenKalshiPositions.mockResolvedValue([]);
     mocks.getTodayRealizedLoss.mockResolvedValue(0);
     mocks.getTodayKalshiOrderCount.mockResolvedValue(0);
+    mocks.fetchKalshiMarketDetails.mockResolvedValue({ yesVolume: 50_000, noVolume: 50_000 });
     mocks.getTradingPreferences.mockResolvedValue({
       autonomyMode: "approval_required",
       liveTradingEnabled: true,
@@ -197,6 +200,70 @@ describe("kalshi risk controls", () => {
     });
 
     expect(mocks.placeKalshiOrder).toHaveBeenCalledWith(1, "GDP-2026", "yes", 2, 0.5);
+  });
+
+  it("blocks manual orders when market-impact guardrails hard-block execution", async () => {
+    mocks.fetchKalshiMarketDetails.mockResolvedValue({ yesVolume: 1, noVolume: 1 });
+    const caller = appRouter.createCaller(createProtectedContext());
+
+    const result = await caller.kalshi.placeOrder({
+      marketId: "THIN-BOOK-2026",
+      side: "yes",
+      quantity: 2,
+      limitPrice: 0.5,
+    });
+
+    expect(result).toEqual({
+      success: false,
+      error: "Order blocked by market-impact guardrail",
+    });
+    expect(mocks.placeKalshiOrder).not.toHaveBeenCalled();
+    expect(mocks.logAuditEvent).toHaveBeenCalledWith(
+      "kalshi_order_blocked_market_impact",
+      expect.stringContaining('"impactAdjustedQuantity":0'),
+      "risk-user"
+    );
+  });
+
+  it("downsizes manual orders when market impact is elevated and audits the adjustment", async () => {
+    mocks.fetchKalshiMarketDetails.mockResolvedValue({ yesVolume: 100, noVolume: 100 });
+    const caller = appRouter.createCaller(createProtectedContext());
+
+    const result = await caller.kalshi.placeOrder({
+      marketId: "MID-LIQ-2026",
+      side: "yes",
+      quantity: 20,
+      limitPrice: 0.5,
+    });
+
+    expect(result.success).toBe(true);
+    expect(mocks.placeKalshiOrder).toHaveBeenCalledWith(1, "MID-LIQ-2026", "yes", 10, 0.5);
+    expect(mocks.logAuditEvent).toHaveBeenCalledWith(
+      "kalshi_order_sized_by_market_impact",
+      expect.stringContaining('"impactAdjustedQuantity":10'),
+      "risk-user"
+    );
+  });
+
+  it("applies conservative sizing fallback when liquidity data is unavailable", async () => {
+    mocks.fetchKalshiMarketDetails.mockResolvedValue(null);
+    const caller = appRouter.createCaller(createProtectedContext());
+
+    const result = await caller.kalshi.placeOrder({
+      marketId: "UNKNOWN-LIQ-2026",
+      side: "yes",
+      quantity: 20,
+      limitPrice: 0.5,
+    });
+
+    expect(result.success).toBe(true);
+    const placedQuantity = mocks.placeKalshiOrder.mock.calls[0][3];
+    expect(placedQuantity).toBeLessThan(20);
+    expect(mocks.logAuditEvent).toHaveBeenCalledWith(
+      "kalshi_order_sized_by_market_impact",
+      expect.stringContaining('"liquidityUnavailable":true'),
+      "risk-user"
+    );
   });
 
   it("returns detailed kill-switch outcomes and logs an audit event", async () => {

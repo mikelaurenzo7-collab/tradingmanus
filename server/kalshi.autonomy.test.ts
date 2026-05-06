@@ -27,6 +27,8 @@ const mocks = vi.hoisted(() => ({
   getLatestAutonomyRun: vi.fn(),
   getTodayKalshiOrderCount: vi.fn(),
   getKalshiCapital: vi.fn(),
+  getKalshiTradeHistory: vi.fn(),
+  getRecentSignals: vi.fn(),
   syncKalshiCapitalWithLiveEquity: vi.fn(),
   getOpenKalshiPositions: vi.fn(),
   getTodayRealizedLoss: vi.fn(),
@@ -55,6 +57,8 @@ vi.mock("./db", () => ({
   getLatestAutonomyRun: mocks.getLatestAutonomyRun,
   getTodayKalshiOrderCount: mocks.getTodayKalshiOrderCount,
   getKalshiCapital: mocks.getKalshiCapital,
+  getKalshiTradeHistory: mocks.getKalshiTradeHistory,
+  getRecentSignals: mocks.getRecentSignals,
   syncKalshiCapitalWithLiveEquity: mocks.syncKalshiCapitalWithLiveEquity,
   getOpenKalshiPositions: mocks.getOpenKalshiPositions,
   getTodayRealizedLoss: mocks.getTodayRealizedLoss,
@@ -181,6 +185,8 @@ describe("scheduled away-from-chat trading", () => {
     mocks.getLatestAutonomyRun.mockResolvedValue(null);
     mocks.getTodayKalshiOrderCount.mockResolvedValue(0);
     mocks.getKalshiCapital.mockResolvedValue({ currentBalance: 100, startingBalance: 100 });
+    mocks.getKalshiTradeHistory.mockResolvedValue([]);
+    mocks.getRecentSignals.mockResolvedValue([]);
     mocks.syncKalshiCapitalWithLiveEquity.mockResolvedValue(undefined);
     mocks.getOpenKalshiPositions.mockResolvedValue([]);
     mocks.getTodayRealizedLoss.mockResolvedValue(0);
@@ -276,22 +282,72 @@ describe("scheduled away-from-chat trading", () => {
     expect(result.decision).toMatchObject({
       marketId: "KXTEST-1",
       side: "yes",
-      quantity: 11,
+      quantity: 10,
       limitPrice: 0.43,
       availableCapital: 100,
       maxBudget: 5,
     });
-    expect(result.decision?.orderExposure).toBeCloseTo(4.73, 6);
-    expect(result.decision?.maxLossOnTrade).toBeCloseTo(4.73, 6);
-    expect(mocks.placeKalshiOrder).toHaveBeenCalledWith(7, "KXTEST-1", "yes", 11, 0.43);
+    expect(result.decision?.orderExposure).toBeCloseTo(4.3, 6);
+    expect(result.decision?.maxLossOnTrade).toBeCloseTo(4.3, 6);
+    expect(mocks.placeKalshiOrder).toHaveBeenCalledWith(7, "KXTEST-1", "yes", 10, 0.43);
     expect(mocks.logAuditEvent).toHaveBeenCalledWith(
       "scheduled_autonomy_order_placed",
-      expect.stringContaining('"orderExposure":4.729'),
+      expect.stringContaining('"orderExposure":4.3'),
       "away-open-id"
     );
     expect(mocks.logAuditEvent).toHaveBeenCalledWith(
       "scheduled_autonomy_run_executed",
       expect.stringContaining('"decision":{"marketId":"KXTEST-1"'),
+      "away-open-id"
+    );
+  });
+
+  it("emits sizing telemetry when market-impact guardrails reduce quantity", async () => {
+    const highImpactSignal = {
+      ...candidateSignal,
+      metadata: {
+        totalVolume: 100,
+        volatility: 0.1,
+      },
+    };
+    mocks.generateSignalsForMarkets.mockResolvedValueOnce([highImpactSignal]);
+    mocks.reviewSignalsWithTrader.mockImplementationOnce(async ({ signals }: { signals: any[] }) => signals);
+    mocks.getTopSignalsForExecution.mockReturnValueOnce([highImpactSignal]);
+
+    const result = await runScheduledAutonomousTrading(testUser);
+
+    expect(result.status).toBe("executed");
+    expect(mocks.placeKalshiOrder).toHaveBeenCalledTimes(1);
+    const placedQuantity = mocks.placeKalshiOrder.mock.calls[0][3];
+    expect(placedQuantity).toBeGreaterThan(0);
+    expect(placedQuantity).toBeLessThan(10);
+    expect(mocks.logAuditEvent).toHaveBeenCalledWith(
+      "scheduled_autonomy_order_sized_by_market_impact",
+      expect.stringContaining('"impactAdjustedQuantity"'),
+      "away-open-id"
+    );
+  });
+
+  it("blocks execution and audits when market-impact guardrails hard-block an order", async () => {
+    const blockedSignal = {
+      ...candidateSignal,
+      metadata: {
+        totalVolume: 10,
+        volatility: 0.25,
+      },
+    };
+    mocks.generateSignalsForMarkets.mockResolvedValueOnce([blockedSignal]);
+    mocks.reviewSignalsWithTrader.mockImplementationOnce(async ({ signals }: { signals: any[] }) => signals);
+    mocks.getTopSignalsForExecution.mockReturnValueOnce([blockedSignal]);
+
+    const result = await runScheduledAutonomousTrading(testUser);
+
+    expect(result.status).toBe("blocked");
+    expect(result.decision?.blockedBy).toBe("market_impact_guardrail");
+    expect(mocks.placeKalshiOrder).not.toHaveBeenCalled();
+    expect(mocks.logAuditEvent).toHaveBeenCalledWith(
+      "scheduled_autonomy_order_blocked_market_impact",
+      expect.stringContaining('"marketId":"KXTEST-1"'),
       "away-open-id"
     );
   });

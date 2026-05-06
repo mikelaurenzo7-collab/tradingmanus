@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   analyzeSignalPerformanceFromData,
+  buildKalshiPlatformBehaviorSnapshot,
   calculatePerformanceMetricsFromTrades,
 } from "./_core/kalshiLearning";
 
@@ -84,5 +85,38 @@ describe("kalshi learning helpers", () => {
       totalPnL: -2,
       recommendation: "strong_sell",
     });
+  });
+
+  it("builds platform behavior snapshot with 100-trade adaptation epochs", () => {
+    const metrics = calculatePerformanceMetricsFromTrades(
+      Array.from({ length: 205 }, (_, index) => ({
+        marketId: `M-${index}`,
+        entryPrice: 0.5,
+        quantity: 10,
+        realizedPnL: index % 2 === 0 ? 1 : -0.2,
+        positionStatus: "closed",
+        closedAt: new Date(`2026-04-24T12:${String(index % 60).padStart(2, "0")}:00Z`),
+      }))
+    );
+
+    const signalPerformance = analyzeSignalPerformanceFromData(
+      [
+        { marketId: "M-1", signalType: "momentum", confidence: 0.7 },
+        { marketId: "M-2", signalType: "momentum", confidence: 0.8 },
+        { marketId: "M-3", signalType: "sentiment", confidence: 0.6 },
+      ],
+      [
+        { marketId: "M-1", realizedPnL: 1, positionStatus: "closed", closedAt: new Date("2026-04-24T12:00:00Z") },
+        { marketId: "M-2", realizedPnL: 1, positionStatus: "closed", closedAt: new Date("2026-04-24T12:01:00Z") },
+        { marketId: "M-3", realizedPnL: -1, positionStatus: "closed", closedAt: new Date("2026-04-24T12:02:00Z") },
+      ]
+    );
+
+    const snapshot = buildKalshiPlatformBehaviorSnapshot(metrics, signalPerformance);
+
+    expect(snapshot.totalClosedTrades).toBe(205);
+    expect(snapshot.adaptationEpoch).toBe(2);
+    expect(snapshot.hasSufficientData).toBe(true);
+    expect(snapshot.signalWinRates.momentum).toBeGreaterThan(snapshot.signalWinRates.sentiment);
   });
 });

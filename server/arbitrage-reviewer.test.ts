@@ -17,6 +17,9 @@ const baseOpp: CrossPlatformArbitrageOpportunity = {
   confidence: 0.78,
   reasoning: "Scanner: large spread, similar question",
   minLiquidity: 5000,
+  feeBurden: 0.05,
+  executionRisk: 0.01,
+  hedgeRatio: 0.95,
 };
 
 function anthropicResponse(content: string) {
