@@ -586,6 +586,29 @@ export const marketSentimentHistory = pgTable("market_sentiment_history", {
 
 export type MarketSentimentHistory = typeof marketSentimentHistory.$inferSelect;
 
+// ── Execution Quality Metrics ─────────────────────────────────────────────────
+
+/**
+ * Per-order execution quality record.
+ * Tracks expected vs actual fill price, slippage, and order strategy used.
+ */
+export const executionQualityMetrics = pgTable("execution_quality_metrics", {
+  id: serial("id").primaryKey(),
+  orderId: varchar("orderId", { length: 128 }).notNull(),
+  userId: integer("userId").notNull(),
+  platform: varchar("platform", { length: 32 }).notNull().default("kalshi"),
+  strategy: varchar("strategy", { length: 32 }).notNull(),
+  expectedPrice: doublePrecision("expectedPrice").notNull(),
+  actualPrice: doublePrecision("actualPrice"),
+  slippagePct: doublePrecision("slippagePct"),
+  targetBudgetUsd: doublePrecision("targetBudgetUsd").notNull(),
+  executedAt: timestamp("executedAt", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  execQualityIdx: index("exec_quality_idx").on(t.userId, t.executedAt),
+}));
+
+export type ExecutionQualityMetric = typeof executionQualityMetrics.$inferSelect;
+
 export type User = typeof users.$inferSelect;
 export type BotConfig = typeof botConfigs.$inferSelect;
 export type ChatMessage = typeof chatMessages.$inferSelect;

@@ -18,6 +18,7 @@ import {
   positionExits,
   mlEnsembleModels,
   marketSentimentHistory,
+  executionQualityMetrics,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 import { eq, and, desc, gte, inArray, ne, sql } from "drizzle-orm";
@@ -1355,5 +1356,30 @@ export async function saveMarketSentiment(data: {
     twitterScore: data.twitterScore ?? null,
     expertScore: data.expertScore ?? null,
     consensusScore: data.consensusScore ?? null,
+  });
+}
+
+export async function saveExecutionQuality(data: {
+  orderId: string;
+  userId: number;
+  platform?: string;
+  strategy: string;
+  expectedPrice: number;
+  actualPrice?: number | null;
+  slippagePct?: number | null;
+  targetBudgetUsd: number;
+}): Promise<void> {
+  const database = await getDb();
+  if (!database) return;
+
+  await database.insert(executionQualityMetrics).values({
+    orderId: data.orderId,
+    userId: data.userId,
+    platform: data.platform ?? "kalshi",
+    strategy: data.strategy,
+    expectedPrice: data.expectedPrice,
+    actualPrice: data.actualPrice ?? null,
+    slippagePct: data.slippagePct ?? null,
+    targetBudgetUsd: data.targetBudgetUsd,
   });
 }
