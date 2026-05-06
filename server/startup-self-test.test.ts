@@ -59,7 +59,7 @@ describe("runStartupSelfTest", () => {
     expect(result.passed).toBe(true);
     const dbCheck = result.checks.find((c) => c.name === "database");
     expect(dbCheck?.status).toBe("ok");
-    const exitCheck = result.checks.find((c) => c.name === "schema.exitState");
+    const exitCheck = result.checks.find((c) => c.name === "schema.kalshiPositions.exitState");
     expect(exitCheck?.status).toBe("ok");
     const aiKey = result.checks.find((c) => c.name === "ai_reviewer_key");
     expect(aiKey?.status).toBe("ok");
@@ -90,7 +90,7 @@ describe("runStartupSelfTest", () => {
     const result = await runStartupSelfTest();
 
     expect(result.passed).toBe(false);
-    const exitCheck = result.checks.find((c) => c.name === "schema.exitState");
+    const exitCheck = result.checks.find((c) => c.name === "schema.kalshiPositions.exitState");
     expect(exitCheck?.status).toBe("fail");
     expect(exitCheck?.detail).toContain("pnpm db:push");
   });

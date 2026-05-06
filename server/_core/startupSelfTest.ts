@@ -55,32 +55,30 @@ async function checkDatabaseReachable(): Promise<SelfTestCheck> {
   }
 }
 
-async function checkExitStateColumn(): Promise<SelfTestCheck> {
+async function checkExitStateColumn(table: string): Promise<SelfTestCheck> {
+  const name = `schema.${table}.exitState`;
   try {
     const database = await getDb();
     if (!database) {
-      return { name: "schema.exitState", status: "fail", detail: "DB unreachable; cannot inspect schema." };
+      return { name, status: "fail", detail: "DB unreachable; cannot inspect schema." };
     }
     const rows = (await database.execute(
-      sql`SELECT column_name FROM information_schema.columns WHERE table_name = 'kalshiPositions' AND column_name = 'exitState'`,
+      sql`SELECT column_name FROM information_schema.columns WHERE table_name = ${table} AND column_name = 'exitState'`,
     )) as unknown as { rows?: Array<unknown>; length?: number };
-    // Drizzle's neon-http driver returns either {rows: [...]} or an array
-    // depending on version; handle both.
     const found = Array.isArray(rows)
       ? rows.length > 0
       : Array.isArray(rows.rows) && rows.rows.length > 0;
     if (!found) {
       return {
-        name: "schema.exitState",
+        name,
         status: "fail",
-        detail:
-          "kalshiPositions.exitState column missing.  Run `corepack pnpm db:push` against your production DATABASE_URL to apply the migration before starting the autonomy.",
+        detail: `${table}.exitState column missing.  Run \`corepack pnpm db:push\` against your production DATABASE_URL to apply the migration before starting the autonomy.`,
       };
     }
-    return { name: "schema.exitState", status: "ok", detail: "exitState column present." };
+    return { name, status: "ok", detail: "exitState column present." };
   } catch (err) {
     return {
-      name: "schema.exitState",
+      name,
       status: "warn",
       detail: `Schema check failed (driver may not expose information_schema): ${err instanceof Error ? err.message : String(err)}`,
     };
@@ -152,14 +150,16 @@ function checkCredentialEncryptionSecret(): SelfTestCheck {
 export async function runStartupSelfTest(): Promise<SelfTestResult> {
   const checks: SelfTestCheck[] = [];
   // Run independent checks in parallel.
-  const [database, exitColumn] = await Promise.all([
+  const [database, kalshiExitColumn, polymarketExitColumn] = await Promise.all([
     checkDatabaseReachable(),
-    checkExitStateColumn(),
+    checkExitStateColumn("kalshiPositions"),
+    checkExitStateColumn("polymarketPositions"),
   ]);
   checks.push(database);
   // Only check schema if DB itself is reachable; skip otherwise to avoid noisy double-fail.
   if (database.status === "ok") {
-    checks.push(exitColumn);
+    checks.push(kalshiExitColumn);
+    checks.push(polymarketExitColumn);
   }
   checks.push(checkAiReviewerKey());
   checks.push(checkAiReviewerModel());

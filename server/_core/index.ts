@@ -8,6 +8,7 @@ import { runScheduledAutonomousTradingBatch } from "./kalshiAutonomy";
 import { runPolymarketAutonomousTrading } from "./polymarketAutonomy";
 import { syncPendingOrders, syncLivePositions } from "./kalshiOrderSync";
 import { evaluateExitsForOpenPositions } from "./exitMonitor";
+import { evaluatePolymarketExitsForOpenPositions } from "./polymarketExitMonitor";
 import { createAutonomousTradingLock, createOrderSyncLock, DistributedLock } from "./distributedLock";
 import { runStartupSelfTest } from "./startupSelfTest";
 import { logger } from "./logger";
@@ -205,13 +206,25 @@ async function runOrderSync() {
         // Evaluate stop-loss / profit-target on every open position with each
         // sync.  Inside the same lock so a concurrent autonomy run can't read
         // a half-closed position state.
-        const exits = await evaluateExitsForOpenPositions(user.id, "local_scheduler");
-        const triggered = exits.filter((e) => e.decision.shouldExit);
-        if (triggered.length > 0) {
+        const [kalshiExits, polymarketExits] = await Promise.all([
+          evaluateExitsForOpenPositions(user.id, "local_scheduler"),
+          evaluatePolymarketExitsForOpenPositions(user.id, "local_scheduler"),
+        ]);
+        const kTriggered = kalshiExits.filter((e) => e.decision.shouldExit);
+        const pTriggered = polymarketExits.filter((e) => e.decision.shouldExit);
+        if (kTriggered.length > 0) {
           logger.info(
-            { userId: user.id, count: triggered.length, closed: triggered.filter((e) => e.closed).length },
-            "[ExitMonitor] %d exit signal(s) triggered for user %d",
-            triggered.length,
+            { userId: user.id, count: kTriggered.length, closed: kTriggered.filter((e) => e.closed).length },
+            "[ExitMonitor] Kalshi: %d exit signal(s) triggered for user %d",
+            kTriggered.length,
+            user.id,
+          );
+        }
+        if (pTriggered.length > 0) {
+          logger.info(
+            { userId: user.id, count: pTriggered.length, closed: pTriggered.filter((e) => e.closed).length },
+            "[PolymarketExitMonitor] %d exit signal(s) triggered for user %d",
+            pTriggered.length,
             user.id,
           );
         }
