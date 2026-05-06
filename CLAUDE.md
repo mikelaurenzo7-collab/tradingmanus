@@ -313,7 +313,8 @@ placeKalshiOrder()                  ← Kalshi REST (wrapped in withUserLock)
 - `railway.json` sets `builder: DOCKERFILE`
 - `Dockerfile` pins Node 20 + pnpm 10.4.1, runs `pnpm install --frozen-lockfile && pnpm build && pnpm build:server`, starts `pnpm start`
 - `pnpm.onlyBuiltDependencies` in `package.json` allows `@tailwindcss/oxide` and `esbuild` postinstall scripts (Tailwind v4 native binary — **required** for the Vite build)
-- Health check: `GET /api/health`
+- `deploy.preDeployCommand` runs `pnpm db:push` before each release so schema changes are applied before the new server starts
+- Liveness probe: `GET /api/health/live` (Railway restart policy is wired here — never touches the DB so a Neon outage cannot cause a restart loop)
 - Schedulers run **in-process**: autonomy every 15 min, order sync every 30 sec
 - `CRON_SECRET` is not needed on Railway
 
@@ -321,6 +322,16 @@ placeKalshiOrder()                  ← Kalshi REST (wrapped in withUserLock)
 - One serverless function: `api/index.ts`
 - `vercel.json` handles rewrites, cron config, build command
 - Cron jobs authenticate with `Authorization: Bearer ${CRON_SECRET}`
+
+### External monitoring (recommended)
+- Point an uptime monitor (Better Uptime, Cronitor, Pingdom, or Railway's external check)
+  at `GET /api/health/ready` — it returns 503 if the DB is unreachable, so it pages
+  before failed trades start accumulating in the audit log.
+- Set `ALERT_WEBHOOK_URL` to a Slack/Discord/PagerDuty inbound webhook to receive
+  proactive alerts on consecutive autonomy failures, equity drops, and exchange
+  rejections (emitted via `server/_core/alerting.ts`).
+- The `/api/health` endpoint also surfaces DB latency, scheduler runtime, and
+  uptime in its body — useful for dashboard scrapers.
 
 ---
 

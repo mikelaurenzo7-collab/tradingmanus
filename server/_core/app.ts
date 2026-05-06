@@ -281,7 +281,10 @@ export async function createApp(options: { runStartupMigrations?: boolean } = {}
   // Security middleware
   app.use(helmet({
     contentSecurityPolicy: ENV.isProduction ? undefined : false, // Disable CSP in dev for HMR
-    crossOriginEmbedderPolicy: false, // Allow embedding for iframe support
+    // COEP defaults to require-corp in helmet >= 5.  We keep that strict default
+    // because the client does not embed cross-origin iframes (verified via grep).
+    // If a future feature needs to embed third-party widgets, scope this to that
+    // route only rather than disabling globally.
   }));
 
   // CORS configuration
