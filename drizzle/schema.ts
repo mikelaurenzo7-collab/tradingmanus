@@ -564,6 +564,28 @@ export const mlEnsembleModels = pgTable("ml_ensemble_models", {
 
 export type MlEnsembleModel = typeof mlEnsembleModels.$inferSelect;
 
+// ── Market Sentiment History ──────────────────────────────────────────────────
+
+export const marketSentimentHistory = pgTable("market_sentiment_history", {
+  id: serial("id").primaryKey(),
+  marketId: varchar("marketId", { length: 128 }).notNull(),
+  platform: varchar("platform", { length: 32 }).notNull().default("kalshi"),
+  compositeScore: doublePrecision("compositeScore").notNull(),
+  compositeConfidence: doublePrecision("compositeConfidence").notNull(),
+  sentimentMomentum: doublePrecision("sentimentMomentum").notNull(),
+  isAlertTriggered: integer("isAlertTriggered").default(0).notNull(),
+  gdeltScore: doublePrecision("gdeltScore"),
+  redditScore: doublePrecision("redditScore"),
+  twitterScore: doublePrecision("twitterScore"),
+  expertScore: doublePrecision("expertScore"),
+  consensusScore: doublePrecision("consensusScore"),
+  recordedAt: timestamp("recordedAt", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  sentimentHistIdx: index("sentiment_hist_idx").on(t.marketId, t.platform, t.recordedAt),
+}));
+
+export type MarketSentimentHistory = typeof marketSentimentHistory.$inferSelect;
+
 export type User = typeof users.$inferSelect;
 export type BotConfig = typeof botConfigs.$inferSelect;
 export type ChatMessage = typeof chatMessages.$inferSelect;

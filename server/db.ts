@@ -17,6 +17,7 @@ import {
   portfolioVolatilityHistory,
   positionExits,
   mlEnsembleModels,
+  marketSentimentHistory,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 import { eq, and, desc, gte, inArray, ne, sql } from "drizzle-orm";
@@ -1323,5 +1324,36 @@ export async function saveEnsembleModel(data: {
     trainingSamples: data.trainingSamples,
     accuracy: data.accuracy ?? null,
     isActive: 1,
+  });
+}
+
+export async function saveMarketSentiment(data: {
+  marketId: string;
+  platform?: string;
+  compositeScore: number;
+  compositeConfidence: number;
+  sentimentMomentum: number;
+  isAlertTriggered: boolean;
+  gdeltScore?: number | null;
+  redditScore?: number | null;
+  twitterScore?: number | null;
+  expertScore?: number | null;
+  consensusScore?: number | null;
+}): Promise<void> {
+  const database = await getDb();
+  if (!database) return;
+
+  await database.insert(marketSentimentHistory).values({
+    marketId: data.marketId,
+    platform: data.platform ?? "kalshi",
+    compositeScore: data.compositeScore,
+    compositeConfidence: data.compositeConfidence,
+    sentimentMomentum: data.sentimentMomentum,
+    isAlertTriggered: data.isAlertTriggered ? 1 : 0,
+    gdeltScore: data.gdeltScore ?? null,
+    redditScore: data.redditScore ?? null,
+    twitterScore: data.twitterScore ?? null,
+    expertScore: data.expertScore ?? null,
+    consensusScore: data.consensusScore ?? null,
   });
 }
