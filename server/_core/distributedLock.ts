@@ -66,10 +66,12 @@ export class DistributedLock {
         const now = new Date();
         const expiresAt = new Date(now.getTime() + ttlMs);
 
-        // 1. Reap any expired lock row so the INSERT below can succeed.
+        // 1. Reap any expired lock row for THIS key so the INSERT below can succeed.
+        //    Scoping to lockKey prevents a global table scan and avoids inadvertently
+        //    cleaning up locks held by other concurrent processes.
         await db
           .delete(distributedLocks)
-          .where(lt(distributedLocks.expiresAt, now));
+          .where(and(eq(distributedLocks.lockKey, this.lockKey), lt(distributedLocks.expiresAt, now)));
 
         // 2. Attempt to insert; the PRIMARY KEY constraint prevents a second
         //    holder from inserting while a valid row already exists.

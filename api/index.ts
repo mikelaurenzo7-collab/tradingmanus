@@ -146,12 +146,10 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     const app = await getApp();
     await dispatchToApp(app, req, res);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
     logger.error({ err: error }, "[api/index] createApp failed");
     sendJsonError(res, 500, {
       success: false,
       error: "Server initialization failed",
-      detail: message,
     });
   }
 }

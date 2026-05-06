@@ -1859,10 +1859,7 @@ export const appRouter = router({
           logger.error({ err: error }, "[Kalshi] Connect account error");
           return {
             success: false,
-            error:
-              error instanceof Error
-                ? error.message
-                : "Unexpected error while connecting your Kalshi account",
+            error: "Failed to connect Kalshi account. Check your API key and try again.",
           };
         }
       }),
@@ -2402,10 +2399,7 @@ export const appRouter = router({
           logger.error({ err: error }, "[Polymarket] Connect account error");
           return {
             success: false,
-            error:
-              error instanceof Error
-                ? error.message
-                : "Unexpected error while connecting your Polymarket account",
+            error: "Failed to connect Polymarket account. Check your API key, secret, and passphrase.",
           };
         }
       }),

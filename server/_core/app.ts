@@ -273,7 +273,10 @@ export async function createApp(options: { runStartupMigrations?: boolean } = {}
   }
 
   const app = express();
-  app.set("trust proxy", true);
+  // Trust exactly one proxy hop (Railway/Vercel ingress).  Setting this to
+  // `true` (all hops) allows clients to spoof X-Forwarded-For, which would
+  // bypass IP-based rate limiting.
+  app.set("trust proxy", 1);
 
   // Security middleware
   app.use(helmet({
@@ -380,9 +383,12 @@ export async function createApp(options: { runStartupMigrations?: boolean } = {}
     });
   });
 
-  // Apply rate limiting to scheduled endpoints
-  app.all("/api/scheduled/autonomous-trading", scheduledLimiter, toExpressHandler(autonomousTradingHandler));
-  app.all("/api/scheduled/order-sync", scheduledLimiter, toExpressHandler(orderSyncHandler));
+  // Scheduled endpoints: Vercel cron fires GET; manual dashboard triggers use POST.
+  // Restrict to these two methods to limit attack surface.
+  app.get("/api/scheduled/autonomous-trading", scheduledLimiter, toExpressHandler(autonomousTradingHandler));
+  app.post("/api/scheduled/autonomous-trading", scheduledLimiter, toExpressHandler(autonomousTradingHandler));
+  app.get("/api/scheduled/order-sync", scheduledLimiter, toExpressHandler(orderSyncHandler));
+  app.post("/api/scheduled/order-sync", scheduledLimiter, toExpressHandler(orderSyncHandler));
 
   // Global error handler
   // Note: express.Request types can resolve inconsistently in some build

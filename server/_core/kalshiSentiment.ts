@@ -5,6 +5,7 @@
 
 import { logger } from "./logger";
 import { fetchWithRetry } from "./fetchWithRetry";
+import { ENV } from "./env";
 
 export interface SentimentData {
   marketId: string;
@@ -378,7 +379,7 @@ export async function fetchGdeltTopicSignal(topic: string): Promise<ExternalTopi
  * Extract sentiment from news articles.
  */
 export async function fetchLiveNewsSummary(topic: string): Promise<LiveNewsSummary | null> {
-  const apiKey = process.env.GNEWS_API_KEY;
+  const apiKey = ENV.gnewsApiKey;
   const cleanTopic = topic.trim();
 
   if (!apiKey || !cleanTopic) {

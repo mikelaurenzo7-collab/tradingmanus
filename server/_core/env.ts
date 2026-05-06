@@ -188,11 +188,13 @@ export function validateServerEnv() {
 }
 
 export function getCredentialEncryptionSecret() {
-  const secret = ENV.credentialEncryptionSecret || ENV.cookieSecret;
+  const secret = ENV.credentialEncryptionSecret;
 
   if (!secret) {
     throw new Error(
-      "CREDENTIAL_ENCRYPTION_SECRET or JWT_SECRET is required for credential encryption"
+      "CREDENTIAL_ENCRYPTION_SECRET is required for credential encryption. " +
+      "Do not share this value with JWT_SECRET — they serve different purposes " +
+      "and rotating one without the other would make stored credentials unreadable."
     );
   }
 
