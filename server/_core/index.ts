@@ -151,7 +151,17 @@ async function runOrderSync() {
   }
 }
 
+// In-flight guard for the 10-second realtime arb scanner.  Without this,
+// a slow exchange (Kalshi or Polymarket > 10 s) would let the next interval
+// fire on top of the in-flight scan, producing a connection storm and
+// tripping the circuit breakers.
+let crossArbScanInFlight = false;
+
 async function runRealtimeCrossPlatformArbScan() {
+  if (crossArbScanInFlight) {
+    return;
+  }
+  crossArbScanInFlight = true;
   try {
     const [rawKalshi, rawPolymarket] = await Promise.all([
       fetchKalshiMarkets({ status: "open" }),
@@ -199,6 +209,8 @@ async function runRealtimeCrossPlatformArbScan() {
     }
   } catch (error) {
     logger.warn({ err: error }, "[CrossArb] realtime scan failed");
+  } finally {
+    crossArbScanInFlight = false;
   }
 }
 

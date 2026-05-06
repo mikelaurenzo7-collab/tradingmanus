@@ -2,6 +2,7 @@ import express from "express";
 import helmet from "helmet";
 import cors from "cors";
 import cookieParser from "cookie-parser";
+import crypto from "node:crypto";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:http";
 import { appRouter } from "../routers";
@@ -55,9 +56,25 @@ function readBearerToken(req: AppRequest) {
   return scheme?.toLowerCase() === "bearer" && token ? token : null;
 }
 
+function constantTimeEqual(a: string, b: string) {
+  // Buffer.byteLength is needed because timingSafeEqual requires equal-length
+  // inputs.  We compare lengths first to avoid the throw, but still do the
+  // constant-time compare on the longer side so failure timing is independent
+  // of where the mismatch occurs.
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) {
+    // Burn a constant amount of work so length-mismatch is indistinguishable
+    // from a value mismatch from the caller's perspective.
+    crypto.timingSafeEqual(bufA, bufA);
+    return false;
+  }
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
 async function getScheduledTrigger(req: AppRequest) {
   const bearer = readBearerToken(req);
-  if (ENV.cronSecret && bearer === ENV.cronSecret) {
+  if (ENV.cronSecret && bearer && constantTimeEqual(bearer, ENV.cronSecret)) {
     return { authorized: true as const, openId: "vercel_cron" };
   }
 

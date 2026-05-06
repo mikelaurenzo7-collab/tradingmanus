@@ -185,6 +185,23 @@ export function validateServerEnv() {
       "[ENV] OPENROUTER_API_KEY is not set. The AI trading reviewer requires this to be configured."
     );
   }
+
+  // Warn loudly when the default free-tier model is used in production.  The
+  // free model has hard daily rate limits and unstable availability; with the
+  // triage + intra-escalation flow each autonomy run issues several model
+  // calls and will exhaust the daily quota in minutes.  Every reviewer call
+  // is the only gate between heuristic signals and live money.
+  if (
+    ENV.isProduction &&
+    !process.env.OPENROUTER_MODEL?.trim() &&
+    ENV.openrouterModel === "tencent/hy3-preview:free"
+  ) {
+    console.warn(
+      "[ENV] OPENROUTER_MODEL is unset; falling back to free-tier 'tencent/hy3-preview:free'. " +
+        "This model has hard daily rate limits unsuitable for production trading. " +
+        "Set OPENROUTER_MODEL to a paid model you have validated on OpenRouter."
+    );
+  }
 }
 
 export function getCredentialEncryptionSecret() {

@@ -5,7 +5,6 @@
     "dockerfilePath": "Dockerfile"
   },
   "deploy": {
-    "preDeployCommand": "pnpm db:push",
     "healthcheckPath": "/api/health/live",
     "healthcheckTimeout": 60,
     "restartPolicyType": "ON_FAILURE",

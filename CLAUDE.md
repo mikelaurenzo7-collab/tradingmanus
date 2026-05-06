@@ -313,7 +313,7 @@ placeKalshiOrder()                  ← Kalshi REST (wrapped in withUserLock)
 - `railway.json` sets `builder: DOCKERFILE`
 - `Dockerfile` pins Node 20 + pnpm 10.4.1, runs `pnpm install --frozen-lockfile && pnpm build && pnpm build:server`, starts `pnpm start`
 - `pnpm.onlyBuiltDependencies` in `package.json` allows `@tailwindcss/oxide` and `esbuild` postinstall scripts (Tailwind v4 native binary — **required** for the Vite build)
-- `deploy.preDeployCommand` runs `pnpm db:push` before each release so schema changes are applied before the new server starts
+- **Schema migrations are manual.** Before deploying any commit that changes `drizzle/schema.ts`, run `corepack pnpm db:push` against the production `DATABASE_URL` from a workstation. We do **not** run `db:push` automatically in `preDeployCommand` because `drizzle-kit push` is interactive: in a non-TTY release environment it would either hang on destructive prompts or auto-skip them, leaving the running server with a schema mismatch. If you want auto-applied migrations, switch to a versioned `drizzle/migrations` folder + `drizzle-kit migrate`.
 - Liveness probe: `GET /api/health/live` (Railway restart policy is wired here — never touches the DB so a Neon outage cannot cause a restart loop)
 - Schedulers run **in-process**: autonomy every 15 min, order sync every 30 sec
 - `CRON_SECRET` is not needed on Railway
@@ -340,7 +340,7 @@ placeKalshiOrder()                  ← Kalshi REST (wrapped in withUserLock)
 1. **CSRF**: all state-changing tRPC calls go through `csrfProtection` middleware (double-submit cookie)
 2. **Rate limiting**: `/api/trpc/auth.*` uses `authLimiter`; `/api/scheduled/*` uses `scheduledLimiter`
 3. **Credential encryption**: Kalshi + Polymarket API keys are stored AES-256-GCM encrypted under `CREDENTIAL_ENCRYPTION_SECRET`. **Never log or return raw credentials.**
-4. **JWT validation**: `protectedProcedure` validates the access token on every call. Refresh token rotation is single-use.
+4. **JWT validation**: `protectedProcedure` validates the access token on every call. Refresh tokens are JWT-verified but **not** denylisted on use; a leaked refresh token is replayable for its full 7-day TTL. Single-use rotation is on the roadmap and requires a `refreshTokenJti` denylist table.
 5. **Distributed lock**: `distributedLock.ts` uses Postgres to ensure only one autonomy run per user is in-flight at a time.
 6. **Input validation**: all tRPC inputs are Zod-validated; Kalshi API responses are validated in `normalizeKalshiMarket` before any downstream code sees them.
 
