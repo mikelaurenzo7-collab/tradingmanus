@@ -9,6 +9,7 @@ import { runPolymarketAutonomousTrading } from "./polymarketAutonomy";
 import { syncPendingOrders, syncLivePositions } from "./kalshiOrderSync";
 import { evaluateExitsForOpenPositions } from "./exitMonitor";
 import { createAutonomousTradingLock, createOrderSyncLock, DistributedLock } from "./distributedLock";
+import { runStartupSelfTest } from "./startupSelfTest";
 import { logger } from "./logger";
 import { fetchKalshiMarkets } from "./kalshiMarketData";
 import { fetchPolymarketMarkets } from "./polymarketAuth";
@@ -289,7 +290,21 @@ async function runRealtimeCrossPlatformArbScan() {
 }
 
 startServer()
-  .then(() => {
+  .then(async () => {
+    // Pre-flight: surface mis-configurations LOUDLY before any autonomy
+    // cycle places real orders.  In production we crash on FAIL so Railway
+    // restarts (and the operator gets paged via the alerting webhook).
+    // In dev we log + continue so a missing optional setup doesn't block
+    // the dev loop.
+    const selfTest = await runStartupSelfTest();
+    if (!selfTest.passed && process.env.NODE_ENV === "production") {
+      logger.fatal(
+        { failed: selfTest.checks.filter((c) => c.status === "fail").map((c) => c.name) },
+        "[Startup] Self-test failed in production; refusing to arm schedulers.  See [SelfTest] log lines above for fix steps.",
+      );
+      process.exit(1);
+    }
+
     setInterval(runAutonomousScheduler, AUTONOMOUS_TRADING_INTERVAL_MS);
     setInterval(runPolymarketAutonomousScheduler, AUTONOMOUS_TRADING_INTERVAL_MS);
     setInterval(runOrderSync, ORDER_SYNC_INTERVAL_MS);

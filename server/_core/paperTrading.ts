@@ -8,8 +8,8 @@
  */
 
 import { db, logAuditEvent, getKalshiMarket } from "../db";
-import { kalshiOrders, kalshiFills } from "../../drizzle/schema";
-import { and, eq } from "drizzle-orm";
+import { kalshiOrders, kalshiFills, polymarketPositions } from "../../drizzle/schema";
+import { and, eq, inArray } from "drizzle-orm";
 import { assertPositiveIntegerUserId } from "./userScope";
 import { logger } from "./logger";
 
@@ -273,6 +273,136 @@ export async function simulateKalshiPositionClose(
     return {
       success: false,
       error: String(error),
+    };
+  }
+}
+
+// ── Polymarket paper-trade simulation ────────────────────────────────────────
+//
+// PAPER_TRADE_MODE was previously a Kalshi-only safety net — Polymarket
+// orders ignored the env and went straight to the live CLOB.  This shipped
+// the Polymarket parity so an operator can run a paper-only validation
+// across both platforms before taking either live.
+//
+// Mirrors the live placePolymarketOrder return shape so the autonomy path
+// can branch on ENV.paperTradeMode without other changes.  The live path
+// does NOT persist to polymarketOrders/polymarketFills (those tables are
+// populated by other flows), so neither does the simulator — we keep
+// behavioural parity.  We DO upsert into polymarketPositions and emit an
+// audit event so the dashboard, learning loop, and any future exit monitor
+// see a consistent simulated state.
+
+export interface PolymarketPlaceResult {
+  success: boolean;
+  orderId?: string;
+  error?: string;
+}
+
+export async function simulatePolymarketOrderFill(
+  userId: number,
+  order: {
+    marketId: string;
+    tokenId: string;
+    /** Position side ("yes"/"no") — the autonomy signal's side. */
+    positionSide: "yes" | "no";
+    price: number;
+    sizeUsdc: number;
+  },
+  triggeredByOpenId: string,
+): Promise<PolymarketPlaceResult> {
+  try {
+    const scopedUserId = assertPositiveIntegerUserId(userId, "Polymarket paper trading userId");
+
+    if (!Number.isFinite(order.price) || order.price <= 0 || order.price >= 1) {
+      return { success: false, error: "Invalid limit price for paper-mode Polymarket fill" };
+    }
+    if (!Number.isFinite(order.sizeUsdc) || order.sizeUsdc <= 0) {
+      return { success: false, error: "Invalid size for paper-mode Polymarket fill" };
+    }
+
+    // Polymarket markets table (current price) is currently absent — the
+    // autonomy path passes its limit price directly.  Without a current-price
+    // source we fill exactly at the limit price.  This is a conservative
+    // simulation (no slippage benefit) so paper P&L doesn't flatter the
+    // strategy.
+    const fillPrice = order.price;
+    const orderId = `nexus-poly-paper-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+    // Upsert the position so the dashboard and downstream learning see it.
+    try {
+      const existing = await db
+        .select()
+        .from(polymarketPositions)
+        .where(
+          and(
+            eq(polymarketPositions.userId, scopedUserId),
+            eq(polymarketPositions.marketId, order.marketId),
+            eq(polymarketPositions.tokenId, order.tokenId),
+            inArray(polymarketPositions.positionStatus, ["open", "closing"]),
+          ),
+        )
+        .then((rows: unknown[]) => (rows as Array<Record<string, unknown>>)[0]);
+
+      if (existing) {
+        const prevSize = Number(existing.sizeUsdc ?? 0);
+        const prevAvg = Number(existing.entryPrice ?? fillPrice);
+        const newSize = prevSize + order.sizeUsdc;
+        const newAvg = newSize > 0 ? (prevSize * prevAvg + order.sizeUsdc * fillPrice) / newSize : fillPrice;
+        await db
+          .update(polymarketPositions)
+          .set({ sizeUsdc: newSize, entryPrice: newAvg, currentPrice: fillPrice })
+          .where(eq(polymarketPositions.id, Number(existing.id)));
+      } else {
+        await db.insert(polymarketPositions).values({
+          userId: scopedUserId,
+          marketId: order.marketId,
+          tokenId: order.tokenId,
+          side: order.positionSide,
+          sizeUsdc: order.sizeUsdc,
+          entryPrice: fillPrice,
+          currentPrice: fillPrice,
+          unrealizedPnl: 0,
+          realizedPnl: 0,
+          positionStatus: "open",
+        });
+      }
+    } catch (positionError) {
+      logger.error(
+        { err: positionError, orderId, marketId: order.marketId },
+        "[PaperTrading] Failed to upsert simulated Polymarket position",
+      );
+      // Position upsert failure is non-fatal — the audit event below still
+      // surfaces the simulated trade.  The autonomy path treats orderId
+      // success as the contract.
+    }
+
+    logger.info(
+      { orderId, marketId: order.marketId, positionSide: order.positionSide, sizeUsdc: order.sizeUsdc, fillPrice },
+      "[PaperTrading] Simulated Polymarket order filled",
+    );
+
+    void logAuditEvent(
+      "polymarket_order_simulated",
+      JSON.stringify({
+        orderId,
+        marketId: order.marketId,
+        tokenId: order.tokenId,
+        positionSide: order.positionSide,
+        sizeUsdc: order.sizeUsdc,
+        fillPrice,
+        simulated: true,
+      }),
+      triggeredByOpenId,
+    ).catch((auditErr) =>
+      logger.error({ err: auditErr, orderId }, "[PaperTrading] Failed to write Polymarket simulated audit event"),
+    );
+
+    return { success: true, orderId };
+  } catch (error) {
+    logger.error({ err: error }, "[PaperTrading] Polymarket order simulation error");
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
     };
   }
 }

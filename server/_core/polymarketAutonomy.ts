@@ -36,6 +36,8 @@ import {
 import { assertPositiveIntegerUserId } from "./userScope";
 import { recordPolymarketTradeEntry } from "./polymarketLearning";
 import { withUserLock } from "./userMutex";
+import { simulatePolymarketOrderFill } from "./paperTrading";
+import { ENV } from "./env";
 import { logger } from "./logger";
 
 const MAX_SCHEDULED_MARKETS = 80;
@@ -582,18 +584,35 @@ export async function runPolymarketAutonomousTrading(
   }
 
   // --- 6. Place the order ---
+  // Paper-mode short-circuit: never hit the live Polymarket CLOB when
+  // PAPER_TRADE_MODE=true.  This was previously a Kalshi-only safety net,
+  // making the env var dangerous for an operator validating Polymarket
+  // signals.  Simulator returns the same shape so downstream code is
+  // unchanged.
   try {
-    const orderResult = await placePolymarketOrder(
-      creds.apiKey,
-      creds.apiSecret,
-      creds.apiPassphrase,
-      {
-        tokenId: best.tokenId,
-        side: "BUY",
-        price: best.limitPrice,
-        size: scaledSize,
-      },
-    );
+    const orderResult = ENV.paperTradeMode
+      ? await simulatePolymarketOrderFill(
+          scopedUserId,
+          {
+            marketId: best.marketId,
+            tokenId: best.tokenId,
+            positionSide: best.side,
+            price: best.limitPrice,
+            sizeUsdc: scaledSize,
+          },
+          triggeredByOpenId,
+        )
+      : await placePolymarketOrder(
+          creds.apiKey,
+          creds.apiSecret,
+          creds.apiPassphrase,
+          {
+            tokenId: best.tokenId,
+            side: "BUY",
+            price: best.limitPrice,
+            size: scaledSize,
+          },
+        );
 
     if (!orderResult.success) {
       await db.logAuditEvent(
