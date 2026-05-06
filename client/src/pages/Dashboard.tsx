@@ -70,6 +70,7 @@ export default function Dashboard() {
   const accountStatusQuery = trpc.kalshi.getKalshiAccountStatus.useQuery();
   const { data: instructions } = trpc.training.getInstructions.useQuery();
   const autonomyActivityQuery = trpc.kalshi.getAutonomyActivity.useQuery();
+  const equityCurveQuery = trpc.kalshi.getEquityCurve.useQuery({ days: 7 });
 
   const startTradingMutation = trpc.kalshi.setTradingActivation.useMutation({
     onSuccess: async (result) => {
@@ -114,33 +115,30 @@ export default function Dashboard() {
   // from the (possibly undefined) query data here.
   const accountStatusForMemo = accountStatusQuery.data;
   const performanceOverviewForMemo = performanceOverviewQuery.data;
-  const equityForMemo = (accountStatusForMemo?.connected ? accountStatusForMemo?.equity : 0) || 0;
-  const realizedPnlForMemo = performanceOverviewForMemo?.metrics?.realizedPnL ?? 0;
+  const equityCurveForMemo = equityCurveQuery.data;
 
-  // Generate placeholder performance data for chart (7 days)
+  // Wire chart to real getEquityCurve data (7 days)
   const performanceChartData = useMemo(() => {
-    const days = 7;
-    const data = [];
-    const balance = equityForMemo - realizedPnlForMemo; // approximate starting balance
-
-    for (let i = days - 1; i >= 0; i--) {
-      const date = new Date();
-      date.setDate(date.getDate() - i);
-      const dayLabel = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-
-      // Simple linear interpolation for now
-      const progress = i === 0 ? 1 : (days - i) / days;
-      const currentBalance = balance + (realizedPnlForMemo * progress);
-
-      data.push({
-        date: dayLabel,
-        equity: Math.max(0, currentBalance),
-        pnl: realizedPnlForMemo * progress,
-      });
+    // If query is loading, errored, or returned no data, fall back to empty
+    if (!equityCurveForMemo?.points || equityCurveForMemo.points.length === 0) {
+      return [];
     }
 
-    return data;
-  }, [equityForMemo, realizedPnlForMemo]);
+    const { points, startingBalance } = equityCurveForMemo;
+
+    // Transform ISO date strings (e.g., "2026-05-06") to display format (e.g., "May 6")
+    return points.map((point) => {
+      const dateObj = new Date(`${point.date}T00:00:00Z`);
+      const dayLabel = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const pnl = point.equity - startingBalance;
+
+      return {
+        date: dayLabel,
+        equity: point.equity,
+        pnl,
+      };
+    });
+  }, [equityCurveForMemo]);
 
   // Generate trend data for sparklines (last 7 data points)
   const pnlTrend = useMemo(
