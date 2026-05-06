@@ -14,6 +14,7 @@ import {
   marketTimeframeAnalysis,
   marketMicrostructure,
   signalBayesianUpdates,
+  portfolioVolatilityHistory,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 import { eq, and, desc, gte, inArray, ne, sql } from "drizzle-orm";
@@ -1237,4 +1238,26 @@ export async function getUserBetaAccessLevel(userId: number) {
     .limit(1);
 
   return (result[0]?.betaAccessLevel ?? "none") as "none" | "internal" | "invited" | "public";
+}
+
+// Portfolio Volatility History
+export async function savePortfolioVolatility(data: {
+  userId: number;
+  annualizedVol: number;
+  dailyVol: number;
+  volScalingFactor: number;
+  positionCount: number;
+  targetVol: number;
+}): Promise<void> {
+  const database = await getDb();
+  if (!database) return;
+  const scopedUserId = assertPositiveIntegerUserId(data.userId, "savePortfolioVolatility userId");
+  await database.insert(portfolioVolatilityHistory).values({
+    userId: scopedUserId,
+    annualizedVol: data.annualizedVol,
+    dailyVol: data.dailyVol,
+    volScalingFactor: data.volScalingFactor,
+    positionCount: data.positionCount,
+    targetVol: data.targetVol,
+  });
 }

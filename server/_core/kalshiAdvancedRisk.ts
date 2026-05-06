@@ -228,3 +228,135 @@ export function recommendAdjustments(
 
   return recommendations;
 }
+
+// ── Portfolio-Level Volatility Targeting ──────────────────────────────────────
+
+const TARGET_VOL_ANNUAL = 0.15;         // 15% annual target vol
+const TRADING_DAYS_PER_YEAR = 252;
+const VOL_HIGH_THRESHOLD_1 = 0.20;     // >20% → reduce 30%
+const VOL_HIGH_THRESHOLD_2 = 0.25;     // >25% → reduce 50%, block high-risk
+const VOL_LOW_THRESHOLD = 0.10;        // <10% → increase 20%
+const VOL_HARD_CAP = 0.30;            // >30% → block all new positions
+
+export interface PositionVolData {
+  positionId: string;
+  weight: number;     // fraction of portfolio (0-1)
+  dailyVol: number;   // daily volatility (0-1 scale)
+  returns: number[];  // array of recent daily returns
+}
+
+export interface PortfolioVolResult {
+  annualizedVol: number;
+  dailyVol: number;
+  volScalingFactor: number;
+  isHighVol: boolean;
+  isExtremeVol: boolean;
+  isHardBlocked: boolean;
+  isLowVol: boolean;
+  shouldBlockHighRiskSignals: boolean;
+}
+
+/**
+ * Calculate standard deviation of an array of numbers.
+ * Returns 0 if fewer than 2 values.
+ */
+export function stdDev(values: number[]): number {
+  if (values.length < 2) return 0;
+  const mean = values.reduce((a, b) => a + b, 0) / values.length;
+  const variance = values.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / values.length;
+  return Math.sqrt(variance);
+}
+
+/**
+ * Calculate Pearson correlation between two return series.
+ * Returns 0 if either series has fewer than 2 values or zero standard deviation.
+ */
+export function calculateCorrelation(returns1: number[], returns2: number[]): number {
+  const n = Math.min(returns1.length, returns2.length);
+  if (n < 2) return 0;
+
+  const r1 = returns1.slice(0, n);
+  const r2 = returns2.slice(0, n);
+
+  const mean1 = r1.reduce((a, b) => a + b, 0) / n;
+  const mean2 = r2.reduce((a, b) => a + b, 0) / n;
+
+  let cov = 0;
+  let var1 = 0;
+  let var2 = 0;
+  for (let i = 0; i < n; i++) {
+    const d1 = r1[i] - mean1;
+    const d2 = r2[i] - mean2;
+    cov += d1 * d2;
+    var1 += d1 * d1;
+    var2 += d2 * d2;
+  }
+
+  const denom = Math.sqrt(var1 * var2);
+  if (denom === 0) return 0;
+  return cov / denom;
+}
+
+/**
+ * Calculate portfolio volatility using the variance-covariance matrix.
+ * Uses returns data when available; falls back to position.dailyVol.
+ */
+export function calculatePortfolioVol(positions: PositionVolData[]): number {
+  if (positions.length === 0) return 0;
+
+  // Per-position sigma: prefer stdDev of returns if available
+  const sigmas = positions.map((p) => {
+    if (p.returns.length >= 2) return stdDev(p.returns);
+    return p.dailyVol;
+  });
+
+  // Portfolio variance = sum_i sum_j w_i * w_j * cov(i,j)
+  let portfolioVariance = 0;
+  for (let i = 0; i < positions.length; i++) {
+    for (let j = 0; j < positions.length; j++) {
+      const rho = i === j ? 1 : calculateCorrelation(positions[i].returns, positions[j].returns);
+      portfolioVariance += positions[i].weight * positions[j].weight * rho * sigmas[i] * sigmas[j];
+    }
+  }
+
+  return Math.sqrt(Math.max(0, portfolioVariance));
+}
+
+/**
+ * Determine vol scaling factor and constraint flags from current annualized vol.
+ */
+export function getVolScalingFactor(annualizedVol: number): Pick<
+  PortfolioVolResult,
+  "volScalingFactor" | "isHighVol" | "isExtremeVol" | "isHardBlocked" | "isLowVol" | "shouldBlockHighRiskSignals"
+> {
+  if (annualizedVol > VOL_HARD_CAP) {
+    return { volScalingFactor: 0, isHighVol: true, isExtremeVol: true, isHardBlocked: true, isLowVol: false, shouldBlockHighRiskSignals: true };
+  }
+  if (annualizedVol > VOL_HIGH_THRESHOLD_2) {
+    return { volScalingFactor: 0.50, isHighVol: true, isExtremeVol: true, isHardBlocked: false, isLowVol: false, shouldBlockHighRiskSignals: true };
+  }
+  if (annualizedVol > VOL_HIGH_THRESHOLD_1) {
+    return { volScalingFactor: 0.70, isHighVol: true, isExtremeVol: false, isHardBlocked: false, isLowVol: false, shouldBlockHighRiskSignals: false };
+  }
+  if (annualizedVol < VOL_LOW_THRESHOLD) {
+    return { volScalingFactor: 1.20, isHighVol: false, isExtremeVol: false, isHardBlocked: false, isLowVol: true, shouldBlockHighRiskSignals: false };
+  }
+  return { volScalingFactor: 1.00, isHighVol: false, isExtremeVol: false, isHardBlocked: false, isLowVol: false, shouldBlockHighRiskSignals: false };
+}
+
+/**
+ * Main entry point: calculate full portfolio volatility result from position data.
+ * Annualizes daily vol using sqrt(TRADING_DAYS_PER_YEAR).
+ */
+export function calculatePortfolioVolatility(positions: PositionVolData[]): PortfolioVolResult {
+  const dailyVol = calculatePortfolioVol(positions);
+  const annualizedVol = dailyVol * Math.sqrt(TRADING_DAYS_PER_YEAR);
+  const scaling = getVolScalingFactor(annualizedVol);
+  return {
+    annualizedVol,
+    dailyVol,
+    ...scaling,
+  };
+}
+
+export { TARGET_VOL_ANNUAL, TRADING_DAYS_PER_YEAR };

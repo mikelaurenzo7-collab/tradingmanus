@@ -504,6 +504,21 @@ export const distributedLocks = pgTable("distributedLocks", {
   acquiredBy: varchar("acquiredBy", { length: 128 }).notNull(),
 });
 
+// ── Portfolio Volatility History ───────────────────────────────────────────────
+
+export const portfolioVolatilityHistory = pgTable("portfolio_volatility_history", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull(),
+  calculatedAt: timestamp("calculatedAt", { withTimezone: true }).defaultNow().notNull(),
+  annualizedVol: doublePrecision("annualizedVol").notNull(),
+  dailyVol: doublePrecision("dailyVol").notNull(),
+  volScalingFactor: doublePrecision("volScalingFactor").notNull(),
+  positionCount: integer("positionCount").notNull(),
+  targetVol: doublePrecision("targetVol").notNull(),
+}, (t) => ({
+  portfolioVolHistIdx: index("portfolio_vol_hist_idx").on(t.userId, t.calculatedAt),
+}));
+
 export type User = typeof users.$inferSelect;
 export type BotConfig = typeof botConfigs.$inferSelect;
 export type ChatMessage = typeof chatMessages.$inferSelect;
