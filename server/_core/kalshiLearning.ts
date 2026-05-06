@@ -406,12 +406,48 @@ export function buildKalshiPlatformBehaviorSnapshot(
 
 export async function getPerformanceOverview(userId: number): Promise<PerformanceOverview> {
   const scopedUserId = assertPositiveIntegerUserId(userId, "getPerformanceOverview userId");
-  const [capital, trades, signals, openPositions] = await Promise.all([
+
+  // We deliberately use Promise.allSettled here: the dashboard performance
+  // overview is the user's *first* impression of the app, and a single
+  // schema-drift / transient DB failure on one of these sub-queries must
+  // never blank-out the whole page. We instead degrade gracefully and log
+  // the underlying error so operators can still see what failed.
+  const settled = await Promise.allSettled([
     db.getKalshiCapital(scopedUserId),
     db.getKalshiTradeHistory(1000, scopedUserId),
     db.getRecentSignals(1000, scopedUserId),
     db.getOpenKalshiPositions(scopedUserId),
   ]);
+
+  const [capitalResult, tradesResult, signalsResult, openPositionsResult] = settled;
+
+  const failures = settled
+    .map((r, i) => ({ r, label: ["capital", "trades", "signals", "openPositions"][i] }))
+    .filter((entry) => entry.r.status === "rejected");
+  if (failures.length > 0) {
+    logger.warn(
+      {
+        userId: scopedUserId,
+        failedSources: failures.map((f) => f.label),
+        firstError: (failures[0].r as PromiseRejectedResult).reason,
+      },
+      "[PerformanceOverview] One or more sub-queries failed; returning degraded overview"
+    );
+  }
+
+  const capital = capitalResult.status === "fulfilled" ? capitalResult.value : null;
+  const trades: TradeLike[] =
+    tradesResult.status === "fulfilled" && Array.isArray(tradesResult.value)
+      ? tradesResult.value
+      : [];
+  const signals: SignalLike[] =
+    signalsResult.status === "fulfilled" && Array.isArray(signalsResult.value)
+      ? signalsResult.value
+      : [];
+  const openPositions: OpenPositionLike[] =
+    openPositionsResult.status === "fulfilled" && Array.isArray(openPositionsResult.value)
+      ? openPositionsResult.value
+      : [];
 
   const startingBalance = Number(
     capital?.startingBalance ?? capital?.currentBalance ?? 0
@@ -421,12 +457,22 @@ export async function getPerformanceOverview(userId: number): Promise<Performanc
     openPositions,
   });
 
+  // profitFactor can be Infinity when there are wins but no losses. Superjson
+  // can serialize it, but downstream consumers (charts, .toFixed(), CSV
+  // exports) routinely crash on non-finite numbers, so cap it at a large
+  // finite sentinel here.
+  const safeProfitFactor = Number.isFinite(metrics.profitFactor)
+    ? metrics.profitFactor
+    : metrics.profitFactor > 0
+      ? 999
+      : 0;
+
   return {
     startingBalance,
     currentBalance: Number(
       capital?.currentBalance ?? startingBalance + metrics.totalPnL
     ),
-    metrics,
+    metrics: { ...metrics, profitFactor: safeProfitFactor },
     signalPerformance: analyzeSignalPerformanceFromData(signals, trades),
   };
 }

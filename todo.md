@@ -298,7 +298,7 @@
 
 - [x] **ISSUE: No loading states during order placement** - Close-position flow now has confirm dialog, sonner toasts, and a visible spinner
 - [x] **ISSUE: No confirmation dialog before trading** - Close-position flow gates on a `window.confirm` showing side, quantity, market, and exit price
-- [ ] **ISSUE: Performance dashboard not wired** - UI created but no backend data flowing
+- [x] **ISSUE: Performance dashboard not wired** - Equity curve and activity heatmap now sourced from real closed positions and order placement history (`kalshi.getEquityCurve` / `kalshi.getActivityHeatmap`), with regression coverage in `server/kalshi.performance-charts.test.ts`
 - [ ] **ISSUE: Training instructions not enforced** - Agent doesn't actually filter signals by training rules
 
 - [x] Add a higher-signal external data source to sentiment scoring

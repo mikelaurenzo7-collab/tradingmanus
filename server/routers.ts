@@ -1425,6 +1425,91 @@ export const appRouter = router({
         }
       }),
 
+    getEquityCurve: protectedProcedure
+      .input(z.object({ days: z.number().int().min(7).max(365).optional().default(30) }).optional())
+      .query(async ({ input, ctx }) => {
+        try {
+          const userId = getRequiredUserId(ctx);
+          const days = input?.days ?? 30;
+          const [overview, dailyPnl] = await Promise.all([
+            getPerformanceOverview(userId),
+            db.getKalshiEquityCurve(userId, days),
+          ]);
+
+          const startingBalance = Number(overview?.startingBalance ?? 0);
+          const currentBalance = Number(overview?.currentBalance ?? 0);
+
+          // Build cumulative-equity series: starting balance → cumulative
+          // realized PnL by day → final point at currentBalance (today).
+          const today = new Date();
+          const todayKey = new Date(Date.UTC(
+            today.getUTCFullYear(),
+            today.getUTCMonth(),
+            today.getUTCDate(),
+          )).toISOString().split("T")[0];
+
+          const points: Array<{ date: string; equity: number }> = [];
+          if (dailyPnl.length === 0) {
+            // No closed trades yet — return a trivial flat series so the
+            // chart can render the current balance honestly.
+            const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
+              .toISOString()
+              .split("T")[0];
+            points.push({ date: startDate, equity: startingBalance });
+            points.push({ date: todayKey, equity: currentBalance });
+            return { points, startingBalance, currentBalance, hasHistory: false };
+          }
+
+          // Anchor the curve at the day before the first close so the
+          // initial equity is plotted as the starting balance.
+          const firstDate = new Date(`${dailyPnl[0].date}T00:00:00Z`);
+          const anchorDate = new Date(firstDate.getTime() - 24 * 60 * 60 * 1000)
+            .toISOString()
+            .split("T")[0];
+          points.push({ date: anchorDate, equity: startingBalance });
+
+          let runningEquity = startingBalance;
+          for (const row of dailyPnl) {
+            runningEquity += row.realizedPnl;
+            points.push({ date: row.date, equity: runningEquity });
+          }
+
+          // Always close the curve at "today" with the live current
+          // balance so the chart reflects unrealized PnL movement too.
+          if (points[points.length - 1].date !== todayKey) {
+            points.push({ date: todayKey, equity: currentBalance });
+          } else {
+            points[points.length - 1] = { date: todayKey, equity: currentBalance };
+          }
+
+          return { points, startingBalance, currentBalance, hasHistory: true };
+        } catch (error) {
+          logger.error({ err: error }, "[Kalshi] Get equity curve error");
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Unable to load equity curve",
+            cause: error,
+          });
+        }
+      }),
+
+    getActivityHeatmap: protectedProcedure
+      .input(z.object({ days: z.number().int().min(7).max(365).optional().default(90) }).optional())
+      .query(async ({ input, ctx }) => {
+        try {
+          const userId = getRequiredUserId(ctx);
+          const buckets = await db.getKalshiActivityHeatmap(userId, input?.days ?? 90);
+          return { buckets };
+        } catch (error) {
+          logger.error({ err: error }, "[Kalshi] Get activity heatmap error");
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Unable to load activity heatmap",
+            cause: error,
+          });
+        }
+      }),
+
     // Kalshi account connection
     connectKalshiAccount: protectedProcedure
       .input(z.object({ apiKey: z.string(), privateKey: z.string() }))

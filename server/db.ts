@@ -1601,3 +1601,95 @@ export async function getPerformanceAttributionHistory(
     .orderBy(desc(performanceAttribution.createdAt))
     .limit(limit);
 }
+
+/**
+ * Reconstruct an equity-curve series from closed positions.
+ *
+ * Returns one point per UTC day where at least one trade closed, plus a
+ * leading point at the first close date with the starting balance. The
+ * caller (UI) typically prepends the starting balance / appends current
+ * balance as needed.
+ */
+export async function getKalshiEquityCurve(userId: number, limitDays: number = 365) {
+  const scopedUserId = assertPositiveIntegerUserId(userId, "getKalshiEquityCurve userId");
+  const database = await getDb();
+  if (!database) return [];
+
+  const cutoff = new Date(Date.now() - limitDays * 24 * 60 * 60 * 1000);
+
+  const closed = await database
+    .select({
+      closedAt: kalshiPositions.closedAt,
+      realizedPnl: kalshiPositions.realizedPnl,
+    })
+    .from(kalshiPositions)
+    .where(
+      and(
+        eq(kalshiPositions.userId, scopedUserId),
+        eq(kalshiPositions.positionStatus, "closed"),
+        gte(kalshiPositions.closedAt, cutoff)
+      )
+    )
+    .orderBy(kalshiPositions.closedAt);
+
+  // Aggregate realized PnL per UTC day.
+  const dailyPnl = new Map<string, number>();
+  for (const row of closed) {
+    const closedAt = row.closedAt as Date | null;
+    if (!closedAt) continue;
+    const key = new Date(Date.UTC(
+      closedAt.getUTCFullYear(),
+      closedAt.getUTCMonth(),
+      closedAt.getUTCDate(),
+    )).toISOString().split("T")[0];
+    const pnl = Number(row.realizedPnl ?? 0);
+    if (!Number.isFinite(pnl)) continue;
+    dailyPnl.set(key, (dailyPnl.get(key) ?? 0) + pnl);
+  }
+
+  return Array.from(dailyPnl.entries())
+    .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+    .map(([date, pnl]) => ({ date, realizedPnl: pnl }));
+}
+
+/**
+ * Aggregate filled-order activity by day-of-week (0=Sun..6=Sat) and
+ * UTC hour-of-day, for the activity heatmap. Falls back to order
+ * createdAt when filledAt is null so pending/cancelled orders still
+ * surface as "attempted" activity.
+ */
+export async function getKalshiActivityHeatmap(userId: number, limitDays: number = 90) {
+  const scopedUserId = assertPositiveIntegerUserId(userId, "getKalshiActivityHeatmap userId");
+  const database = await getDb();
+  if (!database) return [];
+
+  const cutoff = new Date(Date.now() - limitDays * 24 * 60 * 60 * 1000);
+
+  const orders = await database
+    .select({
+      createdAt: kalshiOrders.createdAt,
+      filledAt: kalshiOrders.filledAt,
+    })
+    .from(kalshiOrders)
+    .where(
+      and(
+        eq(kalshiOrders.userId, scopedUserId),
+        gte(kalshiOrders.createdAt, cutoff)
+      )
+    );
+
+  const buckets = new Map<string, number>();
+  for (const row of orders) {
+    const at = (row.filledAt as Date | null) ?? (row.createdAt as Date | null);
+    if (!at) continue;
+    const dow = at.getUTCDay(); // 0=Sun..6=Sat
+    const hour = at.getUTCHours();
+    const key = `${dow}:${hour}`;
+    buckets.set(key, (buckets.get(key) ?? 0) + 1);
+  }
+
+  return Array.from(buckets.entries()).map(([key, count]) => {
+    const [dow, hour] = key.split(":").map(Number);
+    return { dow, hour, count };
+  });
+}

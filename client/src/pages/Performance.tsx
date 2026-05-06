@@ -22,6 +22,18 @@ export default function Performance() {
   
   const performanceOverviewQuery = trpc.kalshi.getPerformanceOverview.useQuery();
   const attributionQuery = trpc.kalshi.getAttributionAnalysis.useQuery({ limit: 250 });
+  const equityCurveDays = useMemo<number>(() => {
+    switch (timeRange) {
+      case '1D': return 7; // server minimum is 7d
+      case '1W': return 7;
+      case '1M': return 30;
+      case '3M': return 90;
+      case '1Y': return 365;
+      default: return 365;
+    }
+  }, [timeRange]);
+  const equityCurveQuery = trpc.kalshi.getEquityCurve.useQuery({ days: equityCurveDays });
+  const activityHeatmapQuery = trpc.kalshi.getActivityHeatmap.useQuery({ days: 90 });
 
   const performanceOverview = performanceOverviewQuery.data;
   const performanceMetrics = performanceOverview?.metrics;
@@ -34,26 +46,11 @@ export default function Performance() {
     return ((performanceMetrics?.totalPnL ?? 0) / performanceOverview.startingBalance) * 100;
   }, [performanceOverview, performanceMetrics]);
 
-  // Build equity curve data (mock demonstration — replace with real historical data when available)
+  // Real equity curve from closed-position history + live current balance.
   const equityCurveData = useMemo(() => {
-    if (!performanceOverview) return [];
-    const startBal = performanceOverview.startingBalance;
-    const currentBal = performanceOverview.currentBalance;
-    const totalPnL = performanceMetrics?.totalPnL ?? 0;
-
-    // Generate a simple 30-day mock curve for visualization
-    const data = [];
-    const days = 30;
-    for (let i = 0; i <= days; i++) {
-      const progress = i / days;
-      const equity = startBal + (totalPnL * progress);
-      data.push({
-        date: new Date(Date.now() - (days - i) * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        equity: equity,
-      });
-    }
-    return data;
-  }, [performanceOverview, performanceMetrics]);
+    return equityCurveQuery.data?.points ?? [];
+  }, [equityCurveQuery.data]);
+  const equityCurveHasHistory = equityCurveQuery.data?.hasHistory ?? false;
 
   // Build distribution chart data from signal performance
   const distributionData = useMemo(() => {
@@ -65,28 +62,28 @@ export default function Performance() {
     }));
   }, [signalPerformance]);
 
-  // Build heatmap data for activity tracking (MOCK DATA — replace when real activity tracking is available)
+  // Real activity heatmap derived from order placement history (UTC).
+  const heatmapRows = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const heatmapCols = Array.from({ length: 24 }, (_, i) => i);
   const heatmapData = useMemo(() => {
-    // Demo data: day-of-week x hour-of-day activity
-    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    const hours = Array.from({ length: 24 }, (_, i) => i);
+    const buckets = activityHeatmapQuery.data?.buckets ?? [];
+    const counts = new Map<string, number>();
+    for (const b of buckets) {
+      counts.set(`${b.dow}:${b.hour}`, b.count);
+    }
     const data: Array<{ row: string | number; col: string | number; value: number }> = [];
-    
-    for (const day of days) {
-      for (const hour of hours) {
-        // Simulate higher activity during market hours (9-16) on weekdays
-        let value = Math.random() * 20;
-        if (['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].includes(day) && hour >= 9 && hour <= 16) {
-          value += Math.random() * 30;
-        }
-        data.push({ row: day, col: hour, value: Math.round(value) });
+    for (let dow = 0; dow < heatmapRows.length; dow++) {
+      for (const hour of heatmapCols) {
+        data.push({
+          row: heatmapRows[dow],
+          col: hour,
+          value: counts.get(`${dow}:${hour}`) ?? 0,
+        });
       }
     }
     return data;
-  }, []);
-
-  const heatmapRows = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-  const heatmapCols = Array.from({ length: 24 }, (_, i) => i);
+  }, [activityHeatmapQuery.data]);
+  const heatmapHasActivity = (activityHeatmapQuery.data?.buckets?.length ?? 0) > 0;
 
   const attributionBreakdownData = useMemo(() => {
     const totals = attributionQuery.data?.totals;
@@ -210,7 +207,14 @@ export default function Performance() {
       {/* Equity Curve Chart — Full Width */}
       {equityCurveData.length > 0 && (
         <div className="glass-panel p-6 glow-subtle">
-          <h3 className="text-lg font-semibold mb-4 text-foreground">Equity Curve</h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-foreground">Equity Curve</h3>
+            {!equityCurveHasHistory && (
+              <span className="text-xs text-muted-foreground">
+                No closed trades yet — showing current balance only
+              </span>
+            )}
+          </div>
           <PerformanceChart
             data={equityCurveData}
             series={[{ key: 'equity', name: 'Account Balance', color: '#8b5cf6' }]}
@@ -237,18 +241,22 @@ export default function Performance() {
         </div>
       )}
 
-      {/* Heatmap Chart — Activity Tracking (Demo Data) */}
+      {/* Heatmap Chart — Activity Tracking (real order placement times, UTC) */}
       <div className="glass-panel p-6 glow-subtle">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold text-foreground">Trading Activity Heatmap</h3>
-          <span className="text-xs text-muted-foreground">Demo data — activity tracking coming soon</span>
+          <span className="text-xs text-muted-foreground">
+            {heatmapHasActivity
+              ? 'Order placements over the last 90 days (UTC)'
+              : 'No order activity yet in the last 90 days'}
+          </span>
         </div>
         <HeatmapChart
           data={heatmapData}
           rows={heatmapRows}
           cols={heatmapCols}
           height={280}
-          formatValue={(v: number) => `${v} signals`}
+          formatValue={(v: number) => `${v} order${v === 1 ? '' : 's'}`}
           colorScale="purple-coral"
           showValues={false}
         />

@@ -228,15 +228,17 @@ describe("kalshi market-data router", () => {
     ]);
   });
 
-  it("surfaces performance overview failures to the client", async () => {
+  it("returns a degraded performance overview when a sub-query fails (does not 500 the dashboard)", async () => {
     mocks.getKalshiTradeHistory.mockRejectedValue(new Error("db unavailable"));
 
     const caller = appRouter.createCaller(createProtectedContext());
 
-    await expect(caller.kalshi.getPerformanceOverview()).rejects.toMatchObject({
-      code: "INTERNAL_SERVER_ERROR",
-      message: "Unable to load performance overview",
-    });
+    const result = await caller.kalshi.getPerformanceOverview();
+    expect(result.metrics.totalTrades).toBe(0);
+    expect(result.signalPerformance).toEqual([]);
+    // Capital came from a successful sub-query and is still surfaced.
+    expect(result.startingBalance).toBe(100);
+    expect(result.currentBalance).toBe(100);
   });
 
   it("builds autonomy activity from structured run-ledger rows", async () => {

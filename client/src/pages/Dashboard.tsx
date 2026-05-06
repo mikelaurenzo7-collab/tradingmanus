@@ -161,16 +161,18 @@ export default function Dashboard() {
     return <DashboardSkeleton />;
   }
 
-  if (
-    performanceOverviewQuery.isError ||
-    accountStatusQuery.isError ||
-    autonomyActivityQuery.isError
-  ) {
+  // We deliberately *don't* hard-block the dashboard when only the
+  // performance-overview or autonomy-activity queries fail. Those datasets
+  // are derived/aggregated and a single sub-query failure (e.g. transient
+  // schema drift on Railway) used to brick the entire landing page. The
+  // page already tolerates missing metrics (everything is `?? 0`), so we
+  // surface a non-blocking banner instead and let the user keep working.
+  // We only fail-hard if the account status itself is unloadable, since
+  // that drives the connection-required vs. connected branches below.
+  if (accountStatusQuery.isError) {
     const errorMessage =
-      performanceOverviewQuery.error?.message ||
       accountStatusQuery.error?.message ||
-      autonomyActivityQuery.error?.message ||
-      "We couldn't load your dashboard data. Please try again.";
+      "We couldn't load your account status. Please try again.";
 
     return (
       <div className="flex items-center justify-center min-h-screen p-6">
@@ -195,6 +197,10 @@ export default function Dashboard() {
       </div>
     );
   }
+
+  const degradedSources: string[] = [];
+  if (performanceOverviewQuery.isError) degradedSources.push("performance overview");
+  if (autonomyActivityQuery.isError) degradedSources.push("autonomy activity");
 
   const accountStatus = accountStatusQuery.data;
   const performanceOverview = performanceOverviewQuery.data;
@@ -413,6 +419,31 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
+      {degradedSources.length > 0 && (
+        <Card className="glass-panel border-warning/30 bg-warning/5">
+          <CardContent className="flex flex-wrap items-center gap-3 p-4 text-sm">
+            <AlertCircle className="w-4 h-4 text-warning shrink-0" />
+            <span className="text-foreground">
+              Some dashboard data is temporarily unavailable
+              <span className="text-muted-foreground"> ({degradedSources.join(", ")})</span>.
+              Live trading and connection status are unaffected.
+            </span>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="ml-auto"
+              onClick={() => {
+                performanceOverviewQuery.refetch();
+                autonomyActivityQuery.refetch();
+              }}
+            >
+              <RefreshCw className="w-3.5 h-3.5 mr-2" />
+              Retry
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Header */}
       <PageHeader
         icon={Activity}
