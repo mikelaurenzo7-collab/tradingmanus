@@ -22,7 +22,6 @@ export const ENV = {
   databaseUrl: normalize(process.env.DATABASE_URL),
   ownerEmail: normalize(process.env.OWNER_EMAIL),
   ownerPassword: normalize(process.env.OWNER_PASSWORD),
-  cronSecret: normalize(process.env.CRON_SECRET),
   // OpenRouter API key.  OPENROUTER_API_KEY is the canonical variable;
   // ANTHROPIC_API_KEY is accepted as a backward-compatible fallback so
   // existing deployments do not need to rename their environment variable.
@@ -167,16 +166,6 @@ export function validateServerEnv() {
   if (ENV.isProduction && ENV.ownerPassword.length < 12) {
     console.warn(
       "[ENV] OWNER_PASSWORD is shorter than 12 characters. Consider using a longer password for better security in production."
-    );
-  }
-
-  // Vercel cron jobs authenticate via `Authorization: Bearer ${CRON_SECRET}`.
-  // Without this secret the cron handler falls through to JWT auth and silently
-  // 401s on every scheduled tick — autonomous trading would never run.
-  if (ENV.isProduction && ENV.cronSecret.length < 32) {
-    console.warn(
-      "[ENV] CRON_SECRET is not set or is shorter than 32 characters. " +
-        "Vercel cron-triggered autonomous trading will not work until CRON_SECRET is configured in the Vercel environment."
     );
   }
 

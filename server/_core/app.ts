@@ -2,7 +2,6 @@ import express from "express";
 import helmet from "helmet";
 import cors from "cors";
 import cookieParser from "cookie-parser";
-import crypto from "node:crypto";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:http";
 import { appRouter } from "../routers";
@@ -56,28 +55,11 @@ function readBearerToken(req: AppRequest) {
   return scheme?.toLowerCase() === "bearer" && token ? token : null;
 }
 
-function constantTimeEqual(a: string, b: string) {
-  // Buffer.byteLength is needed because timingSafeEqual requires equal-length
-  // inputs.  We compare lengths first to avoid the throw, but still do the
-  // constant-time compare on the longer side so failure timing is independent
-  // of where the mismatch occurs.
-  const bufA = Buffer.from(a);
-  const bufB = Buffer.from(b);
-  if (bufA.length !== bufB.length) {
-    // Burn a constant amount of work so length-mismatch is indistinguishable
-    // from a value mismatch from the caller's perspective.
-    crypto.timingSafeEqual(bufA, bufA);
-    return false;
-  }
-  return crypto.timingSafeEqual(bufA, bufB);
-}
-
 async function getScheduledTrigger(req: AppRequest) {
-  const bearer = readBearerToken(req);
-  if (ENV.cronSecret && bearer && constantTimeEqual(bearer, ENV.cronSecret)) {
-    return { authorized: true as const, openId: "vercel_cron" };
-  }
-
+  // Railway-only deployment: only authenticated owner/admin requests can
+  // manually trigger /api/scheduled/* endpoints.  The in-process scheduler
+  // (server/_core/index.ts) is the primary autonomy driver — these HTTP
+  // endpoints exist for manual UI-triggered runs.
   const requester = await authenticateRequest(req);
   if (!requester) {
     return { authorized: false as const, status: 401, error: "Authentication required" };
@@ -94,9 +76,8 @@ export function scopeScheduledUsersToTrigger(
   users: EligibleScheduledUser[],
   triggerOpenId: string
 ) {
-  // Both the Vercel cron trigger and the local Node.js scheduler scope
-  // execution to the configured owner only.
-  if (triggerOpenId === "vercel_cron" || triggerOpenId === "local_scheduler") {
+  // The in-process Node scheduler scopes execution to the configured owner only.
+  if (triggerOpenId === "local_scheduler") {
     const ownerEmail = ENV.ownerEmail.trim().toLowerCase();
     if (!ownerEmail) {
       return users;
