@@ -42,12 +42,8 @@ import {
   type ExitStrategyState,
 } from "./exitStrategy";
 import { closeKalshiPosition } from "./kalshiExecution";
+import { estimateMarketVolatility } from "./marketVolatility";
 
-// Default volatility used when we don't have a per-market vol estimate.
-// 0.15 sits in the medium tier of selectStopPct() → 15 % initial stop.
-// Future: replace with a per-market estimate from kalshiSentiment / market
-// snapshots so high-vol markets get wider stops and low-vol tighter ones.
-const DEFAULT_VOLATILITY = 0.15;
 // ATR proxy used by updateTrailingStop().  Conservative default; a follow-up
 // pass can compute this per-market from the kalshiMarketSnapshots table.
 const DEFAULT_ATR = 0.01;
@@ -158,11 +154,15 @@ export async function evaluateExitsForOpenPositions(
     const currentPrice = pickPriceFor(side, marketRow);
     if (currentPrice === null) continue;
 
+    // Per-market volatility from recent snapshots (high-vol → wider stops,
+    // low-vol → tighter).  Falls back to a constant on insufficient history.
+    const volatility = await estimateMarketVolatility(marketId);
+
     const config: ExitStrategyConfig = {
       entryPrice,
       side,
       initialRisk: entryPrice * quantity,
-      volatility: DEFAULT_VOLATILITY,
+      volatility,
       resolutionDate: marketRow.resolutionDate ?? undefined,
     };
 

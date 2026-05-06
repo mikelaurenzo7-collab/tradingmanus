@@ -55,6 +55,7 @@ import {
   fetchKalshiAccountEquity,
 } from "./_core/kalshiAuth";
 import { getPerformanceOverview } from "./_core/kalshiLearning";
+import { getPnlSummary } from "./_core/paperPnlSummary";
 import {
   calculateSharpeBySource,
   identifyLosingPatterns,
@@ -1605,6 +1606,28 @@ export const appRouter = router({
         });
       }
     }),
+
+    /**
+     * Cross-platform realised P&L over a recent window (default 7 days).
+     * The single number an operator needs while validating in paper mode:
+     * "did the bot make money this week?".  Combines closed Kalshi and
+     * Polymarket positions; the same query reflects real P&L when
+     * PAPER_TRADE_MODE is off.
+     */
+    getPnlSummary: protectedProcedure
+      .input(z.object({ windowDays: z.number().int().min(1).max(90).default(7) }).optional())
+      .query(async ({ ctx, input }) => {
+        try {
+          return await getPnlSummary(getRequiredUserId(ctx), input?.windowDays ?? 7);
+        } catch (error) {
+          logger.error({ err: error }, "[Pnl] Get P&L summary error");
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Unable to load P&L summary",
+            cause: error,
+          });
+        }
+      }),
 
     getAttributionAnalysis: protectedProcedure
       .input(
