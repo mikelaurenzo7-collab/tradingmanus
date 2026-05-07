@@ -63,6 +63,9 @@ export const ENV = {
   xaiApiKey: normalize(process.env.XAI_API_KEY),
   grokModel: normalize(process.env.GROK_MODEL) || "grok-3-latest",
   grokTimeoutMs: normalizePositiveInt(process.env.GROK_TIMEOUT_MS, 15000),
+  // NEW: Grok trader mode flags
+  enableGrokSolo: normalizeBoolean(process.env.ENABLE_GROK_SOLO, false),
+  enableGrokTeam: normalizeBoolean(process.env.ENABLE_GROK_TEAM, true),  // default team with Claude
   // Feature toggles for the AI toolbelt.
   enableAiPromptCache: normalizeBoolean(
     process.env.ENABLE_AI_PROMPT_CACHE,
@@ -193,6 +196,11 @@ export function validateServerEnv() {
         "This model has hard daily rate limits unsuitable for production trading. " +
         "Set OPENROUTER_MODEL to a paid model you have validated on OpenRouter."
     );
+  }
+
+  // Grok-specific warnings
+  if (ENV.isProduction && ENV.enableGrokSolo && !ENV.xaiApiKey) {
+    console.warn("[ENV] ENABLE_GROK_SOLO is true but XAI_API_KEY is not set. Grok solo mode will be disabled.");
   }
 }
 
