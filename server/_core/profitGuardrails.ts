@@ -14,8 +14,10 @@
 import { ENV } from "./env";
 
 // Snapshot exports preserve the prior public surface (other modules / tests
-// that imported the constants by name).  They reflect the env value at
-// module load — env vars do not change at runtime.
+// that imported the constants by name).  They capture ENV.profitGuardrails
+// at module load only and will NOT reflect later mutations.  Runtime
+// mutation of ENV.profitGuardrails is intended for tests; production code
+// should call the get*() helpers below to read live values.
 export const MIN_POSITIVE_EV = ENV.profitGuardrails.minPositiveEv;
 export const MIN_CONFIDENCE_AFTER_ADJUST = ENV.profitGuardrails.minConfidenceAfterAdjust;
 export const MIN_DUAL_BOT_AGREEMENT = ENV.profitGuardrails.minDualBotAgreement;
