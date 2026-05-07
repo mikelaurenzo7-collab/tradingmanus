@@ -22,23 +22,14 @@ export const ENV = {
   databaseUrl: normalize(process.env.DATABASE_URL),
   ownerEmail: normalize(process.env.OWNER_EMAIL),
   ownerPassword: normalize(process.env.OWNER_PASSWORD),
-  // OpenRouter API key.  OPENROUTER_API_KEY is the canonical variable;
-  // ANTHROPIC_API_KEY is accepted as a backward-compatible fallback so
-  // existing deployments do not need to rename their environment variable.
   openrouterApiKey:
     normalize(process.env.OPENROUTER_API_KEY) ||
     normalize(process.env.ANTHROPIC_API_KEY),
-  // Keep anthropicApiKey as an alias so existing call-sites compile without
-  // change during the transition period.
   get anthropicApiKey() {
     return this.openrouterApiKey;
   },
-  // The model served through OpenRouter.  Override via OPENROUTER_MODEL.
-  // All tiers (triage / review / deep) resolve to this single model since
-  // tencent/hy3-preview:free is the configured provider.
   openrouterModel:
     normalize(process.env.OPENROUTER_MODEL) || "tencent/hy3-preview:free",
-  // Backward-compat model aliases — all resolve to openrouterModel.
   get anthropicModel() {
     return this.openrouterModel;
   },
@@ -52,21 +43,18 @@ export const ENV = {
     process.env.ANTHROPIC_TIMEOUT_MS,
     12000
   ),
-  /**
-   * Deep-tier timeout in milliseconds.  Defaults to 25 s.
-   */
   anthropicDeepTimeoutMs: normalizePositiveInt(
     process.env.ANTHROPIC_DEEP_TIMEOUT_MS,
     25000
   ),
-  // NEW: Grok (xAI) support for adding Grok as trader (solo or team)
   xaiApiKey: normalize(process.env.XAI_API_KEY),
   grokModel: normalize(process.env.GROK_MODEL) || "grok-3-latest",
   grokTimeoutMs: normalizePositiveInt(process.env.GROK_TIMEOUT_MS, 15000),
-  // NEW: Grok trader mode flags
   enableGrokSolo: normalizeBoolean(process.env.ENABLE_GROK_SOLO, false),
-  enableGrokTeam: normalizeBoolean(process.env.ENABLE_GROK_TEAM, true),  // default team with Claude
-  // Feature toggles for the AI toolbelt.
+  enableGrokTeam: normalizeBoolean(process.env.ENABLE_GROK_TEAM, true),
+  // Paper graduation for non-owners
+  paperGraduationWinRate: normalizePositiveInt(process.env.PAPER_GRADUATION_WIN_RATE, 55) / 100,
+  paperMinTrades: normalizePositiveInt(process.env.PAPER_MIN_TRADES, 30),
   enableAiPromptCache: normalizeBoolean(
     process.env.ENABLE_AI_PROMPT_CACHE,
     true
@@ -75,24 +63,12 @@ export const ENV = {
     process.env.ENABLE_AI_CATEGORY_ROUTING,
     true
   ),
-  // Web search and extended thinking are Anthropic-only features; they are
-  // disabled when routing through OpenRouter.
   enableAiWebSearch: false,
   enableAiExtendedThinking: false,
-  // Per-desk persistent learning tape (loaded into the cached system prompt).
   enableAiDeskMemory: normalizeBoolean(process.env.ENABLE_AI_DESK_MEMORY, true),
-  // Cheap Haiku pre-filter when the candidate batch is large.
   enableAiTriage: normalizeBoolean(process.env.ENABLE_AI_TRIAGE, true),
   aiTriageThreshold: normalizePositiveInt(process.env.AI_TRIAGE_THRESHOLD, 6),
-  // Surface web_search citations in the audit-log reasoning blurb.
   enableAiCitations: normalizeBoolean(process.env.ENABLE_AI_CITATIONS, true),
-  /**
-   * Intra-Claude second opinion: when Sonnet approves a non-high-stakes
-   * trade but tugs confidence down or moves expected value materially,
-   * escalate just that single market to an Opus second pass.  Both must
-   * agree to keep the trade; disagreement drops it.  Cheap, in-family
-   * replacement for the OpenAI second-opinion we previously ran.
-   */
   enableAiIntraEscalation: normalizeBoolean(
     process.env.ENABLE_AI_INTRA_ESCALATION,
     true
@@ -100,15 +76,8 @@ export const ENV = {
   kalshiApiKey: normalize(process.env.KALSHI_API_KEY),
   isProduction: process.env.NODE_ENV === "production",
   gnewsApiKey: normalize(process.env.GNEWS_API_KEY),
-  // Optional extra origin to add to the production CORS allow-list.
-  // Set to the full base URL of your deployed frontend (e.g. https://app.example.com).
-  // Vercel preview URLs (*.vercel.app) are always allowed in production regardless.
   allowedOrigin: normalize(process.env.ALLOWED_ORIGIN),
-  // Optional: URL to receive webhook POST alerts for critical operational events
-  // (consecutive autonomy failures, equity drops, exchange rejections).
   alertWebhookUrl: normalize(process.env.ALERT_WEBHOOK_URL),
-  // Paper trading mode: when true, all orders are simulated at current market prices.
-  // Simulated trades still update desk memory and learning feedback.
   paperTradeMode: normalizeBoolean(process.env.PAPER_TRADE_MODE, false),
   starterCheckoutUrl: normalize(process.env.STARTER_CHECKOUT_URL),
   proCheckoutUrl: normalize(process.env.PRO_CHECKOUT_URL),
@@ -130,13 +99,6 @@ export function validateServerEnv() {
   ).map(([name]) => name);
 
   if (missing.length > 0) {
-    // Surface a diagnostic that tells the operator *what their runtime
-    // actually sees*, not just which names we expected.  When Railway/Vercel
-    // fail to inject variables (most often because a shared-variable group
-    // wasn't attached to this service, or the service hasn't been
-    // redeployed since the var was added), the operator's instinct is
-    // "but I set those!" — proving the variable is genuinely absent from
-    // process.env saves a long debugging cycle.
     const present = REQUIRED_SERVER_ENV.filter(
       ([, value]) => value.length > 0
     ).map(([name]) => name);
@@ -144,7 +106,7 @@ export function validateServerEnv() {
 
     console.error(
       "[ENV] Missing required environment variables.\n" +
-        `       Missing: ${missing.join(", ")}\n" +
+        `       Missing: ${missing.join(", ")}\n` +
         `       Present (from this required list): ${present.join(", ") || "(none)"}\n` +
         `       Total env vars visible to the process: ${otherEnvKeyCount}\n` +
         "       If the variables are configured in Railway/Vercel but not visible here:\n" +
@@ -181,11 +143,6 @@ export function validateServerEnv() {
     );
   }
 
-  // Warn loudly when the default free-tier model is used in production.  The
-  // free model has hard daily rate limits and unstable availability; with the
-  // triage + intra-escalation flow each autonomy run issues several model
-  // calls and will exhaust the daily quota in minutes.  Every reviewer call
-  // is the only gate between heuristic signals and live money.
   if (
     ENV.isProduction &&
     !process.env.OPENROUTER_MODEL?.trim() &&
@@ -198,7 +155,6 @@ export function validateServerEnv() {
     );
   }
 
-  // Grok-specific warnings
   if (ENV.isProduction && ENV.enableGrokSolo && !ENV.xaiApiKey) {
     console.warn("[ENV] ENABLE_GROK_SOLO is true but XAI_API_KEY is not set. Grok solo mode will be disabled.");
   }
