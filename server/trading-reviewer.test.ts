@@ -377,7 +377,8 @@ describe("AI trading reviewer (OpenRouter/hy3)", () => {
   it("escalates contested mid-stakes approvals to a deep second pass", async () => {
     const anthropicCreate = vi
       .fn()
-      // 1st call: Sonnet approves but tugs confidence down by 0.15 (contested).
+      // 1st call: Sonnet approves but tugs confidence down by 0.10 (contested
+      // — at the >= 0.10 escalation trigger).
       .mockResolvedValueOnce(
         anthropicResponse(
           JSON.stringify({
@@ -385,7 +386,7 @@ describe("AI trading reviewer (OpenRouter/hy3)", () => {
               {
                 marketId: "KXTEST-1",
                 approved: true,
-                confidenceAdjustment: -0.15,
+                confidenceAdjustment: -0.10,
                 expectedValueAdjustment: 0,
                 reasoning: "Edge ok but liquidity thin.",
               },
@@ -393,7 +394,9 @@ describe("AI trading reviewer (OpenRouter/hy3)", () => {
           }),
         ),
       )
-      // 2nd call: Opus second opinion also approves — both must agree.
+      // 2nd call: Opus second opinion also approves with no further tug —
+      // both must agree.  Final confidence = 0.79 - 0.10 = 0.69, above
+      // the 0.68 profit-guardrail floor.
       .mockResolvedValueOnce(
         anthropicResponse(
           JSON.stringify({
@@ -401,7 +404,7 @@ describe("AI trading reviewer (OpenRouter/hy3)", () => {
               {
                 marketId: "KXTEST-1",
                 approved: true,
-                confidenceAdjustment: -0.05,
+                confidenceAdjustment: 0,
                 expectedValueAdjustment: 0,
                 reasoning: "Confirmed after deeper review.",
               },
@@ -410,10 +413,17 @@ describe("AI trading reviewer (OpenRouter/hy3)", () => {
         ),
       );
 
+    // Confidence must:
+    //   (a) stay below the high-stakes 0.8 threshold (so the contested-
+    //       escalation path is exercised, not the always-deep-review path)
+    //   (b) survive the test's confidence-adjustment chain above the
+    //       profit-guardrail floor of 0.68
+    // 0.79 - (0.10 + 0) = 0.69 → above 0.68, below 0.80.
+    const escalationSignal = { ...baseSignal, confidence: 0.79 };
     const result = await reviewSignalsWithTrader(
       {
         markets: [baseMarket as any],
-        signals: [baseSignal as any],
+        signals: [escalationSignal as any],
         maxSignals: 1,
       },
       {
