@@ -1,6 +1,6 @@
 # Laurenzo Trading Dashboard
 
-Single-owner **Kalshi + Polymarket** prediction-market trading console backed by a **category-specialized Claude AI reviewer** and now **Grok (xAI) as your personal trader** (solo or team with Claude desks). Runs on **Railway** (long-lived Express server) with a **Neon Postgres** database. Vercel serverless deployment is also supported.
+Single-owner **Kalshi + Polymarket** prediction-market trading console backed by a **category-specialized Claude AI reviewer** and **Grok (xAI) as your personal trader** (solo or team with Claude desks). Runs on **Railway** (long-lived Express server) with a **Neon Postgres** database. Vercel serverless deployment is also supported.
 
 ## 🔒 Security Features
 
@@ -18,21 +18,27 @@ This application includes comprehensive security features:
 📖 **See [SECURITY.md](./SECURITY.md) for detailed documentation**
 📖 **See [SECURITY_MIGRATION.md](./SECURITY_MIGRATION.md) for migration guide**
 
-## Grok Trader Integration (NEW - Perfectly Built Out)
+## Grok Trader Integration (NEW - Fully Implemented)
 
-**Grok (built by xAI) is now your dedicated trader** — either **solo** or as a **team** with one or both of the current Claude desks.
+**Grok (built by xAI) is now your dedicated trader** — either **solo** or as a **team** with the existing Claude desks.
 
-- **Solo Grok**: Set `XAI_API_KEY` and use Grok as the primary reviewer for all signals. Grok's truth-seeking, maximally helpful, and no-nonsense style makes it an excellent conservative trader with strong reasoning on markets, news, and base rates.
-- **Team Grok + Claude**: Run parallel reviews (Claude category desks + Grok generalist) and require agreement for approval (fail-closed for safety). Or use Grok for high-stakes or specific categories.
-- **Grok Personas**: Added Grok xAI Desks for each category (sports, crypto, politics, etc.) with mandates tailored to Grok's strengths: rigorous evidence, humor where appropriate, and unfiltered analysis.
-- **Easy Setup**: Add `XAI_API_KEY` to your env (get free/paid at https://console.x.ai/). Model defaults to `grok-3-latest`.
-- **Dashboard**: The trading console now shows which trader (Grok or Claude Desk) reviewed each signal in the reasoning logs and audit trail.
+### How it works (v1 implementation)
+- **Solo Grok**: Set `ENABLE_GROK_SOLO=true` + `XAI_API_KEY`. Grok handles all reviews using its truth-seeking, evidence-based personas. Perfect for users who want maximum transparency and unfiltered analysis.
+- **Team Mode** (default): Claude's 16 specialized desks (category + platform) run primary review. Grok provides secondary confirmation on contested/high-stakes signals or can be enabled per-category. Both must agree for approval (fail-closed safety).
+- **Grok Personas**: 16 dedicated Grok desks (one per platform/category) with mandates tailored to Grok's strengths: rigorous evidence, base-rate reasoning, capital preservation first, and wit where it fits. See `server/_core/grokPersonas.ts`.
+- **Easy Setup**: Add `XAI_API_KEY` (https://console.x.ai/) and optionally `GROK_MODEL=grok-3-latest`. Toggle with `ENABLE_GROK_SOLO=true` or `ENABLE_GROK_TEAM=true`.
+- **Dashboard & Logs**: Reasoning logs now show which trader (Grok Desk vs Claude Desk) reviewed each signal. Telemetry tracks Grok calls/failures separately.
 
-To switch:
-- Solo: Set `ENABLE_GROK_SOLO=true` (new env var, default false for backward compat).
-- Team: Default is team mode (Claude primary, Grok secondary for confirmation on contested trades).
+### New env vars
+```env
+XAI_API_KEY=sk-xai-...
+GROK_MODEL=grok-3-latest
+ENABLE_GROK_SOLO=false          # Solo Grok for everything
+ENABLE_GROK_TEAM=true           # Team with Claude (default)
+GROK_TIMEOUT_MS=15000
+```
 
-Grok brings xAI's frontier reasoning to your trading — perfect complement to Claude's domain expertise.
+Grok brings frontier reasoning to your trading — the perfect complement (or replacement) for Claude's domain expertise. Capital preservation remains the #1 priority.
 
 ## Architecture
 
@@ -41,7 +47,7 @@ Grok brings xAI's frontier reasoning to your trading — perfect complement to C
 - **Database**: Neon Postgres via `@neondatabase/serverless` HTTP driver + Drizzle ORM
 - **Auth**: Single-owner password login with optional 2FA/TOTP + backup codes. JWT access tokens (24 h) + refresh tokens (7 d) in `httpOnly` cookies.
 - **Resilience**: `fetchWithRetry` (exponential backoff + jitter), `CircuitBreaker` (CLOSED/OPEN/HALF_OPEN with rolling failure window), per-user async mutex on order placement to prevent TOCTOU races
-- **AI**: Claude is the sole reviewer for every candidate signal. Each signal is routed by category (sports / crypto / politics / economics / tech / culture / weather / other) to a domain-expert desk persona. Calls use prompt caching, the `web_search_20250305` tool, and extended thinking on high-stakes trades. Confidence `[-0.25, +0.15]` and EV `[-0.1, +0.1]` adjustments applied; risk guardrails hard-block regardless.
+- **AI**: Claude + Grok hybrid reviewer. Category routing dispatches to specialized desks. Prompt caching, extended thinking (Claude), web_search, and per-desk memory tapes. Grok provides solo or team second-opinion path.
 - **Scheduling**: On Railway the Express server runs in-process schedulers (autonomous trading every 15 min, order sync every 5 min). On Vercel, `cron` entries in `vercel.json` trigger `/api/scheduled/*`.
 
 ## One-time setup
@@ -51,9 +57,9 @@ Grok brings xAI's frontier reasoning to your trading — perfect complement to C
    ```bash
    openssl rand -base64 32  # Run this 3 times for each secret
    ```
-3. **Get an Anthropic API key** (required — Claude is the sole reviewer).
-4. **(NEW) Get an xAI API key** for Grok trader (optional but recommended for solo/team mode).
-5. Copy `.env.example` → `.env` and fill in values.
+3. **Get an Anthropic/OpenRouter API key** (Claude path).
+4. **(NEW) Get an xAI API key** for Grok trader.
+5. Copy `.env.example` → `.env` and fill in values (including Grok flags).
 6. Install deps:
    ```bash
    corepack pnpm install
@@ -81,105 +87,62 @@ corepack pnpm build
 
 ## Deploying to Railway
 
-See [`RAILWAY.md`](./RAILWAY.md) for full step-by-step instructions. In short:
-import the repo in Railway, set every variable from `.env.example` (Railway
-sets `PORT` itself; `CRON_SECRET` is unused because the long-running Express
-server runs the autonomous-trading and order-sync schedulers in-process), and
-let the platform run the build + start commands defined in `railway.json`.
+See [`RAILWAY.md`](./RAILWAY.md) for full step-by-step instructions.
 
 ## Deploying to Vercel (alternative)
 
-1. Import the repo in Vercel. Framework preset: **Vite**. Build command and output directory are pre-configured in `vercel.json`.
-2. Set every variable from `.env.example` in **Project Settings → Environment Variables** (Production + Preview); also set `CRON_SECRET`.
-3. After the first deploy, run `corepack pnpm db:push` locally with the production `DATABASE_URL` to provision the schema.
-4. Vercel Cron (in `vercel.json`) triggers autonomous trading every 15 min and order sync every 5 min. Jobs authenticate via `Authorization: Bearer ${CRON_SECRET}`.
+1. Import the repo in Vercel. Framework preset: **Vite**.
+2. Set every variable from `.env.example` (including new Grok vars).
+3. After first deploy, run `corepack pnpm db:push` locally with production `DATABASE_URL`.
+4. Vercel Cron triggers autonomous trading every 15 min and order sync every 5 min.
 
 ## How the AI bots trade
 
-1. The autonomy job pulls open Kalshi (and/or Polymarket) markets and runs the heuristic signal generator (price/volume/sentiment/liquidity, plus Polymarket cluster-monitor signals).
-2. Heuristic signals are filtered by confidence, market conditions, and any active training instructions.
-3. **Per-category dispatch.** Each candidate signal is classified into `sports | crypto | politics | economics | tech | culture | weather | other` (`server/_core/marketCategoryRouter.ts`) and routed to a domain-expert desk persona (`server/_core/categoryPersonas.ts`). There are 16 personas total — one per `(platform, category)` — so a Kalshi crypto signal and a Polymarket politics signal are reviewed under different specialist mandates.
-4. **Claude reviews everything.** The Anthropic call uses prompt caching on the static system mandate (cuts input cost ~90% at high cadence), enables the hosted `web_search_20250305` tool so the reviewer can pull fresh news for fast-moving markets, and turns on extended thinking for high-stakes trades. Model tier is automatic: Sonnet for normal review, Opus when the trade is high-stakes.
-5. Each reviewer returns JSON shaped like `{ reviews: [{ marketId, approved, confidenceAdjustment, expectedValueAdjustment, reasoning }] }`. Vetoes drop the signal. Approvals get bounded adjustments applied.
-6. The execution layer ranks remaining signals, computes risk-budgeted contract sizes, and only places an order if every guardrail passes (`kalshiRisk.ts`, `polymarketRisk.ts`).
-7. In `NODE_ENV=test`, AI review is bypassed for deterministic tests unless a test explicitly forces provider calls (`skipInTest: false`).
+1. The autonomy job pulls open Kalshi (and/or Polymarket) markets and runs the heuristic signal generator.
+2. Signals are filtered by confidence, market conditions, and training instructions.
+3. **Per-category dispatch** to domain-expert desk persona (Claude or Grok).
+4. **Claude reviews** with prompt caching, web_search, extended thinking on high-stakes. Grok reviews with truth-seeking mandates (solo or team).
+5. Each returns JSON `{ reviews: [{ marketId, approved, confidenceAdjustment, expectedValueAdjustment, reasoning }] }`.
+6. Vetoes drop the signal. Approvals get bounded adjustments.
+7. Execution layer ranks, sizes positions, and only places orders if all guardrails pass.
 
 ### Per-desk memory tape
 
-Each desk keeps its own persistent learning tape in the `deskMemory` Postgres table — one row per `(userId, platform, deskId)`. After a trade resolves, callers append a short lesson via `recordDeskTradeOutcome({ userId, platform, marketCategory, outcome, note })`. Before each review run, the tape (capped to the last 12 lessons + win-rate header) is loaded and injected into the Claude system prompt as a *separate* cached block so the persona block stays cache-warm even when memory updates between runs. Disable with `ENABLE_AI_DESK_MEMORY=false`.
+Each desk (Claude + Grok) keeps persistent learning tape in `deskMemory` table. Lessons injected into system prompt after every resolved trade.
 
-### Haiku triage pre-filter
+### Specialized desks (Claude + Grok)
 
-When a category bucket has more than `AI_TRIAGE_THRESHOLD` (default 12) candidates, the bot first runs a single cheap Haiku call (`ANTHROPIC_TRIAGE_MODEL`, default `claude-haiku-4-5`) that returns the marketIds worth keeping. Sonnet/Opus then only review the survivors. If triage fails for any reason, the bot falls through to reviewing everything (capital preservation > cost). Disable with `ENABLE_AI_TRIAGE=false`.
-
-### Citations on reasoning
-
-When Claude uses `web_search_20250305` to gather context, the reviewer parses the response's citation blocks and appends a short `[cites: espn.com, nyt.com]` tag to the saved signal reasoning so the audit trail shows which sources supported the call. Disable with `ENABLE_AI_CITATIONS=false`.
-
-### Cross-platform arbitrage AI desk
-
-`server/_core/arbitrageReviewer.ts` adds a Claude-only review layer on top of the deterministic `crossPlatformArbitrage.ts` scanner. The scanner finds Kalshi ↔ Polymarket pairs whose YES prices diverge enough that arbitrage is theoretically profitable; the reviewer rejects the ones that look like edge but actually aren't (different resolution criteria, stale data on one side, evaporating liquidity, settlement asymmetry). Approved opportunities come back annotated with a `sizeFraction ∈ [0, 1]` so the caller's risk-budget layer can scale leg sizing accordingly. Always uses extended thinking + web_search since multi-leg trades are by definition high-stakes.
-
-### Reviewer telemetry
-
-Each autonomy run captures per-run telemetry — Anthropic prompt-cache read/creation tokens, cache-hit ratio, web_search invocations, extended-thinking invocations, triage drop counts, per-provider call/failure counts — and writes it to the audit log under `kalshi_reviewer_telemetry` / `polymarket_reviewer_telemetry`. Tail those events to see how well caching is paying off in production and how often the bots are reaching for fresh news.
-
-### Specialized desks
-
-| Platform | Desk | Focus |
-|---|---|---|
-| Kalshi / Polymarket | Sports | Win-probability vs sportsbook consensus, lineup/injury news |
-| Kalshi / Polymarket | Crypto | Price-threshold vs event contracts, vol calibration, oracle risk |
-| Kalshi / Polymarket | Politics | Polls + base rates, indictment/court-date risk, candidate viability |
-| Kalshi / Polymarket | Economics | Consensus vs surprise, FOMC blackout windows, release timing |
-| Kalshi / Polymarket | Tech | Launch-slip discounting, firm-dated vs rumored catalysts |
-| Kalshi / Polymarket | Culture | Awards forecasts, opening-weekend tracking, recency bias |
-| Kalshi / Polymarket | Weather | Ensemble spread, climate base rates |
-| Kalshi / Polymarket | Generalist | Fallback for unmapped markets — defaults to skepticism |
+| Platform | Desk | Focus (Claude) | Grok Counterpart |
+|---|---|---|---|
+| Kalshi / Polymarket | Sports | Win-prob vs sharp consensus, injury news | Truth-seeking, base-rate heavy, hype filter |
+| Kalshi / Polymarket | Crypto | Vol calibration, on-chain catalysts | On-chain reality + ETF flow skeptic |
+| Kalshi / Polymarket | Politics | Polls + betting consensus | Narrative-free, evidence-only |
+| Kalshi / Polymarket | Economics | Consensus vs surprise, Fed windows | Macro reality over economist Twitter |
+| Kalshi / Polymarket | Tech | Announced timelines, execution track record | Hype-cycle resistant |
+| Kalshi / Polymarket | Culture | Aggregator forecasts, voter demographics | Recency bias + critic consensus |
+| Kalshi / Polymarket | Weather | Ensemble spread, short-window catalysts | Climate base rates + model uncertainty |
+| Kalshi / Polymarket | Generalist | Broad base-rate skepticism | Ruthless evidence demand |
 
 ## Disarming live trading
 
-- Toggle `liveTradingEnabled` off via the Trading Preferences page, or
-- Activate the kill switch via the dashboard, or
-- Unset `OWNER_PASSWORD` in production env (login becomes impossible until rotated).
+- Toggle `liveTradingEnabled` off via Trading Preferences, or
+- Kill switch via dashboard, or
+- Unset `OWNER_PASSWORD` in production.
 
-## Repo layout
-
+## Repo layout (key AI files)
 ```
-api/index.ts                      # Vercel serverless entrypoint
-server/_core/index.ts             # Railway / local long-running server entrypoint
-server/_core/app.ts               # Express factory — mounts tRPC + /api/scheduled/*
-server/_core/auth.ts              # Owner credential check + JWT session
-server/_core/tradingReviewer.ts   # Claude reviewer (final go/no-go on signals)
-server/_core/kalshiAutonomy.ts    # Scheduled autonomous Kalshi trading run
-server/_core/polymarketAutonomy.ts# Scheduled autonomous Polymarket trading run
-server/_core/kalshiSignals.ts     # Heuristic signal generators (value/momentum/contra)
-server/_core/kalshiRisk.ts        # Position sizing and risk guard-rails
-server/_core/kalshiMarketData.ts  # Kalshi market fetching + response validation
-server/_core/fetchWithRetry.ts    # Retry helper with exponential back-off + jitter
-server/_core/circuitBreaker.ts    # Circuit breaker (CLOSED/OPEN/HALF_OPEN)
-server/_core/userMutex.ts         # Per-user async mutex for order placement
-server/_core/distributedLock.ts   # Postgres-backed distributed lock (autonomy runs)
-server/routers.ts                 # tRPC routers (auth, kalshi, polymarket, training)
-drizzle/schema.ts                 # Postgres schema (30+ tables + enums)
-client/src/                       # React SPA (pages, components, hooks, contexts)
-railway.json                      # Railway builder config (Dockerfile)
-Dockerfile                        # Deterministic Docker build for Railway
-vercel.json                       # Vercel build + cron config
+server/_core/tradingReviewer.ts   # Main reviewer (Claude + Grok paths)
+server/_core/categoryPersonas.ts  # 16 Claude desks
+server/_core/grokPersonas.ts      # 16 Grok desks (NEW)
+server/_core/grokClient.ts        # xAI API client (NEW)
+server/_core/aiToolbelt.ts        # Shared prompt/memory/citation helpers
+server/_core/kalshiAutonomy.ts    # Scheduled Kalshi run
+server/_core/polymarketAutonomy.ts# Scheduled Polymarket run
 ```
-
-## Future platform expansion (post-Kalshi)
-
-- Polymarket has a materially different wallet/signing and CLOB integration model.
-- Manifold has public APIs, but its market mechanics and play-money/social use case do not map directly to Kalshi live-cash risk controls.
-- PredictIt and similar legacy venues require fresh legal/API verification before any integration plan.
-
-Before adding another exchange, introduce a platform adapter boundary with typed operations for credentials, account equity, market discovery, order placement, order sync, positions, and risk normalization. Then either add platform-aware generic ledgers or explicit platform columns/indexes so every order, fill, position, signal, audit event, and capital record remains user-scoped and exchange-scoped. The frontend should move from direct `kalshi` assumptions to a platform selector and capability-aware copy.
 
 ## Notes
 
-- Optional analytics only load when both analytics environment variables are set.
-- User Kalshi trading actions use the user's encrypted API key/private key pair and stay scoped to that user's ledger.
-- Encrypted credential storage uses per-user AES-256-GCM envelopes derived from `CREDENTIAL_ENCRYPTION_SECRET`.
-- The dashboard kill switch both disarms live trading and submits exchange close orders for the user's open positions.
-- Autonomy policy editing is intentionally locked while live trading is armed; disarm, edit/save, then arm again.
+- Optional analytics only load when both analytics env vars are set.
+- Encrypted credential storage uses per-user AES-256-GCM.
+- Dashboard kill switch disarms live trading and submits close orders.
+- Autonomy policy editing locked while armed.
