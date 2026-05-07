@@ -83,6 +83,7 @@ used.  Never use `npm` or `yarn` in this repo — the lockfile is
 | `SIGNAL_REVIEW_PRICE_DELTA_BPS` | optional | Adaptive cadence: skip AI review when a market hasn't moved this many basis points since last review (default `50` = 0.5 %) |
 | `SIGNAL_REVIEW_STALE_TTL_MS` | optional | Adaptive cadence heartbeat: re-review every market at least this often regardless of price (default `600000` = 10 min) |
 | `AUTO_CLOSE_ON_EXIT_SIGNAL` | optional | `true` to auto-close positions when stop-loss / profit-target hits (default `false` — emits audit signal only, lets operator validate first) |
+| `POLYMARKET_OWNER_ADDRESS` | optional but recommended | Polymarket EOA proxy wallet (the `0x…` address from your Polymarket account page).  Used by the position-sync reconciliation to detect manual UI closes and refresh mark prices.  When unset the sync silently no-ops; you'll see a `[SelfTest] WARN polymarket_owner_address` line at boot. |
 | `ALLOWED_ORIGIN` | optional | Extra CORS origin for production (e.g. Railway public URL) |
 | `ALERT_WEBHOOK_URL` | optional | Webhook URL for ops alerts (consecutive failures, equity drops) |
 | `PAPER_TRADE_MODE` | optional | `true` is a **global emergency override** — forces every user (including owner) into paper mode.  When unset/false, the configured `OWNER_EMAIL` user trades **live** by default; every other user is forced into paper.  See "Paper-mode policy" below. |
@@ -392,6 +393,38 @@ HTTP server starts listening:
 
 The startup-fatal failures (DB unreachable, app construction throws) still
 crash hard so Railway's restart policy kicks in — those are non-recoverable.
+
+---
+
+## Polymarket position sync
+
+`server/_core/polymarketPositionSync.ts:syncPolymarketPositions(userId)` runs
+inside every order-sync tick (default 30 s) and reconciles the local
+`polymarketPositions` rows against the Polymarket data-api response:
+
+```
+GET https://data-api.polymarket.com/positions?user=<POLYMARKET_OWNER_ADDRESS>
+```
+
+For each remote position the sync UPSERTs the local row (refreshing
+`sizeUsdc`, `currentPrice`, `unrealizedPnl`).  For each local row marked
+`open` whose tokenId is **absent** from the remote response, the sync
+marks the row `closed` and emits a `polymarket_position_drift_closed`
+audit event — this is the manual-UI-close detection.
+
+Without it, manually closing a Polymarket position via the Polymarket
+website would leave the local DB thinking it's still open; the exit
+monitor would then re-attempt to close a vanished position every cycle
+and log "insufficient balance" indefinitely.
+
+The sync requires `POLYMARKET_OWNER_ADDRESS` to be set to your EOA
+proxy wallet (the address shown on your Polymarket account / deposit
+page).  When unset it silently no-ops; the startup self-test surfaces
+a WARN line so you notice before going live.
+
+The data API is unauthenticated for public position reads, so no API
+key is required for the sync itself — only for placing orders (which
+goes through the existing CLOB credentials).
 
 ---
 
