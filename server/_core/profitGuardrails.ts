@@ -65,11 +65,15 @@ export function checkProfitGuardrails(input: {
 
   const evFloor = getMinPositiveEv();
   const confFloor = getMinConfidenceAfterAdjust();
-  // Owner leniency: take the lower of the legacy lenient default and the
-  // configured floor.  Cranking the env var UP affects the owner too;
-  // it never relaxes the gate below the configured value.
-  const minEV = input.isOwner ? Math.min(0.03, evFloor) : evFloor;
-  const minConf = input.isOwner ? Math.min(0.65, confFloor) : confFloor;
+  // Owner gate: respects the configured env floor with 0.03 / 0.65 acting as
+  // a legacy safety floor against accidental over-lowering of the env value.
+  // - Default config (0.035 / 0.68) → owner sees the configured floor.
+  // - Raised env (e.g. 0.10) → owner respects the raised floor.
+  // - Lowered env below 0.03 / 0.65 → owner is clamped to the legacy floor.
+  // The owner never gets a lower floor than non-owner; tightening the env
+  // tightens the gate for everyone.
+  const minEV = input.isOwner ? Math.max(0.03, evFloor) : evFloor;
+  const minConf = input.isOwner ? Math.max(0.65, confFloor) : confFloor;
 
   if (ev < minEV) {
     return {

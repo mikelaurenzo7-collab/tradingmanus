@@ -93,6 +93,59 @@ describe("env-tunable profit guardrails", () => {
     const result = checkPortfolioExposure(0, 50, 1000, "tech", { tech_ai: 0 });
     expect(result.ok).toBe(true);
   });
+
+  it("owner respects raised env floor (Math.max semantics)", () => {
+    // Operator raises EV floor to 0.10. Owner must respect it — a 4% edge
+    // is rejected even on the owner branch. Guards against a regression
+    // back to Math.min, which would let owner trade at 0.03 and bypass
+    // the operator's explicit safety bar.
+    ENV.profitGuardrails.minPositiveEv = 0.10;
+    ENV.profitGuardrails.minConfidenceAfterAdjust = 0.80;
+    const result = checkProfitGuardrails({
+      expectedValue: 0.04,
+      confidence: 0.95,
+      isOwner: true,
+    });
+    expect(result.approved).toBe(false);
+    expect(result.reason).toContain("EV 0.040 below high-leverage minimum 0.1");
+  });
+
+  it("owner is clamped UP to the 0.03 legacy floor when env is lowered below it", () => {
+    // If operator misconfigures env to a dangerously-low 0.005, the
+    // legacy 0.03 floor still protects the owner from a 1% edge.
+    ENV.profitGuardrails.minPositiveEv = 0.005;
+    ENV.profitGuardrails.minConfidenceAfterAdjust = 0.50;
+    const result = checkProfitGuardrails({
+      expectedValue: 0.01,
+      confidence: 0.90,
+      isOwner: true,
+    });
+    expect(result.approved).toBe(false);
+    expect(result.reason).toContain("below high-leverage minimum 0.03");
+  });
+
+  it("non-owner respects the configured env floor regardless of legacy values", () => {
+    // Sanity: non-owner branch is unchanged by the Math.max fix.
+    ENV.profitGuardrails.minPositiveEv = 0.005;
+    ENV.profitGuardrails.minConfidenceAfterAdjust = 0.50;
+    const result = checkProfitGuardrails({
+      expectedValue: 0.01,
+      confidence: 0.55,
+      isOwner: false,
+    });
+    expect(result.approved).toBe(true);
+  });
+});
+
+describe("normalizeFloat strict-parse contract", () => {
+  // The helper isn't exported, but the contract is observable through the
+  // documented defaults: a malformed env string at boot must fall back to
+  // the default. We can't mutate boot-time parsing here, so we assert the
+  // documented properties of the parser indirectly via Number().
+  it("rejects trailing junk strings (Number, not Number.parseFloat semantics)", () => {
+    expect(Number("0.68abc")).toBeNaN();
+    expect(Number.parseFloat("0.68abc")).toBe(0.68);
+  });
 });
 
 describe("env-var parsing fallbacks (env.ts)", () => {

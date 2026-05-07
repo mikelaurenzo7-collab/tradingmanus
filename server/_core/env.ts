@@ -8,7 +8,11 @@ const normalizeFloat = (
   fallback: number,
   { min, max }: { min: number; max: number },
 ) => {
-  const parsed = Number.parseFloat(value?.trim() ?? "");
+  // Strict parse (Number, not Number.parseFloat) so trailing junk like
+  // "0.68abc" yields NaN → fallback, rather than silently parsing as 0.68.
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed) return fallback;
+  const parsed = Number(trimmed);
   if (!Number.isFinite(parsed)) return fallback;
   if (parsed < min || parsed > max) return fallback;
   return parsed;
