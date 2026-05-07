@@ -242,6 +242,9 @@ export type ReviewerTelemetry = {
   // Provider call counts.
   anthropicCalls: number;
   anthropicFailures: number;
+  // Grok provider call counts (used when ENABLE_GROK_SOLO or ENABLE_GROK_TEAM).
+  grokCalls: number;
+  grokFailures: number;
 };
 
 export function newReviewerTelemetry(): ReviewerTelemetry {
@@ -258,6 +261,8 @@ export function newReviewerTelemetry(): ReviewerTelemetry {
     triageKeptCount: 0,
     anthropicCalls: 0,
     anthropicFailures: 0,
+    grokCalls: 0,
+    grokFailures: 0,
   };
 }
 
