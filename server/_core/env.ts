@@ -3,6 +3,16 @@ const normalizePositiveInt = (value: string | undefined, fallback: number) => {
   const parsed = Number.parseInt(value?.trim() ?? "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
+const normalizeFloat = (
+  value: string | undefined,
+  fallback: number,
+  { min, max }: { min: number; max: number },
+) => {
+  const parsed = Number.parseFloat(value?.trim() ?? "");
+  if (!Number.isFinite(parsed)) return fallback;
+  if (parsed < min || parsed > max) return fallback;
+  return parsed;
+};
 const normalizeBoolean = (value: string | undefined, fallback = false) => {
   const trimmed = value?.trim().toLowerCase();
   if (trimmed === undefined || trimmed === "") return fallback;
@@ -55,6 +65,16 @@ export const ENV = {
   // Paper graduation for non-owners
   paperGraduationWinRate: normalizePositiveInt(process.env.PAPER_GRADUATION_WIN_RATE, 55) / 100,
   paperMinTrades: normalizePositiveInt(process.env.PAPER_MIN_TRADES, 30),
+  // High-leverage profit guardrails — owner can retune in Railway without a code change.
+  // Values are read once at boot; redeploy after editing.  Out-of-range values fall back
+  // to the defaults below (matches the prior hardcoded floor).
+  profitGuardrails: {
+    minPositiveEv: normalizeFloat(process.env.MIN_POSITIVE_EV, 0.035, { min: 0, max: 1 }),
+    minConfidenceAfterAdjust: normalizeFloat(process.env.MIN_CONFIDENCE_AFTER_ADJUST, 0.68, { min: 0, max: 1 }),
+    minDualBotAgreement: normalizeFloat(process.env.MIN_DUAL_BOT_AGREEMENT, 0.62, { min: 0, max: 1 }),
+    maxPortfolioExposurePct: normalizeFloat(process.env.MAX_PORTFOLIO_EXPOSURE_PCT, 0.20, { min: 0.01, max: 1 }),
+    maxCorrelatedGroupPct: normalizeFloat(process.env.MAX_CORRELATED_GROUP_PCT, 0.10, { min: 0.01, max: 1 }),
+  },
   enableAiPromptCache: normalizeBoolean(
     process.env.ENABLE_AI_PROMPT_CACHE,
     true
@@ -162,6 +182,14 @@ export function validateServerEnv() {
 
   if (ENV.isProduction && ENV.enableGrokSolo && !ENV.xaiApiKey) {
     console.warn("[ENV] ENABLE_GROK_SOLO is true but XAI_API_KEY is not set. Grok solo mode will be disabled.");
+  }
+
+  if (ENV.isProduction && ENV.enableGrokTeam && !ENV.xaiApiKey) {
+    console.warn(
+      "[ENV] ENABLE_GROK_TEAM is true but XAI_API_KEY is not set. " +
+      "Grok will be skipped silently and the audit log will look ensemble-enabled but only Claude reviews signals. " +
+      "Set XAI_API_KEY or set ENABLE_GROK_TEAM=false to make intent explicit."
+    );
   }
 }
 

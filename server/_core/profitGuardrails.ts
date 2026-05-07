@@ -4,18 +4,31 @@
  * Strict rules for live trading (owner or graduated users).
  * Higher thresholds = fewer but higher-quality trades.
  * NO GUARANTEES — trading involves risk of loss.
+ *
+ * Thresholds are env-tunable via Railway (MIN_POSITIVE_EV,
+ * MIN_CONFIDENCE_AFTER_ADJUST, MIN_DUAL_BOT_AGREEMENT,
+ * MAX_PORTFOLIO_EXPOSURE_PCT, MAX_CORRELATED_GROUP_PCT) — see env.ts.
+ * Out-of-range values silently fall back to the defaults preserved below.
  */
 
 import { ENV } from "./env";
 
-// High-leverage thresholds (tighter than before)
-export const MIN_POSITIVE_EV = 0.035;           // 3.5%+ edge required
+// Snapshot exports preserve the prior public surface (other modules / tests
+// that imported the constants by name).  They reflect the env value at
+// module load — env vars do not change at runtime.
+export const MIN_POSITIVE_EV = ENV.profitGuardrails.minPositiveEv;
+export const MIN_CONFIDENCE_AFTER_ADJUST = ENV.profitGuardrails.minConfidenceAfterAdjust;
+export const MIN_DUAL_BOT_AGREEMENT = ENV.profitGuardrails.minDualBotAgreement;
+export const MAX_PORTFOLIO_EXPOSURE_PCT = ENV.profitGuardrails.maxPortfolioExposurePct;
+export const MAX_CORRELATED_GROUP_PCT = ENV.profitGuardrails.maxCorrelatedGroupPct;
 
-export const MIN_CONFIDENCE_AFTER_ADJUST = 0.68; // 68%+ confidence
-
-export const MIN_DUAL_BOT_AGREEMENT = 0.62;     // Both Claude & Grok must be ≥ this
-
-export const MAX_PORTFOLIO_EXPOSURE_PCT = 0.20; // 20% max (more conservative)
+// Live getters — prefer these in new code.  They re-read ENV on each call so
+// tests can mock ENV.profitGuardrails between checks.
+export const getMinPositiveEv = () => ENV.profitGuardrails.minPositiveEv;
+export const getMinConfidenceAfterAdjust = () => ENV.profitGuardrails.minConfidenceAfterAdjust;
+export const getMinDualBotAgreement = () => ENV.profitGuardrails.minDualBotAgreement;
+export const getMaxPortfolioExposurePct = () => ENV.profitGuardrails.maxPortfolioExposurePct;
+export const getMaxCorrelatedGroupPct = () => ENV.profitGuardrails.maxCorrelatedGroupPct;
 
 export const CORRELATED_CATEGORY_GROUPS: Record<string, string[]> = {
   politics: ["politics"],
@@ -50,8 +63,13 @@ export function checkProfitGuardrails(input: {
   const ev = Number(input.expectedValue) || 0;
   const conf = Number(input.confidence) || 0;
 
-  const minEV = input.isOwner ? 0.03 : MIN_POSITIVE_EV;
-  const minConf = input.isOwner ? 0.65 : MIN_CONFIDENCE_AFTER_ADJUST;
+  const evFloor = getMinPositiveEv();
+  const confFloor = getMinConfidenceAfterAdjust();
+  // Owner leniency: take the lower of the legacy lenient default and the
+  // configured floor.  Cranking the env var UP affects the owner too;
+  // it never relaxes the gate below the configured value.
+  const minEV = input.isOwner ? Math.min(0.03, evFloor) : evFloor;
+  const minConf = input.isOwner ? Math.min(0.65, confFloor) : confFloor;
 
   if (ev < minEV) {
     return {
@@ -83,7 +101,7 @@ export function checkProfitGuardrails(input: {
   }
 
   // If Grok confidence is available, require agreement
-  if (input.grokConfidence !== undefined && input.grokConfidence < MIN_DUAL_BOT_AGREEMENT) {
+  if (input.grokConfidence !== undefined && input.grokConfidence < getMinDualBotAgreement()) {
     return {
       approved: false,
       reason: `Grok confidence ${input.grokConfidence.toFixed(2)} too low for high-leverage trade` ,
@@ -117,12 +135,13 @@ export function checkPortfolioExposure(
   openPositionsByCategory: Record<string, number>,
 ): { ok: boolean; reason?: string; maxAllowed: number } {
   const totalAfter = currentOpenExposureUsd + newOrderExposureUsd;
-  const maxTotal = bankrollUsd * MAX_PORTFOLIO_EXPOSURE_PCT;
+  const portfolioPct = getMaxPortfolioExposurePct();
+  const maxTotal = bankrollUsd * portfolioPct;
 
   if (totalAfter > maxTotal) {
     return {
       ok: false,
-      reason: `Total exposure would exceed ${(MAX_PORTFOLIO_EXPOSURE_PCT * 100).toFixed(0)}% of bankroll (high-leverage limit)` ,
+      reason: `Total exposure would exceed ${(portfolioPct * 100).toFixed(0)}% of bankroll (high-leverage limit)` ,
       maxAllowed: Math.max(0, maxTotal - currentOpenExposureUsd),
     };
   }
@@ -132,12 +151,13 @@ export function checkPortfolioExposure(
   ) || "other";
 
   const groupExposure = (openPositionsByCategory[group] || 0) + newOrderExposureUsd;
-  const maxGroup = bankrollUsd * 0.10; // 10% per correlated group (tighter)
+  const groupPct = getMaxCorrelatedGroupPct();
+  const maxGroup = bankrollUsd * groupPct;
 
   if (groupExposure > maxGroup) {
     return {
       ok: false,
-      reason: `Correlated group '${group}' exposure would exceed 10% of bankroll (high-leverage limit)` ,
+      reason: `Correlated group '${group}' exposure would exceed ${(groupPct * 100).toFixed(0)}% of bankroll (high-leverage limit)` ,
       maxAllowed: Math.max(0, maxGroup - (openPositionsByCategory[group] || 0)),
     };
   }
