@@ -76,6 +76,11 @@ export const ENV = {
   kalshiApiKey: normalize(process.env.KALSHI_API_KEY),
   isProduction: process.env.NODE_ENV === "production",
   gnewsApiKey: normalize(process.env.GNEWS_API_KEY),
+  // Polymarket proxy-wallet address used by the position-sync reconciliation.
+  // The Polymarket data-api keys positions by EOA address (not by API key),
+  // so without this set the sync silently no-ops.  Lower-cased on read so
+  // case-insensitive comparisons work downstream.
+  polymarketOwnerAddress: normalize(process.env.POLYMARKET_OWNER_ADDRESS).toLowerCase(),
   allowedOrigin: normalize(process.env.ALLOWED_ORIGIN),
   alertWebhookUrl: normalize(process.env.ALERT_WEBHOOK_URL),
   paperTradeMode: normalizeBoolean(process.env.PAPER_TRADE_MODE, false),

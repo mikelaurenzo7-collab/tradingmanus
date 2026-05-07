@@ -119,6 +119,35 @@ function checkAiReviewerModel(): SelfTestCheck {
   return { name: "ai_reviewer_model", status: "ok", detail: `OPENROUTER_MODEL = ${ENV.openrouterModel}` };
 }
 
+function checkPolymarketOwnerAddress(): SelfTestCheck {
+  if (ENV.polymarketOwnerAddress.length > 0) {
+    if (!/^0x[a-f0-9]{40}$/.test(ENV.polymarketOwnerAddress)) {
+      return {
+        name: "polymarket_owner_address",
+        status: "warn",
+        detail:
+          `POLYMARKET_OWNER_ADDRESS=${ENV.polymarketOwnerAddress.slice(0, 10)}... does not match expected EOA format (0x + 40 hex chars).  Position sync will fetch with this value but the data-api will likely return empty.`,
+      };
+    }
+    return {
+      name: "polymarket_owner_address",
+      status: "ok",
+      detail:
+        `POLYMARKET_OWNER_ADDRESS set; position sync reconciles every order-sync tick.`,
+    };
+  }
+  return {
+    name: "polymarket_owner_address",
+    status: "warn",
+    detail:
+      "POLYMARKET_OWNER_ADDRESS is unset; Polymarket position sync will silently no-op.  " +
+      "Manual UI closes on Polymarket will desync the local DB and the exit monitor will " +
+      "re-attempt to close vanished positions every cycle (logged as 'insufficient balance').  " +
+      "Set this to your Polymarket proxy wallet (the address shown in the Polymarket UI under " +
+      "your account / deposit page).",
+  };
+}
+
 function checkPaperMode(): SelfTestCheck {
   if (ENV.paperTradeMode) {
     return {
@@ -173,6 +202,7 @@ export async function runStartupSelfTest(): Promise<SelfTestResult> {
   checks.push(checkAiReviewerKey());
   checks.push(checkAiReviewerModel());
   checks.push(checkCredentialEncryptionSecret());
+  checks.push(checkPolymarketOwnerAddress());
   checks.push(checkPaperMode());
 
   const failed = checks.filter((c) => c.status === "fail");

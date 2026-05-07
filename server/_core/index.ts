@@ -9,6 +9,7 @@ import { runPolymarketAutonomousTrading } from "./polymarketAutonomy";
 import { syncPendingOrders, syncLivePositions } from "./kalshiOrderSync";
 import { evaluateExitsForOpenPositions } from "./exitMonitor";
 import { evaluatePolymarketExitsForOpenPositions } from "./polymarketExitMonitor";
+import { syncPolymarketPositions } from "./polymarketPositionSync";
 import { createAutonomousTradingLock, createOrderSyncLock, DistributedLock } from "./distributedLock";
 import { runStartupSelfTest } from "./startupSelfTest";
 import { logger } from "./logger";
@@ -203,6 +204,23 @@ async function runOrderSync() {
       try {
         await syncPendingOrders(user.id);
         await syncLivePositions(user.id);
+        // Reconcile Polymarket positions against the data-api before the
+        // exit monitor runs.  This catches manual UI closes (otherwise
+        // the exit monitor would re-attempt to close a vanished position
+        // every cycle) and refreshes mark prices on rows we already hold.
+        // Silently no-ops when POLYMARKET_OWNER_ADDRESS is unset.
+        const polymarketSync = await syncPolymarketPositions(user.id);
+        if (polymarketSync.closedDriftCount > 0) {
+          logger.info(
+            {
+              userId: user.id,
+              closedDriftCount: polymarketSync.closedDriftCount,
+              positionIds: polymarketSync.closedDriftPositionIds,
+            },
+            "[PolymarketSync] %d local position(s) closed due to drift from data-api",
+            polymarketSync.closedDriftCount,
+          );
+        }
         // Evaluate stop-loss / profit-target on every open position with each
         // sync.  Inside the same lock so a concurrent autonomy run can't read
         // a half-closed position state.
