@@ -59,6 +59,10 @@ export const ENV = {
     process.env.ANTHROPIC_DEEP_TIMEOUT_MS,
     25000
   ),
+  // NEW: Grok (xAI) support for adding Grok as trader (solo or team)
+  xaiApiKey: normalize(process.env.XAI_API_KEY),
+  grokModel: normalize(process.env.GROK_MODEL) || "grok-3-latest",
+  grokTimeoutMs: normalizePositiveInt(process.env.GROK_TIMEOUT_MS, 15000),
   // Feature toggles for the AI toolbelt.
   enableAiPromptCache: normalizeBoolean(
     process.env.ENABLE_AI_PROMPT_CACHE,
@@ -137,15 +141,14 @@ export function validateServerEnv() {
 
     console.error(
       "[ENV] Missing required environment variables.\n" +
-        `       Missing: ${missing.join(", ")}\n` +
+        `       Missing: ${missing.join(", ")}\n" +
         `       Present (from this required list): ${present.join(", ") || "(none)"}\n` +
         `       Total env vars visible to the process: ${otherEnvKeyCount}\n` +
         "       If the variables are configured in Railway/Vercel but not visible here:\n" +
         "         1. Confirm they are attached to THIS service & environment (not a sibling).\n" +
         "         2. Confirm there is no typo in the variable name (case-sensitive).\n" +
         "         3. Redeploy the service — env vars only inject at container start.\n" +
-        "         4. If using shared variables, reference them as ${{shared.VAR_NAME}}\n" +
-        "            in the service's Variables tab, or attach the shared-variable group."
+        "         4. If using shared variables, reference them as ${{shared.VAR_NAME}}\n            in the service's Variables tab, or attach the shared-variable group."
     );
 
     throw new Error(
