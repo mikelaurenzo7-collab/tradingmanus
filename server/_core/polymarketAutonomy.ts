@@ -39,6 +39,7 @@ import { withUserLock } from "./userMutex";
 import { simulatePolymarketOrderFill } from "./paperTrading";
 import { ENV } from "./env";
 import { getEffectivePaperTradeMode } from "./effectivePaperMode";
+import { checkProfitGuardrails } from "./profitGuardrails";
 import {
   shouldReviewMarketAt,
   recordMarketReview,
@@ -474,7 +475,65 @@ export async function runPolymarketAutonomousTrading(
     };
   }
 
-  const sorted = sortSignals(reviewedSignals);
+  // Profit-guardrail filter: applied AFTER the AI reviewer so an approved
+  // candidate must ALSO meet hard EV/confidence thresholds before reaching
+  // the order pipeline.  Mirrors the Kalshi gate in tradingReviewer.ts so
+  // both platforms enforce the same high-leverage-wins-only floor.
+  const guardrailRejections: Array<{ marketId: string; reason: string; ev: number; confidence: number }> = [];
+  const guardedSignals = reviewedSignals.filter((s) => {
+    const check = checkProfitGuardrails({
+      expectedValue: s.expectedValue,
+      confidence: s.confidence,
+      isTeamMode: ENV.enableGrokTeam,
+    });
+    if (!check.approved) {
+      guardrailRejections.push({
+        marketId: s.marketId,
+        reason: check.reason,
+        ev: s.expectedValue,
+        confidence: s.confidence,
+      });
+      logger.warn(
+        { marketId: s.marketId, reason: check.reason, ev: s.expectedValue, confidence: s.confidence },
+        "[ProfitGuardrails] polymarket signal rejected",
+      );
+    }
+    return check.approved;
+  });
+
+  if (guardrailRejections.length > 0) {
+    await db.logAuditEvent(
+      "polymarket_profit_guardrails_filter",
+      JSON.stringify({
+        rejected: guardrailRejections.length,
+        kept: guardedSignals.length,
+        sampleRejections: guardrailRejections.slice(0, 10),
+      }),
+      triggeredByOpenId,
+    );
+  }
+
+  if (guardedSignals.length === 0) {
+    await db.logAuditEvent(
+      "polymarket_autonomy_run_generated_only",
+      JSON.stringify({
+        signalsGenerated: allSignals.length,
+        reason: "all reviewed signals failed high-leverage profit guardrails",
+        guardrailRejections: guardrailRejections.length,
+      }),
+      triggeredByOpenId,
+    );
+    return {
+      success: true,
+      status: "generated_only",
+      reason: "all reviewed signals failed high-leverage profit guardrails",
+      signalsGenerated: allSignals.length,
+      executionCandidates: 0,
+      orderPlaced: false,
+    };
+  }
+
+  const sorted = sortSignals(guardedSignals);
   const candidates = sorted.slice(0, 5);
 
   // --- 4. Pick best candidate and size position with dynamic risk limits ---
