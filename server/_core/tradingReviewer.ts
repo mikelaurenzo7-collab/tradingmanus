@@ -1,4 +1,5 @@
 import { createOpenRouterClient } from "./openrouterClient";
+import { createGrokChatCompletion, extractGrokText } from "./grokClient";
 import type { KalshiMarket } from "./kalshiMarketData";
 import type { KalshiSignal } from "./kalshiSignals";
 import { ENV } from "./env";
@@ -29,13 +30,14 @@ import {
   type MarketCategory,
 } from "./marketCategoryRouter";
 import { getCategoryPersona, type CategoryPersona } from "./categoryPersonas";
+import { getGrokPersona, type GrokPersona } from "./grokPersonas";
 import {
   formatDeskMemoryForPrompt,
   getDeskMemoryBatch,
   type DeskMemoryRecord,
 } from "../db.desk-memory";
 
-type ProviderName = "anthropic";
+type ProviderName = "anthropic" | "grok";
 
 type TradingSignalReview = {
   marketId: string;
@@ -119,6 +121,8 @@ export type TradingReviewerOptions = {
    * and reads it after the review returns.
    */
   telemetry?: ReviewerTelemetry;
+  /** NEW: Force Grok solo mode (overrides ENV) */
+  forceGrokSolo?: boolean;
 };
 
 export type TradingReviewer = {
@@ -138,11 +142,12 @@ export function createTradingReviewer(options: TradingReviewerOptions = {}): Tra
 }
 
 /**
- * The reviewer is "configured" as long as Claude is available.
+ * The reviewer is "configured" as long as Claude or Grok is available.
  */
 export function isTradingReviewerConfigured(options: TradingReviewerOptions = {}) {
-  const apiKey = (options.anthropicApiKey ?? ENV.anthropicApiKey).trim();
-  return apiKey.length > 0;
+  const hasClaude = (options.anthropicApiKey ?? ENV.openrouterApiKey).trim().length > 0;
+  const hasGrok = ENV.xaiApiKey.trim().length > 0;
+  return hasClaude || hasGrok;
 }
 
 function clamp(value: number, minimum: number, maximum: number) {
@@ -224,12 +229,11 @@ function summarizeSignal(signal: KalshiSignal) {
 }
 
 
-
 function getReviewPayload(input: {
   markets: KalshiMarket[];
   signals: KalshiSignal[];
   maxSignals: number;
-  persona?: CategoryPersona;
+  persona?: CategoryPersona | GrokPersona;
 }) {
   const signalsForReview = input.signals.slice(0, input.maxSignals);
   const marketById = new Map(input.markets.map((market) => [market.id, market]));
@@ -237,7 +241,7 @@ function getReviewPayload(input: {
   return {
     mandate:
       "Review candidate Kalshi signals. Approve only if the trade has a clear reason, adequate liquidity, bounded binary-market downside, and no obvious stale/thin-market issue. Veto vague, purely heuristic, low-EV, or weak-liquidity candidates. Do not invent market facts beyond the payload.",
-    desk: input.persona?.label ?? "Kalshi Generalist Desk",
+    desk: (input.persona as any)?.label ?? "Generalist Desk",
     outputSchema:
       "{ reviews: Array<{marketId:string, approved:boolean, confidenceAdjustment:number between -0.25 and 0.15, expectedValueAdjustment:number between -0.1 and 0.1, reasoning:string <= 240 chars}> }",
     markets: signalsForReview.map((signal) => {
@@ -286,10 +290,10 @@ function categoryOfSignal(
   return classifyMarketCategory({ category: market.category, title: market.title });
 }
 
-function buildReviewerBaseMandate(persona?: CategoryPersona): string {
-  const desk = persona?.label ?? "Kalshi Generalist Desk";
-  const personaMandate = persona?.systemMandate
-    ? `\n\nDesk-specific mandate (${desk}):\n${persona.systemMandate}`
+function buildReviewerBaseMandate(persona?: CategoryPersona | GrokPersona): string {
+  const desk = (persona as any)?.label ?? "Generalist Desk";
+  const personaMandate = (persona as any)?.systemMandate
+    ? `\n\nDesk-specific mandate (${desk}):\n${(persona as any).systemMandate}`
     : "";
   return (
     "You are an AI trading reviewer acting as a conservative Kalshi trading reviewer for one founder's small live account. You do not place trades directly. You only approve, veto, or modestly adjust signal confidence and expected value. Capital preservation, liquidity, bounded downside, and avoiding weak heuristic trades are mandatory. Respond with JSON only as {\"reviews\":[...]}." +
@@ -306,7 +310,7 @@ async function requestAnthropicReviews(
   forceDeep = false,
 ) {
   const client = options.anthropicClient ?? createOpenRouterClient(
-    (options.anthropicApiKey ?? ENV.anthropicApiKey).trim(),
+    (options.anthropicApiKey ?? ENV.openrouterApiKey).trim(),
   );
 
   const useDeepModel = forceDeep || isHighStakes(stakes);
@@ -396,6 +400,51 @@ async function requestAnthropicReviews(
   };
 }
 
+// NEW: Grok review request (simpler, no prompt cache / extended thinking / web_search for v1)
+async function requestGrokReviews(
+  reviewPayload: ReturnType<typeof getReviewPayload>,
+  options: TradingReviewerOptions,
+  persona?: GrokPersona,
+  stakes: StakesContext = {},
+  memorySnippet: string | null = null,
+) {
+  if (!ENV.xaiApiKey) {
+    throw new Error("XAI_API_KEY required for Grok review");
+  }
+
+  const systemPrompt = buildReviewerBaseMandate(persona) + (memorySnippet ? `\n\n${memorySnippet}` : "");
+  const userContent = JSON.stringify(reviewPayload);
+
+  const completion = await createGrokChatCompletion(
+    [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userContent },
+    ],
+    {
+      model: ENV.grokModel,
+      temperature: 0,
+      max_tokens: 3200,
+      timeoutMs: ENV.grokTimeoutMs,
+    }
+  );
+
+  const text = extractGrokText(completion);
+  const reviews = parseTradingReviews(text);
+
+  if (options.telemetry) {
+    options.telemetry.grokCalls = (options.telemetry.grokCalls ?? 0) + 1;
+    if (persona && !options.telemetry.desks.includes(persona.id)) {
+      options.telemetry.desks.push(persona.id);
+    }
+  }
+
+  return {
+    provider: "grok" as const,
+    reviews,
+    citations: [], // Grok v1 doesn't return citations in the same format
+  };
+}
+
 function combineApprovedSignal(
   signal: KalshiSignal,
   review: TradingSignalReview,
@@ -437,17 +486,36 @@ type ReviewBatchResult = {
 async function callReviewer(
   reviewPayload: ReturnType<typeof getReviewPayload>,
   options: TradingReviewerOptions,
-  persona: CategoryPersona | undefined,
+  persona: CategoryPersona | GrokPersona | undefined,
   stakes: StakesContext,
   logger: Pick<Console, "warn" | "error">,
   memorySnippet: string | null = null,
   forceDeep = false,
 ): Promise<ReviewBatchResult> {
   try {
+    // NEW: Route to Grok if solo mode or team mode with Grok persona
+    const useGrok = options.forceGrokSolo || ENV.enableGrokSolo || (ENV.enableGrokTeam && persona && (persona as any).id?.startsWith("grok."));
+
+    if (useGrok && ENV.xaiApiKey) {
+      const response = await requestGrokReviews(
+        reviewPayload,
+        options,
+        persona as GrokPersona | undefined,
+        stakes,
+        memorySnippet,
+      );
+      return {
+        reviewsByMarket: new Map(response.reviews.map((review) => [review.marketId, review])),
+        failed: false,
+        citations: response.citations,
+      };
+    }
+
+    // Default: Claude path
     const response = await requestAnthropicReviews(
       reviewPayload,
       options,
-      persona,
+      persona as CategoryPersona | undefined,
       stakes,
       memorySnippet,
       forceDeep,
@@ -459,10 +527,14 @@ async function callReviewer(
     };
   } catch (error) {
     if (options.telemetry) {
-      options.telemetry.anthropicFailures += 1;
+      if ((options.forceGrokSolo || ENV.enableGrokSolo) && ENV.xaiApiKey) {
+        options.telemetry.grokFailures = (options.telemetry.grokFailures ?? 0) + 1;
+      } else {
+        options.telemetry.anthropicFailures += 1;
+      }
     }
     logger.warn(
-      `[TradingReviewer] AI review failed for desk=${persona?.id ?? "default"}: ${error instanceof Error ? error.message : String(error)}`,
+      `[TradingReviewer] AI review failed for desk=${(persona as any)?.id ?? "default"}: ${error instanceof Error ? error.message : String(error)}`,
     );
     return { reviewsByMarket: new Map(), failed: true, citations: [] };
   }
@@ -478,7 +550,7 @@ async function runCategoryReview(
   signals: KalshiSignal[],
   marketsById: Map<string, KalshiMarket>,
   options: TradingReviewerOptions,
-  persona: CategoryPersona | undefined,
+  persona: CategoryPersona | GrokPersona | undefined,
   stakes: StakesContext,
   logger: Pick<Console, "warn" | "error">,
   memorySnippet: string | null = null,
@@ -576,21 +648,20 @@ async function runCategoryReview(
       const review = batchResult.reviewsByMarket.get(signal.marketId);
       if (!review) {
         logger.warn(
-          `[TradingReviewer] AI review missing for marketId=${signal.marketId} (desk=${persona?.id ?? "default"}); dropping signal.`,
+          `[TradingReviewer] AI review missing for marketId=${signal.marketId} (desk=${(persona as any)?.id ?? "default"}); dropping signal.`,
         );
         return null;
       }
       const citations =
         escalationCitationsByMarket.get(signal.marketId) ?? batchResult.citations;
-      return combineApprovedSignal(signal, review, logger, persona?.label, citations);
+      return combineApprovedSignal(signal, review, logger, (persona as any)?.label, citations);
     })
     .filter((signal): signal is KalshiSignal => Boolean(signal));
 }
 
 /**
  * Optional Haiku pre-filter: when the candidate batch is large, drop obvious
- * junk before paying Sonnet/Opus prices.  Returns the surviving signal list.
- * On failure, returns the input unchanged (capital preservation > cost).
+ * junk before paying Sonnet/Opus prices.  Returns the input unchanged (capital preservation > cost).
  */
 async function applyTriageFilter(
   signals: KalshiSignal[],
@@ -605,7 +676,7 @@ async function applyTriageFilter(
   if (signals.length <= threshold) return signals;
 
   const triageClient = options.anthropicClient ?? createOpenRouterClient(
-    (options.anthropicApiKey ?? ENV.anthropicApiKey).trim(),
+    (options.anthropicApiKey ?? ENV.openrouterApiKey).trim(),
   );
 
   const triageInput: TriageCandidate[] = signals.map((signal) => {
@@ -687,7 +758,7 @@ export async function reviewSignalsWithTrader(
   const logger = options.logger ?? console;
   if (!isTradingReviewerConfigured(options)) {
     logger.error(
-      "[TradingReviewer] AI reviewer not configured (need OPENROUTER_API_KEY or ANTHROPIC_API_KEY); dropping all candidates.",
+      "[TradingReviewer] AI reviewer not configured (need OPENROUTER_API_KEY or XAI_API_KEY); dropping all candidates.",
     );
     return [];
   }
@@ -700,6 +771,26 @@ export async function reviewSignalsWithTrader(
   // on obvious junk.  Returns the input unchanged when the batch is small
   // enough or triage is disabled / fails.
   const triagedSignals = await applyTriageFilter(cappedSignals, marketsById, options, logger);
+
+  // NEW: Solo Grok mode - bypass category routing and use Grok for everything
+  if (options.forceGrokSolo || ENV.enableGrokSolo) {
+    if (!ENV.xaiApiKey) {
+      logger.error("[TradingReviewer] ENABLE_GROK_SOLO true but no XAI_API_KEY; falling back to Claude.");
+    } else {
+      const grokPersona = getGrokPersona("kalshi", "other"); // generalist for solo
+      const stakes = stakesForSignals(triagedSignals);
+      const memorySnippet = options.userId ? formatDeskMemoryForPrompt((await loadDeskMemoryForBuckets(new Map([["other", triagedSignals]]), options)).get(grokPersona.id) ?? null) : null;
+      return runCategoryReview(
+        triagedSignals,
+        marketsById,
+        options,
+        grokPersona,
+        stakes,
+        logger,
+        memorySnippet,
+      );
+    }
+  }
 
   // When category routing is disabled, fall back to a single combined batch so
   // the public behavior still matches the original single-mandate reviewer.
