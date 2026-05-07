@@ -110,6 +110,22 @@ describe("env-tunable profit guardrails", () => {
     expect(result.reason).toContain("EV 0.040 below high-leverage minimum 0.1");
   });
 
+  it("owner respects raised confidence env floor (symmetric Math.max)", () => {
+    // Mirror of the EV-clamp test for the confidence path: a high-EV but
+    // low-confidence trade is rejected on the owner branch when the
+    // configured confidence floor is raised.  Locks the symmetric Math.max
+    // semantics for minConfidenceAfterAdjust.
+    ENV.profitGuardrails.minPositiveEv = 0.01;
+    ENV.profitGuardrails.minConfidenceAfterAdjust = 0.90;
+    const result = checkProfitGuardrails({
+      expectedValue: 0.20,
+      confidence: 0.70,
+      isOwner: true,
+    });
+    expect(result.approved).toBe(false);
+    expect(result.reason).toContain("Confidence 0.70 below high-leverage floor 0.9");
+  });
+
   it("owner is clamped UP to the 0.03 legacy floor when env is lowered below it", () => {
     // If operator misconfigures env to a dangerously-low 0.005, the
     // legacy 0.03 floor still protects the owner from a 1% edge.

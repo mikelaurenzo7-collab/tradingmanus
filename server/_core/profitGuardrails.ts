@@ -57,7 +57,7 @@ export function checkProfitGuardrails(input: {
   grokEV?: number;
   grokConfidence?: number;
   isTeamMode?: boolean;
-  isOwner?: boolean;           // owner gets slightly more leeway
+  isOwner?: boolean;           // owner gate is clamped to legacy safety floors (0.03/0.65) but never looser than the configured env floor
   recentWinRate?: number;
 }): ProfitCheckResult {
   const ev = Number(input.expectedValue) || 0;
