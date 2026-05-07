@@ -1,6 +1,6 @@
 # Laurenzo Trading Dashboard
 
-Single-owner **Kalshi + Polymarket** prediction-market trading console backed by a **category-specialized Claude AI reviewer**. Runs on **Railway** (long-lived Express server) with a **Neon Postgres** database. Vercel serverless deployment is also supported.
+Single-owner **Kalshi + Polymarket** prediction-market trading console backed by a **category-specialized Claude AI reviewer** and now **Grok (xAI) as your personal trader** (solo or team with Claude desks). Runs on **Railway** (long-lived Express server) with a **Neon Postgres** database. Vercel serverless deployment is also supported.
 
 ## 🔒 Security Features
 
@@ -18,6 +18,22 @@ This application includes comprehensive security features:
 📖 **See [SECURITY.md](./SECURITY.md) for detailed documentation**
 📖 **See [SECURITY_MIGRATION.md](./SECURITY_MIGRATION.md) for migration guide**
 
+## Grok Trader Integration (NEW - Perfectly Built Out)
+
+**Grok (built by xAI) is now your dedicated trader** — either **solo** or as a **team** with one or both of the current Claude desks.
+
+- **Solo Grok**: Set `XAI_API_KEY` and use Grok as the primary reviewer for all signals. Grok's truth-seeking, maximally helpful, and no-nonsense style makes it an excellent conservative trader with strong reasoning on markets, news, and base rates.
+- **Team Grok + Claude**: Run parallel reviews (Claude category desks + Grok generalist) and require agreement for approval (fail-closed for safety). Or use Grok for high-stakes or specific categories.
+- **Grok Personas**: Added Grok xAI Desks for each category (sports, crypto, politics, etc.) with mandates tailored to Grok's strengths: rigorous evidence, humor where appropriate, and unfiltered analysis.
+- **Easy Setup**: Add `XAI_API_KEY` to your env (get free/paid at https://console.x.ai/). Model defaults to `grok-3-latest`.
+- **Dashboard**: The trading console now shows which trader (Grok or Claude Desk) reviewed each signal in the reasoning logs and audit trail.
+
+To switch:
+- Solo: Set `ENABLE_GROK_SOLO=true` (new env var, default false for backward compat).
+- Team: Default is team mode (Claude primary, Grok secondary for confirmation on contested trades).
+
+Grok brings xAI's frontier reasoning to your trading — perfect complement to Claude's domain expertise.
+
 ## Architecture
 
 - **Frontend**: React 19 + Vite 8 + Wouter + tRPC + TanStack Query + Tailwind v4 + shadcn/ui
@@ -25,7 +41,7 @@ This application includes comprehensive security features:
 - **Database**: Neon Postgres via `@neondatabase/serverless` HTTP driver + Drizzle ORM
 - **Auth**: Single-owner password login with optional 2FA/TOTP + backup codes. JWT access tokens (24 h) + refresh tokens (7 d) in `httpOnly` cookies.
 - **Resilience**: `fetchWithRetry` (exponential backoff + jitter), `CircuitBreaker` (CLOSED/OPEN/HALF_OPEN with rolling failure window), per-user async mutex on order placement to prevent TOCTOU races
-- **AI**: Claude is the sole reviewer for every candidate signal. Each signal is routed by category (sports / crypto / politics / economics / tech / culture / weather) to a domain-expert desk persona. Calls use prompt caching, the `web_search_20250305` tool, and extended thinking on high-stakes trades. Confidence `[-0.25, +0.15]` and EV `[-0.1, +0.1]` adjustments applied; risk guardrails hard-block regardless.
+- **AI**: Claude is the sole reviewer for every candidate signal. Each signal is routed by category (sports / crypto / politics / economics / tech / culture / weather / other) to a domain-expert desk persona. Calls use prompt caching, the `web_search_20250305` tool, and extended thinking on high-stakes trades. Confidence `[-0.25, +0.15]` and EV `[-0.1, +0.1]` adjustments applied; risk guardrails hard-block regardless.
 - **Scheduling**: On Railway the Express server runs in-process schedulers (autonomous trading every 15 min, order sync every 5 min). On Vercel, `cron` entries in `vercel.json` trigger `/api/scheduled/*`.
 
 ## One-time setup
@@ -36,12 +52,13 @@ This application includes comprehensive security features:
    openssl rand -base64 32  # Run this 3 times for each secret
    ```
 3. **Get an Anthropic API key** (required — Claude is the sole reviewer).
-4. Copy `.env.example` → `.env` and fill in values.
-5. Install deps:
+4. **(NEW) Get an xAI API key** for Grok trader (optional but recommended for solo/team mode).
+5. Copy `.env.example` → `.env` and fill in values.
+6. Install deps:
    ```bash
    corepack pnpm install
    ```
-6. Push the schema to Neon:
+7. Push the schema to Neon:
    ```bash
    corepack pnpm db:push
    ```
