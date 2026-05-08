@@ -12,6 +12,7 @@ import { evaluatePolymarketExitsForOpenPositions } from "./polymarketExitMonitor
 import { syncPolymarketPositions } from "./polymarketPositionSync";
 import { createAutonomousTradingLock, createOrderSyncLock, DistributedLock } from "./distributedLock";
 import { runStartupSelfTest } from "./startupSelfTest";
+import { checkBudgetForRun } from "./aiCostBudget";
 import { logger } from "./logger";
 import { fetchKalshiMarkets } from "./kalshiMarketData";
 import { fetchPolymarketMarkets } from "./polymarketAuth";
@@ -120,6 +121,22 @@ const POLYMARKET_MARKET_LIMIT = 80;
 
 async function runAutonomousScheduler() {
   try {
+    // AI daily cost budget gate.  No-op when AI_DAILY_BUDGET_USD is unset.
+    // When the budget is fully spent for the current UTC day, skip this
+    // tick entirely so no AI calls fire until midnight rollover.
+    const budget = checkBudgetForRun();
+    if (!budget.proceed) {
+      logger.warn(
+        {
+          spentUsd: Number(budget.spentUsd.toFixed(4)),
+          capUsd: budget.capUsd,
+          fractionSpent: Number(budget.fractionSpent.toFixed(3)),
+        },
+        "[Scheduler] AI daily budget exhausted; Kalshi autonomy skipping until UTC rollover",
+      );
+      return;
+    }
+
     const eligibleUsers = await getUsersEligibleForAutomaticScheduledTrading();
     // Mirror the HTTP handler: scope to the configured owner only.
     const scopedUsers = scopeScheduledUsersToTrigger(
@@ -155,6 +172,20 @@ async function runAutonomousScheduler() {
 // withUserLock around the risk-check → place sequence.
 async function runPolymarketAutonomousScheduler() {
   try {
+    // AI daily cost budget gate (see runAutonomousScheduler).
+    const budget = checkBudgetForRun();
+    if (!budget.proceed) {
+      logger.warn(
+        {
+          spentUsd: Number(budget.spentUsd.toFixed(4)),
+          capUsd: budget.capUsd,
+          fractionSpent: Number(budget.fractionSpent.toFixed(3)),
+        },
+        "[PolymarketScheduler] AI daily budget exhausted; Polymarket autonomy skipping until UTC rollover",
+      );
+      return;
+    }
+
     const eligibleUsers = await getUsersEligibleForAutomaticScheduledTrading();
     const scopedUsers = scopeScheduledUsersToTrigger(
       eligibleUsers as Array<{ id: number; openId: string; email?: string | null }>,

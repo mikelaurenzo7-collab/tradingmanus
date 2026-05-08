@@ -29,6 +29,7 @@
  */
 
 import { ENV } from "./env";
+import { recordAiCallCost } from "./aiCostBudget";
 
 export type ModelTier = "triage" | "review" | "deep";
 
@@ -280,20 +281,41 @@ export function newReviewerTelemetry(): ReviewerTelemetry {
 
 /**
  * Update telemetry from an Anthropic response.  Reads `usage` (where the
- * cache stats live) and counts `web_search_tool_result` blocks.  Fail-safe
- * for stub responses that don't include `usage`.
+ * cache stats live), counts `web_search_tool_result` blocks, and bills the
+ * call against the daily AI cost budget so the throttler can act on
+ * actual spend.  Fail-safe for stub responses that don't include `usage`.
  */
 export function recordAnthropicResponseTelemetry(
   telemetry: ReviewerTelemetry,
-  response: { content?: Array<unknown>; usage?: Record<string, unknown> },
-  flags: { extendedThinkingUsed?: boolean } = {},
+  response: { content?: Array<unknown>; usage?: Record<string, unknown>; model?: unknown },
+  flags: { extendedThinkingUsed?: boolean; reviewer?: string; userId?: number } = {},
 ): void {
   telemetry.anthropicCalls += 1;
   const usage = response.usage ?? {};
-  telemetry.cacheCreationInputTokens += Number(usage.cache_creation_input_tokens ?? 0) || 0;
-  telemetry.cacheReadInputTokens += Number(usage.cache_read_input_tokens ?? 0) || 0;
-  telemetry.inputTokens += Number(usage.input_tokens ?? 0) || 0;
-  telemetry.outputTokens += Number(usage.output_tokens ?? 0) || 0;
+  const inputTokens = Number(usage.input_tokens ?? 0) || 0;
+  const outputTokens = Number(usage.output_tokens ?? 0) || 0;
+  const cacheCreationInputTokens = Number(usage.cache_creation_input_tokens ?? 0) || 0;
+  const cacheReadInputTokens = Number(usage.cache_read_input_tokens ?? 0) || 0;
+  telemetry.cacheCreationInputTokens += cacheCreationInputTokens;
+  telemetry.cacheReadInputTokens += cacheReadInputTokens;
+  telemetry.inputTokens += inputTokens;
+  telemetry.outputTokens += outputTokens;
+  // Bill against daily budget — no-op when AI_DAILY_BUDGET_USD is unset.
+  const model = typeof response.model === "string" ? response.model : ENV.anthropicModel;
+  recordAiCallCost(
+    model,
+    {
+      inputTokens,
+      outputTokens,
+      cacheReadInputTokens,
+      cacheCreationInputTokens,
+    },
+    {
+      provider: "anthropic",
+      reviewer: flags.reviewer,
+      userId: flags.userId,
+    },
+  );
   if (Array.isArray(response.content)) {
     for (const block of response.content) {
       if (typeof block === "object" && block !== null && (block as any).type === "web_search_tool_result") {

@@ -30,6 +30,8 @@
  * the prompt or model.
  */
 
+import { checkBudgetForRun } from "./aiCostBudget";
+
 interface ReviewCacheEntry {
   lastReviewedPrice: number;
   lastReviewedAtMs: number;
@@ -56,6 +58,13 @@ function readStaleTtlMs(): number {
 
 /**
  * Pure check for one market.  `now` is injectable so tests don't depend on Date.now().
+ *
+ * The AI daily-cost-budget throttle multiplies the effective stale TTL +
+ * price-delta threshold when the operator has set AI_DAILY_BUDGET_USD and
+ * the current day's spend is past a soft limit.  At 60 % spent the TTL is
+ * 1.5×, at 80 % it is 2×, at 95 % it is 4×.  At 100 % the scheduler skips
+ * the run entirely (handled in index.ts), so we don't see a >=4× factor
+ * here in practice.
  */
 export function shouldReviewMarketAt(
   marketId: string,
@@ -70,11 +79,15 @@ export function shouldReviewMarketAt(
   const entry = REVIEW_CACHE.get(marketId);
   if (!entry) return true;
 
-  if (now - entry.lastReviewedAtMs >= readStaleTtlMs()) return true;
+  const throttle = checkBudgetForRun(now).throttleFactor;
+  const effectiveStaleTtlMs = readStaleTtlMs() * throttle;
+  if (now - entry.lastReviewedAtMs >= effectiveStaleTtlMs) return true;
 
-  // Compare in basis points so the threshold is intuitive.
+  // Compare in basis points so the threshold is intuitive.  The throttle
+  // also raises the price-move bar so quiet ticks during budget burn cost
+  // less.
   const deltaBps = Math.abs(currentPrice - entry.lastReviewedPrice) * 10_000;
-  return deltaBps >= readPriceDeltaBps();
+  return deltaBps >= readPriceDeltaBps() * throttle;
 }
 
 export function recordMarketReview(

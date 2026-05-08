@@ -118,6 +118,11 @@ export const ENV = {
   allowedOrigin: normalize(process.env.ALLOWED_ORIGIN),
   alertWebhookUrl: normalize(process.env.ALERT_WEBHOOK_URL),
   paperTradeMode: normalizeBoolean(process.env.PAPER_TRADE_MODE, false),
+  // Daily AI cost cap in USD.  When > 0, the scheduler throttles adaptive
+  // cadence as the budget burns and skips runs entirely once 100 %
+  // spent (resets at UTC midnight).  See server/_core/aiCostBudget.ts.
+  // 0 (or unset) = unlimited.
+  aiDailyBudgetUsd: normalizeFloat(process.env.AI_DAILY_BUDGET_USD, 0, { min: 0, max: 100000 }),
   starterCheckoutUrl: normalize(process.env.STARTER_CHECKOUT_URL),
   proCheckoutUrl: normalize(process.env.PRO_CHECKOUT_URL),
   fundCheckoutUrl: normalize(process.env.FUND_CHECKOUT_URL),

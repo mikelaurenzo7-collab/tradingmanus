@@ -166,6 +166,23 @@ function checkPolymarketOwnerAddress(): SelfTestCheck {
   };
 }
 
+function checkAiDailyBudget(): SelfTestCheck {
+  const cap = ENV.aiDailyBudgetUsd;
+  if (cap <= 0) {
+    return {
+      name: "ai_daily_budget",
+      status: "warn",
+      detail:
+        "AI_DAILY_BUDGET_USD is unset or 0 — there is no soft cap on daily AI spend.  Setting this (e.g. AI_DAILY_BUDGET_USD=10) auto-throttles adaptive cadence as the budget burns and skips runs entirely once exhausted, with rollover at UTC midnight.  Recommended for live trading.",
+    };
+  }
+  return {
+    name: "ai_daily_budget",
+    status: "ok",
+    detail: `AI_DAILY_BUDGET_USD = $${cap.toFixed(2)} per UTC day; auto-throttle armed.`,
+  };
+}
+
 function checkPaperMode(): SelfTestCheck {
   if (ENV.paperTradeMode) {
     return {
@@ -220,6 +237,7 @@ export async function runStartupSelfTest(): Promise<SelfTestResult> {
   checks.push(checkAiReviewerKey());
   checks.push(checkAiReviewerModel());
   checks.push(checkGrokTeamMode());
+  checks.push(checkAiDailyBudget());
   checks.push(checkCredentialEncryptionSecret());
   checks.push(checkPolymarketOwnerAddress());
   checks.push(checkPaperMode());
