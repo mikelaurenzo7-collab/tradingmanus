@@ -405,9 +405,9 @@ const REQUIRED_AI_PROVIDERS = [
 ] as const;
 
 export function validateServerEnv() {
-  const missing = REQUIRED_SERVER_ENV.filter(
-    ([, value]) => value.length === 0,
-  ).map(([name]) => name);
+  const missing: string[] = REQUIRED_SERVER_ENV
+    .filter(([, value]) => value.length === 0)
+    .map(([name]) => String(name));
 
   // AI provider check — at least one of Anthropic or Grok must be set.
   const hasAnyAiProvider = REQUIRED_AI_PROVIDERS.some(
