@@ -131,7 +131,7 @@ surfaces on the dashboard's **Calibration Scores** tab.
 
 Railway deploys from `main` via Docker. Required env vars:
 
-```
+```env
 DATABASE_URL
 JWT_SECRET                    # 32+ random chars
 CREDENTIAL_ENCRYPTION_SECRET  # 32+ random chars, MUST differ from JWT_SECRET
@@ -153,7 +153,7 @@ DEMO_MODE                     # true=demo, false=production (default false)
 
 ## Optional env vars (all auto-tuned)
 
-```
+```env
 # Kalshi connection
 ALLOWED_ORIGIN                          # CORS allow-list
 ALERT_WEBHOOK_URL                       # Slack/Discord/PagerDuty

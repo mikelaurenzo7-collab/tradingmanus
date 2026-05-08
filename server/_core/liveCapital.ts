@@ -33,12 +33,13 @@ export async function getLiveCapitalUsd(opts: {
 
   try {
     const result = await getPortfolioBalance();
-    // Kalshi returns balance in cents; the kalshiClient already converts
-    // to dollars at the response shape. `result.balance` is cents-scale on
-    // the raw API but our wrapper exposes it in dollars.
+    // Kalshi's /portfolio/balance endpoint returns `balance` in cents
+    // (e.g. 4200 = $42.00). `kalshiClient.getPortfolioBalance` is a thin
+    // pass-through (no normalisation), so the raw cents value comes
+    // through here — divide by 100 to get USD.
     const balance =
       typeof result?.balance === "number" && Number.isFinite(result.balance)
-        ? result.balance / 100 // raw API gives cents; convert to USD here
+        ? result.balance / 100
         : 0;
     _cache = { ts: now, usd: balance };
     return balance;

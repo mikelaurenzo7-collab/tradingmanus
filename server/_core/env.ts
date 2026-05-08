@@ -168,15 +168,20 @@ export const ENV = {
       0.1,
       { min: 0.01, max: 1 },
     ),
-    // Kelly sizing: ¼ Kelly capped at 2% of capital, floored at 0.5%.
-    kellyFraction: normalizeFloat(process.env.KELLY_FRACTION, 0.25, {
+    // Kelly sizing: ½ Kelly capped at 4% of capital, floored at 0.5%.
+    // ½ Kelly is the "moderately aggressive" point — gives up ~30% of the
+    // long-run growth Full Kelly would achieve in exchange for ~5× lower
+    // drawdown variance, robust to ±5% reviewer probability calibration
+    // error. Override with KELLY_FRACTION=0.25 for the conservative ¼ Kelly
+    // default the original pivot used.
+    kellyFraction: normalizeFloat(process.env.KELLY_FRACTION, 0.5, {
       min: 0.05,
       max: 1,
     }),
     kellyMaxPctOfCapital: normalizeFloat(
       process.env.KELLY_MAX_PCT_OF_CAPITAL,
-      0.02,
-      { min: 0.005, max: 0.1 },
+      0.04,
+      { min: 0.005, max: 0.15 },
     ),
     kellyMinPctOfCapital: normalizeFloat(
       process.env.KELLY_MIN_PCT_OF_CAPITAL,

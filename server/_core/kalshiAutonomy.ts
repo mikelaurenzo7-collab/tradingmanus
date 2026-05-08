@@ -32,6 +32,8 @@ import { calculateKelly, applyKellyToPositionSize } from "./kellyCriterion";
 import { assertPositiveIntegerUserId } from "./userScope";
 import { withUserLock } from "./userMutex";
 import { reviewSignalsWithTrader } from "./tradingReviewer";
+import { applyEnsembleFilter } from "./ensembleConsensus";
+import { getLiveCapitalUsd } from "./liveCapital";
 import { getCacheHitRatio, newReviewerTelemetry } from "./aiToolbelt";
 import { createOrderSyncLock } from "./distributedLock";
 import { getEffectivePaperTradeMode } from "./effectivePaperMode";
@@ -782,7 +784,97 @@ async function generateScheduledSignals(
     `user:${userId}`,
   );
 
-  await saveSignals(savedSignals, userId);
+  // ── Tier 2/3 ensemble post-filter ──────────────────────────────────────
+  // Grok already approved each `savedSignal`. We now run them through
+  // the cross-family ensemble: high-stakes signals get Sonnet review;
+  // catastrophic-bets demand unanimous Grok+Sonnet+Opus. Vetoed signals
+  // are dropped here; approved signals carry the ensemble's adjusted
+  // EV/confidence into execution.
+  let ensembleApproved = savedSignals;
+  if (ENV.anthropicApiKey && savedSignals.length > 0) {
+    try {
+      const liveCapitalUsd = await getLiveCapitalUsd().catch(() => 0);
+      const marketsByIdLocal = new Map(
+        actionableMarkets.map((m) => [m.id, m]),
+      );
+      const ensembleInputs = savedSignals.map((sig) => {
+        const market = marketsByIdLocal.get(sig.marketId);
+        // KalshiMarket exposes resolutionDate (ISO string), not closeTime.
+        const closeMs = market?.resolutionDate
+          ? new Date(market.resolutionDate).getTime()
+          : null;
+        return {
+          marketId: sig.marketId,
+          ticker: sig.marketId,
+          category: market?.category ?? "other",
+          side: sig.side,
+          confidence: sig.confidence,
+          impliedProbability: sig.impliedProbability,
+          marketPrice: sig.marketPrice,
+          expectedValue: sig.expectedValue,
+          // Sizing is finalised downstream; for the high-stakes detector we
+          // estimate notional at the configured per-position cap. This
+          // overestimates for thin-edge signals (good — we'd rather over-
+          // trigger Sonnet review than miss a catastrophic-bet).
+          count: Math.max(
+            1,
+            Math.floor(
+              (liveCapitalUsd * ENV.profitGuardrails.kellyMaxPctOfCapital) /
+                Math.max(0.01, sig.marketPrice),
+            ),
+          ),
+          resolutionAtMs:
+            Number.isFinite(closeMs) && closeMs !== null ? closeMs : null,
+          // KalshiMarket has `description` but not separate primary/secondary
+          // rule blocks. Pass it as the primary rules text — the persona
+          // mandate's `${RULES_BLOCK}` slot accepts a single block.
+          resolutionPrimary: market?.description ?? null,
+          resolutionSecondary: null,
+        };
+      });
+      const ensembleResult = await applyEnsembleFilter(ensembleInputs, {
+        liveCapitalUsd,
+      });
+      const approvedIds = new Set(
+        ensembleResult.approvedSignals.map((s) => s.marketId),
+      );
+      ensembleApproved = savedSignals.filter((s) => approvedIds.has(s.marketId));
+
+      // Audit-log the per-signal trail so the calibration job can score
+      // Brier per reviewer per category.
+      await db.logAuditEvent(
+        "kalshi_ensemble_review",
+        JSON.stringify({
+          liveCapitalUsd,
+          totalCandidates: savedSignals.length,
+          ensembleApproved: ensembleApproved.length,
+          totalAiCostUsd: ensembleResult.verdicts.reduce(
+            (a, v) => a + v.ensemble.totalAiCostUsd,
+            0,
+          ),
+          verdicts: ensembleResult.verdicts.map((v) => ({
+            marketId: v.marketId,
+            approved: v.ensemble.approved,
+            reasoning: v.ensemble.reasoning,
+            reviewers: v.ensemble.reviews.map((r) => r.reviewerId),
+            classification: {
+              isHighStakes: v.ensemble.classification.isHighStakes,
+              isCatastrophicBet: v.ensemble.classification.isCatastrophicBet,
+              triggers: v.ensemble.classification.triggers,
+            },
+          })),
+        }),
+        `user:${userId}`,
+      );
+    } catch (err) {
+      logger.warn(
+        { err },
+        "[Ensemble] post-filter failed; falling back to Grok-only signals",
+      );
+    }
+  }
+
+  await saveSignals(ensembleApproved, userId);
 
   // Emit a single structured audit event capturing every filter stage count.
   // This answers "why did we end up with N signals?" without requiring log

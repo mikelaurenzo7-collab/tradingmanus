@@ -23,6 +23,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { ENV } from "./env";
 import { logger } from "./logger";
 import { getGrokPersona, injectVerbatimRulesBlock } from "./grokPersonas";
+import { logAuditEvent } from "../db";
 import type { MarketCategory } from "./marketCategoryRouter";
 
 // Lazy-init the client so module import never throws when ANTHROPIC_API_KEY
@@ -180,14 +181,16 @@ function buildUserPrompt(input: ClaudeReviewInput): string {
 }
 
 /**
- * Call Claude Sonnet 4.6 — fast cross-family second opinion. ~$0.017/review
- * at typical prompt size; called on ~10-15% of signals.
+ * Call Claude Sonnet — fast cross-family second opinion. Model id comes from
+ * ENV.claudeSonnetModel (default `claude-sonnet-4-6`); override per-tier via
+ * the CLAUDE_SONNET_MODEL env var.
  */
 export async function reviewWithSonnet(
   input: ClaudeReviewInput,
 ): Promise<ClaudeReviewVerdict> {
   return runClaudeReview(input, {
-    model: "claude-sonnet-4-6",
+    model: ENV.claudeSonnetModel,
+    pricingKey: "claude-sonnet-4-6",
     effort: "medium",
     reviewerId: "claude.sonnet-4-6",
     enableThinkingDisplay: false,
@@ -196,16 +199,18 @@ export async function reviewWithSonnet(
 }
 
 /**
- * Call Claude Opus 4.7 — final tiebreaker when Grok and Sonnet disagree,
- * OR when the position is a "catastrophic-bet" (≥10% of bankroll). Adaptive
- * thinking with summarized display so the reasoning is captured in audit
- * logs. ~$0.083/review; called on ~1-2 reviews/week.
+ * Call Claude Opus — final tiebreaker when Grok and Sonnet disagree, OR
+ * when the position is a catastrophic-bet (≥ CATASTROPHIC_PCT_OF_CAPITAL).
+ * Adaptive thinking with summarized display so the reasoning is captured
+ * in audit logs. Model id comes from ENV.claudeOpusModel (default
+ * `claude-opus-4-7`); override via CLAUDE_OPUS_MODEL.
  */
 export async function reviewWithOpus(
   input: ClaudeReviewInput,
 ): Promise<ClaudeReviewVerdict> {
   return runClaudeReview(input, {
-    model: "claude-opus-4-7",
+    model: ENV.claudeOpusModel,
+    pricingKey: "claude-opus-4-7",
     effort: "high",
     reviewerId: "claude.opus-4-7",
     enableThinkingDisplay: true,
@@ -216,7 +221,13 @@ export async function reviewWithOpus(
 async function runClaudeReview(
   input: ClaudeReviewInput,
   opts: {
-    model: "claude-sonnet-4-6" | "claude-opus-4-7";
+    /** Actual model id sent to the API — taken from env. */
+    model: string;
+    /** Pricing-table key, used to compute cost. We pin this to the model
+     *  family the operator selected (sonnet vs opus); pricing is rough at
+     *  the family level so a snapshot version inside the same family is
+     *  fine to bill against the same row. */
+    pricingKey: keyof typeof PRICING;
     effort: "low" | "medium" | "high" | "xhigh" | "max";
     reviewerId: ClaudeReviewVerdict["reviewerId"];
     enableThinkingDisplay: boolean;
@@ -238,11 +249,11 @@ async function runClaudeReview(
 
   const userPrompt = buildUserPrompt(input);
 
-  // Adaptive thinking. On Opus 4.7 we set display:summarized so we can
+  // Adaptive thinking. On the Opus tier we set display:summarized so we can
   // surface the reasoning in audit logs. On Sonnet, leave it default
   // (omitted) — the reasoning we want is in `reasoning` of the JSON output.
   const thinking =
-    opts.model === "claude-opus-4-7"
+    opts.pricingKey === "claude-opus-4-7"
       ? ({
           type: "adaptive",
           display: opts.enableThinkingDisplay ? "summarized" : "omitted",
@@ -267,25 +278,36 @@ async function runClaudeReview(
   // The non-streaming overload returns `Anthropic.Message`; the union with
   // `Stream<...>` only fires when `stream: true` is set. We never set it, so
   // narrow with a type assertion to avoid the "could be a Stream" path.
+  // Use the SDK's native `timeout` request option (not Promise.race) so the
+  // in-flight HTTP request is actually cancelled on timeout — Promise.race
+  // only rejects the local await; the SDK keeps streaming + billing.
   let response: Anthropic.Message;
   try {
-    response = (await Promise.race([
-      client.messages.create(
-        requestBody as unknown as Anthropic.MessageCreateParamsNonStreaming,
-      ),
-      new Promise<never>((_, reject) =>
-        setTimeout(
-          () =>
-            reject(new Error(`Claude ${opts.model} timeout after ${opts.timeoutMs}ms`)),
-          opts.timeoutMs,
-        ),
-      ),
-    ])) as Anthropic.Message;
+    response = (await client.messages.create(
+      requestBody as unknown as Anthropic.MessageCreateParamsNonStreaming,
+      { timeout: opts.timeoutMs },
+    )) as Anthropic.Message;
   } catch (err) {
     logger.warn(
       { err, model: opts.model, ticker: input.ticker },
       "[ClaudeReviewer] request failed; failing closed (veto)",
     );
+    // Audit-log per repo convention: every AI reviewer failure goes to the
+    // audit stream so calibration / alerting can spot model outages.
+    void logAuditEvent(
+      "ai_reviewer_failure",
+      JSON.stringify({
+        reviewerId: opts.reviewerId,
+        model: opts.model,
+        ticker: input.ticker,
+        marketId: input.marketId,
+        category: input.category,
+        error: err instanceof Error ? err.message : String(err),
+        durationMs: Date.now() - startedAt,
+        phase: "transport_error",
+      }),
+      `kalshi_market:${input.marketId}`,
+    ).catch(() => {});
     return {
       reviewerId: opts.reviewerId,
       approved: false,
@@ -331,6 +353,30 @@ async function runClaudeReview(
   }
 
   if (!parsed) {
+    const usage = response.usage;
+    // Audit-log the malformed-verdict path. Spend already happened, so
+    // costUsd reflects real usage — under-reporting it would let cost
+    // telemetry drift exactly on the failure path that needs the most
+    // monitoring.
+    void logAuditEvent(
+      "ai_reviewer_failure",
+      JSON.stringify({
+        reviewerId: opts.reviewerId,
+        model: opts.model,
+        ticker: input.ticker,
+        marketId: input.marketId,
+        category: input.category,
+        phase: "malformed_verdict",
+        usage: {
+          input_tokens: usage?.input_tokens ?? 0,
+          output_tokens: usage?.output_tokens ?? 0,
+          cache_read_input_tokens: usage?.cache_read_input_tokens ?? 0,
+          cache_creation_input_tokens: usage?.cache_creation_input_tokens ?? 0,
+        },
+        durationMs: Date.now() - startedAt,
+      }),
+      `kalshi_market:${input.marketId}`,
+    ).catch(() => {});
     return {
       reviewerId: opts.reviewerId,
       approved: false,
@@ -339,17 +385,22 @@ async function runClaudeReview(
       impliedProbability: input.entryPrice,
       reasoning: `Claude ${opts.model} returned malformed verdict — fail-closed veto`,
       ambiguityFlag: false,
-      costUsd: 0,
-      inputTokens: response.usage?.input_tokens ?? 0,
-      outputTokens: response.usage?.output_tokens ?? 0,
-      cacheReadInputTokens: response.usage?.cache_read_input_tokens ?? 0,
-      cacheCreationInputTokens: response.usage?.cache_creation_input_tokens ?? 0,
+      costUsd: computeCost(opts.pricingKey, {
+        input: usage?.input_tokens ?? 0,
+        output: usage?.output_tokens ?? 0,
+        cacheRead: usage?.cache_read_input_tokens ?? 0,
+        cacheWrite: usage?.cache_creation_input_tokens ?? 0,
+      }),
+      inputTokens: usage?.input_tokens ?? 0,
+      outputTokens: usage?.output_tokens ?? 0,
+      cacheReadInputTokens: usage?.cache_read_input_tokens ?? 0,
+      cacheCreationInputTokens: usage?.cache_creation_input_tokens ?? 0,
       durationMs: Date.now() - startedAt,
     };
   }
 
   const usage = response.usage;
-  const costUsd = computeCost(opts.model, {
+  const costUsd = computeCost(opts.pricingKey, {
     input: usage?.input_tokens ?? 0,
     output: usage?.output_tokens ?? 0,
     cacheRead: usage?.cache_read_input_tokens ?? 0,
