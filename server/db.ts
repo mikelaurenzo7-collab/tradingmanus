@@ -1305,8 +1305,18 @@ export async function createAutonomyRun(run: {
   const database = await getDb();
   if (!database) return null;
 
-  try {
-    await database.insert(autonomyRuns).values({
+  // Use ON CONFLICT DO NOTHING + a follow-up SELECT.  Catching the unique-
+  // violation by inspecting `error.code` was unreliable on the neon-http
+  // driver: Drizzle wraps the underlying NeonDbError in a DrizzleQueryError
+  // and the Postgres SQLSTATE never reaches the top-level error object, so
+  // duplicate-key inserts were re-thrown and crashed the scheduler tick.
+  // onConflictDoNothing pushes the conflict resolution into the SQL plan and
+  // simply returns no row when the runKey is already taken — the SELECT below
+  // returns null in that case, which is exactly the dedup contract callers
+  // expect.
+  await database
+    .insert(autonomyRuns)
+    .values({
       runId: run.runId,
       runKey: run.runKey,
       userId: scopedUserId,
@@ -1318,13 +1328,8 @@ export async function createAutonomyRun(run: {
       autonomyMode: run.autonomyMode,
       executionCadence: run.executionCadence,
       appliedGuardrails: run.appliedGuardrails ?? null,
-    });
-  } catch (error: any) {
-    if (error?.code === "23505") {
-      return null;
-    }
-    throw error;
-  }
+    })
+    .onConflictDoNothing({ target: autonomyRuns.runKey });
 
   const created = await database
     .select()
