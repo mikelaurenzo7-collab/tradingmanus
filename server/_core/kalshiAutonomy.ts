@@ -822,23 +822,36 @@ async function generateScheduledSignals(
         const closeMs = market?.resolutionDate
           ? new Date(market.resolutionDate).getTime()
           : null;
-        // Estimate the actual stake the executor will use (½ Kelly clamped
-        // 0.5%–4% of capital by default). This matches the real sizing,
-        // so the high-stakes percent trigger fires only on signals that
-        // will be sized large — not on every approved candidate. Using
-        // `kellyMaxPctOfCapital` here would overestimate to 4% on
-        // every signal and trip the 3% high-stakes gate universally.
-        // For NO-side trades, Kelly's edge math uses the win probability
-        // = 1 - YES_implied. Use signal.confidence as the win probability
-        // (reviewer-adjusted, side-aware).
-        const sizing = calculateKellyPosition({
+        // Estimate the actual stake the executor will use. Kelly alone
+        // overestimates because the real executor also caps by
+        // `preferences.maxOrderNotional`, `riskLimits.maxPositionSize`,
+        // and `riskLimits.maxLossPerTrade` — none of which are in scope
+        // here (they're loaded by the caller). Without modeling those, a
+        // $1k account in non-aggressive mode can place a real $5–$10
+        // trade while Kelly says $40 and the 3 % high-stakes gate
+        // over-fires.
+        //
+        // Conservative heuristic: shrink Kelly's recommendation by 50 %.
+        // On non-aggressive setups the per-user caps typically halve the
+        // Kelly stake; on aggressive setups they don't, but those are
+        // genuinely high-stakes and the gate firing is correct.
+        // For NO-side trades, signal.confidence is already side-aware.
+        const kellySizing = calculateKellyPosition({
           winProbability: sig.confidence,
           contractPrice: Math.max(0.01, sig.marketPrice),
           totalCapitalUsd: liveCapitalUsd,
         });
+        const HIGH_STAKES_ESTIMATOR_SHRINK = 0.5;
+        const cappedNotionalUsd = Math.max(
+          0,
+          Math.min(
+            kellySizing.positionUsd * HIGH_STAKES_ESTIMATOR_SHRINK,
+            liveCapitalUsd, // can never exceed total capital
+          ),
+        );
         const estimatedCount = Math.max(
           1,
-          Math.floor(sizing.positionUsd / Math.max(0.01, sig.marketPrice)),
+          Math.floor(cappedNotionalUsd / Math.max(0.01, sig.marketPrice)),
         );
         return {
           marketId: sig.marketId,
@@ -1792,7 +1805,13 @@ export async function runScheduledAutonomousTrading(
         return closedAt > Date.now() - 7 * 24 * 60 * 60 * 1000;
       }),
     )
-    .catch(() => [] as any[]);
+    .catch((err: unknown) => {
+      logger.warn(
+        { err, userId, op: "getKalshiTradeHistory" },
+        "[Autonomy] trade history fetch failed for drawdown breaker; using empty baseline",
+      );
+      return [] as any[];
+    });
   // Weekly realized PnL = sum of realizedPnl across the trailing 7d window.
   const weeklyPnlUsd = closedTrades7d.reduce(
     (acc: number, t: any) => acc + Number(t.realizedPnl ?? 0),

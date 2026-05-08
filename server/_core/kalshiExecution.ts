@@ -8,7 +8,7 @@ import { URL } from "url";
 import { db, logAuditEvent } from "../db";
 import * as kalshiCredDb from "../db.kalshi-credentials";
 import { kalshiOrders, kalshiFills, kalshiPositions } from "../../drizzle/schema";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, lte } from "drizzle-orm";
 import { calculateKalshiBuyOrderRisk, normalizeLimitPrice, normalizeOrderQuantity } from "./kalshiRisk";
 import { assertPositiveIntegerUserId } from "./userScope";
 import { logger } from "./logger";
@@ -1054,26 +1054,48 @@ export async function closePositionFromFill(
     // tranche's PnL is in `realizedPnl` (local). The total realized PnL
     // for the whole trade is the sum.
     const totalRealizedPnl = Number(position.realizedPnl ?? 0) + realizedPnl;
-    // Total contracts originally opened = current remaining + everything
-    // already closed. We can't perfectly recover the original size from
-    // the position row alone, but `position.quantity` reflects what was
-    // OPEN going INTO this fill — so original size = current open + sum
-    // of prior closed quantities. The simplest and most accurate proxy
-    // we have on hand: original_count = closeQuantity + (prior closes,
-    // captured implicitly in position.realizedPnl/entryPrice).
-    //
-    // For the calibration log we want the WHOLE trade's size, not just
-    // this tranche's. Use the position's openedQuantity if persisted; fall
-    // back to (closeQuantity + recovered-from-PnL) approximation.
-    const originalCount = (() => {
-      const stored = Number((position as { openedQuantity?: number | null }).openedQuantity ?? 0);
-      if (stored > 0) return stored;
-      // Approximation: prior closes contributed (totalRealizedPnl -
-      // realizedPnl) at unknown sizes. Use closeQuantity + currentQuantity
-      // as a lower-bound (this fill closed `closeQuantity` of an open
-      // remainder of `currentQuantity`).
-      return closeQuantity + Math.max(0, currentQuantity - closeQuantity);
-    })();
+    // Recover the ORIGINAL opened size by summing filled quantities of
+    // every BUY order on this market+side+user that filled at-or-before
+    // the position's openedAt → now. The position row alone can't
+    // recover this after partial closes (its `quantity` field is the
+    // REMAINING size, not the original), and we don't currently persist
+    // an `openedQuantity` column. Reading from kalshiOrders gives us the
+    // true total. Falls back to closeQuantity + currentQuantity if the
+    // orders lookup fails.
+    let originalCount = closeQuantity + Math.max(0, currentQuantity - closeQuantity);
+    try {
+      const { getDb } = await import("../db");
+      const database = await getDb();
+      if (database) {
+        const orderRows = await database
+          .select({ filledQuantity: kalshiOrders.filledQuantity })
+          .from(kalshiOrders)
+          .where(
+            and(
+              eq(kalshiOrders.userId, position.userId),
+              eq(kalshiOrders.marketId, marketId),
+              eq(kalshiOrders.side, side),
+              eq(kalshiOrders.action, "buy"),
+            ),
+          );
+        const summedOpened = orderRows.reduce(
+          (acc: number, r: { filledQuantity: number | null }) =>
+            acc + Number(r.filledQuantity ?? 0),
+          0,
+        );
+        // Only override the fallback if the orders lookup found something
+        // sensible (≥ this tranche's close size). Otherwise stick with
+        // the lower-bound estimate.
+        if (summedOpened >= closeQuantity) {
+          originalCount = summedOpened;
+        }
+      }
+    } catch (err) {
+      logger.warn(
+        { err, marketId, side },
+        "[Calibration] originalCount lookup from kalshiOrders failed; using fallback estimate",
+      );
+    }
 
     await db
       .update(kalshiPositions)

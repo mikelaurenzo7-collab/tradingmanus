@@ -764,10 +764,37 @@ export const appRouter = router({
      * Drives the dashboard's "Guardrails Status" tab so the operator can
      * see how thresholds scale as they deposit more capital.
      */
-    getGuardrailsSnapshot: protectedProcedure.query(async () => {
+    getGuardrailsSnapshot: protectedProcedure.query(async ({ ctx }) => {
       const { ENV } = await import("./_core/env");
-      const { getLiveCapitalUsd } = await import("./_core/liveCapital");
-      const capitalUsd = await getLiveCapitalUsd().catch(() => 0);
+      // Use the AUTHENTICATED USER'S Kalshi credentials, not process-level
+      // KALSHI_KEY_ID. The rest of this router's capital paths do the same;
+      // without this, the snapshot reads someone else's account or 0.
+      const userId = Number(ctx.user?.id ?? 0);
+      let capitalUsd = 0;
+      if (userId > 0) {
+        try {
+          const creds = await kalshiCredDb.getKalshiCredentials(userId);
+          // Narrow against the union {needsReauth} | {apiKey, privateKey, ...}
+          if (creds && !("needsReauth" in creds && creds.needsReauth)) {
+            const decrypted = creds as {
+              apiKey?: string;
+              privateKey?: string;
+            };
+            if (decrypted.apiKey && decrypted.privateKey) {
+              const equityResult = await fetchKalshiAccountEquity(
+                decrypted.apiKey,
+                decrypted.privateKey,
+              );
+              if (!equityResult.error) {
+                capitalUsd = Number(equityResult.equity ?? 0);
+              }
+            }
+          }
+        } catch {
+          // best-effort: fall through with 0 so the snapshot still renders
+          capitalUsd = 0;
+        }
+      }
 
       const tier =
         capitalUsd > ENV.scannerCapHighTierUsd

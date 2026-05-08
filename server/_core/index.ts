@@ -16,6 +16,8 @@ import * as hb from "./schedulerHeartbeat";
 import { fetchKalshiMarkets } from "./kalshiMarketData";
 import { detectAllCombinatorialArbitrage } from "./kalshiCombinatorial";
 import { runCalibrationJob } from "./calibrationJob";
+import { runDailySportsPlay } from "./dailySportsPlay";
+import { ENV } from "./env";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -310,6 +312,54 @@ async function runCombinatorialArbScanner() {
   }
 }
 
+// ── Daily Sports Play cron (playground mode) ────────────────────────────────
+// Fires once per UTC day at ENV.dailySportsPlayHourUtc (default 14:00 UTC =
+// 10am ET). Tick rate is 5 minutes — when the current UTC hour matches AND
+// we haven't already fired today, run the play for every eligible user.
+let lastDailySportsPlayUtcDay: string | null = null;
+async function maybeRunDailySportsPlay() {
+  if (!ENV.enableDailySportsPlay) return;
+  const now = new Date();
+  const utcHour = now.getUTCHours();
+  if (utcHour !== ENV.dailySportsPlayHourUtc) return;
+  // YYYY-MM-DD in UTC — gate so we only fire once per UTC day.
+  const utcDay = now.toISOString().slice(0, 10);
+  if (lastDailySportsPlayUtcDay === utcDay) return;
+  lastDailySportsPlayUtcDay = utcDay;
+
+  try {
+    const eligibleUsers = await getUsersEligibleForAutomaticScheduledTrading();
+    for (const user of eligibleUsers as Array<{ id: number }>) {
+      try {
+        const result = await runDailySportsPlay(user.id);
+        logger.info(
+          {
+            userId: user.id,
+            status: result.status,
+            reason: result.reason,
+            marketId: result.marketId,
+            side: result.side,
+            count: result.count,
+            notionalUsd: result.notionalUsd,
+            confidence: result.confidence,
+          },
+          "[DailySportsPlay] result for user %d: %s",
+          user.id,
+          result.status,
+        );
+      } catch (err) {
+        logger.warn(
+          { err, userId: user.id },
+          "[DailySportsPlay] run failed for user %d",
+          user.id,
+        );
+      }
+    }
+  } catch (err) {
+    logger.warn({ err }, "[DailySportsPlay] sweep failed");
+  }
+}
+
 // ── Weekly calibration cron ──────────────────────────────────────────────────
 // Recomputes Brier score per reviewer per category. Runs once per week.
 async function runWeeklyCalibration() {
@@ -366,6 +416,9 @@ startServer()
       setInterval(runCombinatorialArbScanner, COMBINATORIAL_ARB_INTERVAL_MS);
       // Weekly Brier-score calibration cron.
       setInterval(runWeeklyCalibration, CALIBRATION_INTERVAL_MS);
+      // Daily Sports Play (playground mode) — checks every 5 minutes
+      // whether to fire; the function itself is idempotent within a UTC day.
+      setInterval(maybeRunDailySportsPlay, 5 * 60 * 1000);
 
       const auditRetentionDays = Number(process.env.AUDIT_LOG_RETENTION_DAYS ?? 90);
       const runAuditCleanup = async () => {

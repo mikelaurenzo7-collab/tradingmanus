@@ -228,6 +228,30 @@ export const ENV = {
   // Strongly prefer maker (limit) orders for the lower fee.
   preferMakerOrders: normalizeBoolean(process.env.PREFER_MAKER_ORDERS, true),
 
+  // ── Daily Sports Play (playground mode, opt-in) ──────────────────────────
+  // When ENABLE_DAILY_SPORTS_PLAY=true, places ONE Kalshi sports trade per
+  // UTC day at the configured hour (default 14:00 UTC = 10am ET / 7am PT).
+  // Sized at DAILY_SPORTS_PLAY_PCT_OF_CAPITAL (default 2.5 %) of LIVE
+  // Kalshi balance. Routes through the same ensemble (Sonnet/Opus) and
+  // the same risk gate stack (drawdown breakers, exposure caps,
+  // MIN_NET_EV, MIN_CONFIDENCE_AFTER_ADJUST) as the regular autonomy
+  // loop. Calibration loop picks up outcomes automatically.
+  enableDailySportsPlay: normalizeBoolean(
+    process.env.ENABLE_DAILY_SPORTS_PLAY,
+    false,
+  ),
+  dailySportsPlayHourUtc: (() => {
+    const raw = (process.env.DAILY_SPORTS_PLAY_HOUR_UTC ?? "").trim();
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 23) return 14;
+    return parsed;
+  })(),
+  dailySportsPlayPctOfCapital: normalizeFloat(
+    process.env.DAILY_SPORTS_PLAY_PCT_OF_CAPITAL,
+    0.025,
+    { min: 0.005, max: 0.1 },
+  ),
+
   // ── Dynamic scanner (5 base / 7-8 conditional) ───────────────────────────
   // Owner override: opt-in domains where the operator's domain knowledge
   // is high enough to relax the AI gate (still honors hard guardrails).
