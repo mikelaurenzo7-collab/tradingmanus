@@ -832,11 +832,17 @@ export async function closeKalshiPosition(
         yes_price: side === "yes" ? priceCents : undefined,
         no_price: side === "no" ? priceCents : undefined,
         time_in_force: "good_till_cancelled",
-        // Honor the same maker preference as opens — exits should also rest
-        // as a maker (cheaper fee tier) rather than crossing the book and
-        // paying taker fees. Without this, every close paid 4× more in fees
-        // even when PREFER_MAKER_ORDERS=true.
-        post_only: ENV.preferMakerOrders ? true : undefined,
+        // Risk exits (stop-loss, profit-target, trailing-stop, kill-switch
+        // via activateKalshiKillSwitch, and the auto-close path in
+        // exitMonitor.ts) ALL flow through this function. They must be
+        // able to take liquidity — Kalshi rejects post-only orders that
+        // would cross the book, so a maker-only stop-loss can leave you
+        // holding a losing position past your trigger. The 4× taker-fee
+        // premium is a small price for guaranteed exit fills.
+        //
+        // Entry orders (placeKalshiOrder) still honor PREFER_MAKER_ORDERS
+        // — opens are voluntary and can wait for better fills. Closes
+        // can't.
       };
 
       const closeResult = await signedKalshiRequest<{ order?: { order_id?: string; id?: string } }>(
