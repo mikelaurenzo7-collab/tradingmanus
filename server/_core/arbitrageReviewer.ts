@@ -222,12 +222,18 @@ export async function reviewArbitrageOpportunities(
   let parsedReviews: ParsedReview[] = [];
   let citations: CitationSummary[] = [];
   try {
+    // Use the deep-tier timeout by default — every arbitrage review is
+    // multi-leg high-stakes by definition (Opus deep model + adaptive
+    // thinking + web_search), so the 12 s bulk-review timeout is much
+    // too tight and would cause spurious timeouts that drop every
+    // arbitrage candidate.  Caller-supplied overrides still win.
+    const arbTimeoutMs = options.anthropicTimeoutMs ?? ENV.anthropicDeepTimeoutMs;
     const response = await callAnthropicWithTimeout(
       client as unknown as {
         messages: { create: (input: unknown) => Promise<{ content: Array<{ type: string; text?: string }> }> };
       },
       messageInput,
-      options.anthropicTimeoutMs ?? ENV.anthropicTimeoutMs,
+      arbTimeoutMs,
       "ArbReviewer",
     );
     parsedReviews = parseReviews(extractAnthropicText(response));
