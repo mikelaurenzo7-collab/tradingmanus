@@ -215,6 +215,34 @@ export async function runDailySportsPlay(
     liveCapitalUsd,
   });
 
+  // Emit `kalshi_ensemble_review` so getAiSpendSummary captures the AI
+  // cost incurred by the daily play. Without this, the dashboard's
+  // pay-for-yourself math undercounts daily-play AI spend → false sense
+  // of profitability.
+  const totalAiCostUsd = ensembleResult.verdicts.reduce(
+    (a, v) => a + (v.ensemble.totalAiCostUsd ?? 0),
+    0,
+  );
+  if (ensembleResult.verdicts.length > 0) {
+    await logAuditEvent(
+      "kalshi_ensemble_review",
+      JSON.stringify({
+        liveCapitalUsd,
+        totalCandidates: ensembleInputs.length,
+        ensembleApproved: ensembleResult.approvedSignals.length,
+        totalAiCostUsd,
+        source: "daily_sports_play",
+        verdicts: ensembleResult.verdicts.map((v) => ({
+          marketId: v.marketId,
+          approved: v.ensemble.approved,
+          reasoning: v.ensemble.reasoning,
+          reviewers: v.ensemble.reviews.map((r) => r.reviewerId),
+        })),
+      }),
+      `user:${userId}`,
+    ).catch(() => {});
+  }
+
   if (ensembleResult.approvedSignals.length === 0) {
     return {
       status: "no_qualifying_play",

@@ -322,9 +322,20 @@ async function requestAnthropicReviews(
   );
 
   const useDeepModel = forceDeep || isHighStakes(stakes);
-  // Grok has a single flat-priced model; the legacy deep-tier timeout
-  // override is preserved for callers that pass a custom value.
-  const timeoutMs = options.anthropicTimeoutMs ?? ENV.grokTimeoutMs;
+  // Pick the right timeout for the active provider. When ANTHROPIC_API_KEY
+  // is set, the underlying call goes to Claude — Sonnet routine timeout
+  // (default 20 s) or Opus deep-tier timeout (default 45 s). Grok's
+  // 15 s default is too tight for Claude (especially Opus with extended
+  // thinking + web_search), causing slow-but-successful reviews to be
+  // counted as failures and the autonomy to fail closed. Operator
+  // overrides via options.anthropicTimeoutMs still win.
+  const claudeProviderActive = ENV.anthropicApiKey.length > 0;
+  const defaultTimeoutMs = claudeProviderActive
+    ? useDeepModel
+      ? ENV.claudeOpusTimeoutMs
+      : ENV.claudeSonnetTimeoutMs
+    : ENV.grokTimeoutMs;
+  const timeoutMs = options.anthropicTimeoutMs ?? defaultTimeoutMs;
   const tier = useDeepModel ? "deep" : "review";
   const model = selectAnthropicModel(tier, options.anthropicModel);
   // When forcing deep review (intra-Claude escalation), promote the stakes

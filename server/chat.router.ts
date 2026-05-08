@@ -143,7 +143,10 @@ async function maybeCompressMemory(
   platform: Platform,
   existingConfig: Awaited<ReturnType<typeof chatDb.getBotConfig>>
 ): Promise<void> {
-  if (!ENV.xaiApiKey) return;
+  // Any AI provider works — the createAnthropicClient adapter routes to
+  // real Anthropic when ANTHROPIC_API_KEY is set, falls back to Grok shim
+  // otherwise. Only abort if neither provider is configured.
+  if (!ENV.anthropicApiKey && !ENV.xaiApiKey) return;
 
   const messages = await chatDb.getChatMessages(userId, platform, MEMORY_COMPRESSION_THRESHOLD + 10);
   if (messages.length < MEMORY_COMPRESSION_THRESHOLD) return;
@@ -151,7 +154,9 @@ async function maybeCompressMemory(
   const toCompress = messages.slice(0, Math.floor(messages.length / 2));
   if (toCompress.length === 0) return;
 
-  const client = createAnthropicClient(ENV.xaiApiKey);
+  const client = createAnthropicClient(
+    (ENV.anthropicApiKey || ENV.xaiApiKey).trim(),
+  );
   const transcript = toCompress
     .map((m: Pick<ChatMessage, "role" | "content">) => `${m.role.toUpperCase()}: ${m.content}`)
     .join("\n");
@@ -265,11 +270,11 @@ export const chatRouter = router({
     .mutation(async ({ input, ctx }) => {
       const userId = assertPositiveIntegerUserId(ctx.user!.id, "chat sendMessage userId");
 
-      if (!ENV.xaiApiKey) {
+      if (!ENV.anthropicApiKey && !ENV.xaiApiKey) {
         return {
           success: false,
           message: null,
-          error: "AI chat requires XAI_API_KEY to be configured.",
+          error: "AI chat requires ANTHROPIC_API_KEY (preferred) or XAI_API_KEY to be configured.",
         };
       }
 
@@ -318,7 +323,9 @@ export const chatRouter = router({
         });
       }
 
-      const client = createAnthropicClient(ENV.xaiApiKey);
+      const client = createAnthropicClient(
+        (ENV.anthropicApiKey || ENV.xaiApiKey).trim(),
+      );
 
       let assistantContent = "";
       try {
