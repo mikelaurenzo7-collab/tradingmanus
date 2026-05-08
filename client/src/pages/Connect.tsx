@@ -108,8 +108,8 @@ function KalshiConnectPanel() {
   });
 
   const isAlreadyConnected = statusQuery.data?.connected === true;
-  const needsReauth = (statusQuery.data as any)?.needsReauth === true;
-  const reauthMessage = (statusQuery.data as any)?.reauthMessage as string | undefined;
+  const needsReauth = statusQuery.data?.needsReauth === true;
+  const reauthMessage = statusQuery.data?.reauthMessage;
 
   const handleConnect = () => {
     if (!trimmedApiKey || !trimmedPrivateKey) {
