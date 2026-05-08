@@ -1,4 +1,4 @@
-import { createOpenRouterClient } from "./openrouterClient";
+import { createAnthropicClient } from "./anthropicClient";
 import { createGrokChatCompletion, extractGrokText } from "./grokClient";
 import type { KalshiMarket } from "./kalshiMarketData";
 import type { KalshiSignal } from "./kalshiSignals";
@@ -146,7 +146,7 @@ export function createTradingReviewer(options: TradingReviewerOptions = {}): Tra
  * The reviewer is "configured" as long as Claude or Grok is available.
  */
 export function isTradingReviewerConfigured(options: TradingReviewerOptions = {}) {
-  const hasClaude = (options.anthropicApiKey ?? ENV.openrouterApiKey).trim().length > 0;
+  const hasClaude = (options.anthropicApiKey ?? ENV.anthropicApiKey).trim().length > 0;
   const hasGrok = ENV.xaiApiKey.trim().length > 0;
   return hasClaude || hasGrok;
 }
@@ -310,8 +310,8 @@ async function requestAnthropicReviews(
   memorySnippet: string | null = null,
   forceDeep = false,
 ) {
-  const client = options.anthropicClient ?? createOpenRouterClient(
-    (options.anthropicApiKey ?? ENV.openrouterApiKey).trim(),
+  const client = options.anthropicClient ?? createAnthropicClient(
+    (options.anthropicApiKey ?? ENV.anthropicApiKey).trim(),
   );
 
   const useDeepModel = forceDeep || isHighStakes(stakes);
@@ -676,8 +676,8 @@ async function applyTriageFilter(
   const threshold = options.triageThresholdOverride ?? getTriageThreshold();
   if (signals.length <= threshold) return signals;
 
-  const triageClient = options.anthropicClient ?? createOpenRouterClient(
-    (options.anthropicApiKey ?? ENV.openrouterApiKey).trim(),
+  const triageClient = options.anthropicClient ?? createAnthropicClient(
+    (options.anthropicApiKey ?? ENV.anthropicApiKey).trim(),
   );
 
   const triageInput: TriageCandidate[] = signals.map((signal) => {
@@ -759,7 +759,7 @@ export async function reviewSignalsWithTrader(
   const logger = options.logger ?? console;
   if (!isTradingReviewerConfigured(options)) {
     logger.error(
-      "[TradingReviewer] AI reviewer not configured (need OPENROUTER_API_KEY or XAI_API_KEY); dropping all candidates.",
+      "[TradingReviewer] AI reviewer not configured (need ANTHROPIC_API_KEY or XAI_API_KEY); dropping all candidates.",
     );
     return [];
   }

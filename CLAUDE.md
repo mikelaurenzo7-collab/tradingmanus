@@ -24,7 +24,7 @@ function (secondary).
 | Backend | Node 20, Express 4, tRPC v11 |
 | Database | Neon Postgres (serverless HTTP driver), Drizzle ORM |
 | Auth | JWT (24 h access / 7 d refresh) in `httpOnly` cookies, optional 2FA/TOTP |
-| AI | OpenRouter (default model: `tencent/hy3-preview:free`) with Anthropic-compatible interface |
+| AI | Anthropic SDK direct (`@anthropic-ai/sdk`) — Claude review tier defaults to Haiku 4.5, deep tier escalates to Opus 4.7. Optional dual-bot consensus with Grok (xAI) when `XAI_API_KEY` is set. |
 | Testing | Vitest 3, no jsdom (pure unit tests) |
 | Build | `pnpm build` → Vite (frontend to `dist/public`), `pnpm build:server` → esbuild (backend to `dist/index.js`) |
 
@@ -73,10 +73,15 @@ used.  Never use `npm` or `yarn` in this repo — the lockfile is
 | `CREDENTIAL_ENCRYPTION_SECRET` | ✅ | 32+ random chars, different from `JWT_SECRET` |
 | `OWNER_EMAIL` | ✅ | Login email |
 | `OWNER_PASSWORD` | ✅ | 12+ chars in production |
-| `OPENROUTER_API_KEY` | ✅ | AI reviewer via OpenRouter — required for any live trading. `ANTHROPIC_API_KEY` accepted as fallback. |
+| `ANTHROPIC_API_KEY` | ✅ | Direct Anthropic API key — required for AI-reviewer-gated live trading. |
 | `NODE_ENV` | ✅ | `development` / `production` |
 | `LOG_LEVEL` | optional | `debug`/`info`/`warn`/`error` (default `info`) |
-| `OPENROUTER_MODEL` | optional | Default `tencent/hy3-preview:free` (free tier — upgrade to a paid model for sub-3-min cadence) |
+| `CLAUDE_MODEL` | optional | Bulk-review tier model (default `claude-haiku-4-5-20251001`) |
+| `CLAUDE_TRIAGE_MODEL` | optional | Triage pre-filter model (default `claude-haiku-4-5-20251001`) |
+| `CLAUDE_DEEP_MODEL` | optional | Deep-tier model for high-stakes / contested trades (default `claude-opus-4-7`) |
+| `XAI_API_KEY` | optional | Grok (xAI) key for true dual-bot consensus. Without it, the reviewer gracefully degrades to Claude-only. |
+| `GROK_MODEL` | optional | Default `grok-3-latest` |
+| `ENABLE_GROK_TEAM` | optional | Default `true` — when `XAI_API_KEY` is set, both bots review every signal in parallel and both must approve. |
 | `AUTONOMY_INTERVAL_MS` | optional | Kalshi+Polymarket autonomy cadence in ms (default `120000` = 2 min) |
 | `ORDER_SYNC_INTERVAL_MS` | optional | Kalshi order/position reconciliation + exit monitor cadence (default `30000` = 30 s) |
 | `CROSS_ARB_INTERVAL_MS` | optional | Cross-platform arb scanner cadence (default `10000` = 10 s) |
@@ -275,14 +280,19 @@ filterSignalsByMarketConditions()   ← drop illiquid / poor-condition markets
 applyInstructionsToSignals()        ← apply user training rules
   │
   ▼
-reviewSignalsWithTrader()           ← AI review via OpenRouter (tradingReviewer.ts)
+reviewSignalsWithTrader()           ← AI review via direct Anthropic SDK (tradingReviewer.ts)
 ┌─────────────────────────────────────────────────────────────────┐
-│  1. Triage pre-filter (if >threshold candidates) via same model │
-│  2. Per-desk review with 16 category personas                   │
-│  3. Intra-model second pass for high-stakes or contested signals│
-│  4. Confidence/EV adjustments applied (bounded)                 │
-│  5. Desk memory tape injected into each desk's system prompt    │
-│  Note: web_search + extended thinking disabled (OpenRouter)     │
+│  1. Haiku 4.5 triage pre-filter (if >threshold candidates)      │
+│  2. Per-desk review with 16 category personas (Haiku 4.5 bulk)  │
+│  3. Optional parallel Grok review (when ENABLE_GROK_TEAM + key) │
+│     → both bots must approve (true dual-bot consensus)          │
+│  4. Opus 4.7 deep-tier escalation for contested mid-stakes      │
+│     trades and high-stakes signals (notional, near-resolution,  │
+│     extreme-tail implied probability)                           │
+│  5. Confidence/EV adjustments applied (bounded)                 │
+│  6. Desk memory tape injected into each desk's system prompt    │
+│  Anthropic-native features ON: prompt caching (cache_control),  │
+│  web_search tool, extended thinking on the deep tier.           │
 └─────────────────────────────────────────────────────────────────┘
   │
   ▼
@@ -383,7 +393,7 @@ HTTP server starts listening:
   server stays up.  This is deliberate: a crash-loop hides the diagnostic
   in restart noise, while a running-but-degraded server keeps `/api/health/*`
   reachable so the operator can inspect the [SelfTest] log lines in
-  Railway, fix the env var (`OPENROUTER_API_KEY`, `DATABASE_URL`,
+  Railway, fix the env var (`ANTHROPIC_API_KEY`, `DATABASE_URL`,
   `CREDENTIAL_ENCRYPTION_SECRET`), and redeploy without watching the
   container restart loop.
 - **Schema migrations missing** (e.g. `kalshiPositions.exitState` after a

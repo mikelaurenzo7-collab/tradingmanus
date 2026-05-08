@@ -37,6 +37,7 @@ import { assertPositiveIntegerUserId } from "./userScope";
 import { recordPolymarketTradeEntry } from "./polymarketLearning";
 import { withUserLock } from "./userMutex";
 import { simulatePolymarketOrderFill } from "./paperTrading";
+import { ENV } from "./env";
 import { getEffectivePaperTradeMode } from "./effectivePaperMode";
 import { checkProfitGuardrails } from "./profitGuardrails";
 import {
@@ -480,18 +481,17 @@ export async function runPolymarketAutonomousTrading(
   // both platforms enforce the same high-leverage-wins-only EV/confidence
   // floor.
   //
-  // NOTE: isTeamMode is intentionally NOT forwarded here.  polymarketSignalReviewer.ts
-  // is Claude-only — Grok is not invoked on the Polymarket review path — so we
-  // never have grokApproved/grokConfidence to gate on.  Passing isTeamMode=true
-  // while supplying neither would be a no-op (checkProfitGuardrails only vetoes
-  // on grokApproved===false or a present low grokConfidence) and would falsely
-  // advertise dual-bot consensus.  Until Grok is wired into the Polymarket
-  // reviewer, the EV + confidence floor is the only enforced gate here.
+  // Team mode: polymarketSignalReviewer.ts now runs Claude + Grok in
+  // parallel and intersects approvals (true dual-bot consensus).  When
+  // ENABLE_GROK_TEAM=true and XAI_API_KEY is set, the resulting consensus
+  // signals reach this filter — passing isTeamMode forwards the high-
+  // leverage threshold so the EV/confidence floor matches the Kalshi side.
   const guardrailRejections: Array<{ marketId: string; reason: string; ev: number; confidence: number }> = [];
   const guardedSignals = reviewedSignals.filter((s) => {
     const check = checkProfitGuardrails({
       expectedValue: s.expectedValue,
       confidence: s.confidence,
+      isTeamMode: ENV.enableGrokTeam,
     });
     if (!check.approved) {
       guardrailRejections.push({

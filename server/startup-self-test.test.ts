@@ -49,8 +49,7 @@ afterEach(() => {
 describe("runStartupSelfTest", () => {
   it("returns passed=true and ok statuses on a fully-configured prod env", async () => {
     process.env.NODE_ENV = "production";
-    process.env.OPENROUTER_API_KEY = "sk-or-test";
-    process.env.OPENROUTER_MODEL = "anthropic/claude-3.5-sonnet";
+    process.env.ANTHROPIC_API_KEY = "sk-ant-test";
     mocks.getDb.mockResolvedValue(fakeDbWith({ exitStateColumnPresent: true }));
 
     const { runStartupSelfTest } = await import("./_core/startupSelfTest");
@@ -67,8 +66,7 @@ describe("runStartupSelfTest", () => {
 
   it("returns passed=false when DB unreachable in production", async () => {
     process.env.NODE_ENV = "production";
-    process.env.OPENROUTER_API_KEY = "sk-or-test";
-    process.env.OPENROUTER_MODEL = "anthropic/claude-3.5-sonnet";
+    process.env.ANTHROPIC_API_KEY = "sk-ant-test";
     mocks.getDb.mockResolvedValue(fakeDbWith({ fail: true }));
 
     const { runStartupSelfTest } = await import("./_core/startupSelfTest");
@@ -82,8 +80,7 @@ describe("runStartupSelfTest", () => {
 
   it("returns passed=true (warn-only) with a clear migration hint when exitState column is missing", async () => {
     process.env.NODE_ENV = "production";
-    process.env.OPENROUTER_API_KEY = "sk-or-test";
-    process.env.OPENROUTER_MODEL = "anthropic/claude-3.5-sonnet";
+    process.env.ANTHROPIC_API_KEY = "sk-ant-test";
     mocks.getDb.mockResolvedValue(fakeDbWith({ exitStateColumnPresent: false }));
 
     const { runStartupSelfTest } = await import("./_core/startupSelfTest");
@@ -98,9 +95,8 @@ describe("runStartupSelfTest", () => {
     expect(exitCheck?.detail).toContain("pnpm db:push");
   });
 
-  it("returns passed=false when OPENROUTER_API_KEY is missing in production", async () => {
+  it("returns passed=false when ANTHROPIC_API_KEY is missing in production", async () => {
     process.env.NODE_ENV = "production";
-    delete process.env.OPENROUTER_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
     mocks.getDb.mockResolvedValue(fakeDbWith({ exitStateColumnPresent: true }));
 
@@ -112,9 +108,8 @@ describe("runStartupSelfTest", () => {
     expect(aiKey?.status).toBe("fail");
   });
 
-  it("downgrades missing OPENROUTER_API_KEY to a warning in development", async () => {
+  it("downgrades missing ANTHROPIC_API_KEY to a warning in development", async () => {
     process.env.NODE_ENV = "development";
-    delete process.env.OPENROUTER_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
     mocks.getDb.mockResolvedValue(fakeDbWith({ exitStateColumnPresent: true }));
 
@@ -128,8 +123,7 @@ describe("runStartupSelfTest", () => {
 
   it("warns when CREDENTIAL_ENCRYPTION_SECRET equals JWT_SECRET", async () => {
     process.env.NODE_ENV = "production";
-    process.env.OPENROUTER_API_KEY = "sk-or-test";
-    process.env.OPENROUTER_MODEL = "anthropic/claude-3.5-sonnet";
+    process.env.ANTHROPIC_API_KEY = "sk-ant-test";
     process.env.CREDENTIAL_ENCRYPTION_SECRET = process.env.JWT_SECRET;
     mocks.getDb.mockResolvedValue(fakeDbWith({ exitStateColumnPresent: true }));
 
@@ -140,17 +134,18 @@ describe("runStartupSelfTest", () => {
     expect(credCheck?.status).toBe("warn");
   });
 
-  it("warns when default free OpenRouter model is in use in production", async () => {
+  it("warns when ENABLE_GROK_TEAM=true but XAI_API_KEY is missing in production", async () => {
     process.env.NODE_ENV = "production";
-    process.env.OPENROUTER_API_KEY = "sk-or-test";
-    delete process.env.OPENROUTER_MODEL; // → defaults to tencent/hy3-preview:free
+    process.env.ANTHROPIC_API_KEY = "sk-ant-test";
+    process.env.ENABLE_GROK_TEAM = "true";
+    delete process.env.XAI_API_KEY;
     mocks.getDb.mockResolvedValue(fakeDbWith({ exitStateColumnPresent: true }));
 
     const { runStartupSelfTest } = await import("./_core/startupSelfTest");
     const result = await runStartupSelfTest();
 
-    const modelCheck = result.checks.find((c) => c.name === "ai_reviewer_model");
-    expect(modelCheck?.status).toBe("warn");
-    expect(modelCheck?.detail).toContain("free");
+    const grokCheck = result.checks.find((c) => c.name === "grok_team_mode");
+    expect(grokCheck?.status).toBe("warn");
+    expect(grokCheck?.detail).toContain("XAI_API_KEY");
   });
 });

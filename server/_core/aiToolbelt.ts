@@ -8,17 +8,20 @@
  *     so high-cadence autonomy runs only pay full input price for the dynamic
  *     payload.  See https://docs.anthropic.com/claude/docs/prompt-caching
  *
- *   - Tiered model selection: Haiku for cheap triage (large candidate sets,
- *     low stakes), Sonnet for the duo review on real candidates, Opus for
- *     high-stakes trades that warrant the deepest reasoning.
+ *   - Tiered model selection: Haiku 4.5 for cheap triage + bulk review on
+ *     normal-stakes candidates, Opus 4.7 for high-stakes trades (large
+ *     notional, near resolution, contested mid-stakes) that warrant the
+ *     deepest reasoning.  Override per-tier via CLAUDE_TRIAGE_MODEL /
+ *     CLAUDE_MODEL / CLAUDE_DEEP_MODEL.
  *
- *   - Extended thinking on high-stakes trades (large notional, near
- *     resolution, or otherwise tagged) so Claude reasons before answering
- *     instead of producing a snap JSON.
+ *   - Extended thinking on high-stakes trades so Claude reasons before
+ *     answering instead of producing a snap JSON.  Toggleable via
+ *     ENABLE_AI_EXTENDED_THINKING (default ON).
  *
  *   - Anthropic-hosted web_search tool so the reviewer can pull fresh news
  *     context for fast-moving markets (sports lineups, crypto news, election
- *     headlines) without us shipping our own scraping pipeline.
+ *     headlines) without us shipping our own scraping pipeline.  Toggleable
+ *     via ENABLE_AI_WEB_SEARCH (default ON).
  *
  * Every helper is pure and side-effect free; the reviewers wire in their
  * own Anthropic client and logger.  Behavior is gated by env so that the
@@ -83,14 +86,17 @@ export function isHighStakes(context: StakesContext): boolean {
 }
 
 /**
- * Pick the right model for the given tier.  All tiers resolve to the same
- * OpenRouter model (tencent/hy3-preview:free by default); the override arg
- * still lets callers pin a specific model string if needed.
+ * Pick the right model for the given tier.  Returns the configured
+ * tier-specific model env var, or the override if provided.
+ *   - triage → ENV.anthropicTriageModel (Haiku — cheap pre-filter)
+ *   - review → ENV.anthropicModel       (Haiku by default — bulk reviewer)
+ *   - deep   → ENV.anthropicDeepModel   (Opus by default — high stakes)
  */
 export function selectAnthropicModel(tier: ModelTier, override?: string): string {
   if (override && override.trim()) return override.trim();
-  // All tiers use the single configured OpenRouter model.
-  return ENV.openrouterModel || "tencent/hy3-preview:free";
+  if (tier === "triage") return ENV.anthropicTriageModel;
+  if (tier === "deep") return ENV.anthropicDeepModel;
+  return ENV.anthropicModel;
 }
 
 /**
@@ -116,13 +122,13 @@ export function buildWebSearchTool(maxUses = 3): WebSearchTool {
 }
 
 export function isWebSearchEnabled(): boolean {
-  // Web search is an Anthropic-hosted feature not available on OpenRouter.
-  return false;
+  // Anthropic-hosted web_search tool.  Toggleable via ENABLE_AI_WEB_SEARCH.
+  return ENV.enableAiWebSearch;
 }
 
 export function isExtendedThinkingEnabled(): boolean {
-  // Extended thinking is an Anthropic-only feature not available on OpenRouter.
-  return false;
+  // Anthropic extended-thinking budget.  Toggleable via ENABLE_AI_EXTENDED_THINKING.
+  return ENV.enableAiExtendedThinking;
 }
 
 /**

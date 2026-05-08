@@ -1,14 +1,21 @@
 /**
- * Polymarket Signal Reviewer — Claude-only.
+ * Polymarket Signal Reviewer — dual-bot consensus (Claude + Grok).
  *
  * Topology:
  *   - Claude (per-category persona, prompt-cached, web_search-enabled, extended
- *     thinking on high-stakes) is the sole reviewer.
+ *     thinking on high-stakes) is the primary reviewer.
+ *   - Grok (xAI) runs in parallel when ENABLE_GROK_TEAM=true and XAI_API_KEY
+ *     is set.  Both must approve the trade for it to pass; either-side veto
+ *     drops the signal (fail-closed dual-bot consensus).
+ *   - When XAI_API_KEY is unset, Grok is skipped silently and Claude reviews
+ *     alone — the audit log records `grokSkipped:true` so the operator can
+ *     see consensus periods vs. solo periods.
  *   - If Claude fails to return a review for a market, the signal is dropped
  *     per fail-closed logic.
  */
 
-import { createOpenRouterClient } from "./openrouterClient";
+import { createAnthropicClient } from "./anthropicClient";
+import { createGrokChatCompletion, extractGrokText } from "./grokClient";
 import type { PolymarketMarket } from "./polymarketAuth";
 import type { PolymarketSignal } from "./polymarketSignals";
 import { ENV } from "./env";
@@ -45,7 +52,7 @@ import {
   type DeskMemoryRecord,
 } from "../db.desk-memory";
 
-type ProviderName = "anthropic";
+type ProviderName = "anthropic" | "grok";
 
 type TradingSignalReview = {
   marketId: string;
@@ -304,7 +311,7 @@ async function requestLLMReviews(
 ) {
   const client =
     options.anthropicClient ??
-    createOpenRouterClient((options.anthropicApiKey ?? ENV.anthropicApiKey).trim());
+    createAnthropicClient((options.anthropicApiKey ?? ENV.anthropicApiKey).trim());
 
   const useDeepModel = forceDeep || isHighStakes(stakes);
   // Wider wall-clock budget for deep-tier calls.
@@ -347,7 +354,7 @@ async function requestLLMReviews(
     },
     messageInput,
     timeoutMs,
-    "OpenRouter Polymarket review",
+    "Anthropic Polymarket review",
   );
 
   if (options.telemetry) {
@@ -364,10 +371,115 @@ async function requestLLMReviews(
     : [];
 
   return {
-    provider: "openrouter" as const,
+    provider: "anthropic" as const,
     reviews: parseTradingReviews(extractAnthropicText(response)),
     citations,
   };
+}
+
+/**
+ * Grok parallel review on a Polymarket batch.  Identical input/output shape to
+ * the Anthropic path so callers can intersect approvals trivially.  Returns
+ * an empty review list if XAI_API_KEY is unset; the caller decides what to
+ * do (skip-grok-but-keep-claude or drop).
+ */
+async function requestGrokPolymarketReviews(
+  reviewPayload: ReturnType<typeof getReviewPayload>,
+  options: PolymarketReviewerOptions,
+  persona?: CategoryPersona,
+  memorySnippet: string | null = null,
+): Promise<{ reviews: TradingSignalReview[]; failed: boolean }> {
+  if (!ENV.xaiApiKey) {
+    return { reviews: [], failed: false };
+  }
+
+  const systemPrompt =
+    buildReviewerBaseMandate(persona) +
+    (memorySnippet ? `\n\n${memorySnippet}` : "");
+
+  try {
+    const completion = await createGrokChatCompletion(
+      [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: JSON.stringify(reviewPayload) },
+      ],
+      {
+        model: ENV.grokModel,
+        temperature: 0,
+        max_tokens: 3200,
+        timeoutMs: ENV.grokTimeoutMs,
+      },
+    );
+
+    const text = extractGrokText(completion);
+    const reviews = parseTradingReviews(text);
+
+    if (options.telemetry) {
+      options.telemetry.grokCalls = (options.telemetry.grokCalls ?? 0) + 1;
+    }
+
+    return { reviews, failed: false };
+  } catch (error) {
+    if (options.telemetry) {
+      options.telemetry.grokFailures = (options.telemetry.grokFailures ?? 0) + 1;
+    }
+    options.logger?.warn?.(
+      `[PolymarketReviewer] Grok review failed: ${error instanceof Error ? error.message : String(error)}; falling back to Claude-only consensus on this batch.`,
+    );
+    return { reviews: [], failed: true };
+  }
+}
+
+/**
+ * Intersect Claude + Grok reviews into a single map keyed by marketId.  A
+ * trade is "approved" only if BOTH bots return approved=true (true dual-bot
+ * consensus).  When Grok is unavailable (no XAI_API_KEY or runtime failure),
+ * Claude's verdict carries the trade — graceful degradation rather than
+ * fail-closed, since the user opted into "Claude-only fallback" semantics.
+ *
+ * Confidence/EV adjustments take the more conservative of the two when both
+ * approve: min of confidenceAdjustments, min of expectedValueAdjustments.
+ */
+function intersectReviews(
+  claudeReviewsByMarket: Map<string, TradingSignalReview>,
+  grokReviews: TradingSignalReview[],
+): Map<string, TradingSignalReview> {
+  if (grokReviews.length === 0) {
+    return claudeReviewsByMarket;
+  }
+  const grokByMarket = new Map(grokReviews.map((r) => [r.marketId, r]));
+  const merged = new Map<string, TradingSignalReview>();
+  for (const [marketId, claudeReview] of claudeReviewsByMarket) {
+    const grokReview = grokByMarket.get(marketId);
+    if (!grokReview) {
+      // Grok had no opinion on this market — keep Claude's verdict.
+      merged.set(marketId, claudeReview);
+      continue;
+    }
+    if (!claudeReview.approved || !grokReview.approved) {
+      merged.set(marketId, {
+        marketId,
+        approved: false,
+        reasoning: claudeReview.approved
+          ? `Grok dissent: ${grokReview.reasoning ?? "(no reason)"}`
+          : claudeReview.reasoning,
+      });
+      continue;
+    }
+    // Both approved — take the more conservative adjustments.
+    const claudeConf = Number(claudeReview.confidenceAdjustment ?? 0);
+    const grokConf = Number(grokReview.confidenceAdjustment ?? 0);
+    const claudeEv = Number(claudeReview.expectedValueAdjustment ?? 0);
+    const grokEv = Number(grokReview.expectedValueAdjustment ?? 0);
+    merged.set(marketId, {
+      marketId,
+      approved: true,
+      confidenceAdjustment: Math.min(claudeConf, grokConf),
+      expectedValueAdjustment: Math.min(claudeEv, grokEv),
+      reasoning: claudeReview.reasoning,
+    });
+  }
+  return merged;
 }
 
 function combineApprovedSignal(
@@ -417,19 +529,24 @@ async function callReviewer(
   memorySnippet: string | null = null,
   forceDeep = false,
 ): Promise<ReviewBatchResult> {
+  // Run Claude (primary) and Grok (parallel consensus) concurrently when team
+  // mode is enabled and Grok is configured.  Both must approve for the trade
+  // to pass; either-side veto drops the signal.  If Grok is missing or fails
+  // at runtime, Claude's verdict carries (graceful degradation).
+  const grokInTeam = ENV.enableGrokTeam && ENV.xaiApiKey.length > 0;
   try {
-    const response = await requestLLMReviews(
-      reviewPayload,
-      options,
-      persona,
-      stakes,
-      memorySnippet,
-      forceDeep,
-    );
+    const [claudeResp, grokResp] = await Promise.all([
+      requestLLMReviews(reviewPayload, options, persona, stakes, memorySnippet, forceDeep),
+      grokInTeam
+        ? requestGrokPolymarketReviews(reviewPayload, options, persona, memorySnippet)
+        : Promise.resolve({ reviews: [], failed: false }),
+    ]);
+    const claudeMap = new Map(claudeResp.reviews.map((r) => [r.marketId, r]));
+    const merged = grokInTeam ? intersectReviews(claudeMap, grokResp.reviews) : claudeMap;
     return {
-      reviewsByMarket: new Map(response.reviews.map((review) => [review.marketId, review])),
+      reviewsByMarket: merged,
       failed: false,
-      citations: response.citations,
+      citations: claudeResp.citations,
     };
   } catch (error) {
     if (options.telemetry) {
@@ -558,7 +675,7 @@ async function applyTriageFilter(
   const threshold = options.triageThresholdOverride ?? getTriageThreshold();
   if (signals.length <= threshold) return signals;
 
-  const triageClient = options.anthropicClient ?? createOpenRouterClient(
+  const triageClient = options.anthropicClient ?? createAnthropicClient(
     (options.anthropicApiKey ?? ENV.anthropicApiKey).trim(),
   );
 
@@ -635,7 +752,7 @@ export async function reviewPolymarketSignalsWithTrader(
   const logger = options.logger ?? console;
   if (!isPolymarketReviewerConfigured(options)) {
     logger.error(
-      "[PolymarketReviewer] AI reviewer not configured (need OPENROUTER_API_KEY or ANTHROPIC_API_KEY); dropping all candidates.",
+      "[PolymarketReviewer] AI reviewer not configured (ANTHROPIC_API_KEY required); dropping all candidates.",
     );
     return [];
   }

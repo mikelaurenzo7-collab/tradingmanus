@@ -71,7 +71,7 @@ function rejectedReviewJson(marketId: string, reasoning = "Vetoed.") {
 
 describe("AI trading reviewer (OpenRouter/hy3)", () => {
   it("treats the LLM reviewer as the required sole provider", () => {
-    expect(isTradingReviewerConfigured({ anthropicApiKey: "openrouter-key" })).toBe(true);
+    expect(isTradingReviewerConfigured({ anthropicApiKey: "sk-ant-test" })).toBe(true);
     expect(isTradingReviewerConfigured({ anthropicApiKey: "" })).toBe(false);
   });
 
@@ -435,10 +435,9 @@ describe("AI trading reviewer (OpenRouter/hy3)", () => {
 
     expect(anthropicCreate).toHaveBeenCalledTimes(2);
     expect(result).toHaveLength(1);
-    // Second call must use the configured OpenRouter model for deep-tier review.
+    // Second call must escalate to the deep-tier Claude model.
     const secondCall = anthropicCreate.mock.calls[1]?.[0];
-    expect(String(secondCall.model)).toBe("tencent/hy3-preview:free");
-    // Deep call should not include extended thinking (disabled for OpenRouter).
+    expect(String(secondCall.model)).toContain("claude-opus");
   });
 
   it("drops the trade when the Opus second opinion disagrees with Sonnet", async () => {

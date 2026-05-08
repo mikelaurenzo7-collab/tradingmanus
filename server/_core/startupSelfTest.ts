@@ -8,7 +8,7 @@
  *
  *   - DB unreachable
  *   - exitState column missing (drizzle-kit push not run)
- *   - OPENROUTER_API_KEY missing in production
+ *   - ANTHROPIC_API_KEY missing in production
  *   - Owner user not found (would mean the local-scheduler's owner-scope
  *     filter returns zero users every cycle)
  *
@@ -92,31 +92,49 @@ async function checkExitStateColumn(table: string): Promise<SelfTestCheck> {
 }
 
 function checkAiReviewerKey(): SelfTestCheck {
-  if (ENV.openrouterApiKey.length > 0) {
-    return { name: "ai_reviewer_key", status: "ok", detail: "OPENROUTER_API_KEY is set." };
+  if (ENV.anthropicApiKey.length > 0) {
+    return { name: "ai_reviewer_key", status: "ok", detail: "ANTHROPIC_API_KEY is set." };
   }
   if (ENV.isProduction) {
     return {
       name: "ai_reviewer_key",
       status: "fail",
       detail:
-        "OPENROUTER_API_KEY (or ANTHROPIC_API_KEY) is unset in production.  The AI reviewer is the gate before any live order — runScheduledAutonomousTradingBatch will throw on every cycle until this is set.",
+        "ANTHROPIC_API_KEY is unset in production.  The AI reviewer is the gate before any live order — every autonomy cycle will fail closed until this is set.",
     };
   }
-  return { name: "ai_reviewer_key", status: "warn", detail: "OPENROUTER_API_KEY unset (dev mode — autonomy will skip AI review)." };
+  return { name: "ai_reviewer_key", status: "warn", detail: "ANTHROPIC_API_KEY unset (dev mode — autonomy will skip AI review)." };
 }
 
 function checkAiReviewerModel(): SelfTestCheck {
-  // Production warning when the default free model is in use.
-  if (ENV.isProduction && !process.env.OPENROUTER_MODEL?.trim() && ENV.openrouterModel === "tencent/hy3-preview:free") {
+  return {
+    name: "ai_reviewer_model",
+    status: "ok",
+    detail: `CLAUDE_MODEL = ${ENV.anthropicModel} (triage=${ENV.anthropicTriageModel}, deep=${ENV.anthropicDeepModel})`,
+  };
+}
+
+function checkGrokTeamMode(): SelfTestCheck {
+  if (!ENV.enableGrokTeam) {
     return {
-      name: "ai_reviewer_model",
-      status: "warn",
-      detail:
-        "OPENROUTER_MODEL is unset; using free-tier 'tencent/hy3-preview:free'.  The free quota will exhaust within hours of running 2-min autonomy cadence — set OPENROUTER_MODEL to a paid model before going live.",
+      name: "grok_team_mode",
+      status: "ok",
+      detail: "ENABLE_GROK_TEAM=false; Claude is the sole reviewer.",
     };
   }
-  return { name: "ai_reviewer_model", status: "ok", detail: `OPENROUTER_MODEL = ${ENV.openrouterModel}` };
+  if (ENV.xaiApiKey.length === 0) {
+    return {
+      name: "grok_team_mode",
+      status: "warn",
+      detail:
+        "ENABLE_GROK_TEAM=true but XAI_API_KEY is unset.  The reviewer will degrade to Claude-only.  Set XAI_API_KEY for true dual-bot consensus, or set ENABLE_GROK_TEAM=false to make intent explicit.",
+    };
+  }
+  return {
+    name: "grok_team_mode",
+    status: "ok",
+    detail: `Dual-bot consensus armed — Claude (${ENV.anthropicModel}) + Grok (${ENV.grokModel}).`,
+  };
 }
 
 function checkPolymarketOwnerAddress(): SelfTestCheck {
@@ -201,6 +219,7 @@ export async function runStartupSelfTest(): Promise<SelfTestResult> {
   }
   checks.push(checkAiReviewerKey());
   checks.push(checkAiReviewerModel());
+  checks.push(checkGrokTeamMode());
   checks.push(checkCredentialEncryptionSecret());
   checks.push(checkPolymarketOwnerAddress());
   checks.push(checkPaperMode());

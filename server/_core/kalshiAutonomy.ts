@@ -1707,12 +1707,12 @@ export async function runScheduledAutonomousTradingBatch(
   // placed; running the batch without it would silently downgrade safety to
   // raw heuristics.  We log a critical audit event so the operator sees this
   // in the audit feed even after the throw is caught upstream.
-  if (ENV.isProduction && !ENV.openrouterApiKey) {
+  if (ENV.isProduction && !ENV.anthropicApiKey) {
     try {
       await db.logAuditEvent(
         "scheduled_autonomy_run_aborted",
         JSON.stringify({
-          reason: "OPENROUTER_API_KEY_MISSING",
+          reason: "ANTHROPIC_API_KEY_MISSING",
           triggeredByOpenId,
           eligibleUsers: users.length,
         }),
@@ -1722,8 +1722,8 @@ export async function runScheduledAutonomousTradingBatch(
       // Audit-log failure must not mask the underlying configuration error.
     }
     throw new Error(
-      "OPENROUTER_API_KEY is not configured. Refusing to run scheduled autonomous trading without the AI reviewer gate. " +
-        "Set OPENROUTER_API_KEY (or ANTHROPIC_API_KEY) in the deployment environment and redeploy."
+      "ANTHROPIC_API_KEY is not configured. Refusing to run scheduled autonomous trading without the AI reviewer gate. " +
+        "Set ANTHROPIC_API_KEY in the deployment environment and redeploy."
     );
   }
 

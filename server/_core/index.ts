@@ -335,7 +335,7 @@ startServer()
     if (!schedulersArmed) {
       logger.error(
         { failed: failedChecks.map((c) => c.name) },
-        "[Startup] Self-test FAILED in production — schedulers will NOT arm.  HTTP server stays up so /api/health/* and the dashboard remain reachable.  Fix the failures above (most commonly: set OPENROUTER_API_KEY, run `pnpm db:push`, set DATABASE_URL) and redeploy.",
+        "[Startup] Self-test FAILED in production — schedulers will NOT arm.  HTTP server stays up so /api/health/* and the dashboard remain reachable.  Fix the failures above (most commonly: set ANTHROPIC_API_KEY, run `pnpm db:push`, set DATABASE_URL) and redeploy.",
       );
     } else {
       setInterval(runAutonomousScheduler, AUTONOMOUS_TRADING_INTERVAL_MS);

@@ -21,7 +21,7 @@
  *     this desk because every approval is high-stakes by definition.
  */
 
-import { createOpenRouterClient } from "./openrouterClient";
+import { createAnthropicClient } from "./anthropicClient";
 import { z } from "zod";
 import { ENV } from "./env";
 import {
@@ -176,7 +176,7 @@ export async function reviewArbitrageOpportunities(
   const logger = options.logger ?? console;
   if (!isArbReviewerConfigured(options)) {
     logger.error(
-      "[ArbReviewer] OPENROUTER_API_KEY missing; dropping all arbitrage candidates so we never auto-execute multi-leg trades without AI sign-off.",
+      "[ArbReviewer] ANTHROPIC_API_KEY missing; dropping all arbitrage candidates so we never auto-execute multi-leg trades without AI sign-off.",
     );
     return [];
   }
@@ -194,12 +194,12 @@ export async function reviewArbitrageOpportunities(
   const tools = buildToolList([], { allowWebSearch: true, maxWebSearchUses: 4 });
   const client =
     options.anthropicClient ??
-    createOpenRouterClient((options.anthropicApiKey ?? ENV.anthropicApiKey).trim());
+    createAnthropicClient((options.anthropicApiKey ?? ENV.anthropicApiKey).trim());
 
   const messageInput: Record<string, unknown> = {
-    // Always use Sonnet (or the configured deep model) — these are by
-    // definition high-stakes multi-leg trades; we want depth over speed.
-    model: options.anthropicModel ?? ENV.anthropicDeepModel ?? ENV.anthropicModel,
+    // Always use the deep model — multi-leg cross-platform arbitrage is
+    // by definition high-stakes; we want depth over speed.
+    model: options.anthropicModel ?? ENV.anthropicDeepModel,
     max_tokens: ARB_REVIEWER_MAX_TOKENS,
     temperature: 0,
     system: cachedSystem,
