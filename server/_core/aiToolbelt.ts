@@ -8,17 +8,20 @@
  *     so high-cadence autonomy runs only pay full input price for the dynamic
  *     payload.  See https://docs.anthropic.com/claude/docs/prompt-caching
  *
- *   - Tiered model selection: Haiku for cheap triage (large candidate sets,
- *     low stakes), Sonnet for the duo review on real candidates, Opus for
- *     high-stakes trades that warrant the deepest reasoning.
+ *   - Tiered model selection: Haiku 4.5 for cheap triage + bulk review on
+ *     normal-stakes candidates, Opus 4.7 for high-stakes trades (large
+ *     notional, near resolution, contested mid-stakes) that warrant the
+ *     deepest reasoning.  Override per-tier via CLAUDE_TRIAGE_MODEL /
+ *     CLAUDE_MODEL / CLAUDE_DEEP_MODEL.
  *
- *   - Extended thinking on high-stakes trades (large notional, near
- *     resolution, or otherwise tagged) so Claude reasons before answering
- *     instead of producing a snap JSON.
+ *   - Extended thinking on high-stakes trades so Claude reasons before
+ *     answering instead of producing a snap JSON.  Toggleable via
+ *     ENABLE_AI_EXTENDED_THINKING (default ON).
  *
  *   - Anthropic-hosted web_search tool so the reviewer can pull fresh news
  *     context for fast-moving markets (sports lineups, crypto news, election
- *     headlines) without us shipping our own scraping pipeline.
+ *     headlines) without us shipping our own scraping pipeline.  Toggleable
+ *     via ENABLE_AI_WEB_SEARCH (default ON).
  *
  * Every helper is pure and side-effect free; the reviewers wire in their
  * own Anthropic client and logger.  Behavior is gated by env so that the
@@ -26,6 +29,7 @@
  */
 
 import { ENV } from "./env";
+import { recordAiCallCost } from "./aiCostBudget";
 
 export type ModelTier = "triage" | "review" | "deep";
 
@@ -83,14 +87,17 @@ export function isHighStakes(context: StakesContext): boolean {
 }
 
 /**
- * Pick the right model for the given tier.  All tiers resolve to the same
- * OpenRouter model (tencent/hy3-preview:free by default); the override arg
- * still lets callers pin a specific model string if needed.
+ * Pick the right model for the given tier.  Returns the configured
+ * tier-specific model env var, or the override if provided.
+ *   - triage → ENV.anthropicTriageModel (Haiku — cheap pre-filter)
+ *   - review → ENV.anthropicModel       (Haiku by default — bulk reviewer)
+ *   - deep   → ENV.anthropicDeepModel   (Opus by default — high stakes)
  */
 export function selectAnthropicModel(tier: ModelTier, override?: string): string {
   if (override && override.trim()) return override.trim();
-  // All tiers use the single configured OpenRouter model.
-  return ENV.openrouterModel || "tencent/hy3-preview:free";
+  if (tier === "triage") return ENV.anthropicTriageModel;
+  if (tier === "deep") return ENV.anthropicDeepModel;
+  return ENV.anthropicModel;
 }
 
 /**
@@ -116,13 +123,13 @@ export function buildWebSearchTool(maxUses = 3): WebSearchTool {
 }
 
 export function isWebSearchEnabled(): boolean {
-  // Web search is an Anthropic-hosted feature not available on OpenRouter.
-  return false;
+  // Anthropic-hosted web_search tool.  Toggleable via ENABLE_AI_WEB_SEARCH.
+  return ENV.enableAiWebSearch;
 }
 
 export function isExtendedThinkingEnabled(): boolean {
-  // Extended thinking is an Anthropic-only feature not available on OpenRouter.
-  return false;
+  // Anthropic extended-thinking budget.  Toggleable via ENABLE_AI_EXTENDED_THINKING.
+  return ENV.enableAiExtendedThinking;
 }
 
 /**
@@ -153,21 +160,27 @@ export function buildCachedSystemPrompt(staticMandate: string, dynamicPreamble?:
 }
 
 export type ExtendedThinkingConfig =
+  | { type: "adaptive"; effort: "low" | "medium" | "high" }
   | { type: "enabled"; budget_tokens: number }
   | undefined;
 
 /**
- * Extended-thinking budget on the deep tier.  Opus benefits sharply from
- * larger thinking budgets on quantitative reasoning; the prior 2048 cap
- * effectively limited it to a paragraph of plan + draft.  6000 tokens lets
- * Opus actually reason about base rates, line movement, and resolution
- * mechanics on a single contested trade.  Sonnet/Haiku do not benefit
- * proportionally on this task, so this budget only fires on the deep tier.
+ * Adaptive extended thinking on the deep tier.  Opus 4.7 (and later) rejects
+ * the legacy manual mode (`{type:"enabled", budget_tokens}`) with a 400 and
+ * requires `{type:"adaptive", effort}` — see Anthropic docs at
+ * https://docs.claude.com/en/docs/build-with-claude/adaptive-thinking
+ *
+ * Adaptive lets the model decide how much thinking to spend per call up to
+ * `max_tokens`.  We pin `effort: "high"` because this only fires on
+ * high-stakes trades (large notional, near-resolution, contested mid-stakes)
+ * where capital preservation outweighs thinking-token cost.  Sonnet/Haiku do
+ * not benefit proportionally on this task, so adaptive only fires on the
+ * deep tier (which currently maps to Opus by default).
  */
 export function buildExtendedThinking(stakes: StakesContext): ExtendedThinkingConfig {
   if (!isExtendedThinkingEnabled()) return undefined;
   if (!isHighStakes(stakes)) return undefined;
-  return { type: "enabled", budget_tokens: 6000 };
+  return { type: "adaptive", effort: "high" };
 }
 
 /**
@@ -268,20 +281,41 @@ export function newReviewerTelemetry(): ReviewerTelemetry {
 
 /**
  * Update telemetry from an Anthropic response.  Reads `usage` (where the
- * cache stats live) and counts `web_search_tool_result` blocks.  Fail-safe
- * for stub responses that don't include `usage`.
+ * cache stats live), counts `web_search_tool_result` blocks, and bills the
+ * call against the daily AI cost budget so the throttler can act on
+ * actual spend.  Fail-safe for stub responses that don't include `usage`.
  */
 export function recordAnthropicResponseTelemetry(
   telemetry: ReviewerTelemetry,
-  response: { content?: Array<unknown>; usage?: Record<string, unknown> },
-  flags: { extendedThinkingUsed?: boolean } = {},
+  response: { content?: Array<unknown>; usage?: Record<string, unknown>; model?: unknown },
+  flags: { extendedThinkingUsed?: boolean; reviewer?: string; userId?: number } = {},
 ): void {
   telemetry.anthropicCalls += 1;
   const usage = response.usage ?? {};
-  telemetry.cacheCreationInputTokens += Number(usage.cache_creation_input_tokens ?? 0) || 0;
-  telemetry.cacheReadInputTokens += Number(usage.cache_read_input_tokens ?? 0) || 0;
-  telemetry.inputTokens += Number(usage.input_tokens ?? 0) || 0;
-  telemetry.outputTokens += Number(usage.output_tokens ?? 0) || 0;
+  const inputTokens = Number(usage.input_tokens ?? 0) || 0;
+  const outputTokens = Number(usage.output_tokens ?? 0) || 0;
+  const cacheCreationInputTokens = Number(usage.cache_creation_input_tokens ?? 0) || 0;
+  const cacheReadInputTokens = Number(usage.cache_read_input_tokens ?? 0) || 0;
+  telemetry.cacheCreationInputTokens += cacheCreationInputTokens;
+  telemetry.cacheReadInputTokens += cacheReadInputTokens;
+  telemetry.inputTokens += inputTokens;
+  telemetry.outputTokens += outputTokens;
+  // Bill against daily budget — no-op when AI_DAILY_BUDGET_USD is unset.
+  const model = typeof response.model === "string" ? response.model : ENV.anthropicModel;
+  recordAiCallCost(
+    model,
+    {
+      inputTokens,
+      outputTokens,
+      cacheReadInputTokens,
+      cacheCreationInputTokens,
+    },
+    {
+      provider: "anthropic",
+      reviewer: flags.reviewer,
+      userId: flags.userId,
+    },
+  );
   if (Array.isArray(response.content)) {
     for (const block of response.content) {
       if (typeof block === "object" && block !== null && (block as any).type === "web_search_tool_result") {
@@ -316,6 +350,21 @@ export function buildMemorySystemBlock(memorySnippet: string | null): SystemBloc
     type: "text",
     text: memorySnippet.trim(),
     cache_control: { type: "ephemeral" },
+  };
+}
+
+/**
+ * Pay-for-yourself scoreboard injection helper.  The scoreboard text is
+ * dynamic (changes every tick as P&L / AI cost / fees update), so this
+ * block is intentionally NOT cached — caching would defeat the purpose
+ * of giving the reviewer a live view of today's running net.
+ */
+export function buildScoreboardSystemBlock(scoreboardText: string | null): SystemBlock | null {
+  if (!scoreboardText || scoreboardText.trim().length === 0) return null;
+  return {
+    type: "text",
+    text: scoreboardText.trim(),
+    // No cache_control — this changes every tick.
   };
 }
 

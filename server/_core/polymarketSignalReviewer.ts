@@ -1,14 +1,22 @@
 /**
- * Polymarket Signal Reviewer — Claude-only.
+ * Polymarket Signal Reviewer — dual-bot consensus (Claude + Grok).
  *
  * Topology:
  *   - Claude (per-category persona, prompt-cached, web_search-enabled, extended
- *     thinking on high-stakes) is the sole reviewer.
+ *     thinking on high-stakes) is the primary reviewer.
+ *   - Grok (xAI) runs in parallel when ENABLE_GROK_TEAM=true and XAI_API_KEY
+ *     is set.  Both must approve the trade for it to pass; either-side veto
+ *     drops the signal (fail-closed dual-bot consensus).
+ *   - When XAI_API_KEY is unset, Grok is skipped silently and Claude reviews
+ *     alone — the audit log records `grokSkipped:true` so the operator can
+ *     see consensus periods vs. solo periods.
  *   - If Claude fails to return a review for a market, the signal is dropped
  *     per fail-closed logic.
  */
 
-import { createOpenRouterClient } from "./openrouterClient";
+import { createAnthropicClient } from "./anthropicClient";
+import { createGrokChatCompletion, extractGrokText } from "./grokClient";
+import { intersectReviews } from "./reviewerConsensus";
 import type { PolymarketMarket } from "./polymarketAuth";
 import type { PolymarketSignal } from "./polymarketSignals";
 import { ENV } from "./env";
@@ -17,6 +25,7 @@ import {
   buildCachedSystemPrompt,
   buildExtendedThinking,
   buildMemorySystemBlock,
+  buildScoreboardSystemBlock,
   buildToolList,
   callAnthropicWithTimeout,
   extractAnthropicText,
@@ -33,6 +42,7 @@ import {
   type StakesContext,
   type TriageCandidate,
 } from "./aiToolbelt";
+import { formatScoreboardForPrompt, getCachedScoreboard } from "./dailyScoreboard";
 import {
   classifyMarketCategory,
   groupByCategory,
@@ -45,7 +55,7 @@ import {
   type DeskMemoryRecord,
 } from "../db.desk-memory";
 
-type ProviderName = "anthropic";
+type ProviderName = "anthropic" | "grok";
 
 type TradingSignalReview = {
   marketId: string;
@@ -304,7 +314,7 @@ async function requestLLMReviews(
 ) {
   const client =
     options.anthropicClient ??
-    createOpenRouterClient((options.anthropicApiKey ?? ENV.anthropicApiKey).trim());
+    createAnthropicClient((options.anthropicApiKey ?? ENV.anthropicApiKey).trim());
 
   const useDeepModel = forceDeep || isHighStakes(stakes);
   // Wider wall-clock budget for deep-tier calls.
@@ -324,19 +334,37 @@ async function requestLLMReviews(
     ? buildCachedSystemPrompt(buildReviewerBaseMandate(persona))
     : null;
   const memoryBlock = ENV.enableAiDeskMemory ? buildMemorySystemBlock(memorySnippet) : null;
+  const scoreboardText = formatScoreboardForPrompt(getCachedScoreboard());
+  const scoreboardBlock = buildScoreboardSystemBlock(scoreboardText);
 
   const messageInput: Record<string, unknown> = {
     model,
-    max_tokens: useDeepModel ? 3200 : 1800,
-    temperature: 0,
+    // Deep tier uses adaptive extended thinking (effort=high), which lets
+    // the model spend up to max_tokens on thinking + output.  8000 gives
+    // room for substantial reasoning while leaving headroom for the JSON
+    // review output.
+    max_tokens: useDeepModel ? 8000 : 1800,
     messages: [{ role: "user", content: JSON.stringify(reviewPayload) }],
   };
+  // Temperature is only set on non-thinking calls.  Anthropic's
+  // extended-thinking modes are designed to run at the default temperature
+  // (~1.0); setting temperature=0 alongside thinking is documented as
+  // incompatible on some models and is suboptimal even where accepted
+  // (constrains the reasoning chain).  Bulk Haiku review without thinking
+  // keeps temperature=0 for determinism.
+  if (!thinking) {
+    messageInput.temperature = 0;
+  }
   if (personaBlocks) {
-    messageInput.system = memoryBlock ? [...personaBlocks, memoryBlock] : personaBlocks;
+    const blocks = [...personaBlocks];
+    if (memoryBlock) blocks.push(memoryBlock);
+    if (scoreboardBlock) blocks.push(scoreboardBlock);
+    messageInput.system = blocks;
   } else {
-    messageInput.system = memorySnippet
-      ? `${buildReviewerBaseMandate(persona)}\n\n${memorySnippet}`
-      : buildReviewerBaseMandate(persona);
+    const sections = [buildReviewerBaseMandate(persona)];
+    if (memorySnippet) sections.push(memorySnippet);
+    if (scoreboardText) sections.push(scoreboardText);
+    messageInput.system = sections.join("\n\n");
   }
   if (thinking) messageInput.thinking = thinking;
   if (tools) messageInput.tools = tools;
@@ -347,7 +375,7 @@ async function requestLLMReviews(
     },
     messageInput,
     timeoutMs,
-    "OpenRouter Polymarket review",
+    "Anthropic Polymarket review",
   );
 
   if (options.telemetry) {
@@ -364,11 +392,71 @@ async function requestLLMReviews(
     : [];
 
   return {
-    provider: "openrouter" as const,
+    provider: "anthropic" as const,
     reviews: parseTradingReviews(extractAnthropicText(response)),
     citations,
   };
 }
+
+/**
+ * Grok parallel review on a Polymarket batch.  Identical input/output shape to
+ * the Anthropic path so callers can intersect approvals trivially.  Returns
+ * an empty review list if XAI_API_KEY is unset; the caller decides what to
+ * do (skip-grok-but-keep-claude or drop).
+ */
+async function requestGrokPolymarketReviews(
+  reviewPayload: ReturnType<typeof getReviewPayload>,
+  options: PolymarketReviewerOptions,
+  persona?: CategoryPersona,
+  memorySnippet: string | null = null,
+): Promise<{ reviews: TradingSignalReview[]; failed: boolean }> {
+  if (!ENV.xaiApiKey) {
+    return { reviews: [], failed: false };
+  }
+
+  const scoreboardText = formatScoreboardForPrompt(getCachedScoreboard());
+  const systemPrompt = [
+    buildReviewerBaseMandate(persona),
+    memorySnippet ?? null,
+    scoreboardText ?? null,
+  ]
+    .filter((s): s is string => Boolean(s))
+    .join("\n\n");
+
+  try {
+    const completion = await createGrokChatCompletion(
+      [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: JSON.stringify(reviewPayload) },
+      ],
+      {
+        model: ENV.grokModel,
+        temperature: 0,
+        max_tokens: 3200,
+        timeoutMs: ENV.grokTimeoutMs,
+      },
+    );
+
+    const text = extractGrokText(completion);
+    const reviews = parseTradingReviews(text);
+
+    if (options.telemetry) {
+      options.telemetry.grokCalls = (options.telemetry.grokCalls ?? 0) + 1;
+    }
+
+    return { reviews, failed: false };
+  } catch (error) {
+    if (options.telemetry) {
+      options.telemetry.grokFailures = (options.telemetry.grokFailures ?? 0) + 1;
+    }
+    options.logger?.warn?.(
+      `[PolymarketReviewer] Grok review failed: ${error instanceof Error ? error.message : String(error)}; falling back to Claude-only consensus on this batch.`,
+    );
+    return { reviews: [], failed: true };
+  }
+}
+
+// intersectReviews moved to ./reviewerConsensus.ts (shared with Kalshi reviewer).
 
 function combineApprovedSignal(
   signal: PolymarketSignal,
@@ -417,19 +505,37 @@ async function callReviewer(
   memorySnippet: string | null = null,
   forceDeep = false,
 ): Promise<ReviewBatchResult> {
+  // Run Claude (primary) and Grok (parallel consensus) concurrently when team
+  // mode is enabled and Grok is configured.  Both must approve for the trade
+  // to pass; either-side veto drops the signal.  Strict-mode rules:
+  //   - Grok ran and returned >=1 verdict → strict intersection: any market
+  //     missing from Grok's response is a veto (protects against partial /
+  //     parse-truncated Grok output reaching execution as solo-Claude under
+  //     the team-mode banner).
+  //   - Grok unavailable entirely (no XAI_API_KEY, network error, parse
+  //     failure → empty reviews) → graceful degrade to Claude solo.
+  const grokInTeam = ENV.enableGrokTeam && ENV.xaiApiKey.length > 0;
   try {
-    const response = await requestLLMReviews(
-      reviewPayload,
-      options,
-      persona,
-      stakes,
-      memorySnippet,
-      forceDeep,
-    );
+    const [claudeResp, grokResp] = await Promise.all([
+      requestLLMReviews(reviewPayload, options, persona, stakes, memorySnippet, forceDeep),
+      grokInTeam
+        ? requestGrokPolymarketReviews(reviewPayload, options, persona, memorySnippet)
+        : Promise.resolve({ reviews: [], failed: false }),
+    ]);
+    const claudeMap = new Map(claudeResp.reviews.map((r) => [r.marketId, r]));
+    // Strict mode = Grok actually ran (HTTP completion succeeded).  An
+    // empty or parse-truncated `reviews` array still counts as "ran" and
+    // triggers veto on missing markets — only transport-level failures
+    // (failed=true) gracefully degrade to Claude solo.  Prevents output
+    // like `{"reviews":[]}` from masquerading as Grok-unavailable.
+    const grokRanSuccessfully = grokInTeam && !grokResp.failed;
+    const merged = grokInTeam
+      ? intersectReviews(claudeMap, grokResp.reviews, grokRanSuccessfully)
+      : claudeMap;
     return {
-      reviewsByMarket: new Map(response.reviews.map((review) => [review.marketId, review])),
+      reviewsByMarket: merged,
       failed: false,
-      citations: response.citations,
+      citations: claudeResp.citations,
     };
   } catch (error) {
     if (options.telemetry) {
@@ -558,7 +664,7 @@ async function applyTriageFilter(
   const threshold = options.triageThresholdOverride ?? getTriageThreshold();
   if (signals.length <= threshold) return signals;
 
-  const triageClient = options.anthropicClient ?? createOpenRouterClient(
+  const triageClient = options.anthropicClient ?? createAnthropicClient(
     (options.anthropicApiKey ?? ENV.anthropicApiKey).trim(),
   );
 
@@ -635,7 +741,7 @@ export async function reviewPolymarketSignalsWithTrader(
   const logger = options.logger ?? console;
   if (!isPolymarketReviewerConfigured(options)) {
     logger.error(
-      "[PolymarketReviewer] AI reviewer not configured (need OPENROUTER_API_KEY or ANTHROPIC_API_KEY); dropping all candidates.",
+      "[PolymarketReviewer] AI reviewer not configured (ANTHROPIC_API_KEY required); dropping all candidates.",
     );
     return [];
   }

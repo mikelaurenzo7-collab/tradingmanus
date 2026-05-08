@@ -50,11 +50,20 @@ describe("aiToolbelt", () => {
   });
 
   describe("selectAnthropicModel", () => {
-    it("falls back to the configured OpenRouter model when no override is provided", () => {
-      // All tiers resolve to tencent/hy3-preview:free (or the env override).
+    it("returns a non-empty model id for every tier", () => {
+      // Each tier has a documented default; review→Haiku, triage→Haiku,
+      // deep→Opus.  We don't pin the exact id here to avoid binding the
+      // test to a Claude version, but we assert all three resolve.
       expect(selectAnthropicModel("review")).toBeTruthy();
       expect(selectAnthropicModel("triage")).toBeTruthy();
       expect(selectAnthropicModel("deep")).toBeTruthy();
+    });
+
+    it("uses different model ids for triage/review vs deep tiers by default", () => {
+      // Bulk + triage default to Haiku; deep defaults to Opus.  These are
+      // intentionally different so high-stakes trades pay for the deeper
+      // model only when justified by stakes.
+      expect(selectAnthropicModel("deep")).not.toBe(selectAnthropicModel("review"));
     });
 
     it("honors an explicit override", () => {

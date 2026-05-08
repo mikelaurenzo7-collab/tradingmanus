@@ -39,11 +39,15 @@ import { withUserLock } from "./userMutex";
 import { simulatePolymarketOrderFill } from "./paperTrading";
 import { ENV } from "./env";
 import { getEffectivePaperTradeMode } from "./effectivePaperMode";
+import { checkProfitGuardrails } from "./profitGuardrails";
 import {
   shouldReviewMarketAt,
   recordMarketReview,
   getAdaptiveCadenceTelemetry,
 } from "./adaptiveCadence";
+import { classifyMarketCategory } from "./marketCategoryRouter";
+import { getDeskWeights, getCategoryWeight } from "./deskAttention";
+import { getCategoryPersona } from "./categoryPersonas";
 import { logger } from "./logger";
 
 const MAX_SCHEDULED_MARKETS = 80;
@@ -390,12 +394,31 @@ export async function runPolymarketAutonomousTrading(
   // moved materially since their last review.  Mirror of the Kalshi gate
   // — same env vars, same in-memory cache, so a deploy-wide tuning of
   // SIGNAL_REVIEW_PRICE_DELTA_BPS / SIGNAL_REVIEW_STALE_TTL_MS controls
-  // both platforms uniformly.
+  // both platforms uniformly.  Per-category TTLs + near-resolution
+  // acceleration are layered automatically when env overrides are unset.
+  const deskWeights = await getDeskWeights(userId, "polymarket");
+
   const cadencePassedSignals: typeof executableSignals = [];
   const cadenceSkippedMarketIds: string[] = [];
   for (const signal of executableSignals) {
     const sidePrice = Number(signal.limitPrice);
-    if (shouldReviewMarketAt(signal.marketId, sidePrice)) {
+    const market = markets.find((m) => m.marketId === signal.marketId);
+    const category = market
+      ? classifyMarketCategory({ category: market.category, question: market.question })
+      : undefined;
+    const hoursToResolution =
+      market?.endDateIso
+        ? Math.max(0, (new Date(market.endDateIso).getTime() - Date.now()) / (60 * 60 * 1000))
+        : null;
+    const deskId = category ? getCategoryPersona("polymarket", category).id : undefined;
+    const deskWeight = deskId ? getCategoryWeight(deskWeights, deskId) : 1.0;
+    if (
+      shouldReviewMarketAt(signal.marketId, sidePrice, {
+        category,
+        hoursToResolution,
+        deskWeight,
+      })
+    ) {
       cadencePassedSignals.push(signal);
       if (Number.isFinite(sidePrice)) recordMarketReview(signal.marketId, sidePrice);
     } else {
@@ -474,7 +497,72 @@ export async function runPolymarketAutonomousTrading(
     };
   }
 
-  const sorted = sortSignals(reviewedSignals);
+  // Profit-guardrail filter: applied AFTER the AI reviewer so an approved
+  // candidate must ALSO meet hard EV/confidence thresholds before reaching
+  // the order pipeline.  Mirrors the Kalshi gate in tradingReviewer.ts so
+  // both platforms enforce the same high-leverage-wins-only EV/confidence
+  // floor.
+  //
+  // Team mode: polymarketSignalReviewer.ts now runs Claude + Grok in
+  // parallel and intersects approvals (true dual-bot consensus).  When
+  // ENABLE_GROK_TEAM=true and XAI_API_KEY is set, the resulting consensus
+  // signals reach this filter — passing isTeamMode forwards the high-
+  // leverage threshold so the EV/confidence floor matches the Kalshi side.
+  const guardrailRejections: Array<{ marketId: string; reason: string; ev: number; confidence: number }> = [];
+  const guardedSignals = reviewedSignals.filter((s) => {
+    const check = checkProfitGuardrails({
+      expectedValue: s.expectedValue,
+      confidence: s.confidence,
+      isTeamMode: ENV.enableGrokTeam,
+    });
+    if (!check.approved) {
+      guardrailRejections.push({
+        marketId: s.marketId,
+        reason: check.reason,
+        ev: s.expectedValue,
+        confidence: s.confidence,
+      });
+      logger.warn(
+        { marketId: s.marketId, reason: check.reason, ev: s.expectedValue, confidence: s.confidence },
+        "[ProfitGuardrails] polymarket signal rejected",
+      );
+    }
+    return check.approved;
+  });
+
+  if (guardrailRejections.length > 0) {
+    await db.logAuditEvent(
+      "polymarket_profit_guardrails_filter",
+      JSON.stringify({
+        rejected: guardrailRejections.length,
+        kept: guardedSignals.length,
+        sampleRejections: guardrailRejections.slice(0, 10),
+      }),
+      triggeredByOpenId,
+    );
+  }
+
+  if (guardedSignals.length === 0) {
+    await db.logAuditEvent(
+      "polymarket_autonomy_run_generated_only",
+      JSON.stringify({
+        signalsGenerated: allSignals.length,
+        reason: "all reviewed signals failed high-leverage profit guardrails",
+        guardrailRejections: guardrailRejections.length,
+      }),
+      triggeredByOpenId,
+    );
+    return {
+      success: true,
+      status: "generated_only",
+      reason: "all reviewed signals failed high-leverage profit guardrails",
+      signalsGenerated: allSignals.length,
+      executionCandidates: 0,
+      orderPlaced: false,
+    };
+  }
+
+  const sorted = sortSignals(guardedSignals);
   const candidates = sorted.slice(0, 5);
 
   // --- 4. Pick best candidate and size position with dynamic risk limits ---

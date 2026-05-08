@@ -24,7 +24,7 @@ function (secondary).
 | Backend | Node 20, Express 4, tRPC v11 |
 | Database | Neon Postgres (serverless HTTP driver), Drizzle ORM |
 | Auth | JWT (24 h access / 7 d refresh) in `httpOnly` cookies, optional 2FA/TOTP |
-| AI | OpenRouter (default model: `tencent/hy3-preview:free`) with Anthropic-compatible interface |
+| AI | Anthropic SDK direct (`@anthropic-ai/sdk`) — Claude review tier defaults to Haiku 4.5, deep tier escalates to Opus 4.7. Optional dual-bot consensus with Grok (xAI) when `XAI_API_KEY` is set. |
 | Testing | Vitest 3, no jsdom (pure unit tests) |
 | Build | `pnpm build` → Vite (frontend to `dist/public`), `pnpm build:server` → esbuild (backend to `dist/index.js`) |
 
@@ -73,11 +73,17 @@ used.  Never use `npm` or `yarn` in this repo — the lockfile is
 | `CREDENTIAL_ENCRYPTION_SECRET` | ✅ | 32+ random chars, different from `JWT_SECRET` |
 | `OWNER_EMAIL` | ✅ | Login email |
 | `OWNER_PASSWORD` | ✅ | 12+ chars in production |
-| `OPENROUTER_API_KEY` | ✅ | AI reviewer via OpenRouter — required for any live trading. `ANTHROPIC_API_KEY` accepted as fallback. |
+| `ANTHROPIC_API_KEY` | ✅ | Direct Anthropic API key — required for AI-reviewer-gated live trading. |
 | `NODE_ENV` | ✅ | `development` / `production` |
 | `LOG_LEVEL` | optional | `debug`/`info`/`warn`/`error` (default `info`) |
-| `OPENROUTER_MODEL` | optional | Default `tencent/hy3-preview:free` (free tier — upgrade to a paid model for sub-3-min cadence) |
-| `AUTONOMY_INTERVAL_MS` | optional | Kalshi+Polymarket autonomy cadence in ms (default `120000` = 2 min) |
+| `CLAUDE_MODEL` | optional | Bulk-review tier model (default `claude-haiku-4-5-20251001`) |
+| `CLAUDE_TRIAGE_MODEL` | optional | Triage pre-filter model (default `claude-haiku-4-5-20251001`) |
+| `CLAUDE_DEEP_MODEL` | optional | Deep-tier model for high-stakes / contested trades (default `claude-opus-4-7`) |
+| `XAI_API_KEY` | optional | Grok (xAI) key for true dual-bot consensus. Without it, the reviewer gracefully degrades to Claude-only. |
+| `GROK_MODEL` | optional | Default `grok-3-latest` |
+| `ENABLE_GROK_TEAM` | optional | Default `true` — when `XAI_API_KEY` is set, both bots review every signal in parallel and both must approve. |
+| `AI_DAILY_BUDGET_USD` | optional | Daily soft cap on the *pay-for-yourself* overrun = `(ai_cost + fees − realized_pnl)`.  Profitable days never throttle regardless of AI spend.  Net-negative days self-throttle as the deficit widens (×1.5 at 60% overrun, ×2 at 80%, ×4 at 95%, hard skip at 100%).  Cold-start exemption: under $5 AI spend, no throttle.  Resets at UTC midnight.  `0` or unset = unlimited.  See `server/_core/aiCostBudget.ts` + `server/_core/dailyScoreboard.ts`. |
+| `AUTONOMY_INTERVAL_MS` | optional | Kalshi+Polymarket autonomy tick rate in ms (default `60000` = 1 min). Adaptive cadence keeps actual AI cost bounded by skipping quiet markets. |
 | `ORDER_SYNC_INTERVAL_MS` | optional | Kalshi order/position reconciliation + exit monitor cadence (default `30000` = 30 s) |
 | `CROSS_ARB_INTERVAL_MS` | optional | Cross-platform arb scanner cadence (default `10000` = 10 s) |
 | `SIGNAL_REVIEW_PRICE_DELTA_BPS` | optional | Adaptive cadence: skip AI review when a market hasn't moved this many basis points since last review (default `50` = 0.5 %) |
@@ -275,14 +281,19 @@ filterSignalsByMarketConditions()   ← drop illiquid / poor-condition markets
 applyInstructionsToSignals()        ← apply user training rules
   │
   ▼
-reviewSignalsWithTrader()           ← AI review via OpenRouter (tradingReviewer.ts)
+reviewSignalsWithTrader()           ← AI review via direct Anthropic SDK (tradingReviewer.ts)
 ┌─────────────────────────────────────────────────────────────────┐
-│  1. Triage pre-filter (if >threshold candidates) via same model │
-│  2. Per-desk review with 16 category personas                   │
-│  3. Intra-model second pass for high-stakes or contested signals│
-│  4. Confidence/EV adjustments applied (bounded)                 │
-│  5. Desk memory tape injected into each desk's system prompt    │
-│  Note: web_search + extended thinking disabled (OpenRouter)     │
+│  1. Haiku 4.5 triage pre-filter (if >threshold candidates)      │
+│  2. Per-desk review with 16 category personas (Haiku 4.5 bulk)  │
+│  3. Optional parallel Grok review (when ENABLE_GROK_TEAM + key) │
+│     → both bots must approve (true dual-bot consensus)          │
+│  4. Opus 4.7 deep-tier escalation for contested mid-stakes      │
+│     trades and high-stakes signals (notional, near-resolution,  │
+│     extreme-tail implied probability)                           │
+│  5. Confidence/EV adjustments applied (bounded)                 │
+│  6. Desk memory tape injected into each desk's system prompt    │
+│  Anthropic-native features ON: prompt caching (cache_control),  │
+│  web_search tool, extended thinking on the deep tier.           │
 └─────────────────────────────────────────────────────────────────┘
   │
   ▼
@@ -353,7 +364,14 @@ it are treated as fresh state.
 - `railway.json` sets `builder: DOCKERFILE`
 - `Dockerfile` pins Node 20 + pnpm 10.4.1, runs `pnpm install --frozen-lockfile && pnpm build && pnpm build:server`, starts `pnpm start`
 - `pnpm.onlyBuiltDependencies` in `package.json` allows `@tailwindcss/oxide` and `esbuild` postinstall scripts (Tailwind v4 native binary — **required** for the Vite build)
-- **Schema migrations are manual.** Before deploying any commit that changes `drizzle/schema.ts`, run `corepack pnpm db:push` against the production `DATABASE_URL` from a workstation. We do **not** run `db:push` automatically in `preDeployCommand` because `drizzle-kit push` is interactive: in a non-TTY release environment it would either hang on destructive prompts or auto-skip them, leaving the running server with a schema mismatch. If you want auto-applied migrations, switch to a versioned `drizzle/migrations` folder + `drizzle-kit migrate`.
+- **Schema migrations are auto-applied on deploy** via `pnpm migrate:apply` in the start script (`pnpm start` = `pnpm migrate:apply && node dist/index.js`).  The runner is a small custom script (`scripts/applyMigrations.ts`) that:
+    1. Creates a `migrations_log` tracking table on first run.
+    2. Reads `drizzle/migrations/*.sql` files in lexicographic (0001_, 0002_, …) order.
+    3. Runs each unapplied file inside a single Neon HTTP request (multi-statement supported).
+    4. Records the filename in `migrations_log` so reruns are idempotent at the runner level.
+  Migrations are also expected to be **idempotent at the SQL level** (use `ADD COLUMN IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`, etc.) so that hand-applied changes via Neon's SQL editor don't break the runner on the next deploy.
+- **Adding a new migration**: drop a new SQL file in `drizzle/migrations/` using the next sequential number.  No code change needed; the next deploy applies it.
+- **`pnpm db:push` is still available** for fast iteration during development, but production should use the migration files committed to the repo.
 - Liveness probe: `GET /api/health/live` (Railway restart policy is wired here — never touches the DB so a Neon outage cannot cause a restart loop)
 - Schedulers run **in-process** (`server/_core/index.ts`):
   - Kalshi + Polymarket autonomy: every `AUTONOMY_INTERVAL_MS` (default 2 min)
@@ -383,7 +401,7 @@ HTTP server starts listening:
   server stays up.  This is deliberate: a crash-loop hides the diagnostic
   in restart noise, while a running-but-degraded server keeps `/api/health/*`
   reachable so the operator can inspect the [SelfTest] log lines in
-  Railway, fix the env var (`OPENROUTER_API_KEY`, `DATABASE_URL`,
+  Railway, fix the env var (`ANTHROPIC_API_KEY`, `DATABASE_URL`,
   `CREDENTIAL_ENCRYPTION_SECRET`), and redeploy without watching the
   container restart loop.
 - **Schema migrations missing** (e.g. `kalshiPositions.exitState` after a

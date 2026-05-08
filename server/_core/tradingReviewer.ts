@@ -1,5 +1,6 @@
-import { createOpenRouterClient } from "./openrouterClient";
+import { createAnthropicClient } from "./anthropicClient";
 import { createGrokChatCompletion, extractGrokText } from "./grokClient";
+import { intersectReviews } from "./reviewerConsensus";
 import type { KalshiMarket } from "./kalshiMarketData";
 import type { KalshiSignal } from "./kalshiSignals";
 import { ENV } from "./env";
@@ -8,6 +9,7 @@ import {
   buildCachedSystemPrompt,
   buildExtendedThinking,
   buildMemorySystemBlock,
+  buildScoreboardSystemBlock,
   buildToolList,
   callAnthropicWithTimeout,
   extractAnthropicText,
@@ -24,6 +26,7 @@ import {
   type StakesContext,
   type TriageCandidate,
 } from "./aiToolbelt";
+import { formatScoreboardForPrompt, getCachedScoreboard } from "./dailyScoreboard";
 import {
   classifyMarketCategory,
   groupByCategory,
@@ -146,7 +149,7 @@ export function createTradingReviewer(options: TradingReviewerOptions = {}): Tra
  * The reviewer is "configured" as long as Claude or Grok is available.
  */
 export function isTradingReviewerConfigured(options: TradingReviewerOptions = {}) {
-  const hasClaude = (options.anthropicApiKey ?? ENV.openrouterApiKey).trim().length > 0;
+  const hasClaude = (options.anthropicApiKey ?? ENV.anthropicApiKey).trim().length > 0;
   const hasGrok = ENV.xaiApiKey.trim().length > 0;
   return hasClaude || hasGrok;
 }
@@ -310,8 +313,8 @@ async function requestAnthropicReviews(
   memorySnippet: string | null = null,
   forceDeep = false,
 ) {
-  const client = options.anthropicClient ?? createOpenRouterClient(
-    (options.anthropicApiKey ?? ENV.openrouterApiKey).trim(),
+  const client = options.anthropicClient ?? createAnthropicClient(
+    (options.anthropicApiKey ?? ENV.anthropicApiKey).trim(),
   );
 
   const useDeepModel = forceDeep || isHighStakes(stakes);
@@ -343,11 +346,19 @@ async function requestAnthropicReviews(
     ? buildCachedSystemPrompt(buildReviewerBaseMandate(persona))
     : null;
   const memoryBlock = ENV.enableAiDeskMemory ? buildMemorySystemBlock(memorySnippet) : null;
+  // Pay-for-yourself scoreboard — every reviewer call sees today's running
+  // net so it can tighten its bar when net-negative.  Block is uncached
+  // because the scoreboard changes every tick.
+  const scoreboardText = formatScoreboardForPrompt(getCachedScoreboard());
+  const scoreboardBlock = buildScoreboardSystemBlock(scoreboardText);
 
   const messageInput: Record<string, unknown> = {
     model,
-    max_tokens: useDeepModel ? 3200 : 1800,
-    temperature: 0,
+    // Deep tier uses adaptive extended thinking (effort=high), which lets
+    // the model spend up to max_tokens on thinking + output.  8000 gives
+    // room for substantial reasoning while leaving headroom for the JSON
+    // review output.
+    max_tokens: useDeepModel ? 8000 : 1800,
     messages: [
       {
         role: "user",
@@ -355,12 +366,25 @@ async function requestAnthropicReviews(
       },
     ],
   };
+  // Temperature is only set on non-thinking calls.  Anthropic's
+  // extended-thinking modes are designed to run at the default temperature
+  // (~1.0); setting temperature=0 alongside thinking is documented as
+  // incompatible on some models and is suboptimal even where accepted
+  // (constrains the reasoning chain).  Bulk Haiku review without thinking
+  // keeps temperature=0 for determinism.
+  if (!thinking) {
+    messageInput.temperature = 0;
+  }
   if (personaBlocks) {
-    messageInput.system = memoryBlock ? [...personaBlocks, memoryBlock] : personaBlocks;
+    const blocks = [...personaBlocks];
+    if (memoryBlock) blocks.push(memoryBlock);
+    if (scoreboardBlock) blocks.push(scoreboardBlock);
+    messageInput.system = blocks;
   } else {
-    messageInput.system = memorySnippet
-      ? `${buildReviewerBaseMandate(persona)}\n\n${memorySnippet}`
-      : buildReviewerBaseMandate(persona);
+    const sections = [buildReviewerBaseMandate(persona)];
+    if (memorySnippet) sections.push(memorySnippet);
+    if (scoreboardText) sections.push(scoreboardText);
+    messageInput.system = sections.join("\n\n");
   }
   if (thinking) {
     messageInput.thinking = thinking;
@@ -413,7 +437,14 @@ async function requestGrokReviews(
     throw new Error("XAI_API_KEY required for Grok review");
   }
 
-  const systemPrompt = buildReviewerBaseMandate(persona) + (memorySnippet ? `\n\n${memorySnippet}` : "");
+  const scoreboardText = formatScoreboardForPrompt(getCachedScoreboard());
+  const systemPrompt = [
+    buildReviewerBaseMandate(persona),
+    memorySnippet ?? null,
+    scoreboardText ?? null,
+  ]
+    .filter((s): s is string => Boolean(s))
+    .join("\n\n");
   const userContent = JSON.stringify(reviewPayload);
 
   const completion = await createGrokChatCompletion(
@@ -444,6 +475,67 @@ async function requestGrokReviews(
     reviews,
     citations: [], // Grok v1 doesn't return citations in the same format
   };
+}
+
+/**
+ * Non-throwing Grok variant used in parallel team-consensus mode.  When
+ * Grok fails (network error, parse failure, no key), returns
+ * `{reviews: [], failed: true}` so the caller can gracefully degrade to
+ * Claude-only on this batch instead of unwinding the whole Promise.all.
+ *
+ * The CategoryPersona persona is reused for the system prompt — Grok's
+ * reasoning benefits from the same desk-specific mandate Claude gets.
+ */
+async function requestGrokTeamSidecar(
+  reviewPayload: ReturnType<typeof getReviewPayload>,
+  options: TradingReviewerOptions,
+  persona: CategoryPersona | undefined,
+  memorySnippet: string | null,
+): Promise<{ reviews: TradingSignalReview[]; failed: boolean }> {
+  if (!ENV.xaiApiKey) {
+    return { reviews: [], failed: false };
+  }
+
+  const scoreboardText = formatScoreboardForPrompt(getCachedScoreboard());
+  const systemPrompt = [
+    buildReviewerBaseMandate(persona),
+    memorySnippet ?? null,
+    scoreboardText ?? null,
+  ]
+    .filter((s): s is string => Boolean(s))
+    .join("\n\n");
+
+  try {
+    const completion = await createGrokChatCompletion(
+      [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: JSON.stringify(reviewPayload) },
+      ],
+      {
+        model: ENV.grokModel,
+        temperature: 0,
+        max_tokens: 3200,
+        timeoutMs: ENV.grokTimeoutMs,
+      },
+    );
+
+    const text = extractGrokText(completion);
+    const reviews = parseTradingReviews(text);
+
+    if (options.telemetry) {
+      options.telemetry.grokCalls = (options.telemetry.grokCalls ?? 0) + 1;
+    }
+
+    return { reviews, failed: false };
+  } catch (error) {
+    if (options.telemetry) {
+      options.telemetry.grokFailures = (options.telemetry.grokFailures ?? 0) + 1;
+    }
+    options.logger?.warn?.(
+      `[TradingReviewer] Grok team sidecar failed: ${error instanceof Error ? error.message : String(error)}; falling back to Claude-only on this batch.`,
+    );
+    return { reviews: [], failed: true };
+  }
 }
 
 function combineApprovedSignal(
@@ -493,11 +585,21 @@ async function callReviewer(
   memorySnippet: string | null = null,
   forceDeep = false,
 ): Promise<ReviewBatchResult> {
-  try {
-    // NEW: Route to Grok if solo mode or team mode with Grok persona
-    const useGrok = options.forceGrokSolo || ENV.enableGrokSolo || (ENV.enableGrokTeam && persona && (persona as any).id?.startsWith("grok."));
+  // Routing precedence:
+  //   1. forceGrokSolo / ENABLE_GROK_SOLO  → Grok-only (legacy single-bot path)
+  //   2. Persona is a Grok persona (id starts with "grok.")  → Grok-only
+  //      (per-desk routing for narrowly Grok-tuned desks)
+  //   3. ENABLE_GROK_TEAM + XAI_API_KEY    → parallel Claude+Grok intersection
+  //                                         (matches Polymarket dual-bot consensus)
+  //   4. otherwise                         → Claude-only
+  const isGrokPersona = Boolean(persona && (persona as any).id?.startsWith?.("grok."));
+  const useGrokSolo =
+    Boolean(options.forceGrokSolo) || ENV.enableGrokSolo || isGrokPersona;
+  const useTeamConsensus =
+    !useGrokSolo && ENV.enableGrokTeam && ENV.xaiApiKey.length > 0;
 
-    if (useGrok && ENV.xaiApiKey) {
+  try {
+    if (useGrokSolo && ENV.xaiApiKey) {
       const response = await requestGrokReviews(
         reviewPayload,
         options,
@@ -512,7 +614,53 @@ async function callReviewer(
       };
     }
 
-    // Default: Claude path
+    if (useTeamConsensus) {
+      // Parallel Claude + Grok with strict intersection.  Mirrors
+      // polymarketSignalReviewer.callReviewer; intersectReviews lives in
+      // reviewerConsensus.ts.  Strict mode = missing-from-Grok is a veto
+      // when Grok actually ran successfully; if Grok fails entirely we
+      // gracefully degrade to Claude-only for this batch.
+      const [claudeResp, grokResp] = await Promise.all([
+        requestAnthropicReviews(
+          reviewPayload,
+          options,
+          persona as CategoryPersona | undefined,
+          stakes,
+          memorySnippet,
+          forceDeep,
+        ),
+        requestGrokTeamSidecar(
+          reviewPayload,
+          options,
+          persona as CategoryPersona | undefined,
+          memorySnippet,
+        ),
+      ]);
+      const claudeMap = new Map(
+        claudeResp.reviews.map((review) => [review.marketId, review]),
+      );
+      // Strict mode = Grok actually ran (HTTP completion succeeded).  An
+      // empty or parse-truncated `reviews` array still counts as "ran" and
+      // triggers veto on missing markets — only transport-level failures
+      // (caught in requestGrokTeamSidecar's try/catch and surfaced as
+      // failed=true) gracefully degrade to Claude solo.  This prevents
+      // Grok output like `{"reviews":[]}` from masquerading as Grok-
+      // unavailable and letting solo Claude approval slip through under
+      // the team-mode banner.
+      const grokRanSuccessfully = !grokResp.failed;
+      const merged = intersectReviews(
+        claudeMap,
+        grokResp.reviews,
+        grokRanSuccessfully,
+      );
+      return {
+        reviewsByMarket: merged,
+        failed: false,
+        citations: claudeResp.citations,
+      };
+    }
+
+    // Default: Claude-only path
     const response = await requestAnthropicReviews(
       reviewPayload,
       options,
@@ -528,7 +676,7 @@ async function callReviewer(
     };
   } catch (error) {
     if (options.telemetry) {
-      if ((options.forceGrokSolo || ENV.enableGrokSolo) && ENV.xaiApiKey) {
+      if (useGrokSolo && ENV.xaiApiKey) {
         options.telemetry.grokFailures = (options.telemetry.grokFailures ?? 0) + 1;
       } else {
         options.telemetry.anthropicFailures += 1;
@@ -676,8 +824,8 @@ async function applyTriageFilter(
   const threshold = options.triageThresholdOverride ?? getTriageThreshold();
   if (signals.length <= threshold) return signals;
 
-  const triageClient = options.anthropicClient ?? createOpenRouterClient(
-    (options.anthropicApiKey ?? ENV.openrouterApiKey).trim(),
+  const triageClient = options.anthropicClient ?? createAnthropicClient(
+    (options.anthropicApiKey ?? ENV.anthropicApiKey).trim(),
   );
 
   const triageInput: TriageCandidate[] = signals.map((signal) => {
@@ -759,7 +907,7 @@ export async function reviewSignalsWithTrader(
   const logger = options.logger ?? console;
   if (!isTradingReviewerConfigured(options)) {
     logger.error(
-      "[TradingReviewer] AI reviewer not configured (need OPENROUTER_API_KEY or XAI_API_KEY); dropping all candidates.",
+      "[TradingReviewer] AI reviewer not configured (need ANTHROPIC_API_KEY or XAI_API_KEY); dropping all candidates.",
     );
     return [];
   }

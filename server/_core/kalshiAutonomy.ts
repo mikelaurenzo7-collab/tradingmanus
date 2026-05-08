@@ -40,6 +40,9 @@ import {
   recordMarketReview,
   getAdaptiveCadenceTelemetry,
 } from "./adaptiveCadence";
+import { classifyMarketCategory } from "./marketCategoryRouter";
+import { getDeskWeights, getCategoryWeight } from "./deskAttention";
+import { getCategoryPersona } from "./categoryPersonas";
 import {
   alertIfConsecutiveFailures,
   alertEquityDrop,
@@ -625,6 +628,12 @@ async function generateScheduledSignals(userId: number, minConfidence: number, a
   // through quota.  Markets that pass the gate are recorded *before* the
   // call so a thrown reviewer error doesn't leave them re-reviewable on
   // the next tick (the staleness TTL still guarantees a heartbeat).
+  // Load per-desk attention weights from rolling win-rate (cached 5 min
+  // per user).  Winning desks get tighter TTL → reviewed more often;
+  // losing desks get looser TTL → reviewed less often.  Cold desks
+  // (<10 trades) stay neutral.
+  const deskWeights = await getDeskWeights(userId, "kalshi");
+
   const cadencePassed: typeof instructionFilteredSignals = [];
   const cadenceSkippedMarketIds: string[] = [];
   for (const signal of instructionFilteredSignals) {
@@ -632,7 +641,25 @@ async function generateScheduledSignals(userId: number, minConfidence: number, a
     const sidePrice = market
       ? Number(signal.side === "yes" ? market.yesPrice : market.noPrice)
       : NaN;
-    if (shouldReviewMarketAt(signal.marketId, sidePrice)) {
+    // Per-category cadence + near-resolution acceleration + win-rate
+    // attention weight.  See server/_core/adaptiveCadence.ts and
+    // server/_core/deskAttention.ts.
+    const category = market
+      ? classifyMarketCategory({ category: market.category, title: market.title })
+      : undefined;
+    const hoursToResolution =
+      market?.resolutionDate
+        ? Math.max(0, (new Date(market.resolutionDate).getTime() - Date.now()) / (60 * 60 * 1000))
+        : null;
+    const deskId = category ? getCategoryPersona("kalshi", category).id : undefined;
+    const deskWeight = deskId ? getCategoryWeight(deskWeights, deskId) : 1.0;
+    if (
+      shouldReviewMarketAt(signal.marketId, sidePrice, {
+        category,
+        hoursToResolution,
+        deskWeight,
+      })
+    ) {
       cadencePassed.push(signal);
       if (Number.isFinite(sidePrice)) recordMarketReview(signal.marketId, sidePrice);
     } else {
@@ -1707,12 +1734,12 @@ export async function runScheduledAutonomousTradingBatch(
   // placed; running the batch without it would silently downgrade safety to
   // raw heuristics.  We log a critical audit event so the operator sees this
   // in the audit feed even after the throw is caught upstream.
-  if (ENV.isProduction && !ENV.openrouterApiKey) {
+  if (ENV.isProduction && !ENV.anthropicApiKey) {
     try {
       await db.logAuditEvent(
         "scheduled_autonomy_run_aborted",
         JSON.stringify({
-          reason: "OPENROUTER_API_KEY_MISSING",
+          reason: "ANTHROPIC_API_KEY_MISSING",
           triggeredByOpenId,
           eligibleUsers: users.length,
         }),
@@ -1722,8 +1749,8 @@ export async function runScheduledAutonomousTradingBatch(
       // Audit-log failure must not mask the underlying configuration error.
     }
     throw new Error(
-      "OPENROUTER_API_KEY is not configured. Refusing to run scheduled autonomous trading without the AI reviewer gate. " +
-        "Set OPENROUTER_API_KEY (or ANTHROPIC_API_KEY) in the deployment environment and redeploy."
+      "ANTHROPIC_API_KEY is not configured. Refusing to run scheduled autonomous trading without the AI reviewer gate. " +
+        "Set ANTHROPIC_API_KEY in the deployment environment and redeploy."
     );
   }
 

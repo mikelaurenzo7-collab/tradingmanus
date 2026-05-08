@@ -5,6 +5,7 @@
  */
 
 import { ENV } from "./env";
+import { recordAiCallCost } from "./aiCostBudget";
 
 export type GrokMessage = {
   role: "system" | "user" | "assistant";
@@ -74,7 +75,18 @@ export async function createGrokChatCompletion(
       throw new Error(`Grok API error ${response.status}: ${errorText}`);
     }
 
-    return (await response.json()) as GrokChatCompletion;
+    const completion = (await response.json()) as GrokChatCompletion;
+    // Bill against the daily AI cost budget — no-op when
+    // AI_DAILY_BUDGET_USD is unset.
+    recordAiCallCost(
+      model,
+      {
+        inputTokens: completion.usage?.prompt_tokens ?? 0,
+        outputTokens: completion.usage?.completion_tokens ?? 0,
+      },
+      { provider: "grok" },
+    );
+    return completion;
   } finally {
     clearTimeout(timeout);
   }

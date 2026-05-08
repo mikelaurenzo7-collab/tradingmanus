@@ -50,6 +50,11 @@ COPY --from=builder /app/package.json /app/pnpm-lock.yaml ./
 COPY --from=builder /app/patches ./patches
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
+# Migration runner needs the .ts source + the SQL files at runtime so the
+# `pnpm migrate:apply` step in the start script can run before the server
+# boots.  scripts/ is tiny; drizzle/migrations/ is just SQL.
+COPY --from=builder /app/scripts ./scripts
+COPY --from=builder /app/drizzle/migrations ./drizzle/migrations
 
 # Railway sets PORT at runtime; the server reads it from process.env.PORT.
 EXPOSE 3000

@@ -21,7 +21,7 @@
  *     this desk because every approval is high-stakes by definition.
  */
 
-import { createOpenRouterClient } from "./openrouterClient";
+import { createAnthropicClient } from "./anthropicClient";
 import { z } from "zod";
 import { ENV } from "./env";
 import {
@@ -37,7 +37,10 @@ import {
 import type { CrossPlatformArbitrageOpportunity } from "./crossPlatformArbitrage";
 
 const ARB_REVIEWER_MAX_OPPORTUNITIES = 8;
-const ARB_REVIEWER_MAX_TOKENS = 2400;
+// Multi-leg arbitrage is always high-stakes and runs adaptive extended
+// thinking (effort=high).  6000 max_tokens gives the model room for
+// substantial reasoning while leaving headroom for the JSON review output.
+const ARB_REVIEWER_MAX_TOKENS = 6000;
 const ARB_REVIEWER_REASONING_CHARS = 320;
 
 const ARBITRAGE_DESK_MANDATE = [
@@ -176,7 +179,7 @@ export async function reviewArbitrageOpportunities(
   const logger = options.logger ?? console;
   if (!isArbReviewerConfigured(options)) {
     logger.error(
-      "[ArbReviewer] OPENROUTER_API_KEY missing; dropping all arbitrage candidates so we never auto-execute multi-leg trades without AI sign-off.",
+      "[ArbReviewer] ANTHROPIC_API_KEY missing; dropping all arbitrage candidates so we never auto-execute multi-leg trades without AI sign-off.",
     );
     return [];
   }
@@ -194,31 +197,43 @@ export async function reviewArbitrageOpportunities(
   const tools = buildToolList([], { allowWebSearch: true, maxWebSearchUses: 4 });
   const client =
     options.anthropicClient ??
-    createOpenRouterClient((options.anthropicApiKey ?? ENV.anthropicApiKey).trim());
+    createAnthropicClient((options.anthropicApiKey ?? ENV.anthropicApiKey).trim());
 
   const messageInput: Record<string, unknown> = {
-    // Always use Sonnet (or the configured deep model) — these are by
-    // definition high-stakes multi-leg trades; we want depth over speed.
-    model: options.anthropicModel ?? ENV.anthropicDeepModel ?? ENV.anthropicModel,
+    // Always use the deep model — multi-leg cross-platform arbitrage is
+    // by definition high-stakes; we want depth over speed.
+    model: options.anthropicModel ?? ENV.anthropicDeepModel,
     max_tokens: ARB_REVIEWER_MAX_TOKENS,
-    temperature: 0,
     system: cachedSystem,
     messages: [{ role: "user", content: JSON.stringify(payload) }],
   };
   if (ENV.enableAiExtendedThinking) {
-    messageInput.thinking = { type: "enabled", budget_tokens: 3000 };
+    // Adaptive thinking — Opus 4.7+ rejects manual mode (400).  See
+    // https://docs.claude.com/en/docs/build-with-claude/adaptive-thinking
+    // Temperature is intentionally NOT set when thinking is enabled
+    // (extended thinking is designed for the default ~1.0 temperature).
+    messageInput.thinking = { type: "adaptive", effort: "high" };
+  } else {
+    // No thinking → keep deterministic at temperature 0.
+    messageInput.temperature = 0;
   }
   if (tools) messageInput.tools = tools;
 
   let parsedReviews: ParsedReview[] = [];
   let citations: CitationSummary[] = [];
   try {
+    // Use the deep-tier timeout by default — every arbitrage review is
+    // multi-leg high-stakes by definition (Opus deep model + adaptive
+    // thinking + web_search), so the 12 s bulk-review timeout is much
+    // too tight and would cause spurious timeouts that drop every
+    // arbitrage candidate.  Caller-supplied overrides still win.
+    const arbTimeoutMs = options.anthropicTimeoutMs ?? ENV.anthropicDeepTimeoutMs;
     const response = await callAnthropicWithTimeout(
       client as unknown as {
         messages: { create: (input: unknown) => Promise<{ content: Array<{ type: string; text?: string }> }> };
       },
       messageInput,
-      options.anthropicTimeoutMs ?? ENV.anthropicTimeoutMs,
+      arbTimeoutMs,
       "ArbReviewer",
     );
     parsedReviews = parseReviews(extractAnthropicText(response));

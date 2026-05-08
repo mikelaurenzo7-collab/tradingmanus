@@ -3,6 +3,20 @@ const normalizePositiveInt = (value: string | undefined, fallback: number) => {
   const parsed = Number.parseInt(value?.trim() ?? "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
+const normalizeFloat = (
+  value: string | undefined,
+  fallback: number,
+  { min, max }: { min: number; max: number },
+) => {
+  // Strict parse (Number, not Number.parseFloat) so trailing junk like
+  // "0.68abc" yields NaN → fallback, rather than silently parsing as 0.68.
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed) return fallback;
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed)) return fallback;
+  if (parsed < min || parsed > max) return fallback;
+  return parsed;
+};
 const normalizeBoolean = (value: string | undefined, fallback = false) => {
   const trimmed = value?.trim().toLowerCase();
   if (trimmed === undefined || trimmed === "") return fallback;
@@ -14,6 +28,15 @@ const normalizeBoolean = (value: string | undefined, fallback = false) => {
   );
 };
 
+// Default Anthropic model IDs.  Default review tier is Haiku 4.5 — cheapest +
+// fastest model that still meets the trading reviewer's reasoning bar.  Triage
+// also uses Haiku.  Deep tier escalates to Opus 4.7 for high-stakes trades
+// (large notional, near-resolution, contested mid-stakes).  Override per-tier
+// via CLAUDE_MODEL / CLAUDE_TRIAGE_MODEL / CLAUDE_DEEP_MODEL.
+const DEFAULT_CLAUDE_MODEL = "claude-haiku-4-5-20251001";
+const DEFAULT_CLAUDE_TRIAGE_MODEL = "claude-haiku-4-5-20251001";
+const DEFAULT_CLAUDE_DEEP_MODEL = "claude-opus-4-7";
+
 export const ENV = {
   cookieSecret: normalize(process.env.JWT_SECRET),
   credentialEncryptionSecret: normalize(
@@ -22,23 +45,16 @@ export const ENV = {
   databaseUrl: normalize(process.env.DATABASE_URL),
   ownerEmail: normalize(process.env.OWNER_EMAIL),
   ownerPassword: normalize(process.env.OWNER_PASSWORD),
-  openrouterApiKey:
-    normalize(process.env.OPENROUTER_API_KEY) ||
-    normalize(process.env.ANTHROPIC_API_KEY),
-  get anthropicApiKey() {
-    return this.openrouterApiKey;
-  },
-  openrouterModel:
-    normalize(process.env.OPENROUTER_MODEL) || "tencent/hy3-preview:free",
-  get anthropicModel() {
-    return this.openrouterModel;
-  },
-  get anthropicTriageModel() {
-    return this.openrouterModel;
-  },
-  get anthropicDeepModel() {
-    return this.openrouterModel;
-  },
+  // Direct Anthropic API key.  Required for AI-reviewer-gated live trading.
+  // OpenRouter has been removed; ANTHROPIC_API_KEY is the only accepted source.
+  anthropicApiKey: normalize(process.env.ANTHROPIC_API_KEY),
+  // Tier-aware model selection.  Reviewers pick triage/review/deep via
+  // selectAnthropicModel() in aiToolbelt.ts.
+  anthropicModel: normalize(process.env.CLAUDE_MODEL) || DEFAULT_CLAUDE_MODEL,
+  anthropicTriageModel:
+    normalize(process.env.CLAUDE_TRIAGE_MODEL) || DEFAULT_CLAUDE_TRIAGE_MODEL,
+  anthropicDeepModel:
+    normalize(process.env.CLAUDE_DEEP_MODEL) || DEFAULT_CLAUDE_DEEP_MODEL,
   anthropicTimeoutMs: normalizePositiveInt(
     process.env.ANTHROPIC_TIMEOUT_MS,
     12000
@@ -47,6 +63,8 @@ export const ENV = {
     process.env.ANTHROPIC_DEEP_TIMEOUT_MS,
     25000
   ),
+  // Grok (xAI) — direct API.  Optional; team mode is enabled by default but
+  // gracefully degrades to Claude-only when XAI_API_KEY is unset.
   xaiApiKey: normalize(process.env.XAI_API_KEY),
   grokModel: normalize(process.env.GROK_MODEL) || "grok-3-latest",
   grokTimeoutMs: normalizePositiveInt(process.env.GROK_TIMEOUT_MS, 15000),
@@ -55,6 +73,16 @@ export const ENV = {
   // Paper graduation for non-owners
   paperGraduationWinRate: normalizePositiveInt(process.env.PAPER_GRADUATION_WIN_RATE, 55) / 100,
   paperMinTrades: normalizePositiveInt(process.env.PAPER_MIN_TRADES, 30),
+  // High-leverage profit guardrails — owner can retune in Railway without a code change.
+  // Values are read once at boot; redeploy after editing.  Out-of-range values fall back
+  // to the defaults below (matches the prior hardcoded floor).
+  profitGuardrails: {
+    minPositiveEv: normalizeFloat(process.env.MIN_POSITIVE_EV, 0.035, { min: 0, max: 1 }),
+    minConfidenceAfterAdjust: normalizeFloat(process.env.MIN_CONFIDENCE_AFTER_ADJUST, 0.68, { min: 0, max: 1 }),
+    minDualBotAgreement: normalizeFloat(process.env.MIN_DUAL_BOT_AGREEMENT, 0.62, { min: 0, max: 1 }),
+    maxPortfolioExposurePct: normalizeFloat(process.env.MAX_PORTFOLIO_EXPOSURE_PCT, 0.20, { min: 0.01, max: 1 }),
+    maxCorrelatedGroupPct: normalizeFloat(process.env.MAX_CORRELATED_GROUP_PCT, 0.10, { min: 0.01, max: 1 }),
+  },
   enableAiPromptCache: normalizeBoolean(
     process.env.ENABLE_AI_PROMPT_CACHE,
     true
@@ -63,8 +91,14 @@ export const ENV = {
     process.env.ENABLE_AI_CATEGORY_ROUTING,
     true
   ),
-  enableAiWebSearch: false,
-  enableAiExtendedThinking: false,
+  // Anthropic-native features — re-enabled now that we're on the direct SDK.
+  // Both default ON because they materially improve reviewer quality on the
+  // trades that matter (high stakes, fresh news), at modest cost.
+  enableAiWebSearch: normalizeBoolean(process.env.ENABLE_AI_WEB_SEARCH, true),
+  enableAiExtendedThinking: normalizeBoolean(
+    process.env.ENABLE_AI_EXTENDED_THINKING,
+    true
+  ),
   enableAiDeskMemory: normalizeBoolean(process.env.ENABLE_AI_DESK_MEMORY, true),
   enableAiTriage: normalizeBoolean(process.env.ENABLE_AI_TRIAGE, true),
   aiTriageThreshold: normalizePositiveInt(process.env.AI_TRIAGE_THRESHOLD, 6),
@@ -84,6 +118,11 @@ export const ENV = {
   allowedOrigin: normalize(process.env.ALLOWED_ORIGIN),
   alertWebhookUrl: normalize(process.env.ALERT_WEBHOOK_URL),
   paperTradeMode: normalizeBoolean(process.env.PAPER_TRADE_MODE, false),
+  // Daily AI cost cap in USD.  When > 0, the scheduler throttles adaptive
+  // cadence as the budget burns and skips runs entirely once 100 %
+  // spent (resets at UTC midnight).  See server/_core/aiCostBudget.ts.
+  // 0 (or unset) = unlimited.
+  aiDailyBudgetUsd: normalizeFloat(process.env.AI_DAILY_BUDGET_USD, 0, { min: 0, max: 100000 }),
   starterCheckoutUrl: normalize(process.env.STARTER_CHECKOUT_URL),
   proCheckoutUrl: normalize(process.env.PRO_CHECKOUT_URL),
   fundCheckoutUrl: normalize(process.env.FUND_CHECKOUT_URL),
@@ -142,26 +181,22 @@ export function validateServerEnv() {
     );
   }
 
-  if (ENV.isProduction && ENV.openrouterApiKey.length === 0) {
+  if (ENV.isProduction && ENV.anthropicApiKey.length === 0) {
     console.warn(
-      "[ENV] OPENROUTER_API_KEY is not set. The AI trading reviewer requires this to be configured."
-    );
-  }
-
-  if (
-    ENV.isProduction &&
-    !process.env.OPENROUTER_MODEL?.trim() &&
-    ENV.openrouterModel === "tencent/hy3-preview:free"
-  ) {
-    console.warn(
-      "[ENV] OPENROUTER_MODEL is unset; falling back to free-tier 'tencent/hy3-preview:free'. " +
-        "This model has hard daily rate limits unsuitable for production trading. " +
-        "Set OPENROUTER_MODEL to a paid model you have validated on OpenRouter."
+      "[ENV] ANTHROPIC_API_KEY is not set. The AI trading reviewer requires this — autonomy will fail closed every cycle until it is configured."
     );
   }
 
   if (ENV.isProduction && ENV.enableGrokSolo && !ENV.xaiApiKey) {
     console.warn("[ENV] ENABLE_GROK_SOLO is true but XAI_API_KEY is not set. Grok solo mode will be disabled.");
+  }
+
+  if (ENV.isProduction && ENV.enableGrokTeam && !ENV.xaiApiKey) {
+    console.warn(
+      "[ENV] ENABLE_GROK_TEAM is true but XAI_API_KEY is not set. " +
+      "The reviewer will degrade to Claude-only and the audit log will record solo Claude reviews. " +
+      "Set XAI_API_KEY to enable true dual-bot consensus, or set ENABLE_GROK_TEAM=false to make intent explicit."
+    );
   }
 }
 
