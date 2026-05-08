@@ -1,6 +1,6 @@
 import { Loader2, ClipboardCheck, CheckCircle2, XCircle, AlertCircle, TrendingUp, TrendingDown } from "lucide-react";
 import { trpc } from "@/lib/trpc";
-import PaperTradingStatus from "@/components/PaperTradingStatus";
+// PaperTradingStatus was removed in the Kalshi-only single-owner pivot.
 import DeskMemoryTape from "@/components/DeskMemoryTape";
 import AutonomyMetrics from "@/components/AutonomyMetrics";
 import PreLiveChecklist from "@/components/PreLiveChecklist";
@@ -154,7 +154,7 @@ export default function TradingReadiness() {
       </div>
 
       {/* Paper Trading Status */}
-      <PaperTradingStatus data={readinessData} />
+      {/* Paper-trading graduation banner removed (single-owner always-live). */}
 
       {/* Desk Memory Health */}
       <DeskMemoryTape deskMemoryStats={readinessData.deskMemoryStats} />

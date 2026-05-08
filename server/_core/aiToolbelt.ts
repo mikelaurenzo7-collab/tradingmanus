@@ -87,17 +87,14 @@ export function isHighStakes(context: StakesContext): boolean {
 }
 
 /**
- * Pick the right model for the given tier.  Returns the configured
- * tier-specific model env var, or the override if provided.
- *   - triage → ENV.anthropicTriageModel (Haiku — cheap pre-filter)
- *   - review → ENV.anthropicModel       (Haiku by default — bulk reviewer)
- *   - deep   → ENV.anthropicDeepModel   (Opus by default — high stakes)
+ * Pick the right model for the given tier.  Returns the override if
+ * provided, otherwise the configured Grok model.  Tiers used to map to
+ * Anthropic Haiku/Opus; the Grok-only pivot collapses them to a single
+ * model since Grok pricing is flat.
  */
-export function selectAnthropicModel(tier: ModelTier, override?: string): string {
+export function selectAnthropicModel(_tier: ModelTier, override?: string): string {
   if (override && override.trim()) return override.trim();
-  if (tier === "triage") return ENV.anthropicTriageModel;
-  if (tier === "deep") return ENV.anthropicDeepModel;
-  return ENV.anthropicModel;
+  return ENV.grokModel;
 }
 
 /**
@@ -128,8 +125,9 @@ export function isWebSearchEnabled(): boolean {
 }
 
 export function isExtendedThinkingEnabled(): boolean {
-  // Anthropic extended-thinking budget.  Toggleable via ENABLE_AI_EXTENDED_THINKING.
-  return ENV.enableAiExtendedThinking;
+  // Anthropic extended-thinking is a no-op in Grok-only mode.  Returning
+  // false keeps the trading reviewer on the simple JSON-only response path.
+  return false;
 }
 
 /**
@@ -301,7 +299,7 @@ export function recordAnthropicResponseTelemetry(
   telemetry.inputTokens += inputTokens;
   telemetry.outputTokens += outputTokens;
   // Bill against daily budget — no-op when AI_DAILY_BUDGET_USD is unset.
-  const model = typeof response.model === "string" ? response.model : ENV.anthropicModel;
+  const model = typeof response.model === "string" ? response.model : ENV.grokModel;
   recordAiCallCost(
     model,
     {
@@ -311,7 +309,7 @@ export function recordAnthropicResponseTelemetry(
       cacheCreationInputTokens,
     },
     {
-      provider: "anthropic",
+      provider: "grok",
       reviewer: flags.reviewer,
       userId: flags.userId,
     },
@@ -446,11 +444,13 @@ export function formatCitationsForReasoning(citations: CitationSummary[]): strin
 export const TRIAGE_THRESHOLD_DEFAULT = 6;
 
 export function isTriageEnabled(): boolean {
-  return ENV.enableAiTriage === true;
+  // Triage was an Anthropic-Haiku-specific cost-saving trick; Grok is
+  // a single flat-priced model so triage is a no-op.
+  return false;
 }
 
 export function getTriageThreshold(): number {
-  return ENV.aiTriageThreshold > 0 ? ENV.aiTriageThreshold : TRIAGE_THRESHOLD_DEFAULT;
+  return TRIAGE_THRESHOLD_DEFAULT;
 }
 
 export type TriageCandidate = {

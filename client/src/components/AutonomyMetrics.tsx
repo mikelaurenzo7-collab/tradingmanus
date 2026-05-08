@@ -1,7 +1,7 @@
 interface AutonomyRun {
   runId: string;
   timestamp: string;
-  platform: "kalshi" | "polymarket";
+  platform: "kalshi";
   signalsGenerated: number;
   signalsApproved: number;
   ordersPlaced: number;

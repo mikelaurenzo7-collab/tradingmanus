@@ -2,7 +2,7 @@ import { botConfigs, chatMessages } from "../drizzle/schema";
 import { eq, and, desc, inArray } from "drizzle-orm";
 import { getDb } from "./db";
 
-type Platform = "kalshi" | "polymarket";
+type Platform = "kalshi";
 
 // ── Bot Config ────────────────────────────────────────────────────────────────
 

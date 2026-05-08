@@ -1,25 +1,15 @@
 /**
- * Paper-mode P&L summary.
+ * Paper-mode P&L summary (Kalshi-only).
  *
- * The single number an operator needs while validating in paper mode:
- * "did the bot make money in paper today / this week?".  Without this,
- * the operator has to grep the audit log manually to compute paper P&L.
- *
- * Sources:
- *   - kalshiPositions where positionStatus='closed' AND realizedPnl != 0
- *     (Kalshi paper-close marks the row closed with realizedPnl)
- *   - polymarketPositions where positionStatus='closed' AND realizedPnl != 0
- *     (Polymarket paper-close mirrors)
- *   - Filtered by closedAt >= sinceDate
+ * Reports closed-position P&L for a rolling window so the operator can
+ * answer "did the bot make money in paper today / this week?".  Uses a
+ * single indexed query against `kalshiPositions`.
  *
  * Note: this is *paper P&L only when PAPER_TRADE_MODE was on*.  When the
- * operator is live, the same closed-position rows reflect REAL P&L.  We
- * report both with a flag the caller can use to interpret.
- *
- * The summary is intentionally cheap — two indexed queries, no joins.
+ * operator is live, the same closed-position rows reflect REAL P&L.
  */
 
-import { kalshiPositions, polymarketPositions } from "../../drizzle/schema";
+import { kalshiPositions } from "../../drizzle/schema";
 import { and, eq, gte, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { logger } from "./logger";
@@ -39,7 +29,6 @@ export interface PnlSummary {
   windowDays: number;
   sinceIso: string;
   kalshi: PnlBreakdown;
-  polymarket: PnlBreakdown;
   combined: PnlBreakdown;
 }
 
@@ -114,53 +103,35 @@ export async function getPnlSummary(userId: number, windowDays = 7): Promise<Pnl
       windowDays,
       sinceIso,
       kalshi: EMPTY_BREAKDOWN,
-      polymarket: EMPTY_BREAKDOWN,
       combined: EMPTY_BREAKDOWN,
     };
   }
 
   try {
-    const [kalshiRows, polymarketRows] = await Promise.all([
-      database
-        .select({ realizedPnl: kalshiPositions.realizedPnl })
-        .from(kalshiPositions)
-        .where(
-          and(
-            eq(kalshiPositions.userId, userId),
-            eq(kalshiPositions.positionStatus, "closed"),
-            gte(kalshiPositions.closedAt, sinceDate),
-            sql`${kalshiPositions.realizedPnl} <> 0`,
-          ),
+    const kalshiRows = await database
+      .select({ realizedPnl: kalshiPositions.realizedPnl })
+      .from(kalshiPositions)
+      .where(
+        and(
+          eq(kalshiPositions.userId, userId),
+          eq(kalshiPositions.positionStatus, "closed"),
+          gte(kalshiPositions.closedAt, sinceDate),
+          sql`${kalshiPositions.realizedPnl} <> 0`,
         ),
-      database
-        .select({ realizedPnl: polymarketPositions.realizedPnl })
-        .from(polymarketPositions)
-        .where(
-          and(
-            eq(polymarketPositions.userId, userId),
-            eq(polymarketPositions.positionStatus, "closed"),
-            gte(polymarketPositions.closedAt, sinceDate),
-            sql`${polymarketPositions.realizedPnl} <> 0`,
-          ),
-        ),
-    ]);
+      );
 
     const kalshi = summarisePnls(
       kalshiRows.map((r: { realizedPnl: number | null }) => Number(r.realizedPnl ?? 0)),
     );
-    const polymarket = summarisePnls(
-      polymarketRows.map((r: { realizedPnl: number | null }) => Number(r.realizedPnl ?? 0)),
-    );
-    const combined = combineBreakdowns(kalshi, polymarket);
+    const combined = combineBreakdowns(kalshi, EMPTY_BREAKDOWN);
 
-    return { windowDays, sinceIso, kalshi, polymarket, combined };
+    return { windowDays, sinceIso, kalshi, combined };
   } catch (err) {
     logger.error({ err, userId, windowDays }, "[paperPnlSummary] query failed");
     return {
       windowDays,
       sinceIso,
       kalshi: EMPTY_BREAKDOWN,
-      polymarket: EMPTY_BREAKDOWN,
       combined: EMPTY_BREAKDOWN,
     };
   }

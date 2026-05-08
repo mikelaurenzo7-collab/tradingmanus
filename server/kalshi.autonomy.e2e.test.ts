@@ -435,24 +435,6 @@ describe("Kalshi autonomy E2E — full cycle", () => {
     expect(mocks.saveSignals).toHaveBeenCalled();
   });
 
-  it("Approval-required mode blocks execution even with approved signal", async () => {
-    mocks.getTradingPreferences.mockResolvedValue({
-      ...mocks.DEFAULT_PREFERENCES,
-      autonomyMode: "approval_required",
-    });
-
-    const result = await runScheduledAutonomousTrading(testUser);
-
-    expect(result.status).toBe("generated_only");
-    expect(result.reason).toContain("approval-required mode");
-    expect(result.executionCandidates).toBeGreaterThan(0);
-    expect(mocks.placeKalshiOrder).not.toHaveBeenCalled();
-
-    // But decision should still be captured
-    expect(result.decision).toBeDefined();
-    expect(result.decision?.blockedBy).toBe("approval_required_mode");
-  });
-
   it("Markets with insufficient liquidity are filtered out", async () => {
     mocks.filterSignalsByMarketConditions.mockImplementation((signals: any[]) =>
       signals.filter((s) => s.marketId !== "KXPOL-250531")

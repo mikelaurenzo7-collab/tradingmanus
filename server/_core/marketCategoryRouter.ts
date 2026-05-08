@@ -1,14 +1,13 @@
 /**
  * Market category router.
  *
- * Classifies a Kalshi or Polymarket market into one of a small set of
- * domains so the AI reviewer can dispatch each candidate to a domain-expert
- * persona (sports book, crypto desk, political analyst, etc).
+ * Classifies a Kalshi market into one of a small set of domains so the AI
+ * reviewer can dispatch each candidate to a domain-expert persona (sports
+ * book, crypto desk, political analyst, etc).
  *
  * The classifier is intentionally deterministic and self-contained — no LLM
  * call — so it adds zero latency to the autonomy loop and stays cheap to
- * run on every candidate.  Categories are chosen from the union of tags we
- * actually observe on Kalshi/Polymarket.
+ * run on every candidate.
  */
 
 export type MarketCategory =
@@ -34,7 +33,7 @@ export const MARKET_CATEGORIES: MarketCategory[] = [
 
 type CategoryRule = {
   category: MarketCategory;
-  /** Kalshi/Polymarket category tag substrings (case-insensitive). */
+  /** Kalshi category tag substrings (case-insensitive). */
   categoryTokens: string[];
   /** Substrings that frequently appear inside the market title/question. */
   titleTokens: string[];
@@ -262,8 +261,7 @@ export function classifyMarketCategory(market: ClassifiableMarket): MarketCatego
 
 /**
  * Group an arbitrary list of markets/signals by category.  The selector
- * pulls the classifiable fields off each item so this works for both
- * KalshiMarket and PolymarketMarket without coupling.
+ * pulls the classifiable fields off each item.
  */
 export function groupByCategory<T>(
   items: T[],

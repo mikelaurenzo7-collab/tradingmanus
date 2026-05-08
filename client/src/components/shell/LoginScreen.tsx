@@ -101,8 +101,8 @@ export function LoginScreen({
             Financial Command Center
           </p>
           <p className="text-xs text-muted-foreground/70 text-center max-w-sm">
-            Run Kalshi and Polymarket bots from one subscription-backed trading
-            desk.
+            Run a Kalshi prediction-market trading desk backed by an AI
+            reviewer.
           </p>
         </div>
 
@@ -132,7 +132,7 @@ export function LoginScreen({
                 <Sparkles className="w-4 h-4 shrink-0 text-emerald-300" />
                 <span>
                   Start with a 7-day trial, then complete billing from your plan
-                  link. Kalshi and Polymarket are both included in paid plans.
+                  link. Kalshi access is included in every paid plan.
                 </span>
               </div>
             ) : null}
@@ -255,7 +255,7 @@ export function LoginScreen({
 
         <div className="flex items-center justify-center gap-2 mt-8 text-xs text-muted-foreground/60">
           <Shield className="w-3.5 h-3.5" />
-          <span>Subscription access · Kalshi bot · Polymarket bot</span>
+          <span>Subscription access · Kalshi bot</span>
         </div>
       </form>
     </div>

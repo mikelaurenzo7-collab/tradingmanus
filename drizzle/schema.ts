@@ -465,118 +465,9 @@ export const autonomyRuns = pgTable("autonomyRuns", {
   updatedAt: updatedAt(),
 });
 
-// ── Polymarket Orders / Fills / Positions ─────────────────────────────────────
-// These replace the DEBT workaround in polymarketLearning.ts that was using
-// Kalshi tables as a proxy. Polymarket uses USDC CLOB semantics; sizes are in
-// USDC rather than contracts.
+// ── AI Desk Memory (per-user, per-category persistent learnings) ──────────────
 
-export const polymarketOrderStatusEnum = pgEnum("polymarket_order_status", [
-  "pending",
-  "filled",
-  "cancelled",
-  "rejected",
-]);
-export const polymarketSideEnum = pgEnum("polymarket_side", ["yes", "no"]);
-export const polymarketPositionStatusEnum = pgEnum(
-  "polymarket_position_status",
-  ["open", "closing", "closed"]
-);
-
-export const polymarketOrders = pgTable("polymarketOrders", {
-  id: serial("id").primaryKey(),
-  userId: integer("userId").notNull(),
-  orderId: varchar("orderId", { length: 128 }).notNull().unique(),
-  marketId: varchar("marketId", { length: 256 }).notNull(),
-  tokenId: varchar("tokenId", { length: 256 }).notNull(),
-  side: polymarketSideEnum("side").notNull(),
-  /** Size in USDC */
-  sizeUsdc: doublePrecision("sizeUsdc").notNull(),
-  limitPrice: doublePrecision("limitPrice").notNull(),
-  status: polymarketOrderStatusEnum("status").default("pending").notNull(),
-  filledSizeUsdc: doublePrecision("filledSizeUsdc").default(0).notNull(),
-  averagePrice: doublePrecision("averagePrice").default(0).notNull(),
-  createdAt: createdAt(),
-  filledAt: timestamp("filledAt", { withTimezone: true }),
-  cancelledAt: timestamp("cancelledAt", { withTimezone: true }),
-});
-
-export const polymarketFills = pgTable("polymarketFills", {
-  id: serial("id").primaryKey(),
-  userId: integer("userId").notNull(),
-  orderId: varchar("orderId", { length: 128 }).notNull(),
-  marketId: varchar("marketId", { length: 256 }).notNull(),
-  tokenId: varchar("tokenId", { length: 256 }).notNull(),
-  fillPrice: doublePrecision("fillPrice").notNull(),
-  /** Fill size in USDC */
-  fillSizeUsdc: doublePrecision("fillSizeUsdc").notNull(),
-  fillTime: createdAt(),
-});
-
-export const polymarketPositions = pgTable("polymarketPositions", {
-  id: serial("id").primaryKey(),
-  userId: integer("userId").notNull(),
-  marketId: varchar("marketId", { length: 256 }).notNull(),
-  tokenId: varchar("tokenId", { length: 256 }).notNull(),
-  side: polymarketSideEnum("side").notNull(),
-  /** Position size in USDC */
-  sizeUsdc: doublePrecision("sizeUsdc").notNull(),
-  entryPrice: doublePrecision("entryPrice").notNull(),
-  currentPrice: doublePrecision("currentPrice").notNull(),
-  unrealizedPnl: doublePrecision("unrealizedPnl").default(0).notNull(),
-  realizedPnl: doublePrecision("realizedPnl").default(0).notNull(),
-  positionStatus: polymarketPositionStatusEnum("positionStatus")
-    .default("open")
-    .notNull(),
-  // Stateful exit-strategy bookkeeping (mirror of kalshiPositions.exitState).
-  // Holds ExitStrategyState shape from server/_core/exitStrategy.ts so the
-  // trailing stop ratchets across exit-monitor ticks for Polymarket positions
-  // too.  Nullable: pre-migration rows are treated as fresh state.
-  exitState: jsonb("exitState"),
-  openedAt: createdAt(),
-  closedAt: timestamp("closedAt", { withTimezone: true }),
-});
-
-export const polymarketAccountStatusEnum = pgEnum("polymarket_account_status", [
-  "connected",
-  "disconnected",
-  "error",
-]);
-export const platformSubscriptionEnum = pgEnum("platform_subscription", [
-  "kalshi",
-  "polymarket",
-  "both",
-]);
-
-export const polymarketCredentials = pgTable("polymarketCredentials", {
-  id: serial("id").primaryKey(),
-  userId: integer("userId").notNull().unique(),
-  apiKeyEncrypted: text("apiKeyEncrypted").notNull(),
-  apiSecretEncrypted: text("apiSecretEncrypted").notNull(),
-  apiPassphraseEncrypted: text("apiPassphraseEncrypted").notNull(),
-  accountStatus: polymarketAccountStatusEnum("accountStatus")
-    .default("disconnected")
-    .notNull(),
-  lastSyncedAt: timestamp("lastSyncedAt", { withTimezone: true }),
-  createdAt: createdAt(),
-  updatedAt: updatedAt(),
-});
-
-export const userPlatformSubscriptions = pgTable("userPlatformSubscriptions", {
-  id: serial("id").primaryKey(),
-  userId: integer("userId").notNull().unique(),
-  subscribedPlatforms: platformSubscriptionEnum("subscribedPlatforms")
-    .default("kalshi")
-    .notNull(),
-  createdAt: createdAt(),
-  updatedAt: updatedAt(),
-});
-
-// ── AI Desk Memory (per-user, per-platform, per-category persistent learnings) ─
-
-export const deskPlatformEnum = pgEnum("desk_platform", [
-  "kalshi",
-  "polymarket",
-]);
+export const deskPlatformEnum = pgEnum("desk_platform", ["kalshi"]);
 export const deskOutcomeEnum = pgEnum("desk_outcome", [
   "win",
   "loss",
@@ -618,7 +509,7 @@ export const marketTimeframeAnalysis = pgTable(
     id: serial("id").primaryKey(),
     userId: integer("user_id").notNull(),
     marketId: text("market_id").notNull(),
-    platform: text("platform").notNull(), // 'kalshi' | 'polymarket'
+    platform: text("platform").notNull(), // 'kalshi'
     timeframe: text("timeframe").notNull(), // timeframe in milliseconds as string
     momentum: doublePrecision("momentum").notNull(),
     volatility: doublePrecision("volatility").notNull(),
@@ -670,10 +561,7 @@ export const marketMicrostructure = pgTable(
 
 // ── Chatbot ────────────────────────────────────────────────────────────────────
 
-export const chatBotPlatformEnum = pgEnum("chat_bot_platform", [
-  "kalshi",
-  "polymarket",
-]);
+export const chatBotPlatformEnum = pgEnum("chat_bot_platform", ["kalshi"]);
 export const chatRoleEnum = pgEnum("chat_role", ["user", "assistant"]);
 export const botToneEnum = pgEnum("bot_tone", [
   "professional",
@@ -873,44 +761,6 @@ export const executionQualityMetrics = pgTable(
 export type ExecutionQualityMetric =
   typeof executionQualityMetrics.$inferSelect;
 
-// ── Cross-Platform Arbitrage Execution History ───────────────────────────────
-
-export const crossPlatformArbitrageExecutions = pgTable(
-  "cross_platform_arbitrage_executions",
-  {
-    id: serial("id").primaryKey(),
-    userId: integer("userId").notNull(),
-    kalshiMarketId: varchar("kalshiMarketId", { length: 128 }).notNull(),
-    polymarketMarketId: varchar("polymarketMarketId", {
-      length: 128,
-    }).notNull(),
-    buyPlatform: varchar("buyPlatform", { length: 32 }).notNull(),
-    netEdge: doublePrecision("netEdge").notNull(),
-    feeBurden: doublePrecision("feeBurden").notNull(),
-    executionRisk: doublePrecision("executionRisk").notNull(),
-    hedgeRatio: doublePrecision("hedgeRatio").notNull(),
-    bothLegsExecuted: integer("bothLegsExecuted").notNull(),
-    kalshiOrderId: varchar("kalshiOrderId", { length: 128 }),
-    polymarketOrderId: varchar("polymarketOrderId", { length: 128 }),
-    partialLegAction: varchar("partialLegAction", { length: 32 }),
-    pnlAttributionArb: doublePrecision("pnlAttributionArb")
-      .default(0)
-      .notNull(),
-    pnlAttributionMarketMove: doublePrecision("pnlAttributionMarketMove")
-      .default(0)
-      .notNull(),
-    executedAt: timestamp("executedAt", { withTimezone: true })
-      .defaultNow()
-      .notNull(),
-  },
-  t => ({
-    crossArbExecIdx: index("cross_arb_exec_idx").on(t.userId, t.executedAt),
-  })
-);
-
-export type CrossPlatformArbitrageExecution =
-  typeof crossPlatformArbitrageExecutions.$inferSelect;
-
 // ── Online Learning Updates ──────────────────────────────────────────────────
 
 export const onlineLearningUpdates = pgTable(
@@ -998,7 +848,4 @@ export type User = Omit<
   >;
 export type BotConfig = typeof botConfigs.$inferSelect;
 export type ChatMessage = typeof chatMessages.$inferSelect;
-export type PolymarketOrder = typeof polymarketOrders.$inferSelect;
-export type PolymarketFill = typeof polymarketFills.$inferSelect;
-export type PolymarketPosition = typeof polymarketPositions.$inferSelect;
 export type PositionExit = typeof positionExits.$inferSelect;

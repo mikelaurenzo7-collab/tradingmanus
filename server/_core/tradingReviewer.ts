@@ -146,12 +146,13 @@ export function createTradingReviewer(options: TradingReviewerOptions = {}): Tra
 }
 
 /**
- * The reviewer is "configured" as long as Claude or Grok is available.
+ * The reviewer is "configured" as long as Grok is available.  The Anthropic
+ * path was removed in the Kalshi-only pivot; the legacy `anthropicApiKey`
+ * option on TradingReviewerOptions is now a no-op shim.
  */
-export function isTradingReviewerConfigured(options: TradingReviewerOptions = {}) {
-  const hasClaude = (options.anthropicApiKey ?? ENV.anthropicApiKey).trim().length > 0;
+export function isTradingReviewerConfigured(_options: TradingReviewerOptions = {}) {
   const hasGrok = ENV.xaiApiKey.trim().length > 0;
-  return hasClaude || hasGrok;
+  return hasGrok;
 }
 
 function clamp(value: number, minimum: number, maximum: number) {
@@ -314,16 +315,13 @@ async function requestAnthropicReviews(
   forceDeep = false,
 ) {
   const client = options.anthropicClient ?? createAnthropicClient(
-    (options.anthropicApiKey ?? ENV.anthropicApiKey).trim(),
+    (options.anthropicApiKey ?? ENV.xaiApiKey).trim(),
   );
 
   const useDeepModel = forceDeep || isHighStakes(stakes);
-  // Deep-tier calls (Opus + extended thinking + multiple web_search uses)
-  // need a wider wall-clock budget; bulk Sonnet stays on the tight default
-  // so missed cron ticks remain rare.
-  const timeoutMs = useDeepModel
-    ? Math.max(options.anthropicTimeoutMs ?? 0, ENV.anthropicDeepTimeoutMs)
-    : options.anthropicTimeoutMs ?? ENV.anthropicTimeoutMs;
+  // Grok has a single flat-priced model; the legacy deep-tier timeout
+  // override is preserved for callers that pass a custom value.
+  const timeoutMs = options.anthropicTimeoutMs ?? ENV.grokTimeoutMs;
   const tier = useDeepModel ? "deep" : "review";
   const model = selectAnthropicModel(tier, options.anthropicModel);
   // When forcing deep review (intra-Claude escalation), promote the stakes
@@ -414,9 +412,9 @@ async function requestAnthropicReviews(
     }
   }
 
-  const citations = ENV.enableAiCitations
-    ? extractCitations(response as { content: Array<unknown> })
-    : [];
+  // Citations only meaningful with Anthropic web_search; Grok-only mode skips.
+  const citations: ReturnType<typeof extractCitations> = [];
+  void extractCitations; // keep import live
 
   return {
     provider: "anthropic" as const,
@@ -593,10 +591,12 @@ async function callReviewer(
   //                                         (matches Polymarket dual-bot consensus)
   //   4. otherwise                         → Claude-only
   const isGrokPersona = Boolean(persona && (persona as any).id?.startsWith?.("grok."));
+  // Grok-only pivot: every review is a solo Grok call.  ENABLE_GROK_SOLO /
+  // ENABLE_GROK_TEAM env vars were removed; the legacy `forceGrokSolo` opt
+  // remains a no-op since solo is the only mode.
   const useGrokSolo =
-    Boolean(options.forceGrokSolo) || ENV.enableGrokSolo || isGrokPersona;
-  const useTeamConsensus =
-    !useGrokSolo && ENV.enableGrokTeam && ENV.xaiApiKey.length > 0;
+    Boolean(options.forceGrokSolo) || isGrokPersona || ENV.xaiApiKey.length > 0;
+  const useTeamConsensus = false;
 
   try {
     if (useGrokSolo && ENV.xaiApiKey) {
@@ -731,8 +731,9 @@ async function runCategoryReview(
   // semantics.  This recreates the OpenAI second-opinion behavior we removed,
   // entirely within Claude and only on contested mid-stakes candidates.
   const escalationCitationsByMarket = new Map<string, CitationSummary[]>();
+  // Intra-Claude escalation was removed in the Grok-only pivot.
   if (
-    ENV.enableAiIntraEscalation &&
+    false &&
     !isHighStakes(stakes) &&
     !batchResult.failed
   ) {
@@ -825,7 +826,7 @@ async function applyTriageFilter(
   if (signals.length <= threshold) return signals;
 
   const triageClient = options.anthropicClient ?? createAnthropicClient(
-    (options.anthropicApiKey ?? ENV.anthropicApiKey).trim(),
+    (options.anthropicApiKey ?? ENV.xaiApiKey).trim(),
   );
 
   const triageInput: TriageCandidate[] = signals.map((signal) => {
@@ -843,7 +844,7 @@ async function applyTriageFilter(
   });
 
   const keep = await runHaikuTriage(triageClient as { messages: { create: (input: unknown) => Promise<{ content: Array<{ type: string; text?: string }> }> } }, triageInput, {
-    timeoutMs: Math.min(options.anthropicTimeoutMs ?? ENV.anthropicTimeoutMs, 8000),
+    timeoutMs: Math.min(options.anthropicTimeoutMs ?? ENV.grokTimeoutMs, 8000),
     logger,
   });
   if (options.telemetry) {
@@ -930,7 +931,9 @@ export async function reviewSignalsWithTrader(
       const check = checkProfitGuardrails({
         expectedValue: s.expectedValue,
         confidence: s.confidence,
-        isTeamMode: ENV.enableGrokTeam,
+        count: 1,
+        entryPrice: Number((s as { impliedProbability?: number }).impliedProbability ?? 0.5),
+        category: "other",
       });
       if (!check.approved) {
         logger.warn?.(
@@ -940,10 +943,10 @@ export async function reviewSignalsWithTrader(
       return check.approved;
     });
 
-  // NEW: Solo Grok mode - bypass category routing and use Grok for everything
-  if (options.forceGrokSolo || ENV.enableGrokSolo) {
+  // Grok-only mode (the only AI path in the Kalshi-only pivot).
+  if (options.forceGrokSolo || ENV.xaiApiKey) {
     if (!ENV.xaiApiKey) {
-      logger.error("[TradingReviewer] ENABLE_GROK_SOLO true but no XAI_API_KEY; falling back to Claude.");
+      logger.error("[TradingReviewer] No XAI_API_KEY configured; AI review disabled.");
     } else {
       const grokPersona = getGrokPersona("kalshi", "other"); // generalist for solo
       const stakes = stakesForSignals(triagedSignals);

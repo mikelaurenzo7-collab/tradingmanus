@@ -243,34 +243,6 @@ describe("scheduled away-from-chat trading", () => {
     );
   });
 
-  it("generates and saves signals but never auto-submits in approval-required mode while persisting candidate details", async () => {
-    mocks.getTradingPreferences.mockResolvedValue({
-      ...mocks.DEFAULT_PREFERENCES,
-      autonomyMode: "approval_required",
-    });
-
-    const result = await runScheduledAutonomousTrading(testUser);
-
-    expect(result.status).toBe("generated_only");
-    expect(result.reason).toContain("approval-required mode");
-    expect(result.executionCandidates).toBe(1);
-    expect(result.decision).toMatchObject({
-      marketId: "KXTEST-1",
-      side: "yes",
-      confidence: 0.83,
-      executionScore: 0.84,
-      expectedValue: 0.18,
-      limitPrice: 0.43,
-      blockedBy: "approval_required_mode",
-    });
-    expect(mocks.saveSignals).toHaveBeenCalled();
-    expect(mocks.placeKalshiOrder).not.toHaveBeenCalled();
-    expect(mocks.logAuditEvent).toHaveBeenCalledWith(
-      "scheduled_autonomy_run_generated_only",
-      expect.stringContaining('"decision":{"marketId":"KXTEST-1"'),
-      "away-open-id"
-    );
-  });
 
   it("places a live order when a fully autonomous scheduled run finds an eligible non-heuristic signal and persists the sizing decision", async () => {
     const result = await runScheduledAutonomousTrading(testUser);
@@ -466,7 +438,7 @@ describe("scheduled away-from-chat trading", () => {
           executionCandidates: 1,
           orderPlaced: false,
           candidateMarketId: "KXTEST-2",
-          autonomyMode: "semi_autonomous",
+          autonomyMode: "fully_autonomous",
           executionCadence: "hourly_watch",
           decision: null,
         };
@@ -666,21 +638,6 @@ describe("execution guardrails — safety blocking paths", () => {
     expect(mocks.placeKalshiOrder).not.toHaveBeenCalled();
   });
 
-  it("withholds execution in semi-autonomous mode when the order budget exceeds the approval threshold", async () => {
-    // maxBudget = min(maxOrderNotional=10, maxPositionSize=20, maxLossPerTrade=5, capital=100) = 5
-    // requireApprovalAbove = 3  →  5 > 3 triggers the approval-threshold guard
-    mocks.getTradingPreferences.mockResolvedValue({
-      ...mocks.DEFAULT_PREFERENCES,
-      autonomyMode: "semi_autonomous",
-      requireApprovalAbove: 3,
-    });
-
-    const result = await runScheduledAutonomousTrading(testUser);
-
-    expect(result.status).toBe("generated_only");
-    expect(result.reason).toContain("semi-autonomous");
-    expect(mocks.placeKalshiOrder).not.toHaveBeenCalled();
-  });
 
   it("skips an execution candidate when an open position already exists for the same market", async () => {
     // One position is open, but maxOpenPositions = 5 so the global cap passes;

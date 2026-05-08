@@ -69,34 +69,10 @@ export default function TradingAutonomy() {
     onError: (error) => setMessage(error.message),
   });
 
-  const aggressiveModeMutation = trpc.kalshi.setAggressiveMode.useMutation({
-    onSuccess: async (result) => {
-      setForm(result.preferences);
-      setMessage(
-        result.preferences.aggressiveMode
-          ? "Aggressive Mode enabled — training wheels off, full autonomy at max permission."
-          : "Aggressive Mode disabled — training wheels on (cooldown + concentration cap + posture floor active)."
-      );
-      await Promise.all([
-        utils.kalshi.getTradingPreferences.invalidate(),
-        utils.kalshi.getKalshiAccountStatus.invalidate(),
-      ]);
-    },
-    onError: (error) => setMessage(error.message),
-  });
-
-  const moonshotModeMutation = trpc.kalshi.setMoonshotMode.useMutation({
-    onSuccess: async (result) => {
-      setForm(result.preferences);
-      setMessage(
-        result.preferences.moonshotMode
-          ? "Moonshot Mode enabled — bot may now hunt 2-20¢ asymmetric plays (capped at $5/trade, $25 total)."
-          : "Moonshot Mode disabled.",
-      );
-      await utils.kalshi.getTradingPreferences.invalidate();
-    },
-    onError: (error) => setMessage(error.message),
-  });
+  // Aggressive / Moonshot toggles were removed in the Kalshi-only personal pivot.
+  // Single-owner mode runs directly under the new profitGuardrails (net EV ≥ 6.5 %,
+  // confidence ≥ 76 %, ¼ Kelly, drawdown breakers); there's no separate
+  // "training wheels off" or "longshot sleeve" control surface.
 
   const accountStatus = accountStatusQuery.data;
   const connected = accountStatus?.connected ?? false;
@@ -147,86 +123,6 @@ export default function TradingAutonomy() {
           <AlertDescription>{message}</AlertDescription>
         </Alert>
       )}
-
-      {/* ── Aggressive Mode (training wheels off) ───────────────────── */}
-      <Card className={`glass-panel border-l-4 ${form.aggressiveMode ? "border-l-rose-500 glow-destructive" : "border-l-amber-500/40"}`}>
-        <CardContent className="p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <Zap className={`h-4 w-4 ${form.aggressiveMode ? "text-rose-400" : "text-amber-400"}`} />
-              <span className="font-semibold text-sm">Aggressive Mode</span>
-              {form.aggressiveMode ? (
-                <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded bg-rose-500/15 text-rose-300">
-                  ON
-                </span>
-              ) : null}
-            </div>
-            <p className="text-xs text-muted-foreground max-w-2xl">
-              Training wheels off. Bypasses the 5-min recent-manual-order cooldown, the
-              per-category concentration cap, and the posture-driven confidence floor boost;
-              tightens adaptive cadence ×0.5; arms Moonshot Mode. Hard safety gates
-              (credentials, capital, price drift, exchange rejection) stay enforced.
-              Default ON for single-tenant — flip off to put training wheels back on.
-            </p>
-          </div>
-          <Button
-            variant={form.aggressiveMode ? "outline" : "default"}
-            size="sm"
-            disabled={aggressiveModeMutation.isPending || (!connected && !form.aggressiveMode)}
-            onClick={() => aggressiveModeMutation.mutate({ enabled: !form.aggressiveMode })}
-            className={form.aggressiveMode ? "" : "bg-rose-500 hover:bg-rose-600 text-white"}
-          >
-            {aggressiveModeMutation.isPending ? (
-              <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-            ) : null}
-            {form.aggressiveMode ? "Disable Aggressive Mode" : "Enable Aggressive Mode"}
-          </Button>
-        </CardContent>
-      </Card>
-
-      {/* ── Moonshot Mode (advanced sleeve, requires Aggressive Mode) ── */}
-      <Card className={`glass-panel border-l-4 ${form.moonshotMode ? "border-l-fuchsia-500 glow-primary" : "border-l-fuchsia-500/30"} ${form.aggressiveMode ? "" : "opacity-60"}`}>
-        <CardContent className="p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <Zap className={`h-4 w-4 ${form.moonshotMode ? "text-fuchsia-400" : "text-fuchsia-400/60"}`} />
-              <span className="font-semibold text-sm">Moonshot Mode</span>
-              {form.moonshotMode ? (
-                <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded bg-fuchsia-500/15 text-fuchsia-300">
-                  ON
-                </span>
-              ) : null}
-              {!form.aggressiveMode ? (
-                <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded bg-amber-500/15 text-amber-300">
-                  Requires Aggressive Mode
-                </span>
-              ) : null}
-            </div>
-            <p className="text-xs text-muted-foreground max-w-2xl">
-              Lets the bot also hunt low-probability asymmetric plays — 2-20¢ longshots and
-              80-98¢ shortshots Claude+Grok think are mispriced. Hard-bounded: each moonshot
-              caps at $5 notional, total open moonshot exposure caps at $25, max 5 open at
-              once. Bad moonshots can lose at most that bucket. Independent of the main
-              bankroll.
-            </p>
-          </div>
-          <Button
-            variant={form.moonshotMode ? "outline" : "default"}
-            size="sm"
-            disabled={
-              moonshotModeMutation.isPending ||
-              (!form.aggressiveMode && !form.moonshotMode)
-            }
-            onClick={() => moonshotModeMutation.mutate({ enabled: !form.moonshotMode })}
-            className={form.moonshotMode ? "" : "bg-fuchsia-500 hover:bg-fuchsia-600 text-white"}
-          >
-            {moonshotModeMutation.isPending ? (
-              <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-            ) : null}
-            {form.moonshotMode ? "Disable Moonshot" : "Enable Moonshot"}
-          </Button>
-        </CardContent>
-      </Card>
 
       {/* ── Hero Status Card ─────────────────────────────────────────── */}
       <Card className={`glass-panel relative overflow-hidden ${isArmed ? 'glow-primary animate-pulse-glow' : ''}`}>

@@ -16,7 +16,7 @@ import { getDb } from "./db";
 import { assertPositiveIntegerUserId } from "./_core/userScope";
 import { logger } from "./_core/logger";
 
-export type DeskPlatform = "kalshi" | "polymarket";
+export type DeskPlatform = "kalshi";
 export type DeskOutcome = "win" | "loss" | "scratch";
 
 export type DeskMemoryNote = {
@@ -312,53 +312,6 @@ export async function tryRecordKalshiCloseToDeskMemory(input: {
   } catch (error) {
     (input.logger ?? console).warn(
       `[deskMemory] Kalshi close memory write failed for marketId=${input.marketId}: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-}
-
-/**
- * Polymarket variant.  Polymarket markets aren't cached in our DB so the
- * caller must supply the market category / title from the trade record.
- * As with the Kalshi version, errors are swallowed + logged to keep the
- * memory write off the critical close path.
- */
-export async function tryRecordPolymarketCloseToDeskMemory(input: {
-  userId: number;
-  marketId: string;
-  marketTitle?: string | null;
-  marketCategoryTag?: string | null;
-  side: "yes" | "no";
-  entryPrice: number;
-  exitPrice: number;
-  sizeUsdc: number;
-  realizedPnl: number;
-  logger?: Pick<Console, "warn">;
-}): Promise<void> {
-  try {
-    const { classifyMarketCategory } = await import("./_core/marketCategoryRouter");
-    const category = classifyMarketCategory({
-      category: input.marketCategoryTag ?? null,
-      question: input.marketTitle ?? null,
-    });
-    const { outcome, note } = summarizeTradeAsDeskNote({
-      side: input.side,
-      entryPrice: input.entryPrice,
-      exitPrice: input.exitPrice,
-      // Polymarket sizes are USDC notional, not contract count — show in dollars.
-      quantity: Number(input.sizeUsdc.toFixed(2)),
-      realizedPnl: input.realizedPnl,
-      marketTitle: input.marketTitle,
-    });
-    await recordDeskTradeOutcome({
-      userId: input.userId,
-      platform: "polymarket",
-      marketCategory: category,
-      outcome,
-      note,
-    });
-  } catch (error) {
-    (input.logger ?? console).warn(
-      `[deskMemory] Polymarket close memory write failed for marketId=${input.marketId}: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 }

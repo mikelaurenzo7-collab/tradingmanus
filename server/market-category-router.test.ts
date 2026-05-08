@@ -85,7 +85,7 @@ describe("groupByCategory", () => {
 
 describe("category personas", () => {
   it("provides a persona for every (platform, category) pair", () => {
-    for (const platform of ["kalshi", "polymarket"] as const) {
+    for (const platform of ["kalshi"] as const) {
       for (const category of MARKET_CATEGORIES) {
         const persona = getCategoryPersona(platform, category);
         expect(persona.platform).toBe(platform);
@@ -98,6 +98,5 @@ describe("category personas", () => {
 
   it("listPersonasForPlatform returns one persona per category", () => {
     expect(listPersonasForPlatform("kalshi")).toHaveLength(MARKET_CATEGORIES.length);
-    expect(listPersonasForPlatform("polymarket")).toHaveLength(MARKET_CATEGORIES.length);
   });
 });

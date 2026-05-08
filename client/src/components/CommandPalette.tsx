@@ -89,11 +89,11 @@ export function CommandPalette() {
 
         <CommandGroup heading="Quick actions">
           <CommandItem
-            value="Connect exchange Kalshi Polymarket onboarding"
+            value="Connect exchange Kalshi onboarding"
             onSelect={() => handleNavigate("/connect")}
           >
             <Plug className="mr-2 h-4 w-4 opacity-70" />
-            Connect an exchange
+            Connect Kalshi
           </CommandItem>
           <CommandItem
             value="Fund deposit balance"
