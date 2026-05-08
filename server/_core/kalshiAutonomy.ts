@@ -1808,10 +1808,36 @@ export async function runScheduledAutonomousTrading(
     .catch((err: unknown) => {
       logger.warn(
         { err, userId, op: "getKalshiTradeHistory" },
-        "[Autonomy] trade history fetch failed for drawdown breaker; using empty baseline",
+        "[Autonomy] trade history fetch failed for drawdown breaker; failing closed",
       );
-      return [] as any[];
+      // FAIL CLOSED: returning [] would make weekly PnL, consecutive
+      // losses, and realized edge all evaluate as "safe" — opposite of
+      // intent. Sentinel `null` triggers the abort branch below.
+      return null;
     });
+
+  if (closedTrades7d === null) {
+    return finalize({
+      status: "blocked",
+      reason:
+        "Trade history unavailable (DB outage); refusing to trade until weekly drawdown breaker has real data",
+      signalsGenerated: savedSignals.length,
+      executionCandidates: executionCandidates.length,
+      orderPlaced: false,
+      candidateMarketId: eligibleSignal.marketId,
+      autonomyMode: preferences.autonomyMode,
+      executionCadence: preferences.executionCadence,
+      candidateSet,
+      rejectedCandidates,
+      decision: buildDecisionDetails(eligibleSignal, {
+        quantity,
+        confidence: eligibleSignal.confidence,
+        blockedBy: "trade_history_unavailable",
+      }),
+    }, {
+      appliedGuardrails: safeJsonStringify(buildAppliedGuardrails(preferences, riskLimits)),
+    });
+  }
   // Weekly realized PnL = sum of realizedPnl across the trailing 7d window.
   const weeklyPnlUsd = closedTrades7d.reduce(
     (acc: number, t: any) => acc + Number(t.realizedPnl ?? 0),

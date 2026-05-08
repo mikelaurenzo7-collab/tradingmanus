@@ -33,6 +33,7 @@ import { applyEnsembleFilter } from "./ensembleConsensus";
 import { reviewSignalsWithTrader } from "./tradingReviewer";
 import { fetchKalshiAccountEquity } from "./kalshiAuth";
 import { placeKalshiOrder } from "./kalshiExecution";
+import { withUserLock } from "./userMutex";
 import { checkDrawdownBreaker } from "./drawdownBreaker";
 import { getKalshiCredentials } from "../db.kalshi-credentials";
 import { getTradingPreferences } from "../db.trading-preferences";
@@ -514,12 +515,19 @@ export async function runDailySportsPlay(
   // (4 % default) means 2.5 % is below the per-position ceiling, but
   // exposure caps may still veto if the operator already has open sports
   // positions accumulating to the per-category limit.
-  const result = await placeKalshiOrder(
-    userId,
-    top.marketId,
-    top.side,
-    finalCount,
-    Math.max(0.01, top.marketPrice),
+  // Per-user mutex wraps the order placement. The scheduled autonomy
+  // path already holds this lock when it calls placeKalshiOrder; the
+  // daily play does NOT come from inside that lock, so we acquire it
+  // here. Without this, the daily play could race with autonomy or
+  // tRPC for the same user (TOCTOU on positions/orders).
+  const result = await withUserLock(userId, () =>
+    placeKalshiOrder(
+      userId,
+      top.marketId,
+      top.side,
+      finalCount,
+      Math.max(0.01, top.marketPrice),
+    ),
   ).catch((err) => ({ success: false, error: err instanceof Error ? err.message : String(err) }));
 
   if (!("success" in result) || !result.success) {

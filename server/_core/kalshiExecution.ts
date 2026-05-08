@@ -205,12 +205,14 @@ export async function placeKalshiOrder(
     return simulateKalshiOrderFill(userId, marketId, side, quantity, limitPrice);
   }
 
-  // Per-user mutex — prevents TOCTOU races between the autonomy loop, the
-  // daily plays (sports + moonshot), and any manual tRPC placeOrder call
-  // for the same user. Without this, three concurrent paths can each read
-  // stale getOpenKalshiPositions / getPendingKalshiOrders and double-fire
-  // entries. CLAUDE.md mandates this; cancel + close already do it.
-  return withUserLock(userId, async () => {
+  // Per-user mutex is acquired by CALLERS that don't already hold one:
+  //   - server/_core/dailySportsPlay.ts (wraps its execute path in withUserLock)
+  //   - server/_core/dailyMoonshotPlay.ts (same)
+  //   - tRPC manual-place handler (also wraps)
+  // The scheduled autonomy already wraps placeKalshiOrder in
+  // withUserLock at runScheduledAutonomousTrading, so we don't acquire
+  // again here — the userMutex queue is non-reentrant and a re-entry
+  // attempt from the same async chain would deadlock.
   try {
     const risk = calculateKalshiBuyOrderRisk({ quantity, limitPrice });
     const priceCents = toCents(risk.limitPrice);
@@ -419,7 +421,6 @@ export async function placeKalshiOrder(
       },
     };
   }
-  }); // end withUserLock
 }
 
 /**

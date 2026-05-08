@@ -50,6 +50,7 @@ import { applyEnsembleFilter } from "./ensembleConsensus";
 import { reviewSignalsWithTrader } from "./tradingReviewer";
 import { fetchKalshiAccountEquity } from "./kalshiAuth";
 import { placeKalshiOrder } from "./kalshiExecution";
+import { withUserLock } from "./userMutex";
 import { checkDrawdownBreaker } from "./drawdownBreaker";
 import { calculateNetEv } from "./feeCalculator";
 import { getKalshiCredentials } from "../db.kalshi-credentials";
@@ -557,12 +558,16 @@ export async function runDailyMoonshotPlay(
     `user:${userId}`,
   ).catch(() => {});
 
-  const result = await placeKalshiOrder(
-    userId,
-    top.marketId,
-    top.side,
-    finalCount,
-    Math.max(0.01, top.marketPrice),
+  // Per-user mutex wraps the order placement (same reasoning as the
+  // sports play — daily plays don't run inside the autonomy's outer lock).
+  const result = await withUserLock(userId, () =>
+    placeKalshiOrder(
+      userId,
+      top.marketId,
+      top.side,
+      finalCount,
+      Math.max(0.01, top.marketPrice),
+    ),
   ).catch((err) => ({
     success: false,
     error: err instanceof Error ? err.message : String(err),
