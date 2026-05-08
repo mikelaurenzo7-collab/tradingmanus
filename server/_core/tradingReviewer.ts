@@ -616,7 +616,15 @@ async function callReviewer(
       const claudeMap = new Map(
         claudeResp.reviews.map((review) => [review.marketId, review]),
       );
-      const grokRanSuccessfully = !grokResp.failed && grokResp.reviews.length > 0;
+      // Strict mode = Grok actually ran (HTTP completion succeeded).  An
+      // empty or parse-truncated `reviews` array still counts as "ran" and
+      // triggers veto on missing markets — only transport-level failures
+      // (caught in requestGrokTeamSidecar's try/catch and surfaced as
+      // failed=true) gracefully degrade to Claude solo.  This prevents
+      // Grok output like `{"reviews":[]}` from masquerading as Grok-
+      // unavailable and letting solo Claude approval slip through under
+      // the team-mode banner.
+      const grokRanSuccessfully = !grokResp.failed;
       const merged = intersectReviews(
         claudeMap,
         grokResp.reviews,
