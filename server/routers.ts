@@ -1910,10 +1910,16 @@ export const appRouter = router({
               { err: storageError },
               "[Kalshi] Failed to persist validated credentials"
             );
+            const GENERIC_STORAGE_MESSAGE =
+              "Your Kalshi credentials were validated, but the dashboard could not save the connection state. Please retry in a moment.";
+            // Only surface the specific encryption-mismatch message (written by us,
+            // not from the DB driver).  All other errors use the generic fallback so
+            // internal constraint names, query fragments, etc. never reach the client.
             const storageMessage =
-              storageError instanceof Error
+              storageError instanceof Error &&
+              storageError.message.startsWith("Credentials could not be securely stored:")
                 ? storageError.message
-                : "Your Kalshi credentials were validated, but the dashboard could not save the connection state. Please retry in a moment.";
+                : GENERIC_STORAGE_MESSAGE;
             return {
               success: false,
               error: storageMessage,

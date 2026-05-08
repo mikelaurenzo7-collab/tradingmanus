@@ -38,6 +38,7 @@ function KalshiConnectPanel() {
   const utils = trpc.useUtils();
   const [, setLocation] = useLocation();
   const redirectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mountedRef = useRef(true);
   const [apiKey, setApiKey] = useState("");
   const [privateKey, setPrivateKey] = useState("");
   const [connectionMessage, setConnectionMessage] = useState<string | null>(
@@ -46,7 +47,9 @@ function KalshiConnectPanel() {
   const [connected, setConnected] = useState(false);
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       if (redirectTimerRef.current !== null) {
         clearTimeout(redirectTimerRef.current);
       }
@@ -84,7 +87,9 @@ function KalshiConnectPanel() {
           utils.kalshi.getPerformanceOverview.invalidate(),
           utils.kalshi.getPositions.invalidate(),
         ]);
-        redirectTimerRef.current = setTimeout(() => setLocation("/"), CONNECT_REDIRECT_DELAY_MS);
+        if (mountedRef.current) {
+          redirectTimerRef.current = setTimeout(() => setLocation("/"), CONNECT_REDIRECT_DELAY_MS);
+        }
         return;
       }
       setConnectionMessage(
