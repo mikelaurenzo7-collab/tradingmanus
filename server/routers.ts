@@ -927,6 +927,13 @@ export const appRouter = router({
         if (database) {
           // 1. AI spend from kalshi_ensemble_review audit events
           //    (totalAiCostUsd field captures Sonnet + Opus per-signal cost).
+          // Scope to THIS user's reviewer events. Audit rows are tagged
+          // with `triggeredByOpenId = "user:${userId}"` when the autonomy
+          // logs them (see kalshi_ensemble_review emission in
+          // kalshiAutonomy.ts and kalshi_daily_sports_play_executed in
+          // dailySportsPlay.ts). Without this filter, the dashboard
+          // would compare global AI spend to user-scoped P&L → wrong.
+          const userOpenIdMarker = `user:${userId}`;
           const aiRows = await database
             .select({
               createdAt: auditLog.createdAt,
@@ -936,6 +943,7 @@ export const appRouter = router({
             .where(
               and(
                 eq(auditLog.eventType, "kalshi_ensemble_review"),
+                eq(auditLog.triggeredByOpenId, userOpenIdMarker),
                 gte(auditLog.createdAt, cutoff),
               ),
             );

@@ -29,6 +29,7 @@ import {
   filterSignalsByConfidence,
 } from "./kalshiSignals";
 import { applyEnsembleFilter } from "./ensembleConsensus";
+import { reviewSignalsWithTrader } from "./tradingReviewer";
 import { fetchKalshiAccountEquity } from "./kalshiAuth";
 import { placeKalshiOrder } from "./kalshiExecution";
 import { checkDrawdownBreaker } from "./drawdownBreaker";
@@ -130,9 +131,33 @@ export async function runDailySportsPlay(
     };
   }
 
-  // Run them through the ensemble — Sonnet on high-stakes, Opus on
-  // disagreement / catastrophic-bet. Returns approved + adjusted signals.
-  const ensembleInputs = confidenceFiltered.map((sig) => {
+  // CRITICAL: run the primary AI reviewer (Tier 1 = Claude Sonnet by default,
+  // or Grok in legacy mode) BEFORE the ensemble post-filter. The ensemble
+  // post-filter fabricates a Tier-1-approved verdict — it assumes the
+  // autonomy candidate path already ran the real reviewer. Without this,
+  // low-stakes sports picks (most of them at 2.5 % of bankroll) take the
+  // ensemble's "low-stakes → trust Tier 1" branch immediately and never
+  // see actual AI review.
+  const reviewedSignals = await reviewSignalsWithTrader(
+    {
+      markets: sportsMarkets,
+      signals: confidenceFiltered,
+      maxSignals: confidenceFiltered.length,
+    },
+    { userId },
+  );
+  if (reviewedSignals.length === 0) {
+    return {
+      status: "no_qualifying_play",
+      reason: "All sports candidates vetoed by primary AI reviewer (Tier 1)",
+    };
+  }
+
+  // Run reviewer-approved signals through the ensemble for high-stakes /
+  // catastrophic-bet escalation (Sonnet adversarial, Opus tiebreaker /
+  // unanimous gate). The fabricated Tier-1 approval inside applyEnsembleFilter
+  // is now legitimate because we just ran the real reviewer above.
+  const ensembleInputs = reviewedSignals.map((sig) => {
     const market = sportsMarkets.find((m) => m.id === sig.marketId);
     const closeMs = market?.resolutionDate
       ? new Date(market.resolutionDate).getTime()
@@ -191,27 +216,45 @@ export async function runDailySportsPlay(
   // re-entry rules all live in the autonomy hot path. Inline them here so
   // the daily play never trades when the regular executor would block the
   // same market.
-  const [
-    openPositions,
-    pendingOrders,
-    todayOrderCount,
-    todayRealizedLoss,
-    closedTrades7d,
-  ] = await Promise.all([
-    getOpenKalshiPositions(userId).catch(() => [] as any[]),
-    getPendingKalshiOrders(userId).catch(() => [] as any[]),
-    getTodayKalshiOrderCount(userId).catch(() => 0),
-    getTodayRealizedLoss(userId).catch(() => 0),
-    getKalshiTradeHistory(500, userId)
-      .then((rows: any[]) =>
+  // Fail-closed risk-state reads. Earlier version caught DB errors as
+  // []/0, which made every gate evaluate "safe" on a transient outage and
+  // the trade went through. The autonomy candidate path fails closed on
+  // any of these — match that. ANY read failure aborts the play; next
+  // 5-min tick within the configured hour retries.
+  let openPositions: any[];
+  let pendingOrders: any[];
+  let todayOrderCount: number;
+  let todayRealizedLoss: number;
+  let closedTrades7d: any[];
+  try {
+    const [op, po, toc, trl, cth] = await Promise.all([
+      getOpenKalshiPositions(userId),
+      getPendingKalshiOrders(userId),
+      getTodayKalshiOrderCount(userId),
+      getTodayRealizedLoss(userId),
+      getKalshiTradeHistory(500, userId).then((rows: any[]) =>
         rows.filter((t: any) => {
           if (t.positionStatus !== "closed") return false;
           const closedAt = t.closedAt ? new Date(t.closedAt).getTime() : 0;
           return closedAt > Date.now() - 7 * 24 * 60 * 60 * 1000;
         }),
-      )
-      .catch(() => [] as any[]),
-  ]);
+      ),
+    ]);
+    openPositions = op as any[];
+    pendingOrders = po as any[];
+    todayOrderCount = Number(toc ?? 0);
+    todayRealizedLoss = Number(trl ?? 0);
+    closedTrades7d = cth as any[];
+  } catch (err) {
+    logger.warn(
+      { err, userId },
+      "[DailySportsPlay] risk-state ledger reads failed; aborting play (fail-closed)",
+    );
+    return {
+      status: "error",
+      reason: "Risk-state ledger reads failed; refusing to trade until DB is healthy",
+    };
+  }
 
   // Any side already open on the same market? Block on marketId alone —
   // a YES + NO on the same Kalshi contract is a structural error
