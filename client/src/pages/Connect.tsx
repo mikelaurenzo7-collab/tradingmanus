@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -27,19 +27,32 @@ import { Badge } from "@/components/ui/badge";
 import {
   buildKalshiConnectionSuccessMessage,
   buildPolymarketConnectionSuccessMessage,
+  CONNECT_REDIRECT_DELAY_MS,
 } from "@/lib/connectFlow";
 import { trpc } from "@/lib/trpc";
+import { useLocation } from "wouter";
 import { EmptyState } from "@/components/EmptyStates";
 
 // ---------- Kalshi panel ----------
 function KalshiConnectPanel() {
   const utils = trpc.useUtils();
+  const [, setLocation] = useLocation();
+  const mountedRef = useRef(true);
+  const redirectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [apiKey, setApiKey] = useState("");
   const [privateKey, setPrivateKey] = useState("");
   const [connectionMessage, setConnectionMessage] = useState<string | null>(
     null
   );
   const [connected, setConnected] = useState(false);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (redirectTimerRef.current !== null) clearTimeout(redirectTimerRef.current);
+    };
+  }, []);
 
   const trimmedApiKey = apiKey.trim();
   const trimmedPrivateKey = privateKey.trim();
@@ -72,6 +85,9 @@ function KalshiConnectPanel() {
           utils.kalshi.getPerformanceOverview.invalidate(),
           utils.kalshi.getPositions.invalidate(),
         ]);
+        if (mountedRef.current) {
+          redirectTimerRef.current = setTimeout(() => setLocation("/"), CONNECT_REDIRECT_DELAY_MS);
+        }
         return;
       }
       setConnectionMessage(
@@ -95,6 +111,8 @@ function KalshiConnectPanel() {
   });
 
   const isAlreadyConnected = statusQuery.data?.connected === true;
+  const needsReauth = statusQuery.data?.needsReauth === true;
+  const reauthMessage = statusQuery.data?.reauthMessage;
 
   const handleConnect = () => {
     if (!trimmedApiKey || !trimmedPrivateKey) {
@@ -170,11 +188,21 @@ function KalshiConnectPanel() {
           </Alert>
         ) : (
           <>
-            <EmptyState
-              icon={WifiOff}
-              title="Not connected"
-              message="Add your Kalshi API credentials to enable autonomous trading"
-            />
+            {needsReauth ? (
+              <Alert variant="destructive" className="glow-destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>Re-authentication required</AlertTitle>
+                <AlertDescription>
+                  {reauthMessage ?? "Your stored Kalshi credentials could not be decrypted. Paste your credentials below to reconnect."}
+                </AlertDescription>
+              </Alert>
+            ) : (
+              <EmptyState
+                icon={WifiOff}
+                title="Not connected"
+                message="Add your Kalshi API credentials to enable autonomous trading"
+              />
+            )}
 
             <Alert className="border-indigo-400/30 bg-indigo-500/10">
               <Laptop className="h-4 w-4 text-indigo-400" />
