@@ -56,10 +56,14 @@ function SchedulerRow({ name, snap }: { name: string; snap: any }) {
   const tel = snap?.telemetry ?? {};
 
   const detail = useMemo(() => {
-    if (activity === "blocked") return snap.blockReason ?? "Blocked";
-    if (activity === "skipped") return tel.skipReason ?? snap.message ?? "Skipped this tick";
-    if (activity === "error") return snap.message ?? "Error — see logs";
-    if (snap.message) return snap.message;
+    // snap can be undefined on the first poll (heartbeat query hasn't
+    // returned yet) or when a scheduler kind is missing from the payload;
+    // optional-chain every access so an undefined snapshot can't crash
+    // the dashboard.
+    if (activity === "blocked") return snap?.blockReason ?? "Blocked";
+    if (activity === "skipped") return tel.skipReason ?? snap?.message ?? "Skipped this tick";
+    if (activity === "error") return snap?.message ?? "Error — see logs";
+    if (snap?.message) return snap.message;
     if (tel.ordersPlaced) return `Placed ${tel.ordersPlaced} order${tel.ordersPlaced === 1 ? "" : "s"} this tick`;
     if (tel.marketsScanned) return `Scanned ${tel.marketsScanned} markets`;
     return null;
