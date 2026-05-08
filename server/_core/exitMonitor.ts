@@ -41,12 +41,9 @@ import {
   type ExitStrategyState,
 } from "./exitStrategy";
 import { closeKalshiPosition } from "./kalshiExecution";
-import { estimateMarketVolatility } from "./marketVolatility";
+import { estimateMarketMetrics } from "./marketVolatility";
 import { getEffectivePaperTradeMode } from "./effectivePaperMode";
 
-// ATR proxy used by updateTrailingStop().  Conservative default; a follow-up
-// pass can compute this per-market from the kalshiMarketSnapshots table.
-const DEFAULT_ATR = 0.01;
 
 const AUTO_CLOSE_ENABLED =
   (process.env.AUTO_CLOSE_ON_EXIT_SIGNAL ?? "")
@@ -158,9 +155,9 @@ export async function evaluateExitsForOpenPositions(
     const currentPrice = pickPriceFor(side, marketRow);
     if (currentPrice === null) continue;
 
-    // Per-market volatility from recent snapshots (high-vol → wider stops,
-    // low-vol → tighter).  Falls back to a constant on insufficient history.
-    const volatility = await estimateMarketVolatility(marketId);
+    // Per-market volatility + ATR from recent snapshots (high-vol → wider
+    // stops/gaps; low-vol → tighter).  Both come from the same DB query.
+    const { volatility, atr } = await estimateMarketMetrics(marketId);
 
     const config: ExitStrategyConfig = {
       entryPrice,
@@ -178,7 +175,7 @@ export async function evaluateExitsForOpenPositions(
     const previousTrailingStop = initialState.trailingStop;
 
     // 1. Ratchet trailing stop on new highs (lows for "no" side).
-    let state = updateTrailingStop(initialState, currentPrice, DEFAULT_ATR, side);
+    let state = updateTrailingStop(initialState, currentPrice, atr, side);
     // 2. Tighten stop within the close-to-resolution window.
     state = applyTimeDecayToStops(state, config);
     const trailingStopRaised = state.trailingStop !== previousTrailingStop;

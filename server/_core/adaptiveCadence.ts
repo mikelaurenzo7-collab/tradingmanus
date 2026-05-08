@@ -92,6 +92,55 @@ const CATEGORY_BASE_DELTA_BPS: Record<MarketCategory, number> = {
 };
 
 /**
+ * Expected price velocity for each category in bps/minute, derived from
+ * CATEGORY_BASE_DELTA_BPS / CATEGORY_BASE_TTL_MS.  Used to scale the
+ * per-market threshold when actual price velocity diverges from the norm.
+ *
+ * Example: crypto expected = 30bps / 1min = 30 bpm.  If a specific crypto
+ * market has been moving at 6 bpm (unusually quiet), tighten its threshold
+ * to 0.5× so we catch small moves.  If moving at 90 bpm (unusually hot),
+ * loosen to 1.5× to avoid review spam.
+ */
+const CATEGORY_EXPECTED_VELOCITY_BPM: Record<MarketCategory, number> = {
+  crypto:     30 / 1,    // 30 bps / 1 min
+  sports:     30 / 2,    // 30 bps / 2 min
+  tech:       50 / 5,    // 50 bps / 5 min
+  economics:  50 / 5,    // 50 bps / 5 min
+  politics:   75 / 10,   // 75 bps / 10 min
+  culture:    75 / 10,
+  other:      50 / 10,
+  weather:   100 / 15,   // 100 bps / 15 min
+};
+
+/**
+ * Compute a velocity-based scaling factor for the price-delta threshold.
+ * Compares how fast this market has actually been moving (bps/min since
+ * last review) vs. the category's expected pace.
+ *
+ * - Faster than expected → loosen threshold (×1.5 cap) to avoid spamming
+ * - Slower than expected → tighten threshold (×0.5 floor) to catch small moves
+ * - No history / category unknown → neutral (×1.0)
+ */
+function velocityScale(
+  currentPrice: number,
+  entry: ReviewCacheEntry | undefined,
+  category: MarketCategory | undefined,
+  now: number,
+): number {
+  if (!entry || !category) return 1.0;
+  const elapsedMs = now - entry.lastReviewedAtMs;
+  if (elapsedMs < 1000) return 1.0; // too short to measure
+  const priceDeltaBps = Math.abs(currentPrice - entry.lastReviewedPrice) * 10_000;
+  const elapsedMin = elapsedMs / 60_000;
+  const actualVelocityBpm = priceDeltaBps / elapsedMin;
+  const expectedVelocityBpm = CATEGORY_EXPECTED_VELOCITY_BPM[category] ?? 7.5;
+  if (!Number.isFinite(actualVelocityBpm) || actualVelocityBpm <= 0) return 1.0;
+  const ratio = actualVelocityBpm / expectedVelocityBpm;
+  // Fast market → loosen (cap ×1.5); quiet market → tighten (floor ×0.5).
+  return Math.max(0.5, Math.min(1.5, ratio));
+}
+
+/**
  * Near-resolution acceleration: as a market approaches resolution,
  * mispricing collapses fastest, so we tighten cadence aggressively.
  * Multiplier applied to the category base TTL (smaller = more often).
@@ -156,12 +205,15 @@ function clampWeight(w: number | undefined): number {
  */
 function effectiveStaleTtlMs(context: ReviewContext, throttle: number): number {
   const deskWeight = clampWeight(context.deskWeight);
+  // Aggressive Mode multiplier: ×0.5 = quiet markets get re-reviewed twice as
+  // often.  Bypassed when the owner hasn't enabled it.
+  const aggressiveModeMultiplier = context.aggressiveMode ? 0.5 : 1.0;
   // Env override always wins — operators tuning a global TTL should not
   // be silently overridden by per-category defaults.  Desk weight + cost
   // throttle still apply on top so the budget guardrail is never bypassed.
   const envOverride = (process.env.SIGNAL_REVIEW_STALE_TTL_MS ?? "").trim();
   if (envOverride) {
-    return Math.max(MIN_TTL_MS, Math.round(readStaleTtlMs() * deskWeight * throttle));
+    return Math.max(MIN_TTL_MS, Math.round(readStaleTtlMs() * deskWeight * throttle * aggressiveModeMultiplier));
   }
   const baseTtl =
     context.category && CATEGORY_BASE_TTL_MS[context.category] !== undefined
@@ -169,20 +221,31 @@ function effectiveStaleTtlMs(context: ReviewContext, throttle: number): number {
       : DEFAULT_STALE_TTL_MS;
   const accelerated = baseTtl * nearResolutionMultiplier(context.hoursToResolution ?? null);
   // Floor at MIN_TTL_MS so we never go below the safe minimum.
-  return Math.max(MIN_TTL_MS, Math.round(accelerated * deskWeight * throttle));
+  return Math.max(MIN_TTL_MS, Math.round(accelerated * deskWeight * throttle * aggressiveModeMultiplier));
 }
 
-function effectivePriceDeltaBps(context: ReviewContext, throttle: number): number {
+function effectivePriceDeltaBps(
+  context: ReviewContext,
+  throttle: number,
+  currentPrice: number,
+  entry: ReviewCacheEntry | undefined,
+  now: number,
+): number {
   const deskWeight = clampWeight(context.deskWeight);
+  // Aggressive Mode multiplier: ×0.5 = a smaller price move triggers re-review.
+  const aggressiveModeMultiplier = context.aggressiveMode ? 0.5 : 1.0;
   const envOverride = (process.env.SIGNAL_REVIEW_PRICE_DELTA_BPS ?? "").trim();
   if (envOverride) {
-    return readPriceDeltaBps() * deskWeight * throttle;
+    return readPriceDeltaBps() * deskWeight * throttle * aggressiveModeMultiplier;
   }
   const baseBps =
     context.category && CATEGORY_BASE_DELTA_BPS[context.category] !== undefined
       ? CATEGORY_BASE_DELTA_BPS[context.category]
       : DEFAULT_PRICE_DELTA_BPS;
-  return baseBps * deskWeight * throttle;
+  // Scale by per-market velocity: quiet markets get tighter thresholds,
+  // hot markets get looser thresholds — all derived from in-memory cache data.
+  const velScale = velocityScale(currentPrice, entry, context.category, now);
+  return baseBps * deskWeight * throttle * aggressiveModeMultiplier * velScale;
 }
 
 /**
@@ -227,7 +290,7 @@ export function shouldReviewMarketAt(
   }
 
   const deltaBps = Math.abs(currentPrice - entry.lastReviewedPrice) * 10_000;
-  return deltaBps >= effectivePriceDeltaBps(context, throttle);
+  return deltaBps >= effectivePriceDeltaBps(context, throttle, currentPrice, entry, now);
 }
 
 export function recordMarketReview(

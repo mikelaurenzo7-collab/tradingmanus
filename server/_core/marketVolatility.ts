@@ -69,34 +69,63 @@ export function computeVolatilityFromPrices(prices: number[]): number {
   return Math.min(MAX_VOLATILITY, Math.max(MIN_VOLATILITY, stdDev));
 }
 
+const DEFAULT_ATR = 0.01;
+const MIN_ATR = 0.002;
+const MAX_ATR = 0.15;
+
+/** Mean absolute price difference over consecutive snapshot prices. */
+export function computeATRFromPrices(prices: number[]): number {
+  const valid = prices.filter((p) => Number.isFinite(p) && p > 0 && p < 1);
+  if (valid.length < 2) return DEFAULT_ATR;
+  let total = 0;
+  for (let i = 1; i < valid.length; i++) {
+    total += Math.abs(valid[i] - valid[i - 1]);
+  }
+  const atr = total / (valid.length - 1);
+  if (!Number.isFinite(atr) || atr <= 0) return DEFAULT_ATR;
+  return Math.min(MAX_ATR, Math.max(MIN_ATR, atr));
+}
+
+export type MarketMetrics = { volatility: number; atr: number };
+
 /**
- * DB-bound version: loads recent snapshots for `marketId` and feeds them
- * into computeVolatilityFromPrices().  Returns DEFAULT_VOLATILITY on any
- * read failure.
+ * Single DB query: returns both the per-period volatility (for stop-pct
+ * selection) and the ATR (for trailing-stop gap sizing).  Old callers that
+ * only need volatility can keep using estimateMarketVolatility(); this is
+ * for the exit monitor which needs both.
  */
-export async function estimateMarketVolatility(marketId: string): Promise<number> {
+export async function estimateMarketMetrics(marketId: string): Promise<MarketMetrics> {
+  const fallback: MarketMetrics = { volatility: DEFAULT_VOLATILITY, atr: DEFAULT_ATR };
   try {
     const database = await getDb();
-    if (!database) return DEFAULT_VOLATILITY;
+    if (!database) return fallback;
     const rows = await database
       .select({ yesPrice: kalshiMarketSnapshots.yesPrice })
       .from(kalshiMarketSnapshots)
       .where(eq(kalshiMarketSnapshots.marketId, marketId))
       .orderBy(desc(kalshiMarketSnapshots.snapshotTime))
       .limit(SNAPSHOT_LIMIT);
-    if (rows.length === 0) return DEFAULT_VOLATILITY;
-    // Reverse so prices are chronological for log-return math.
+    if (rows.length === 0) return fallback;
     const prices = rows
       .map((r: { yesPrice: number }) => Number(r.yesPrice))
       .reverse();
-    return computeVolatilityFromPrices(prices);
+    return {
+      volatility: computeVolatilityFromPrices(prices),
+      atr: computeATRFromPrices(prices),
+    };
   } catch (err) {
-    logger.warn(
-      { err, marketId },
-      "[marketVolatility] estimate failed; using default",
-    );
-    return DEFAULT_VOLATILITY;
+    logger.warn({ err, marketId }, "[marketVolatility] metrics estimate failed; using defaults");
+    return fallback;
   }
+}
+
+/**
+ * DB-bound version: loads recent snapshots for `marketId` and feeds them
+ * into computeVolatilityFromPrices().  Returns DEFAULT_VOLATILITY on any
+ * read failure.
+ */
+export async function estimateMarketVolatility(marketId: string): Promise<number> {
+  return (await estimateMarketMetrics(marketId)).volatility;
 }
 
 export const MARKET_VOLATILITY_DEFAULT = DEFAULT_VOLATILITY;

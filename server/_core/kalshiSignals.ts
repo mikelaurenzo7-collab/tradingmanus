@@ -316,6 +316,45 @@ function applySentimentOverlay(
 }
 
 /**
+ * Pre-event confidence boost.
+ *
+ * Markets approaching resolution in 2–24 h are entering their highest-
+ * information window: late news, updated forecasts, and last-minute data
+ * releases concentrate edge right before the event.  Boost confidence
+ * modestly so the execution scorer surfaces these signals over longer-
+ * horizon alternatives.
+ *
+ * Excluded: < 2 h (adverse selection / thin liquidity spike risk).
+ * Excluded: weather/sports (resolution ≠ a scheduled information event).
+ */
+const PRE_EVENT_BOOST_CATEGORIES = new Set(["economics", "politics", "crypto", "tech"]);
+const PRE_EVENT_BOOST_AMOUNT = 0.07;
+
+function applyPreEventBoost(signals: KalshiSignal[], resolutionDate: string | undefined | null, category: string | null | undefined): KalshiSignal[] {
+  if (!resolutionDate) return signals;
+  if (!category || !PRE_EVENT_BOOST_CATEGORIES.has(category)) return signals;
+  const hoursToResolution = (new Date(resolutionDate).getTime() - Date.now()) / 3_600_000;
+  if (!Number.isFinite(hoursToResolution) || hoursToResolution < 2 || hoursToResolution > 24) {
+    return signals;
+  }
+  // Linear taper: max boost at 6 h, full boost from 6–18 h, taper back at edges.
+  // hoursToResolution in [2, 24] → taper factor in [0, 1].
+  const taper =
+    hoursToResolution < 6
+      ? (hoursToResolution - 2) / 4   // ramp up from 2→6 h
+      : hoursToResolution <= 18
+        ? 1.0                           // full boost 6→18 h
+        : (24 - hoursToResolution) / 6; // ramp down 18→24 h
+  const boost = PRE_EVENT_BOOST_AMOUNT * Math.max(0, taper);
+  if (boost <= 0) return signals;
+  return signals.map((s) => ({
+    ...s,
+    confidence: Math.min(0.99, s.confidence + boost),
+    reasoning: `${s.reasoning} | Pre-event window (${hoursToResolution.toFixed(1)}h to resolution): +${(boost * 100).toFixed(1)}% confidence`,
+  }));
+}
+
+/**
  * Category-specific fundamental probability priors.
  * Used as a fallback when no explicit fundamental probability is provided.
  * Based on the typical base rate for "YES" outcomes in each category:
@@ -807,10 +846,14 @@ export async function generateSignalsForMarket(
     applyKalshiPlatformBehaviorAdjustment(signal, market.category, platformPerformance)
   );
 
+  // Pre-event boost: markets resolving in 2–24 h in high-signal categories get
+  // a modest confidence lift to surface them over longer-horizon alternatives.
+  const withPreEvent = applyPreEventBoost(withPlatformProfile, market.resolutionDate, market.category);
+
   // Apply confluence combining: when multiple independent signal types agree on
   // direction, merge them into a single higher-conviction signal so the execution
   // scorer can concentrate capital on the strongest opportunities.
-  return consolidateSignalsForMarket(withPlatformProfile);
+  return consolidateSignalsForMarket(withPreEvent);
 }
 
 /**

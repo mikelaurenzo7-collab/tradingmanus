@@ -220,9 +220,39 @@ function estimateFairValue(market: PolymarketMarket): number {
   return clamp(prior * 0.3 + market.impliedProbabilityYes * 0.7, 0.01, 0.99);
 }
 
+const PM_PRE_EVENT_BOOST_CATEGORIES = new Set(["economics", "politics", "crypto", "tech", "science"]);
+const PM_PRE_EVENT_BOOST_AMOUNT = 0.07;
+
+function applyPolymarketPreEventBoost(
+  signal: PolymarketSignal,
+  endDateIso: string | null | undefined,
+  category: string,
+): PolymarketSignal {
+  if (!endDateIso) return signal;
+  const cat = category.toLowerCase().split(/[\s/]/)[0] ?? "";
+  if (!PM_PRE_EVENT_BOOST_CATEGORIES.has(cat)) return signal;
+  const hoursToResolution = (new Date(endDateIso).getTime() - Date.now()) / 3_600_000;
+  if (!Number.isFinite(hoursToResolution) || hoursToResolution < 2 || hoursToResolution > 24) {
+    return signal;
+  }
+  const taper =
+    hoursToResolution < 6
+      ? (hoursToResolution - 2) / 4
+      : hoursToResolution <= 18
+        ? 1.0
+        : (24 - hoursToResolution) / 6;
+  const boost = PM_PRE_EVENT_BOOST_AMOUNT * Math.max(0, taper);
+  if (boost <= 0) return signal;
+  return {
+    ...signal,
+    confidence: Math.min(0.99, signal.confidence + boost),
+    reasoning: `${signal.reasoning} | Pre-event window (${hoursToResolution.toFixed(1)}h to resolution): +${(boost * 100).toFixed(1)}% confidence`,
+  };
+}
+
 /**
  * Generate trading signals for a list of Polymarket markets.
- * 
+ *
  * NOTE: Multi-timeframe analysis requires a MarketFeed with historical price/volume data.
  * Polymarket currently does not have feed infrastructure (unlike Kalshi's real-time
  * market feed polling). When feeds are provided, multi-timeframe analysis will be
@@ -693,14 +723,22 @@ export function generatePolymarketSignals(
     });
   }
 
-  const categoryByMarketId = new Map(markets.map((market) => [market.marketId, market.category]));
+  const marketById = new Map(markets.map((m) => [m.marketId, m]));
+
   const withPlatformBehavior = signals.map((signal) =>
     applyPolymarketPlatformBehaviorAdjustment(
       signal,
-      categoryByMarketId.get(signal.marketId),
+      marketById.get(signal.marketId)?.category,
       platformPerformance
     )
   );
 
-  return withPlatformBehavior.filter((s) => s.confidence >= minConfidence);
+  // Pre-event boost: markets resolving in 2–24 h in high-signal categories.
+  const withPreEvent = withPlatformBehavior.map((signal) => {
+    const market = marketById.get(signal.marketId);
+    if (!market) return signal;
+    return applyPolymarketPreEventBoost(signal, market.endDateIso, market.category);
+  });
+
+  return withPreEvent.filter((s) => s.confidence >= minConfidence);
 }
