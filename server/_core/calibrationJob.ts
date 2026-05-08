@@ -178,35 +178,30 @@ async function collectCalibrationSamples(opts: {
 }): Promise<CalibrationSample[]> {
   const { getDb } = await import("../db");
   const { auditLog } = await import("../../drizzle/schema");
-  const { eq, and, gte, sql } = await import("drizzle-orm");
+  const { eq, and, gte } = await import("drizzle-orm");
   const database = await getDb();
   if (!database) return [];
   const sinceMs = Date.now() - opts.lookbackDays * 24 * 60 * 60 * 1000;
 
+  // The performance tracker writes one `kalshi_trade_outcome_log` row per
+  // settled trade, carrying both the predicted side (predictedWinProbability
+  // + the persona/category that emitted it) and the realized outcome. We
+  // calibrate from those rows directly — there is no separate review-
+  // telemetry stream to pair against, and pairing two event types in SQL
+  // would just hide the same join we'd do in memory.
   const rows = await database
     .select({ details: auditLog.details, createdAt: auditLog.createdAt })
     .from(auditLog)
     .where(
       and(
         eq(auditLog.triggeredByOpenId, String(opts.userId)),
-        // Pull both the predicted (review telemetry) and realized (outcome
-        // log) rows. They're paired downstream.
-        sql`${auditLog.eventType} IN ('kalshi_grok_review_telemetry', 'kalshi_trade_outcome_log')`,
+        eq(auditLog.eventType, "kalshi_trade_outcome_log"),
         gte(auditLog.createdAt, new Date(sinceMs)),
       ),
     )
     .limit(2000);
 
-  type ReviewRow = {
-    ticker: string;
-    category: string;
-    personaId: string;
-    predictedProbability: number;
-    createdAtMs: number;
-  };
-  const reviews = new Map<string, ReviewRow>();
-  const outcomes = new Map<string, { actualOutcome: 0 | 1; settledAtMs: number }>();
-
+  const samples: CalibrationSample[] = [];
   for (const r of rows) {
     let p: Record<string, unknown> | null = null;
     try {
@@ -216,45 +211,33 @@ async function collectCalibrationSamples(opts: {
     }
     if (!p) continue;
     const ticker = typeof p.ticker === "string" ? p.ticker : null;
-    if (!ticker) continue;
-    if (
-      "predictedProbability" in p &&
-      typeof p.predictedProbability === "number" &&
+    const predictedProb =
+      typeof p.predictedWinProbability === "number"
+        ? Math.min(1, Math.max(0, p.predictedWinProbability))
+        : null;
+    const outcomeRaw = typeof p.outcome === "string" ? p.outcome : null;
+    if (!ticker || predictedProb === null || outcomeRaw === null) continue;
+    // Persona id isn't yet stamped onto the outcome log; until the reviewer
+    // tags trades with the desk that approved them, fall back to the
+    // category-keyed persona id Grok personas already use.
+    const category = typeof p.category === "string" ? p.category : "unknown";
+    const personaId =
       typeof p.personaId === "string"
-    ) {
-      reviews.set(ticker, {
-        ticker,
-        category: typeof p.category === "string" ? p.category : "unknown",
-        personaId: p.personaId,
-        predictedProbability: Math.min(1, Math.max(0, p.predictedProbability)),
-        createdAtMs: r.createdAt instanceof Date ? r.createdAt.getTime() : 0,
-      });
-    }
-    if ("outcome" in p) {
-      const outcome = p.outcome === "win" ? 1 : 0;
-      outcomes.set(ticker, {
-        actualOutcome: outcome as 0 | 1,
-        settledAtMs:
-          typeof p.settledAtMs === "number"
-            ? p.settledAtMs
-            : r.createdAt instanceof Date
-              ? r.createdAt.getTime()
-              : 0,
-      });
-    }
-  }
-
-  const samples: CalibrationSample[] = [];
-  for (const [ticker, review] of reviews.entries()) {
-    const outcome = outcomes.get(ticker);
-    if (!outcome) continue;
+        ? p.personaId
+        : `grok.kalshi.${category}`;
+    const settledAtMs =
+      typeof p.settledAtMs === "number"
+        ? p.settledAtMs
+        : r.createdAt instanceof Date
+          ? r.createdAt.getTime()
+          : 0;
     samples.push({
       ticker,
-      category: review.category,
-      personaId: review.personaId,
-      predictedProbability: review.predictedProbability,
-      actualOutcome: outcome.actualOutcome,
-      settledAtMs: outcome.settledAtMs,
+      category,
+      personaId,
+      predictedProbability: predictedProb,
+      actualOutcome: outcomeRaw === "win" ? 1 : 0,
+      settledAtMs,
     });
   }
 

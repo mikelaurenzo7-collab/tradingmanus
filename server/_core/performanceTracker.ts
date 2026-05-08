@@ -198,7 +198,7 @@ async function fetchTradeOutcomeRows(
   // Late-import drizzle to avoid pulling the schema into test bootstraps.
   const { getDb } = await import("../db");
   const { auditLog } = await import("../../drizzle/schema");
-  const { eq, and, gte, sql } = await import("drizzle-orm");
+  const { eq, and, gte, desc } = await import("drizzle-orm");
   const database = await getDb();
   if (!database) return [];
 
@@ -215,7 +215,7 @@ async function fetchTradeOutcomeRows(
         gte(auditLog.createdAt, sinceDate),
       ),
     )
-    .orderBy(sql`created_at DESC`);
+    .orderBy(desc(auditLog.createdAt));
 
   const decoded: TradeOutcomeRecord[] = [];
   for (const row of rows) {

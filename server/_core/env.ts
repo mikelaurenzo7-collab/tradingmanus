@@ -8,6 +8,8 @@
  * via `KALSHI_PRIVATE_KEY` (multi-line PEM).
  */
 
+import { readFileSync } from "node:fs";
+
 const normalize = (value: string | undefined) => value?.trim() ?? "";
 const normalizePositiveInt = (value: string | undefined, fallback: number) => {
   const parsed = Number.parseInt(value?.trim() ?? "", 10);
@@ -317,11 +319,7 @@ export function getKalshiPrivateKeyPem(): string {
     return ENV.kalshiPrivateKey.replace(/\\n/g, "\n");
   }
   if (ENV.kalshiPrivateKeyPath) {
-    // Lazy-import fs so non-Node environments (tests with custom env) don't
-    // crash on import.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const fs = require("fs") as typeof import("fs");
-    return fs.readFileSync(ENV.kalshiPrivateKeyPath, "utf8");
+    return readFileSync(ENV.kalshiPrivateKeyPath, "utf8");
   }
   if (process.env.NODE_ENV === "test") {
     return "test-private-key";
