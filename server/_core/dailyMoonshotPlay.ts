@@ -42,6 +42,7 @@ import { fetchKalshiMarkets } from "./kalshiMarketData";
 import {
   generateSignalsForMarkets,
   filterSignalsByConfidence,
+  saveSignals,
 } from "./kalshiSignals";
 import { applyEnsembleFilter } from "./ensembleConsensus";
 import { reviewSignalsWithTrader } from "./tradingReviewer";
@@ -255,18 +256,18 @@ export async function runDailyMoonshotPlay(
     };
   }
 
-  // Pick top by best lottery-ticket score:
-  // (edge_ratio) × (payout_multiple). Edge ratio = AI prob / implied;
-  // payout = 1 / marketPrice for YES (or 1 / (1-yesPrice) for NO).
+  // Pick top by best lottery-ticket score: edge_ratio × payout_multiple.
+  // - Payout: signal.marketPrice is ALREADY the side-specific contract
+  //   price (signal generator stores market.yesPrice for YES signals
+  //   and market.noPrice for NO signals). Both pay $1 per contract on
+  //   resolution, so payout = 1 / marketPrice for both sides. The
+  //   earlier `1 / (1 - marketPrice)` for NO was wrong — turned a $0.10
+  //   NO moonshot's true 10× payout into a 1.11× under-rank.
+  // - Edge ratio: market's view of "this side wins" for NO is
+  //   1 - YES_implied (impliedProbability is always YES).
   const top = moonshotApproved.slice().sort((a, b) => {
-    const aPayout =
-      a.side === "yes"
-        ? 1 / Math.max(0.01, a.marketPrice)
-        : 1 / Math.max(0.01, 1 - a.marketPrice);
-    const bPayout =
-      b.side === "yes"
-        ? 1 / Math.max(0.01, b.marketPrice)
-        : 1 / Math.max(0.01, 1 - b.marketPrice);
+    const aPayout = 1 / Math.max(0.01, a.marketPrice);
+    const bPayout = 1 / Math.max(0.01, b.marketPrice);
     const aMarketProb =
       a.side === "yes"
         ? Math.max(0.001, a.impliedProbability)
@@ -449,10 +450,30 @@ export async function runDailyMoonshotPlay(
     };
   }
 
-  const payoutMultiple =
-    top.side === "yes"
-      ? 1 / Math.max(0.01, top.marketPrice)
-      : 1 / Math.max(0.01, 1 - top.marketPrice);
+  // Payout multiple = $1 / contract price. signal.marketPrice is the
+  // side-specific contract price for both YES and NO trades.
+  const payoutMultiple = 1 / Math.max(0.01, top.marketPrice);
+
+  // Persist the entry signal to kalshiSignals BEFORE placing the order so
+  // the calibration-outcome lookup at close-time can find it. Without
+  // this, `logCalibrationOutcomeFromClose` falls back to default values
+  // and corrupts Brier-score samples for every moonshot trade.
+  const entrySignal = reviewedSignals.find(
+    (rs) =>
+      rs.marketId === top.marketId &&
+      rs.side === top.side &&
+      String(rs.signalType ?? "default") === top.signalType,
+  );
+  if (entrySignal) {
+    try {
+      await saveSignals([entrySignal], userId);
+    } catch (err) {
+      logger.warn(
+        { err, marketId: top.marketId, userId },
+        "[DailyMoonshotPlay] saveSignals failed; calibration may use fallback values",
+      );
+    }
+  }
 
   await logAuditEvent(
     "kalshi_daily_moonshot_play_attempt",

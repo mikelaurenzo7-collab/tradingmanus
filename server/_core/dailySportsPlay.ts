@@ -27,6 +27,7 @@ import { fetchKalshiMarkets } from "./kalshiMarketData";
 import {
   generateSignalsForMarkets,
   filterSignalsByConfidence,
+  saveSignals,
 } from "./kalshiSignals";
 import { applyEnsembleFilter } from "./ensembleConsensus";
 import { reviewSignalsWithTrader } from "./tradingReviewer";
@@ -405,6 +406,31 @@ export async function runDailySportsPlay(
       status: "exposure_capped",
       reason: `True sports notional $${(sportsExposureUsd + trueNotionalUsd).toFixed(2)} would exceed ${(ENV.profitGuardrails.maxCorrelatedGroupPct * 100).toFixed(0)}% per-category cap ($${maxCategoryUsd.toFixed(2)})`,
     };
+  }
+
+  // Persist the entry signal to kalshiSignals BEFORE placing the order so
+  // the calibration-outcome lookup at close-time can find it. Without
+  // this, `logCalibrationOutcomeFromClose` falls back to default values
+  // and corrupts Brier-score samples for every daily-play trade. Pull
+  // the original reviewed signal record so we save the post-Tier-1
+  // values, not the post-ensemble-adjusted ones (the entry sizing used
+  // the post-ensemble values, but the reviewer's stated confidence/EV
+  // is what calibration scores).
+  const entrySignal = reviewedSignals.find(
+    (rs) =>
+      rs.marketId === top.marketId &&
+      rs.side === top.side &&
+      String(rs.signalType ?? "default") === top.signalType,
+  );
+  if (entrySignal) {
+    try {
+      await saveSignals([entrySignal], userId);
+    } catch (err) {
+      logger.warn(
+        { err, marketId: top.marketId, userId },
+        "[DailySportsPlay] saveSignals failed; calibration may use fallback values",
+      );
+    }
   }
 
   await logAuditEvent(

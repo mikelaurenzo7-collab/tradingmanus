@@ -147,8 +147,15 @@ export const ENV = {
   // Hard floor net EV after Kalshi fees + amortized Grok cost: 6.5%.
   // Confidence floor: 76%. These are the post-pivot tighter thresholds.
   profitGuardrails: {
-    minNetEv: normalizeFloat(process.env.MIN_NET_EV, 0.065, { min: 0, max: 1 }),
-    minPositiveEv: normalizeFloat(process.env.MIN_NET_EV, 0.065, {
+    // Net-EV floor (after fees + amortized AI cost). Default 5 % — was
+    // 6.5 %, which empirically rejected 5-7 % edge trades that are
+    // legitimately profitable on a calibrated reviewer. The
+    // MIN_CONFIDENCE_AFTER_ADJUST floor + drawdown breakers are the
+    // real miscalibration safety net; layering a tight EV floor on top
+    // costs ~30-40 % of legitimate volume. Set higher for conservative
+    // mode, lower for more volume.
+    minNetEv: normalizeFloat(process.env.MIN_NET_EV, 0.05, { min: 0, max: 1 }),
+    minPositiveEv: normalizeFloat(process.env.MIN_NET_EV, 0.05, {
       min: 0,
       max: 1,
     }),
@@ -164,7 +171,7 @@ export const ENV = {
     ),
     maxPortfolioExposurePct: normalizeFloat(
       process.env.MAX_PORTFOLIO_EXPOSURE_PCT,
-      0.2,
+      0.25,
       { min: 0.01, max: 1 },
     ),
     maxCorrelatedGroupPct: normalizeFloat(
@@ -184,7 +191,7 @@ export const ENV = {
     }),
     kellyMaxPctOfCapital: normalizeFloat(
       process.env.KELLY_MAX_PCT_OF_CAPITAL,
-      0.04,
+      0.05,
       { min: 0.005, max: 0.15 },
     ),
     kellyMinPctOfCapital: normalizeFloat(
@@ -284,13 +291,18 @@ export const ENV = {
   ),
   dailyMoonshotMinProbRatio: normalizeFloat(
     process.env.DAILY_MOONSHOT_MIN_PROB_RATIO,
-    1.5, // AI prob must be ≥ 1.5× market implied (10 % market → 15 % AI)
+    1.75, // AI prob must be ≥ 1.75× market implied (10 % market → 17.5 % AI).
+    // The earlier 1.5× threshold was too permissive — pairs with the
+    // higher MIN_NET_EV below to filter for genuine underdog edge.
     { min: 1.05, max: 5 },
   ),
   dailyMoonshotMinNetEv: normalizeFloat(
     process.env.DAILY_MOONSHOT_MIN_NET_EV,
-    0.04, // 4 % net-EV floor — looser than main 6.5 % since moonshots are low-sharpe
-    { min: 0, max: 0.5 },
+    0.15, // 15 % net-EV floor — was 4 %, which did NOTHING. Real moonshots
+    // produce 30-50 % net EV by structure (low-priced contract × decent
+    // edge ratio = huge per-dollar EV). Below 15 % means the prob ratio
+    // is barely above the gate and the trade is marginal noise.
+    { min: 0, max: 1 },
   ),
 
   // ── Dynamic scanner (5 base / 7-8 conditional) ───────────────────────────
