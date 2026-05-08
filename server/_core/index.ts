@@ -498,6 +498,29 @@ startServer()
       setInterval(runPolymarketAutonomousScheduler, AUTONOMOUS_TRADING_INTERVAL_MS);
       setInterval(runOrderSync, ORDER_SYNC_INTERVAL_MS);
       setInterval(runRealtimeCrossPlatformArbScan, CROSS_PLATFORM_ARB_INTERVAL_MS);
+
+      // Daily auditLog retention sweep (default 90 days).  Runs once now to
+      // claw back any backlog and then every 24 hours.  Fire-and-forget; a
+      // cleanup failure must never block the schedulers.
+      const auditRetentionDays = Number(process.env.AUDIT_LOG_RETENTION_DAYS ?? 90);
+      const runAuditCleanup = async () => {
+        try {
+          const { cleanupOldAuditLogEntries } = await import("../db");
+          const { deleted } = await cleanupOldAuditLogEntries(auditRetentionDays);
+          if (deleted > 0) {
+            logger.info(
+              { deleted, retentionDays: auditRetentionDays },
+              "[AuditCleanup] purged %d row(s) older than %d days",
+              deleted,
+              auditRetentionDays,
+            );
+          }
+        } catch (err) {
+          logger.warn({ err }, "[AuditCleanup] sweep failed");
+        }
+      };
+      void runAuditCleanup();
+      setInterval(runAuditCleanup, 24 * 60 * 60 * 1000);
       // Kick off the first Kalshi + Polymarket runs ~30s after boot so they
       // don't both hit the AI reviewer simultaneously on startup.
       setTimeout(runAutonomousScheduler, 30 * 1000);

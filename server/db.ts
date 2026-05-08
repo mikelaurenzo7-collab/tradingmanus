@@ -1499,6 +1499,35 @@ export async function getAuditLog(
 }
 
 /**
+ * Delete auditLog rows older than `retentionDays` (default 90).  The
+ * scheduler in server/_core/index.ts runs this once at startup and then
+ * every 24 hours so the table doesn't grow unboundedly.  Indexed by
+ * createdAt (drizzle/migrations/0008) so the range delete is O(deleted),
+ * not O(table).
+ *
+ * Returns { deleted } so the caller can log the count for observability.
+ */
+export async function cleanupOldAuditLogEntries(retentionDays = 90) {
+  const database = await getDb();
+  if (!database) return { deleted: 0 };
+  const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+  // Drizzle's neon-http delete doesn't return a row count; we issue raw SQL
+  // so we can surface "how much did we just prune" in the audit and logs.
+  const result = await database.execute(
+    sql`DELETE FROM "auditLog" WHERE "createdAt" < ${cutoff} RETURNING 1`,
+  );
+  // Result shape varies across drivers; prefer the standard rowCount and
+  // fall back to the rows array length.
+  const deleted =
+    typeof (result as { rowCount?: number }).rowCount === "number"
+      ? (result as { rowCount?: number }).rowCount ?? 0
+      : Array.isArray((result as { rows?: unknown[] }).rows)
+        ? ((result as { rows?: unknown[] }).rows ?? []).length
+        : 0;
+  return { deleted };
+}
+
+/**
  * Lightweight DB connectivity probe — used by the /api/health endpoint.
  * Returns true if the database responds, false otherwise.  Bounded by a
  * hard timeout so a hung Neon endpoint cannot stall the health-check

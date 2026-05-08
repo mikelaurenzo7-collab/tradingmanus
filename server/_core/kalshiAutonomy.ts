@@ -63,7 +63,12 @@ const BASE_RISK_LIMITS = {
 const SCHEDULED_SCAN_EVENT = "scheduled_autonomy_scan_completed";
 const HOURLY_SCAN_MIN_INTERVAL_MS = 55 * 60 * 1000;
 const RECENT_MANUAL_ORDER_COOLDOWN_MS = 5 * 60 * 1000;
-const AUTONOMY_RUN_DEDUPLICATION_WINDOW_MS = 15 * 60 * 1000;
+// Dedup window — was 15 min, which meant a single failed run would freeze
+// the dashboard's "last run" status for up to 15 min before a new tick
+// could fire and overwrite it.  At a 60s cadence that was 14 silent
+// "skipped" ticks per failed run.  1 min matches the cadence so every
+// scheduler tick produces a fresh autonomy_runs row.
+const AUTONOMY_RUN_DEDUPLICATION_WINDOW_MS = 60 * 1000;
 const MARKET_DATA_STALE_AFTER_MS = 30 * 1000;
 // Maximum allowed price drift between signal generation and order
 // submission.  Markets quoted on Kalshi are in cents, so 2¢ is a
@@ -500,7 +505,12 @@ function applyInstructionsToMarkets(
   });
 }
 
-async function generateScheduledSignals(userId: number, minConfidence: number, activeInstructions: any[] = []) {
+async function generateScheduledSignals(
+  userId: number,
+  minConfidence: number,
+  activeInstructions: any[] = [],
+  options: { ownerMode?: boolean } = {},
+) {
   const markets = await fetchKalshiMarkets({ status: "open" });
   const filteredMarkets = applyInstructionsToMarkets(markets, activeInstructions);
   const actionableMarkets = selectDiverseMarkets(
@@ -658,6 +668,7 @@ async function generateScheduledSignals(userId: number, minConfidence: number, a
         category,
         hoursToResolution,
         deskWeight,
+        ownerMode: options.ownerMode,
       })
     ) {
       cadencePassed.push(signal);
@@ -1098,7 +1109,8 @@ export async function runScheduledAutonomousTrading(
   const { savedSignals, executionCandidates, reviewerTelemetry } = await generateScheduledSignals(
     userId,
     preferences.minSignalConfidence,
-    activeInstructions
+    activeInstructions,
+    { ownerMode: preferences.ownerMode },
   );
   const candidateSet = executionCandidates.map(summarizeCandidate);
 

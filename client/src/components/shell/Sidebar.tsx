@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   ChevronLeft,
   ChevronRight,
+  FileText,
   Loader2,
   Zap,
 } from "lucide-react";
@@ -166,6 +167,28 @@ export function Sidebar({
 
         {/* Live status footer */}
         <div className="border-t border-border/60 p-3 space-y-2 shrink-0">
+          {/* Audit-log shortcut — out of the main sidebar list (it's a
+              monitoring tool, not a daily-use page) but still 1 click away. */}
+          {!collapsed ? (
+            <Link href="/audit">
+              <Button variant="ghost" size="sm" className="w-full justify-start gap-2 text-xs text-muted-foreground hover:text-foreground">
+                <FileText className="w-3.5 h-3.5" />
+                Audit log
+              </Button>
+            </Link>
+          ) : (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Link href="/audit">
+                  <Button variant="ghost" size="icon" className="w-full h-9">
+                    <FileText className="w-4 h-4" />
+                  </Button>
+                </Link>
+              </TooltipTrigger>
+              <TooltipContent side="right">Audit log</TooltipContent>
+            </Tooltip>
+          )}
+
           {!collapsed ? (
             <div className="rounded-lg border border-border/60 bg-background/40 p-3 space-y-2">
               <div className="flex items-center justify-between">
