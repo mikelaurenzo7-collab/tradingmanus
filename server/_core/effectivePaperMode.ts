@@ -1,35 +1,37 @@
 /**
- * Per-user effective paper-trade mode with graduation for non-owners.
+ * Per-user effective paper-trade mode.
  *
- * Owner (matching OWNER_EMAIL) trades LIVE immediately.
- * Non-owners start in paper and must "graduate" by hitting performance target
- * (win rate ≥ PAPER_GRADUATION_WIN_RATE over ≥ PAPER_MIN_TRADES + positive total P&L).
- *
- * Resolution order (first match wins):
+ * Live trading is now open to every authenticated user.  Paper-mode is
+ * opt-in, controlled at two levels:
  *
  *   1. ENV.paperTradeMode === true
- *      → EVERYONE is paper.  Global emergency kill-switch.
+ *      → EVERYONE is paper.  Global emergency kill-switch the operator
+ *        sets via Railway env.  Wins over per-user preferences.
  *
- *   2. The user matches OWNER_EMAIL (case- and whitespace-insensitive)
- *      → LIVE.  The founder's bots place real orders.
+ *   2. tradingPreferences.paperTradeMode === 1 for this user
+ *      → THIS user is paper.  Per-user opt-in toggle accessible from
+ *        the dashboard's Trading Preferences page.  Default 0 = live.
  *
- *   3. Non-owner who has graduated → LIVE.
+ *   3. otherwise → LIVE.
  *
- *   4. Non-owner who has not graduated (or graduation check fails) → PAPER.
+ * Compared to the previous behaviour (owner-only live, others forced
+ * paper-then-graduation), the model is now: anyone authenticated and
+ * properly configured can trade live; paper is opt-in.  All the other
+ * safety layers stay in place: per-user `liveTradingEnabled` toggle,
+ * required Kalshi credentials, profit guardrails, max order notional,
+ * max daily orders, withUserLock around order placement.
  *
- * Cached per-userId for 5 minutes so an autonomy run that opens one Kalshi
- * order + one Polymarket order pays at most one users-table read + one
- * paper-PnL summary fetch.
+ * Cached per-userId for 5 minutes so an autonomy run that opens one
+ * Kalshi order + one Polymarket order pays at most one DB read.
  *
- * Failure mode: when any lookup fails we conservatively return TRUE
- * (paper) — refusing to assume the caller is the owner OR has graduated
- * is the safer default.
+ * Failure mode: when the lookup fails we conservatively return TRUE
+ * (paper).  Defaulting to live on failure would silently let real
+ * orders through during a transient DB outage; paper is the safer
+ * default.
  */
 
 import { ENV } from "./env";
-import { getUserById } from "../db";
 import { logger } from "./logger";
-import { getPnlSummary } from "./paperPnlSummary";
 
 interface CachedEntry {
   paperMode: boolean;
@@ -39,65 +41,17 @@ interface CachedEntry {
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const cache = new Map<number, CachedEntry>();
 
-// Look-back window for graduation accounting.  90 days is wide enough
-// to accumulate the trade count required for graduation while still
-// reflecting current performance.
-const GRADUATION_WINDOW_DAYS = 90;
-
-function ownerEmailNormalised(): string {
-  return ENV.ownerEmail.trim().toLowerCase();
-}
-
-function isOwnerEmail(email: string | null | undefined): boolean {
-  const owner = ownerEmailNormalised();
-  if (!owner) return false;
-  return String(email ?? "").trim().toLowerCase() === owner;
-}
-
 /**
  * Pure resolver — does not touch the DB.  Exported for testing and for
- * callers that already have the user record + graduation status on hand.
+ * callers that already have the user's preference in hand.
  */
 export function resolveEffectivePaperTradeMode(input: {
   envPaperMode: boolean;
-  userEmail: string | null | undefined;
-  ownerEmail: string;
-  hasGraduated?: boolean;
+  userPaperPreference: boolean;
 }): boolean {
   if (input.envPaperMode) return true;
-  const owner = input.ownerEmail.trim().toLowerCase();
-  if (!owner) return true;
-  if (String(input.userEmail ?? "").trim().toLowerCase() === owner) return false;
-  // Non-owner: live only when graduated.
-  return !(input.hasGraduated === true);
-}
-
-/**
- * Check if a non-owner has graduated from paper-mode.
- *
- * Criteria (env-tunable):
- *   - At least PAPER_MIN_TRADES closed trades (combined Kalshi + Polymarket)
- *     in the look-back window
- *   - Win rate ≥ PAPER_GRADUATION_WIN_RATE
- *   - Cumulative realized P&L > 0 (positive over the window)
- *
- * All three must be true.  Returns false on any failure (safe default).
- */
-export async function hasGraduatedFromPaper(userId: number): Promise<boolean> {
-  if (!Number.isFinite(userId) || userId <= 0) return false;
-  try {
-    const summary = await getPnlSummary(userId, GRADUATION_WINDOW_DAYS);
-    const minTrades = ENV.paperMinTrades || 30;
-    const minWinRate = ENV.paperGraduationWinRate || 0.55;
-
-    if (summary.combined.closedTrades < minTrades) return false;
-    if (summary.combined.winRate < minWinRate) return false;
-    if (summary.combined.totalPnlUsd <= 0) return false;
-    return true;
-  } catch (err) {
-    logger.warn({ err, userId }, "[effectivePaperMode] graduation check failed");
-    return false;
-  }
+  if (input.userPaperPreference) return true;
+  return false;
 }
 
 export async function getEffectivePaperTradeMode(userId: number): Promise<boolean> {
@@ -111,22 +65,31 @@ export async function getEffectivePaperTradeMode(userId: number): Promise<boolea
 
   let paperMode = true;
   try {
-    const user = await getUserById(userId);
-    const email = user?.email ?? null;
-
-    if (isOwnerEmail(email)) {
-      paperMode = false;
+    // Late-import to avoid the server module pulling drizzle schema into
+    // the test bootstrap; same pattern as the previous version.
+    const { getDb } = await import("../db");
+    const { tradingPreferences } = await import("../../drizzle/schema");
+    const { eq } = await import("drizzle-orm");
+    const database = await getDb();
+    if (!database) {
+      paperMode = true;
     } else {
-      const graduated = await hasGraduatedFromPaper(userId);
+      const rows = await database
+        .select({ paperTradeMode: tradingPreferences.paperTradeMode })
+        .from(tradingPreferences)
+        .where(eq(tradingPreferences.userId, userId))
+        .limit(1);
+      const userPaperPreference = (rows[0]?.paperTradeMode ?? 0) === 1;
       paperMode = resolveEffectivePaperTradeMode({
         envPaperMode: ENV.paperTradeMode,
-        userEmail: email,
-        ownerEmail: ENV.ownerEmail,
-        hasGraduated: graduated,
+        userPaperPreference,
       });
     }
   } catch (err) {
-    logger.warn({ err, userId }, "[effectivePaperMode] lookup failed; defaulting to paper");
+    logger.warn(
+      { err, userId },
+      "[effectivePaperMode] lookup failed; defaulting to paper",
+    );
     paperMode = true;
   }
 
@@ -141,6 +104,3 @@ export function invalidateEffectivePaperTradeMode(userId: number): void {
 export function _resetEffectivePaperTradeModeCacheForTests(): void {
   cache.clear();
 }
-
-export const _OWNER_EMAIL_NORMALISED_FOR_TESTS = ownerEmailNormalised;
-export { isOwnerEmail };

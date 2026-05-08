@@ -269,7 +269,11 @@ describe("kalshi.setTradingActivation – beta gate", () => {
     vi.clearAllMocks();
   });
 
-  it("blocks arming live trading when beta access level is none", async () => {
+  it("allows arming live trading regardless of beta access level (gate removed)", async () => {
+    // The closed-beta gate has been removed — live autonomous trading is
+    // open to every authenticated user, paper-mode opt-in.  This test
+    // pins the new contract so a future "re-enable the gate" change
+    // doesn't slip in unnoticed.
     betaMocks.getKalshiCredentials.mockResolvedValue({
       userId: 7,
       accountStatus: "connected",
@@ -277,15 +281,23 @@ describe("kalshi.setTradingActivation – beta gate", () => {
     });
     betaMocks.getTradingPreferences.mockResolvedValue({
       ...betaMocks.DEFAULT_PREFERENCES,
+      autonomyMode: "fully_autonomous",
+    });
+    betaMocks.saveTradingPreferences.mockResolvedValue({
+      ...betaMocks.DEFAULT_PREFERENCES,
+      autonomyMode: "fully_autonomous",
+      liveTradingEnabled: true,
     });
     betaMocks.getUserBetaAccessLevel.mockResolvedValue("none");
 
     const { appRouter } = await import("./routers");
     const caller = appRouter.createCaller(createProtectedContext());
 
+    // Should NOT throw "closed beta".  May still throw for other reasons
+    // (e.g. risk validation), but not for beta access.
     await expect(
       caller.kalshi.setTradingActivation({ enabled: true })
-    ).rejects.toThrow("closed beta");
+    ).resolves.toBeDefined();
   });
 
   it("allows arming when beta access level is internal", async () => {

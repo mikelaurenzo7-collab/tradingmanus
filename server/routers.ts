@@ -159,6 +159,7 @@ const tradingPreferencesInput = z.object({
     "fully_autonomous",
   ]),
   liveTradingEnabled: z.boolean(),
+  paperTradeMode: z.boolean().optional(),
   executionCadence: z.enum([
     "manual_only",
     "session_assisted",
@@ -2139,17 +2140,19 @@ export const appRouter = router({
             });
           }
 
-          // Beta gate: live trading with autonomous modes requires beta access.
-          // Internal and invited beta users can arm live trading.
-          // "none" access blocks arming until explicitly granted by an admin.
-          const betaLevel = await db.getUserBetaAccessLevel(userId);
-          if (betaLevel === "none") {
-            throw new TRPCError({
-              code: "FORBIDDEN",
-              message:
-                "Live autonomous trading is in closed beta. Request beta access to arm live trading.",
-            });
-          }
+          // Live autonomous trading is open to every authenticated user.
+          // Paper-mode is opt-in via PAPER_TRADE_MODE=true (env-level
+          // global override) or by leaving liveTradingEnabled=false in
+          // Trading Preferences.  The previous `betaAccessLevel='none'`
+          // gate has been removed; the column + getUserBetaAccessLevel
+          // helper stay in case beta-tier features come back later.
+          //
+          // Per-user safety still depends on:
+          //   - withUserLock around the order-placement path (TOCTOU)
+          //   - getEffectivePaperTradeMode (owner=live, others=paper unless
+          //     explicitly graduated; PAPER_TRADE_MODE=true forces all paper)
+          //   - profitGuardrails (EV/confidence floors, exposure caps)
+          //   - per-user max-order-notional + max-daily-orders in TP
 
           const saved = await tradingPreferencesDb.saveTradingPreferences(
             userId,

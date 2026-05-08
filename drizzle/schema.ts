@@ -400,6 +400,10 @@ export const tradingPreferences = pgTable("tradingPreferences", {
     .default("approval_required")
     .notNull(),
   liveTradingEnabled: integer("liveTradingEnabled").default(0).notNull(),
+  // Per-user paper-mode toggle.  When true, this user's orders are simulated
+  // even in fully_autonomous mode.  Default 0 = live trading.  The env-level
+  // PAPER_TRADE_MODE=true global override still wins over this when set.
+  paperTradeMode: integer("paperTradeMode").default(0).notNull(),
   executionCadence: executionCadenceEnum("executionCadence")
     .default("manual_only")
     .notNull(),

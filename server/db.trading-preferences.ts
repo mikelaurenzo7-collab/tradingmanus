@@ -30,6 +30,12 @@ export type RiskPosture = (typeof RISK_POSTURES)[number];
 export type TradingPreferencesSettings = {
   autonomyMode: TradingAutonomyMode;
   liveTradingEnabled: boolean;
+  /**
+   * When true, this user's orders are simulated even in fully_autonomous
+   * mode.  Default false = live trading.  The env-level PAPER_TRADE_MODE
+   * global override still wins when set.
+   */
+  paperTradeMode: boolean;
   executionCadence: ExecutionCadence;
   riskPosture: RiskPosture;
   minSignalConfidence: number;
@@ -41,6 +47,7 @@ export type TradingPreferencesSettings = {
 export const DEFAULT_TRADING_PREFERENCES: TradingPreferencesSettings = {
   autonomyMode: "approval_required",
   liveTradingEnabled: false,
+  paperTradeMode: false,
   executionCadence: "manual_only",
   riskPosture: "balanced",
   minSignalConfidence: 0.72,
@@ -98,6 +105,9 @@ function normalizeTradingPreferences(
             input?.liveTradingEnabled ??
               DEFAULT_TRADING_PREFERENCES.liveTradingEnabled
           ),
+    paperTradeMode: Boolean(
+      input?.paperTradeMode ?? DEFAULT_TRADING_PREFERENCES.paperTradeMode,
+    ),
     executionCadence,
     riskPosture,
     minSignalConfidence: clamp(
@@ -130,6 +140,7 @@ function toDatabaseValues(input: TradingPreferencesSettings) {
   return {
     autonomyMode: input.autonomyMode,
     liveTradingEnabled: input.liveTradingEnabled ? 1 : 0,
+    paperTradeMode: input.paperTradeMode ? 1 : 0,
     executionCadence: input.executionCadence,
     riskPosture: input.riskPosture,
     minSignalConfidence: input.minSignalConfidence,
@@ -160,6 +171,7 @@ export async function getTradingPreferences(userId: number) {
     return normalizeTradingPreferences({
       autonomyMode: record.autonomyMode,
       liveTradingEnabled: Boolean(record.liveTradingEnabled),
+      paperTradeMode: Boolean((record as { paperTradeMode?: number }).paperTradeMode ?? 0),
       executionCadence: record.executionCadence,
       riskPosture: record.riskPosture,
       minSignalConfidence: record.minSignalConfidence,
