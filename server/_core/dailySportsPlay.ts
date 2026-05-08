@@ -229,17 +229,19 @@ export async function runDailySportsPlay(
     };
   }
 
-  // Same market + side already has a pending order?
+  // Any pending order on the same market? Block by marketId alone — the
+  // autonomy candidate path does the same. A YES + NO pending pair on
+  // the same Kalshi contract creates double-fill exposure (both can fill
+  // and you end up paying double fees on a hedged position).
   const hasPending = pendingOrders.some(
     (o: any) =>
       o.marketId === top.marketId &&
-      String(o.side).toLowerCase() === top.side &&
       String(o.status).toLowerCase() === "pending",
   );
   if (hasPending) {
     return {
       status: "no_qualifying_play",
-      reason: `Already have a pending order for ${top.side.toUpperCase()} on ${top.marketId}`,
+      reason: `Already have a pending order on ${top.marketId} (any side)`,
     };
   }
 

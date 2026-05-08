@@ -92,8 +92,15 @@ export function isHighStakes(context: StakesContext): boolean {
  * Anthropic Haiku/Opus; the Grok-only pivot collapses them to a single
  * model since Grok pricing is flat.
  */
-export function selectAnthropicModel(_tier: ModelTier, override?: string): string {
+export function selectAnthropicModel(tier: ModelTier, override?: string): string {
   if (override && override.trim()) return override.trim();
+  // Claude-as-trader: when ANTHROPIC_API_KEY is set, route to the
+  // configured Claude models (Sonnet for routine review, Opus for
+  // high-stakes / deep tier). Falls back to Grok's flat model only
+  // when Anthropic is unavailable (legacy mode).
+  if (ENV.anthropicApiKey.length > 0) {
+    return tier === "deep" ? ENV.claudeOpusModel : ENV.claudeSonnetModel;
+  }
   return ENV.grokModel;
 }
 

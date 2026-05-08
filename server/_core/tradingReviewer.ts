@@ -318,7 +318,7 @@ async function requestAnthropicReviews(
   forceDeep = false,
 ) {
   const client = options.anthropicClient ?? createAnthropicClient(
-    (options.anthropicApiKey ?? ENV.xaiApiKey).trim(),
+    (options.anthropicApiKey ?? ENV.anthropicApiKey ?? ENV.xaiApiKey).trim(),
   );
 
   const useDeepModel = forceDeep || isHighStakes(stakes);
