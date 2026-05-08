@@ -7,8 +7,7 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import DashboardLayout from "./components/DashboardLayout";
 
 const Dashboard = lazy(() => import("./pages/Dashboard"));
-const Positions = lazy(() => import("./pages/Positions"));
-const Trades = lazy(() => import("./pages/Trades"));
+const Activity = lazy(() => import("./pages/Activity"));
 const Signals = lazy(() => import("./pages/Signals"));
 const RiskControls = lazy(() => import("./pages/RiskControls"));
 const AuditLog = lazy(() => import("./pages/AuditLog"));
@@ -54,8 +53,13 @@ function Router() {
       <Route path={"/connect"} component={withLayout(Connect)} />
       <Route path={"/autonomy"} component={withLayout(TradingAutonomy)} />
       <Route path={"/trading-readiness"} component={withLayout(TradingReadiness)} />
-      <Route path={"/positions"} component={withLayout(Positions)} />
-      <Route path={"/trades"} component={withLayout(Trades)} />
+      {/* Unified Activity page (replaces /positions + /trades).  The old
+          routes still resolve and the Activity page picks the correct tab
+          from the URL so existing deep links keep working. */}
+      <Route path={"/activity"} component={withLayout(Activity)} />
+      <Route path={"/activity/:tab"} component={withLayout(Activity)} />
+      <Route path={"/positions"} component={withLayout(Activity)} />
+      <Route path={"/trades"} component={withLayout(Activity)} />
       <Route path={"/signals"} component={withLayout(Signals)} />
       <Route path={"/cluster-monitor"} component={withLayout(ClusterMonitor)} />
       <Route path={"/strategies"} component={withLayout(Strategies)} />

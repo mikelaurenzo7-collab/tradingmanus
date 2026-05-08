@@ -5,19 +5,15 @@ import {
   Bot,
   Brain,
   Briefcase,
-  CheckCircle2,
   Compass,
   Cpu,
-  FileText,
   LayoutDashboard,
   LineChart,
-  ListChecks,
   MessageSquare,
   Network,
   PieChart,
   Plug,
   Shield,
-  Wallet,
   Zap,
 } from "lucide-react";
 
@@ -40,11 +36,13 @@ export type NavSection = {
  * ANALYZE / CONFIGURE), so users see *what they can do* rather than
  * *where things are filed*.
  *
- * Setup lives at the top so first-time users find it instantly.  Audit
- * Log moves into TRADE because it's a daily-monitoring page, not a
- * configuration page.  /connect, /funding, /trading-readiness are still
- * routes (deep-link compatible) but the sidebar funnels everyone through
- * /setup which orchestrates them.
+ * Consolidation pass:
+ *   - Positions + Trades → single "Activity" page (tabs: Open / History).
+ *   - Audit Log moved to a topbar-accessible drawer, not a sidebar item.
+ *   - Funding folded into Dashboard cards.
+ *   - Trading Readiness folded into Setup as step 4.
+ *   - All removed routes still resolve as deep links — only the sidebar
+ *     surface shrinks, no functionality is lost.
  */
 export const navSections: NavSection[] = [
   {
@@ -59,9 +57,7 @@ export const navSections: NavSection[] = [
     label: "Trade",
     items: [
       { icon: Zap, label: "Signals", path: "/signals", hint: "Latest reviewed signals" },
-      { icon: ListChecks, label: "Positions", path: "/positions", hint: "Open positions" },
-      { icon: Activity, label: "Trades", path: "/trades", hint: "Trade history" },
-      { icon: FileText, label: "Audit Log", path: "/audit", hint: "Every cycle, review, order" },
+      { icon: Activity, label: "Activity", path: "/activity", hint: "Open positions + trade history" },
     ],
   },
   {
@@ -88,8 +84,6 @@ export const navSections: NavSection[] = [
     label: "Account",
     items: [
       { icon: Plug, label: "Connect", path: "/connect", hint: "Exchange API credentials" },
-      { icon: Wallet, label: "Funding", path: "/funding", hint: "Deposit and withdraw" },
-      { icon: CheckCircle2, label: "Readiness", path: "/trading-readiness", hint: "Pre-live checklist" },
     ],
   },
 ];

@@ -31,7 +31,7 @@ function formatQuantity(value: number) {
   return Number.isFinite(value) ? value.toString() : "—";
 }
 
-export default function Positions() {
+export default function Positions({ embedded = false }: { embedded?: boolean } = {}) {
   const positionsQuery = trpc.kalshi.getPositions.useQuery();
   const closePositionMutation = trpc.kalshi.closePosition.useMutation();
   const [closingId, setClosingId] = useState<number | null>(null);
@@ -278,6 +278,7 @@ export default function Positions() {
 
   return (
     <div className="space-y-6">
+      {embedded ? null : (
       <PageHeader
         icon={Briefcase}
         title="Open Positions"
@@ -301,6 +302,7 @@ export default function Positions() {
           </Button>
         }
       />
+      )}
 
       {/* Summary Cards */}
       {positions.length > 0 && (

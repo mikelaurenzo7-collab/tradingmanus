@@ -28,7 +28,7 @@ interface Trade {
   closedAt: string | null;
 }
 
-export default function Trades() {
+export default function Trades({ embedded = false }: { embedded?: boolean } = {}) {
   const tradeHistoryQuery = trpc.kalshi.getTradeHistory.useQuery({ limit: 50 });
   
   const [searchQuery, setSearchQuery] = useState("");
@@ -153,11 +153,13 @@ export default function Trades() {
   if (tradeHistoryQuery.isLoading) {
     return (
       <div className="space-y-6 animate-fade-in">
-        <PageHeader
-          icon={Receipt}
-          title="Trade History"
-          description="Loading trade data..."
-        />
+        {embedded ? null : (
+          <PageHeader
+            icon={Receipt}
+            title="Trade History"
+            description="Loading trade data..."
+          />
+        )}
         <div className="glass-panel p-8">
           <TableSkeleton rows={8} />
         </div>
@@ -167,6 +169,7 @@ export default function Trades() {
 
   return (
     <div className="space-y-6 animate-fade-in">
+      {embedded ? null : (
       <PageHeader
         icon={Receipt}
         title="Trade History"
@@ -191,6 +194,7 @@ export default function Trades() {
           ) : null
         }
       />
+      )}
 
       {trades.length === 0 ? (
         <div className="glass-panel p-8">
