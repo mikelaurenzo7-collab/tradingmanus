@@ -520,6 +520,31 @@ async function processOneSignalForEnsemble(
     impliedProbability: ensemble.finalImpliedProbability,
   };
 
+  // Re-check the post-adjustment confidence against the configured hard
+  // floor (default MIN_CONFIDENCE_AFTER_ADJUST=0.76). The pre-ensemble
+  // gate already validated this for the GROSS confidence, but Claude
+  // reviewers can trim it; a 78% confident signal reduced to 60% must
+  // be vetoed even if the user-preference floor is lower (e.g. 0.55 in
+  // aggressive mode), since execution-score ranking would otherwise let
+  // it through.
+  const minConfidence = ENV.profitGuardrails.minConfidenceAfterAdjust;
+  if (adjustedSignal.confidence < minConfidence) {
+    logger.info(
+      {
+        ticker: s.ticker,
+        confidence: adjustedSignal.confidence,
+        minConfidence,
+      },
+      "[Ensemble] post-adjustment confidence below MIN_CONFIDENCE_AFTER_ADJUST floor — vetoing",
+    );
+    const vetoedEnsemble: EnsembleVerdict = {
+      ...ensemble,
+      approved: false,
+      reasoning: `Post-adjustment confidence ${(adjustedSignal.confidence * 100).toFixed(2)}% < MIN_CONFIDENCE_AFTER_ADJUST ${(minConfidence * 100).toFixed(2)}%. ${ensemble.reasoning}`,
+    };
+    return { signal: s, ensemble: vetoedEnsemble, adjusted: null };
+  }
+
   // Re-check the post-fee + post-AI-cost net EV against the configured hard
   // floor (default MIN_NET_EV=0.065). Claude reviewers can trim EV; a
   // previously valid 7% trade reduced to 4% must be vetoed.

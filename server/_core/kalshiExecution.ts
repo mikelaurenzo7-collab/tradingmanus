@@ -1049,31 +1049,56 @@ export async function closePositionFromFill(
       return true;
     }
 
+    // Compute the FULL trade aggregate before persisting `closed`. Earlier
+    // partial-fill tranches accumulated into `position.realizedPnl`; this
+    // tranche's PnL is in `realizedPnl` (local). The total realized PnL
+    // for the whole trade is the sum.
+    const totalRealizedPnl = Number(position.realizedPnl ?? 0) + realizedPnl;
+    // Total contracts originally opened = current remaining + everything
+    // already closed. We can't perfectly recover the original size from
+    // the position row alone, but `position.quantity` reflects what was
+    // OPEN going INTO this fill — so original size = current open + sum
+    // of prior closed quantities. The simplest and most accurate proxy
+    // we have on hand: original_count = closeQuantity + (prior closes,
+    // captured implicitly in position.realizedPnl/entryPrice).
+    //
+    // For the calibration log we want the WHOLE trade's size, not just
+    // this tranche's. Use the position's openedQuantity if persisted; fall
+    // back to (closeQuantity + recovered-from-PnL) approximation.
+    const originalCount = (() => {
+      const stored = Number((position as { openedQuantity?: number | null }).openedQuantity ?? 0);
+      if (stored > 0) return stored;
+      // Approximation: prior closes contributed (totalRealizedPnl -
+      // realizedPnl) at unknown sizes. Use closeQuantity + currentQuantity
+      // as a lower-bound (this fill closed `closeQuantity` of an open
+      // remainder of `currentQuantity`).
+      return closeQuantity + Math.max(0, currentQuantity - closeQuantity);
+    })();
+
     await db
       .update(kalshiPositions)
       .set({
         currentPrice: exitPrice,
         unrealizedPnl: 0,
-        realizedPnl: Number(position.realizedPnl ?? 0) + realizedPnl,
+        realizedPnl: totalRealizedPnl,
         positionStatus: "closed",
         closedAt: new Date(),
       })
       .where(eq(kalshiPositions.id, position.id));
 
-    // Log to the calibration / cost-vs-profit outcome stream. Best-effort —
-    // the calibration job uses this to compute Brier per reviewer per
-    // category. Fields that aren't directly on the position row (predicted
-    // EV/confidence from the original signal) are filled in by joining
-    // against `kalshiSignals` if available; otherwise we log 0 so calibration
-    // can still see the outcome.
+    // Log to the calibration / cost-vs-profit outcome stream with the
+    // FULL accumulated trade — total realized PnL across all fills, total
+    // closed size. Logging only this final tranche's slice would corrupt
+    // Brier scoring: a winning trade with a small money-losing closing
+    // tranche would be classified as a loss.
     void logCalibrationOutcomeFromClose({
       userId: position.userId,
       marketId,
       side,
-      count: closeQuantity,
+      count: originalCount,
       entryPrice,
       exitPrice,
-      realizedPnl,
+      realizedPnl: totalRealizedPnl,
       placedAtMs: position.openedAt
         ? new Date(position.openedAt).getTime()
         : Date.now(),
