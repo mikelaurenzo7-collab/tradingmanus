@@ -2247,6 +2247,34 @@ export const appRouter = router({
         return { success: true, preferences: saved };
       }),
 
+    setMoonshotMode: protectedProcedure
+      .input(z.object({ enabled: z.boolean() }))
+      .mutation(async ({ ctx, input }) => {
+        const userId = getRequiredUserId(ctx);
+        const existing = await tradingPreferencesDb.getTradingPreferences(userId);
+
+        // Moonshot Mode requires Owner Mode to be on first — it's an
+        // advanced sleeve, not a beginner toggle.  Reject the enable
+        // attempt rather than silently flipping ownerMode for the user.
+        if (input.enabled && !existing.ownerMode) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Enable Owner Mode before turning on Moonshot Mode.",
+          });
+        }
+
+        const saved = await tradingPreferencesDb.saveTradingPreferences(userId, {
+          ...existing,
+          moonshotMode: input.enabled,
+        });
+        await db.logAuditEvent(
+          input.enabled ? "moonshot_mode_enabled" : "moonshot_mode_disabled",
+          "",
+          ctx.user!.openId,
+        );
+        return { success: true, preferences: saved };
+      }),
+
     disconnectKalshiAccount: protectedProcedure.mutation(async ({ ctx }) => {
       try {
         const userId = getRequiredUserId(ctx);

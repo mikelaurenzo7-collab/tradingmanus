@@ -85,6 +85,19 @@ export default function TradingAutonomy() {
     onError: (error) => setMessage(error.message),
   });
 
+  const moonshotModeMutation = trpc.kalshi.setMoonshotMode.useMutation({
+    onSuccess: async (result) => {
+      setForm(result.preferences);
+      setMessage(
+        result.preferences.moonshotMode
+          ? "Moonshot Mode enabled — bot may now hunt 2-20¢ asymmetric plays (capped at $5/trade, $25 total)."
+          : "Moonshot Mode disabled.",
+      );
+      await utils.kalshi.getTradingPreferences.invalidate();
+    },
+    onError: (error) => setMessage(error.message),
+  });
+
   const accountStatus = accountStatusQuery.data;
   const connected = accountStatus?.connected ?? false;
   const equity = accountStatus?.equity ?? 0;
@@ -167,6 +180,50 @@ export default function TradingAutonomy() {
               <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
             ) : null}
             {form.ownerMode ? "Disable Owner Mode" : "Enable Owner Mode"}
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* ── Moonshot Mode (advanced sleeve, requires Owner Mode) ────── */}
+      <Card className={`glass-panel border-l-4 ${form.moonshotMode ? "border-l-fuchsia-500 glow-primary" : "border-l-fuchsia-500/30"} ${form.ownerMode ? "" : "opacity-60"}`}>
+        <CardContent className="p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <Zap className={`h-4 w-4 ${form.moonshotMode ? "text-fuchsia-400" : "text-fuchsia-400/60"}`} />
+              <span className="font-semibold text-sm">Moonshot Mode</span>
+              {form.moonshotMode ? (
+                <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded bg-fuchsia-500/15 text-fuchsia-300">
+                  ON
+                </span>
+              ) : null}
+              {!form.ownerMode ? (
+                <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded bg-amber-500/15 text-amber-300">
+                  Requires Owner Mode
+                </span>
+              ) : null}
+            </div>
+            <p className="text-xs text-muted-foreground max-w-2xl">
+              Lets the bot also hunt low-probability asymmetric plays — 2-20¢ longshots and
+              80-98¢ shortshots Claude+Grok think are mispriced. Hard-bounded: each moonshot
+              caps at $5 notional, total open moonshot exposure caps at $25, max 5 open at
+              once. Bad moonshots can lose at most that bucket. Independent of the main
+              bankroll.
+            </p>
+          </div>
+          <Button
+            variant={form.moonshotMode ? "outline" : "default"}
+            size="sm"
+            disabled={
+              moonshotModeMutation.isPending ||
+              (!form.ownerMode && !form.moonshotMode)
+            }
+            onClick={() => moonshotModeMutation.mutate({ enabled: !form.moonshotMode })}
+            className={form.moonshotMode ? "" : "bg-fuchsia-500 hover:bg-fuchsia-600 text-white"}
+          >
+            {moonshotModeMutation.isPending ? (
+              <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+            ) : null}
+            {form.moonshotMode ? "Disable Moonshot" : "Enable Moonshot"}
           </Button>
         </CardContent>
       </Card>

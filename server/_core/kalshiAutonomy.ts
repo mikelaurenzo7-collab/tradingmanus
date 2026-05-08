@@ -88,6 +88,26 @@ const MAX_MARKETS_PER_CATEGORY = 8;
 // Markets with combined yes+no volume below this threshold are excluded from
 // scheduled scans.  Thin markets have wide spreads and high adverse selection.
 const MIN_SCHEDULED_MARKET_VOLUME = 500;
+// Moonshot Mode tier — a separate, smaller-bankroll sleeve for low-probability
+// asymmetric plays.  When a signal targets a market whose price sits in the
+// moonshot band, the autonomy run replaces Kelly-sized notional with a fixed
+// per-trade cap and refuses new moonshots if the open moonshot exposure
+// already meets MOONSHOT_MAX_TOTAL_USD.
+const MOONSHOT_PRICE_MIN = 0.02; // 2¢
+const MOONSHOT_PRICE_MAX = 0.20; // 20¢ (or symmetrically 80¢..98¢ on the no side)
+const MOONSHOT_MIN_VOLUME = 100;
+const MOONSHOT_MAX_NOTIONAL = 5;       // $ per moonshot trade
+const MOONSHOT_MAX_TOTAL_USD = 25;     // total open moonshot exposure cap
+const MOONSHOT_MAX_OPEN_COUNT = 5;     // hard cap on open moonshot positions
+
+/** Returns true if the side's price sits in the moonshot band on either side. */
+export function isMoonshotPrice(price: number): boolean {
+  if (!Number.isFinite(price)) return false;
+  return (
+    (price >= MOONSHOT_PRICE_MIN && price <= MOONSHOT_PRICE_MAX) ||
+    (price >= 1 - MOONSHOT_PRICE_MAX && price <= 1 - MOONSHOT_PRICE_MIN)
+  );
+}
 // Markets resolving within this many hours are excluded from scheduled scans.
 // Imminent-resolution markets carry high adverse-selection risk and waste the
 // AI reviewer's budget on signals that can rarely be executed cleanly.
@@ -372,8 +392,18 @@ function getMarketTotalVolume(market: { yesVolume?: unknown; noVolume?: unknown 
   return Number(market.yesVolume ?? 0) + Number(market.noVolume ?? 0);
 }
 
-export function extractActionableMarkets(markets: Awaited<ReturnType<typeof fetchKalshiMarkets>>) {
+export function extractActionableMarkets(
+  markets: Awaited<ReturnType<typeof fetchKalshiMarkets>>,
+  options: { moonshotMode?: boolean } = {},
+) {
   const minResolutionTime = Date.now() + MIN_RESOLUTION_HOURS_AHEAD * 60 * 60 * 1000;
+  // Moonshot Mode loosens the actionable filter so the bot can also see
+  // 2-20¢ longshots and 80-98¢ shortshots; the position-sizing path uses
+  // the fixed MOONSHOT_MAX_NOTIONAL so the loosened filter cannot blow up
+  // notional risk.  Without moonshot mode the prior tight bounds apply.
+  const minPrice = options.moonshotMode ? MOONSHOT_PRICE_MIN : 0.01;
+  const maxPrice = options.moonshotMode ? 1 - MOONSHOT_PRICE_MIN : 0.99;
+  const minVol = options.moonshotMode ? MOONSHOT_MIN_VOLUME : MIN_SCHEDULED_MARKET_VOLUME;
 
   return markets.filter((market) => {
     const yesPrice = Number(market.yesPrice);
@@ -384,18 +414,18 @@ export function extractActionableMarkets(markets: Awaited<ReturnType<typeof fetc
       !Number.isFinite(yesPrice) ||
       !Number.isFinite(noPrice) ||
       !Number.isFinite(impliedProbability) ||
-      yesPrice <= 0.01 ||
-      yesPrice >= 0.99 ||
-      noPrice <= 0.01 ||
-      noPrice >= 0.99 ||
-      impliedProbability <= 0.01 ||
-      impliedProbability >= 0.99
+      yesPrice <= minPrice ||
+      yesPrice >= maxPrice ||
+      noPrice <= minPrice ||
+      noPrice >= maxPrice ||
+      impliedProbability <= minPrice ||
+      impliedProbability >= maxPrice
     ) {
       return false;
     }
 
     // Exclude thin markets that cannot be executed without heavy adverse selection.
-    if (getMarketTotalVolume(market) < MIN_SCHEDULED_MARKET_VOLUME) {
+    if (getMarketTotalVolume(market) < minVol) {
       return false;
     }
 
@@ -509,12 +539,12 @@ async function generateScheduledSignals(
   userId: number,
   minConfidence: number,
   activeInstructions: any[] = [],
-  options: { ownerMode?: boolean } = {},
+  options: { ownerMode?: boolean; moonshotMode?: boolean } = {},
 ) {
   const markets = await fetchKalshiMarkets({ status: "open" });
   const filteredMarkets = applyInstructionsToMarkets(markets, activeInstructions);
   const actionableMarkets = selectDiverseMarkets(
-    extractActionableMarkets(filteredMarkets),
+    extractActionableMarkets(filteredMarkets, { moonshotMode: options.moonshotMode }),
     MAX_SCHEDULED_MARKETS,
     MAX_MARKETS_PER_CATEGORY
   );
@@ -1110,7 +1140,12 @@ export async function runScheduledAutonomousTrading(
     userId,
     preferences.minSignalConfidence,
     activeInstructions,
-    { ownerMode: preferences.ownerMode },
+    {
+      ownerMode: preferences.ownerMode,
+      // Moonshot only takes effect when ownerMode is also on — it's an
+      // advanced sleeve, not a beginner toggle.
+      moonshotMode: preferences.ownerMode && preferences.moonshotMode,
+    },
   );
   const candidateSet = executionCandidates.map(summarizeCandidate);
 
@@ -1365,8 +1400,57 @@ export async function runScheduledAutonomousTrading(
   }
 
   const availableCapital = Number(capital?.currentBalance ?? equityResult.equity ?? 0);
-  const maxBudget = Math.min(eligibleMaxBudget ?? Number.POSITIVE_INFINITY, availableCapital);
   const limitPrice = Number(eligibleSignal.marketPrice);
+
+  // Moonshot path: the candidate's price sits in the moonshot band AND the
+  // user has both ownerMode + moonshotMode on.  Replace Kelly-sized notional
+  // with the fixed MOONSHOT_MAX_NOTIONAL and refuse if the open moonshot
+  // exposure has already hit the bucket cap.  Hard-bounds the downside on
+  // the riskier sleeve.
+  const moonshotEnabled = preferences.ownerMode && preferences.moonshotMode;
+  const isMoonshotCandidate = moonshotEnabled && isMoonshotPrice(limitPrice);
+
+  if (isMoonshotCandidate) {
+    const moonshotPositions = (openPositions as Array<{ entryPrice?: number; quantity?: number }>).filter(
+      (p) => isMoonshotPrice(Number(p.entryPrice ?? 0)),
+    );
+    const openMoonshotExposure = moonshotPositions.reduce(
+      (sum, p) => sum + Number(p.entryPrice ?? 0) * Number(p.quantity ?? 0),
+      0,
+    );
+    if (
+      moonshotPositions.length >= MOONSHOT_MAX_OPEN_COUNT ||
+      openMoonshotExposure >= MOONSHOT_MAX_TOTAL_USD
+    ) {
+      return finalize({
+        status: "blocked",
+        reason: `moonshot bucket full (${moonshotPositions.length} open, $${openMoonshotExposure.toFixed(2)} of $${MOONSHOT_MAX_TOTAL_USD})`,
+        signalsGenerated: savedSignals.length,
+        executionCandidates: executionCandidates.length,
+        orderPlaced: false,
+        candidateMarketId: eligibleSignal.marketId,
+        autonomyMode: preferences.autonomyMode,
+        executionCadence: preferences.executionCadence,
+        candidateSet,
+        rejectedCandidates,
+        decision: buildDecisionDetails(eligibleSignal, {
+          quantity: 0,
+          availableCapital,
+          maxBudget: 0,
+          orderExposure: 0,
+          maxLossOnTrade: 0,
+          blockedBy: "moonshot_bucket_full",
+        }),
+      }, {
+        appliedGuardrails: safeJsonStringify(buildAppliedGuardrails(preferences, riskLimits)),
+      });
+    }
+    // Per-trade moonshot cap, also bounded by the remaining bucket headroom.
+    const remainingBucket = Math.max(0, MOONSHOT_MAX_TOTAL_USD - openMoonshotExposure);
+    eligibleMaxBudget = Math.min(MOONSHOT_MAX_NOTIONAL, remainingBucket);
+  }
+
+  const maxBudget = Math.min(eligibleMaxBudget ?? Number.POSITIVE_INFINITY, availableCapital);
   const requestedQuantity = estimateContractsForRiskBudget(maxBudget, limitPrice);
 
   if (requestedQuantity < 1) {

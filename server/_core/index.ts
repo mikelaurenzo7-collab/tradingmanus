@@ -16,6 +16,26 @@ import { checkBudgetForRun } from "./aiCostBudget";
 import { refreshScoreboard } from "./dailyScoreboard";
 import { logger } from "./logger";
 import * as hb from "./schedulerHeartbeat";
+import { hasAnyDualConnectedUser } from "../db";
+
+// 60-second cache for "any user has both Kalshi + Polymarket connected".
+// The cross-arb scheduler ticks every 10s; without this we'd hit the DB
+// 6 times a minute for a question whose answer almost never changes.
+let _dualConnectedCache: { value: boolean; expiresAt: number } | null = null;
+async function isDualConnectedCached(): Promise<boolean> {
+  const now = Date.now();
+  if (_dualConnectedCache && now < _dualConnectedCache.expiresAt) {
+    return _dualConnectedCache.value;
+  }
+  let value = false;
+  try {
+    value = await hasAnyDualConnectedUser();
+  } catch (err) {
+    logger.warn({ err }, "[CrossArb] dual-connected probe failed; assuming false");
+  }
+  _dualConnectedCache = { value, expiresAt: now + 60_000 };
+  return value;
+}
 import { fetchKalshiMarkets } from "./kalshiMarketData";
 import { fetchPolymarketMarkets } from "./polymarketAuth";
 import {
@@ -405,6 +425,17 @@ let crossArbScanInFlight = false;
 async function runRealtimeCrossPlatformArbScan() {
   if (crossArbScanInFlight) {
     hb.setSkipped("cross_arb", "previous scan still in flight");
+    return;
+  }
+  // Don't waste fetch quota when no user has both Kalshi AND Polymarket
+  // connected — cross-arb has no actionable value for single-platform
+  // users.  Cache the gate for 60 s so we don't re-query the DB every
+  // 10 s tick when the answer obviously isn't going to flip.
+  const dualConnected = await isDualConnectedCached();
+  if (!dualConnected) {
+    hb.markTickStart("cross_arb", "skipped", "No user has both Kalshi + Polymarket connected");
+    hb.setSkipped("cross_arb", "no dual-connected user — cross-arb has nothing to act on");
+    hb.markTickComplete("cross_arb", Date.now());
     return;
   }
   crossArbScanInFlight = true;

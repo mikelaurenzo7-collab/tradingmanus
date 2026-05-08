@@ -408,6 +408,10 @@ export const tradingPreferences = pgTable("tradingPreferences", {
   // accepts the risk would otherwise fight.  See drizzle/migrations/0007
   // and the bypasses in server/_core/kalshiAutonomy.ts.  Default 0 = off.
   ownerMode: integer("ownerMode").default(0).notNull(),
+  // Moonshot Mode — when both ownerMode and moonshotMode are on, the
+  // bot also hunts low-probability asymmetric plays.  See drizzle/
+  // migrations/0009 and the moonshot path in kalshiAutonomy.ts.
+  moonshotMode: integer("moonshotMode").default(0).notNull(),
   executionCadence: executionCadenceEnum("executionCadence")
     .default("manual_only")
     .notNull(),

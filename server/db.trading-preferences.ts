@@ -44,6 +44,14 @@ export type TradingPreferencesSettings = {
    * price drift, exchange rejection) remain unchanged.  Default false = off.
    */
   ownerMode: boolean;
+  /**
+   * Moonshot Mode — only effective when ownerMode is also true.  Lets the
+   * bot hunt low-probability asymmetric plays (2-20¢ / 80-98¢ markets).
+   * Each moonshot trade is capped at MOONSHOT_MAX_NOTIONAL ($5) and total
+   * open moonshot exposure is capped at MOONSHOT_MAX_TOTAL_USD ($25), so
+   * a streak of bad moonshots can lose at most that bucket.
+   */
+  moonshotMode: boolean;
   executionCadence: ExecutionCadence;
   riskPosture: RiskPosture;
   minSignalConfidence: number;
@@ -57,6 +65,7 @@ export const DEFAULT_TRADING_PREFERENCES: TradingPreferencesSettings = {
   liveTradingEnabled: false,
   paperTradeMode: false,
   ownerMode: false,
+  moonshotMode: false,
   executionCadence: "manual_only",
   riskPosture: "balanced",
   minSignalConfidence: 0.72,
@@ -140,6 +149,9 @@ function normalizeTradingPreferences(
     ownerMode: Boolean(
       input?.ownerMode ?? DEFAULT_TRADING_PREFERENCES.ownerMode,
     ),
+    moonshotMode: Boolean(
+      input?.moonshotMode ?? DEFAULT_TRADING_PREFERENCES.moonshotMode,
+    ),
     executionCadence,
     riskPosture,
     minSignalConfidence: clamp(
@@ -174,6 +186,7 @@ function toDatabaseValues(input: TradingPreferencesSettings) {
     liveTradingEnabled: input.liveTradingEnabled ? 1 : 0,
     paperTradeMode: input.paperTradeMode ? 1 : 0,
     ownerMode: input.ownerMode ? 1 : 0,
+    moonshotMode: input.moonshotMode ? 1 : 0,
     executionCadence: input.executionCadence,
     riskPosture: input.riskPosture,
     minSignalConfidence: input.minSignalConfidence,
@@ -206,6 +219,7 @@ export async function getTradingPreferences(userId: number) {
       liveTradingEnabled: Boolean(record.liveTradingEnabled),
       paperTradeMode: Boolean((record as { paperTradeMode?: number }).paperTradeMode ?? 0),
       ownerMode: Boolean((record as { ownerMode?: number }).ownerMode ?? 0),
+      moonshotMode: Boolean((record as { moonshotMode?: number }).moonshotMode ?? 0),
       executionCadence: record.executionCadence,
       riskPosture: record.riskPosture,
       minSignalConfidence: record.minSignalConfidence,

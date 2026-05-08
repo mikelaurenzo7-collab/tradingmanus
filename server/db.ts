@@ -10,6 +10,7 @@ import {
   kalshiPerformance,
   kalshiCapital,
   kalshiCredentials,
+  polymarketCredentials,
   tradingPreferences,
   marketTimeframeAnalysis,
   marketMicrostructure,
@@ -377,6 +378,29 @@ export async function getUsersEligibleForAutomaticScheduledTrading() {
         ne(kalshiCredentials.privateKeyEncrypted, "")
       )
     );
+}
+
+/**
+ * Returns true if at least one user has BOTH Kalshi and Polymarket
+ * credentials connected.  Used to gate the cross-platform arbitrage
+ * scanner — running it without dual connectivity wastes Kalshi /
+ * Polymarket fetch quotas on opportunities the user can't act on.
+ */
+export async function hasAnyDualConnectedUser(): Promise<boolean> {
+  const database = await getDb();
+  if (!database) return false;
+  const [hit] = await database
+    .select({ userId: kalshiCredentials.userId })
+    .from(kalshiCredentials)
+    .innerJoin(polymarketCredentials, eq(kalshiCredentials.userId, polymarketCredentials.userId))
+    .where(
+      and(
+        eq(kalshiCredentials.accountStatus, "connected"),
+        eq(polymarketCredentials.accountStatus, "connected"),
+      ),
+    )
+    .limit(1);
+  return Boolean(hit);
 }
 
 // Kalshi market queries
