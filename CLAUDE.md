@@ -364,7 +364,14 @@ it are treated as fresh state.
 - `railway.json` sets `builder: DOCKERFILE`
 - `Dockerfile` pins Node 20 + pnpm 10.4.1, runs `pnpm install --frozen-lockfile && pnpm build && pnpm build:server`, starts `pnpm start`
 - `pnpm.onlyBuiltDependencies` in `package.json` allows `@tailwindcss/oxide` and `esbuild` postinstall scripts (Tailwind v4 native binary — **required** for the Vite build)
-- **Schema migrations are manual.** Before deploying any commit that changes `drizzle/schema.ts`, run `corepack pnpm db:push` against the production `DATABASE_URL` from a workstation. We do **not** run `db:push` automatically in `preDeployCommand` because `drizzle-kit push` is interactive: in a non-TTY release environment it would either hang on destructive prompts or auto-skip them, leaving the running server with a schema mismatch. If you want auto-applied migrations, switch to a versioned `drizzle/migrations` folder + `drizzle-kit migrate`.
+- **Schema migrations are auto-applied on deploy** via `pnpm migrate:apply` in the start script (`pnpm start` = `pnpm migrate:apply && node dist/index.js`).  The runner is a small custom script (`scripts/applyMigrations.ts`) that:
+    1. Creates a `migrations_log` tracking table on first run.
+    2. Reads `drizzle/migrations/*.sql` files in lexicographic (0001_, 0002_, …) order.
+    3. Runs each unapplied file inside a single Neon HTTP request (multi-statement supported).
+    4. Records the filename in `migrations_log` so reruns are idempotent at the runner level.
+  Migrations are also expected to be **idempotent at the SQL level** (use `ADD COLUMN IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`, etc.) so that hand-applied changes via Neon's SQL editor don't break the runner on the next deploy.
+- **Adding a new migration**: drop a new SQL file in `drizzle/migrations/` using the next sequential number.  No code change needed; the next deploy applies it.
+- **`pnpm db:push` is still available** for fast iteration during development, but production should use the migration files committed to the repo.
 - Liveness probe: `GET /api/health/live` (Railway restart policy is wired here — never touches the DB so a Neon outage cannot cause a restart loop)
 - Schedulers run **in-process** (`server/_core/index.ts`):
   - Kalshi + Polymarket autonomy: every `AUTONOMY_INTERVAL_MS` (default 2 min)

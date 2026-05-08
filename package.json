@@ -11,7 +11,7 @@
     "dev": "NODE_ENV=development tsx watch server/_core/index.ts",
     "build": "vite build",
     "build:server": "esbuild server/_core/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
-    "start": "NODE_ENV=production node dist/index.js",
+    "start": "NODE_ENV=production pnpm migrate:apply && node dist/index.js",
     "backtest": "tsx scripts/backtest-exits.ts",
     "check": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
@@ -19,7 +19,8 @@
     "test": "vitest run",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "migrate:apply": "tsx scripts/applyMigrations.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.95.1",
