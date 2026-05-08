@@ -82,7 +82,7 @@ used.  Never use `npm` or `yarn` in this repo — the lockfile is
 | `XAI_API_KEY` | optional | Grok (xAI) key for true dual-bot consensus. Without it, the reviewer gracefully degrades to Claude-only. |
 | `GROK_MODEL` | optional | Default `grok-3-latest` |
 | `ENABLE_GROK_TEAM` | optional | Default `true` — when `XAI_API_KEY` is set, both bots review every signal in parallel and both must approve. |
-| `AUTONOMY_INTERVAL_MS` | optional | Kalshi+Polymarket autonomy cadence in ms (default `120000` = 2 min) |
+| `AUTONOMY_INTERVAL_MS` | optional | Kalshi+Polymarket autonomy tick rate in ms (default `60000` = 1 min). Adaptive cadence keeps actual AI cost bounded by skipping quiet markets. |
 | `ORDER_SYNC_INTERVAL_MS` | optional | Kalshi order/position reconciliation + exit monitor cadence (default `30000` = 30 s) |
 | `CROSS_ARB_INTERVAL_MS` | optional | Cross-platform arb scanner cadence (default `10000` = 10 s) |
 | `SIGNAL_REVIEW_PRICE_DELTA_BPS` | optional | Adaptive cadence: skip AI review when a market hasn't moved this many basis points since last review (default `50` = 0.5 %) |

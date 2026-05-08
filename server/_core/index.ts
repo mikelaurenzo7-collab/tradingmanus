@@ -92,9 +92,9 @@ async function startServer() {
 }
 
 // All scheduler intervals are env-tunable so the operator can dial cadence
-// against AI cost.  Each Kalshi+Polymarket cycle issues ~1-3 OpenRouter
-// reviewer calls; with the free-tier model the daily quota caps practical
-// cadence around 5 min.  With a paid model 1-2 min is comfortable.
+// against AI cost.  Each Kalshi+Polymarket cycle issues 1-3 reviewer calls
+// per active desk on average — adaptive cadence skips ~70-85 % of stale
+// candidates so most ticks make zero AI calls.
 function envIntervalMs(name: string, fallbackMs: number): number {
   const raw = (process.env[name] ?? "").trim();
   if (!raw) return fallbackMs;
@@ -102,16 +102,18 @@ function envIntervalMs(name: string, fallbackMs: number): number {
   if (!Number.isFinite(parsed) || parsed < 1000) return fallbackMs;
   return parsed;
 }
-// Default 2 min: empirically the profit-maximizing cadence for a single-owner
-// prediction-market dashboard.  Most alpha in sports/crypto/news markets
-// persists 1-5 minutes after the catalyst — 2 min captures it before others
-// arbitrage it away while keeping AI reviewer cost bounded.
+// Default 60 s: the cron tick rate.  This is the *opportunity* cadence;
+// adaptive cadence (server/_core/adaptiveCadence.ts) decides which markets
+// actually go to the reviewer on any given tick based on price movement +
+// per-category staleness TTL.  60 s captures fast-moving sports/crypto
+// alpha that persists only 1-3 minutes after a catalyst, while the
+// adaptive layer keeps AI cost bounded by skipping quiet markets.
 //
 // Tune via env:
-//   AUTONOMY_INTERVAL_MS=60000   → 1 min  (max alpha, requires paid OpenRouter model)
-//   AUTONOMY_INTERVAL_MS=120000  → 2 min  (default — sweet spot)
-//   AUTONOMY_INTERVAL_MS=300000  → 5 min  (free-tier-safe; ~30% alpha sacrificed)
-const AUTONOMOUS_TRADING_INTERVAL_MS = envIntervalMs("AUTONOMY_INTERVAL_MS", 2 * 60 * 1000);
+//   AUTONOMY_INTERVAL_MS=30000   → 30 s (max alpha, near-realtime markets)
+//   AUTONOMY_INTERVAL_MS=60000   → 1 min (default — balanced)
+//   AUTONOMY_INTERVAL_MS=120000  → 2 min (cost-conservative)
+const AUTONOMOUS_TRADING_INTERVAL_MS = envIntervalMs("AUTONOMY_INTERVAL_MS", 60 * 1000);
 const ORDER_SYNC_INTERVAL_MS = envIntervalMs("ORDER_SYNC_INTERVAL_MS", 30 * 1000);
 const CROSS_PLATFORM_ARB_INTERVAL_MS = envIntervalMs("CROSS_ARB_INTERVAL_MS", 10 * 1000);
 const POLYMARKET_MARKET_LIMIT = 80;

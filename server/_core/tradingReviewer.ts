@@ -1,5 +1,6 @@
 import { createAnthropicClient } from "./anthropicClient";
 import { createGrokChatCompletion, extractGrokText } from "./grokClient";
+import { intersectReviews } from "./reviewerConsensus";
 import type { KalshiMarket } from "./kalshiMarketData";
 import type { KalshiSignal } from "./kalshiSignals";
 import { ENV } from "./env";
@@ -458,6 +459,62 @@ async function requestGrokReviews(
   };
 }
 
+/**
+ * Non-throwing Grok variant used in parallel team-consensus mode.  When
+ * Grok fails (network error, parse failure, no key), returns
+ * `{reviews: [], failed: true}` so the caller can gracefully degrade to
+ * Claude-only on this batch instead of unwinding the whole Promise.all.
+ *
+ * The CategoryPersona persona is reused for the system prompt — Grok's
+ * reasoning benefits from the same desk-specific mandate Claude gets.
+ */
+async function requestGrokTeamSidecar(
+  reviewPayload: ReturnType<typeof getReviewPayload>,
+  options: TradingReviewerOptions,
+  persona: CategoryPersona | undefined,
+  memorySnippet: string | null,
+): Promise<{ reviews: TradingSignalReview[]; failed: boolean }> {
+  if (!ENV.xaiApiKey) {
+    return { reviews: [], failed: false };
+  }
+
+  const systemPrompt =
+    buildReviewerBaseMandate(persona) +
+    (memorySnippet ? `\n\n${memorySnippet}` : "");
+
+  try {
+    const completion = await createGrokChatCompletion(
+      [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: JSON.stringify(reviewPayload) },
+      ],
+      {
+        model: ENV.grokModel,
+        temperature: 0,
+        max_tokens: 3200,
+        timeoutMs: ENV.grokTimeoutMs,
+      },
+    );
+
+    const text = extractGrokText(completion);
+    const reviews = parseTradingReviews(text);
+
+    if (options.telemetry) {
+      options.telemetry.grokCalls = (options.telemetry.grokCalls ?? 0) + 1;
+    }
+
+    return { reviews, failed: false };
+  } catch (error) {
+    if (options.telemetry) {
+      options.telemetry.grokFailures = (options.telemetry.grokFailures ?? 0) + 1;
+    }
+    options.logger?.warn?.(
+      `[TradingReviewer] Grok team sidecar failed: ${error instanceof Error ? error.message : String(error)}; falling back to Claude-only on this batch.`,
+    );
+    return { reviews: [], failed: true };
+  }
+}
+
 function combineApprovedSignal(
   signal: KalshiSignal,
   review: TradingSignalReview,
@@ -505,11 +562,21 @@ async function callReviewer(
   memorySnippet: string | null = null,
   forceDeep = false,
 ): Promise<ReviewBatchResult> {
-  try {
-    // NEW: Route to Grok if solo mode or team mode with Grok persona
-    const useGrok = options.forceGrokSolo || ENV.enableGrokSolo || (ENV.enableGrokTeam && persona && (persona as any).id?.startsWith("grok."));
+  // Routing precedence:
+  //   1. forceGrokSolo / ENABLE_GROK_SOLO  → Grok-only (legacy single-bot path)
+  //   2. Persona is a Grok persona (id starts with "grok.")  → Grok-only
+  //      (per-desk routing for narrowly Grok-tuned desks)
+  //   3. ENABLE_GROK_TEAM + XAI_API_KEY    → parallel Claude+Grok intersection
+  //                                         (matches Polymarket dual-bot consensus)
+  //   4. otherwise                         → Claude-only
+  const isGrokPersona = Boolean(persona && (persona as any).id?.startsWith?.("grok."));
+  const useGrokSolo =
+    Boolean(options.forceGrokSolo) || ENV.enableGrokSolo || isGrokPersona;
+  const useTeamConsensus =
+    !useGrokSolo && ENV.enableGrokTeam && ENV.xaiApiKey.length > 0;
 
-    if (useGrok && ENV.xaiApiKey) {
+  try {
+    if (useGrokSolo && ENV.xaiApiKey) {
       const response = await requestGrokReviews(
         reviewPayload,
         options,
@@ -524,7 +591,45 @@ async function callReviewer(
       };
     }
 
-    // Default: Claude path
+    if (useTeamConsensus) {
+      // Parallel Claude + Grok with strict intersection.  Mirrors
+      // polymarketSignalReviewer.callReviewer; intersectReviews lives in
+      // reviewerConsensus.ts.  Strict mode = missing-from-Grok is a veto
+      // when Grok actually ran successfully; if Grok fails entirely we
+      // gracefully degrade to Claude-only for this batch.
+      const [claudeResp, grokResp] = await Promise.all([
+        requestAnthropicReviews(
+          reviewPayload,
+          options,
+          persona as CategoryPersona | undefined,
+          stakes,
+          memorySnippet,
+          forceDeep,
+        ),
+        requestGrokTeamSidecar(
+          reviewPayload,
+          options,
+          persona as CategoryPersona | undefined,
+          memorySnippet,
+        ),
+      ]);
+      const claudeMap = new Map(
+        claudeResp.reviews.map((review) => [review.marketId, review]),
+      );
+      const grokRanSuccessfully = !grokResp.failed && grokResp.reviews.length > 0;
+      const merged = intersectReviews(
+        claudeMap,
+        grokResp.reviews,
+        grokRanSuccessfully,
+      );
+      return {
+        reviewsByMarket: merged,
+        failed: false,
+        citations: claudeResp.citations,
+      };
+    }
+
+    // Default: Claude-only path
     const response = await requestAnthropicReviews(
       reviewPayload,
       options,
@@ -540,7 +645,7 @@ async function callReviewer(
     };
   } catch (error) {
     if (options.telemetry) {
-      if ((options.forceGrokSolo || ENV.enableGrokSolo) && ENV.xaiApiKey) {
+      if (useGrokSolo && ENV.xaiApiKey) {
         options.telemetry.grokFailures = (options.telemetry.grokFailures ?? 0) + 1;
       } else {
         options.telemetry.anthropicFailures += 1;

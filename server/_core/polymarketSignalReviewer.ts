@@ -16,6 +16,7 @@
 
 import { createAnthropicClient } from "./anthropicClient";
 import { createGrokChatCompletion, extractGrokText } from "./grokClient";
+import { intersectReviews } from "./reviewerConsensus";
 import type { PolymarketMarket } from "./polymarketAuth";
 import type { PolymarketSignal } from "./polymarketSignals";
 import { ENV } from "./env";
@@ -442,75 +443,7 @@ async function requestGrokPolymarketReviews(
   }
 }
 
-/**
- * Intersect Claude + Grok reviews into a single map keyed by marketId.  A
- * trade is "approved" only if BOTH bots return approved=true (true dual-bot
- * consensus).
- *
- * Confidence/EV adjustments take the more conservative of the two when both
- * approve: min of confidenceAdjustments, min of expectedValueAdjustments.
- *
- * @param strict  When true (Grok succeeded with at least one verdict), a
- *                missing-from-Grok market is a veto — protects against
- *                partial / parse-truncated Grok responses that would
- *                otherwise let solo Claude approval reach execution under
- *                the team-mode banner.  When false (Grok unavailable
- *                entirely), Claude's verdict carries — graceful degradation.
- */
-function intersectReviews(
-  claudeReviewsByMarket: Map<string, TradingSignalReview>,
-  grokReviews: TradingSignalReview[],
-  strict: boolean,
-): Map<string, TradingSignalReview> {
-  if (!strict && grokReviews.length === 0) {
-    return claudeReviewsByMarket;
-  }
-  const grokByMarket = new Map(grokReviews.map((r) => [r.marketId, r]));
-  const merged = new Map<string, TradingSignalReview>();
-  for (const [marketId, claudeReview] of claudeReviewsByMarket) {
-    const grokReview = grokByMarket.get(marketId);
-    if (!grokReview) {
-      if (strict) {
-        // Team mode armed and Grok ran but did not return a verdict for
-        // this market.  Veto rather than letting solo Claude approval
-        // through under the dual-bot consensus banner.
-        merged.set(marketId, {
-          marketId,
-          approved: false,
-          reasoning: "Grok omitted this market from its response; dual-bot consensus requires both verdicts.",
-        });
-      } else {
-        // Grok unavailable entirely — keep Claude's verdict (graceful
-        // degrade; audit log already records grokFailures).
-        merged.set(marketId, claudeReview);
-      }
-      continue;
-    }
-    if (!claudeReview.approved || !grokReview.approved) {
-      merged.set(marketId, {
-        marketId,
-        approved: false,
-        reasoning: claudeReview.approved
-          ? `Grok dissent: ${grokReview.reasoning ?? "(no reason)"}`
-          : claudeReview.reasoning,
-      });
-      continue;
-    }
-    // Both approved — take the more conservative adjustments.
-    const claudeConf = Number(claudeReview.confidenceAdjustment ?? 0);
-    const grokConf = Number(grokReview.confidenceAdjustment ?? 0);
-    const claudeEv = Number(claudeReview.expectedValueAdjustment ?? 0);
-    const grokEv = Number(grokReview.expectedValueAdjustment ?? 0);
-    merged.set(marketId, {
-      marketId,
-      approved: true,
-      confidenceAdjustment: Math.min(claudeConf, grokConf),
-      expectedValueAdjustment: Math.min(claudeEv, grokEv),
-      reasoning: claudeReview.reasoning,
-    });
-  }
-  return merged;
-}
+// intersectReviews moved to ./reviewerConsensus.ts (shared with Kalshi reviewer).
 
 function combineApprovedSignal(
   signal: PolymarketSignal,
