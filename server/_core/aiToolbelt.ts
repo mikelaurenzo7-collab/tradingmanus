@@ -354,6 +354,21 @@ export function buildMemorySystemBlock(memorySnippet: string | null): SystemBloc
 }
 
 /**
+ * Pay-for-yourself scoreboard injection helper.  The scoreboard text is
+ * dynamic (changes every tick as P&L / AI cost / fees update), so this
+ * block is intentionally NOT cached — caching would defeat the purpose
+ * of giving the reviewer a live view of today's running net.
+ */
+export function buildScoreboardSystemBlock(scoreboardText: string | null): SystemBlock | null {
+  if (!scoreboardText || scoreboardText.trim().length === 0) return null;
+  return {
+    type: "text",
+    text: scoreboardText.trim(),
+    // No cache_control — this changes every tick.
+  };
+}
+
+/**
  * Citation extraction.  Anthropic's web_search tool emits two relevant block
  * types in the message content:
  *   - `web_search_tool_result` blocks: contain { content: [{ url, title, ... }] }

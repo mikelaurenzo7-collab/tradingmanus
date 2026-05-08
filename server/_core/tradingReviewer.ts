@@ -9,6 +9,7 @@ import {
   buildCachedSystemPrompt,
   buildExtendedThinking,
   buildMemorySystemBlock,
+  buildScoreboardSystemBlock,
   buildToolList,
   callAnthropicWithTimeout,
   extractAnthropicText,
@@ -25,6 +26,7 @@ import {
   type StakesContext,
   type TriageCandidate,
 } from "./aiToolbelt";
+import { formatScoreboardForPrompt, getCachedScoreboard } from "./dailyScoreboard";
 import {
   classifyMarketCategory,
   groupByCategory,
@@ -344,6 +346,11 @@ async function requestAnthropicReviews(
     ? buildCachedSystemPrompt(buildReviewerBaseMandate(persona))
     : null;
   const memoryBlock = ENV.enableAiDeskMemory ? buildMemorySystemBlock(memorySnippet) : null;
+  // Pay-for-yourself scoreboard — every reviewer call sees today's running
+  // net so it can tighten its bar when net-negative.  Block is uncached
+  // because the scoreboard changes every tick.
+  const scoreboardText = formatScoreboardForPrompt(getCachedScoreboard());
+  const scoreboardBlock = buildScoreboardSystemBlock(scoreboardText);
 
   const messageInput: Record<string, unknown> = {
     model,
@@ -369,11 +376,15 @@ async function requestAnthropicReviews(
     messageInput.temperature = 0;
   }
   if (personaBlocks) {
-    messageInput.system = memoryBlock ? [...personaBlocks, memoryBlock] : personaBlocks;
+    const blocks = [...personaBlocks];
+    if (memoryBlock) blocks.push(memoryBlock);
+    if (scoreboardBlock) blocks.push(scoreboardBlock);
+    messageInput.system = blocks;
   } else {
-    messageInput.system = memorySnippet
-      ? `${buildReviewerBaseMandate(persona)}\n\n${memorySnippet}`
-      : buildReviewerBaseMandate(persona);
+    const sections = [buildReviewerBaseMandate(persona)];
+    if (memorySnippet) sections.push(memorySnippet);
+    if (scoreboardText) sections.push(scoreboardText);
+    messageInput.system = sections.join("\n\n");
   }
   if (thinking) {
     messageInput.thinking = thinking;
@@ -426,7 +437,14 @@ async function requestGrokReviews(
     throw new Error("XAI_API_KEY required for Grok review");
   }
 
-  const systemPrompt = buildReviewerBaseMandate(persona) + (memorySnippet ? `\n\n${memorySnippet}` : "");
+  const scoreboardText = formatScoreboardForPrompt(getCachedScoreboard());
+  const systemPrompt = [
+    buildReviewerBaseMandate(persona),
+    memorySnippet ?? null,
+    scoreboardText ?? null,
+  ]
+    .filter((s): s is string => Boolean(s))
+    .join("\n\n");
   const userContent = JSON.stringify(reviewPayload);
 
   const completion = await createGrokChatCompletion(
@@ -478,9 +496,14 @@ async function requestGrokTeamSidecar(
     return { reviews: [], failed: false };
   }
 
-  const systemPrompt =
-    buildReviewerBaseMandate(persona) +
-    (memorySnippet ? `\n\n${memorySnippet}` : "");
+  const scoreboardText = formatScoreboardForPrompt(getCachedScoreboard());
+  const systemPrompt = [
+    buildReviewerBaseMandate(persona),
+    memorySnippet ?? null,
+    scoreboardText ?? null,
+  ]
+    .filter((s): s is string => Boolean(s))
+    .join("\n\n");
 
   try {
     const completion = await createGrokChatCompletion(

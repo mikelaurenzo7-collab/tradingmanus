@@ -12,6 +12,7 @@
  */
 
 import { ENV } from "./env";
+import { getCachedScoreboard } from "./dailyScoreboard";
 
 // Snapshot exports preserve the prior public surface (other modules / tests
 // that imported the constants by name).  They capture ENV.profitGuardrails
@@ -31,6 +32,36 @@ export const getMinConfidenceAfterAdjust = () => ENV.profitGuardrails.minConfide
 export const getMinDualBotAgreement = () => ENV.profitGuardrails.minDualBotAgreement;
 export const getMaxPortfolioExposurePct = () => ENV.profitGuardrails.maxPortfolioExposurePct;
 export const getMaxCorrelatedGroupPct = () => ENV.profitGuardrails.maxCorrelatedGroupPct;
+
+/**
+ * Pay-for-yourself floor multiplier.  When the day's running net is
+ * negative (we've spent more on AI + fees than we've earned in P&L),
+ * the post-review hard floors auto-tighten in proportion to the deficit.
+ *
+ *   net >= 0      → 1.0 × (no tightening)
+ *   overrun 0-50% → 1.0..1.25 (linear ramp)
+ *   overrun >=100%→ 1.5 ×  (hard cap)
+ *
+ * Capped at 1.5× so the gate never becomes impossibly tight (which would
+ * just mean no trades all day).  Together with cadence throttling and the
+ * reviewer-prompt awareness, this gives us a three-layer pay-for-yourself
+ * defense:
+ *   - Cadence layer (aiCostBudget): throttle reviews when overrunning
+ *   - Reviewer layer: tighten judgment when net-negative
+ *   - This (post-review) layer: hard veto on marginal approvals
+ *
+ * Returns 1.0 when no scoreboard cached (test path / first boot tick).
+ */
+export function getPayForYourselfMultiplier(): number {
+  const sb = getCachedScoreboard();
+  if (!sb) return 1.0;
+  if (sb.netUsd >= 0) return 1.0;
+  const cap = ENV.aiDailyBudgetUsd;
+  if (cap <= 0) return 1.0; // operator opted out of cap → don't auto-tighten
+  const overrunFraction = Math.min(1, sb.effectiveOverrunUsd / cap);
+  // Linear ramp 1.0 → 1.5 across 0 → 100% overrun.
+  return 1.0 + overrunFraction * 0.5;
+}
 
 export const CORRELATED_CATEGORY_GROUPS: Record<string, string[]> = {
   politics: ["politics"],
@@ -65,15 +96,25 @@ export function checkProfitGuardrails(input: {
   const ev = Number(input.expectedValue) || 0;
   const conf = Number(input.confidence) || 0;
 
-  const evFloor = getMinPositiveEv();
-  const confFloor = getMinConfidenceAfterAdjust();
-  // Owner gate: respects the configured env floor with 0.03 / 0.65 acting as
-  // a legacy safety floor against accidental over-lowering of the env value.
-  // - Default config (0.035 / 0.68) → owner sees the configured floor.
+  // Pay-for-yourself: tighten floors when today's net is negative.  Returns
+  // 1.0 (no tightening) when net-positive, when no scoreboard cached, or
+  // when AI_DAILY_BUDGET_USD is unset.  Maxes at 1.5× to keep the gate
+  // sane.  Confidence floor is similarly tightened but capped at 0.95 so
+  // it never becomes mathematically impossible to clear.
+  const pfymult = getPayForYourselfMultiplier();
+  const evFloorBase = getMinPositiveEv();
+  const confFloorBase = getMinConfidenceAfterAdjust();
+  const evFloor = evFloorBase * pfymult;
+  const confFloor = Math.min(0.95, confFloorBase * pfymult);
+  // Owner gate: respects the (now PFY-adjusted) env floor with 0.03 / 0.65
+  // acting as a legacy safety floor against accidental over-lowering of
+  // the env value.
+  // - Default config + net-positive day (0.035 / 0.68) → owner sees the configured floor.
   // - Raised env (e.g. 0.10) → owner respects the raised floor.
   // - Lowered env below 0.03 / 0.65 → owner is clamped to the legacy floor.
+  // - Net-negative day → both branches see the PFY-multiplied floor.
   // The owner never gets a lower floor than non-owner; tightening the env
-  // tightens the gate for everyone.
+  // (or burning the day's budget) tightens the gate for everyone.
   const minEV = input.isOwner ? Math.max(0.03, evFloor) : evFloor;
   const minConf = input.isOwner ? Math.max(0.65, confFloor) : confFloor;
 

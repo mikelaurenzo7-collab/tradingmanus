@@ -13,6 +13,7 @@ import { syncPolymarketPositions } from "./polymarketPositionSync";
 import { createAutonomousTradingLock, createOrderSyncLock, DistributedLock } from "./distributedLock";
 import { runStartupSelfTest } from "./startupSelfTest";
 import { checkBudgetForRun } from "./aiCostBudget";
+import { refreshScoreboard } from "./dailyScoreboard";
 import { logger } from "./logger";
 import { fetchKalshiMarkets } from "./kalshiMarketData";
 import { fetchPolymarketMarkets } from "./polymarketAuth";
@@ -121,22 +122,6 @@ const POLYMARKET_MARKET_LIMIT = 80;
 
 async function runAutonomousScheduler() {
   try {
-    // AI daily cost budget gate.  No-op when AI_DAILY_BUDGET_USD is unset.
-    // When the budget is fully spent for the current UTC day, skip this
-    // tick entirely so no AI calls fire until midnight rollover.
-    const budget = checkBudgetForRun();
-    if (!budget.proceed) {
-      logger.warn(
-        {
-          spentUsd: Number(budget.spentUsd.toFixed(4)),
-          capUsd: budget.capUsd,
-          fractionSpent: Number(budget.fractionSpent.toFixed(3)),
-        },
-        "[Scheduler] AI daily budget exhausted; Kalshi autonomy skipping until UTC rollover",
-      );
-      return;
-    }
-
     const eligibleUsers = await getUsersEligibleForAutomaticScheduledTrading();
     // Mirror the HTTP handler: scope to the configured owner only.
     const scopedUsers = scopeScheduledUsersToTrigger(
@@ -146,6 +131,30 @@ async function runAutonomousScheduler() {
 
     const ownerUser = scopedUsers[0];
     if (!ownerUser) return;
+
+    // Refresh the pay-for-yourself scoreboard before consulting the budget
+    // throttle.  This pulls today's realized P&L + estimated fees from the
+    // DB and combines them with the in-memory AI spend counter so the
+    // throttle gate sees `effectiveOverrun = max(0, ai+fees-pnl)`.
+    await refreshScoreboard(ownerUser.id);
+
+    // AI daily cost budget gate.  No-op when AI_DAILY_BUDGET_USD is unset.
+    // Profitable days never throttle; losing days self-throttle as the
+    // deficit widens.  Cold-start exemption: under $5 AI spend, no throttle.
+    const budget = checkBudgetForRun();
+    if (!budget.proceed) {
+      logger.warn(
+        {
+          spentUsd: Number(budget.spentUsd.toFixed(4)),
+          effectiveOverrunUsd: Number(budget.effectiveOverrunUsd.toFixed(4)),
+          capUsd: budget.capUsd,
+          fractionSpent: Number(budget.fractionSpent.toFixed(3)),
+          reason: budget.reason,
+        },
+        "[Scheduler] Pay-for-yourself overrun exceeded daily cap; Kalshi autonomy skipping until UTC rollover",
+      );
+      return;
+    }
 
     const lock = createAutonomousTradingLock(ownerUser.id);
     const acquired = await lock.acquire({ ttlMs: 5 * 60 * 1000 });
@@ -172,20 +181,6 @@ async function runAutonomousScheduler() {
 // withUserLock around the risk-check → place sequence.
 async function runPolymarketAutonomousScheduler() {
   try {
-    // AI daily cost budget gate (see runAutonomousScheduler).
-    const budget = checkBudgetForRun();
-    if (!budget.proceed) {
-      logger.warn(
-        {
-          spentUsd: Number(budget.spentUsd.toFixed(4)),
-          capUsd: budget.capUsd,
-          fractionSpent: Number(budget.fractionSpent.toFixed(3)),
-        },
-        "[PolymarketScheduler] AI daily budget exhausted; Polymarket autonomy skipping until UTC rollover",
-      );
-      return;
-    }
-
     const eligibleUsers = await getUsersEligibleForAutomaticScheduledTrading();
     const scopedUsers = scopeScheduledUsersToTrigger(
       eligibleUsers as Array<{ id: number; openId: string; email?: string | null }>,
@@ -194,6 +189,25 @@ async function runPolymarketAutonomousScheduler() {
 
     const ownerUser = scopedUsers[0];
     if (!ownerUser) return;
+
+    // Pay-for-yourself scoreboard refresh before the budget gate.  See
+    // runAutonomousScheduler for the rationale.
+    await refreshScoreboard(ownerUser.id);
+
+    const budget = checkBudgetForRun();
+    if (!budget.proceed) {
+      logger.warn(
+        {
+          spentUsd: Number(budget.spentUsd.toFixed(4)),
+          effectiveOverrunUsd: Number(budget.effectiveOverrunUsd.toFixed(4)),
+          capUsd: budget.capUsd,
+          fractionSpent: Number(budget.fractionSpent.toFixed(3)),
+          reason: budget.reason,
+        },
+        "[PolymarketScheduler] Pay-for-yourself overrun exceeded daily cap; Polymarket autonomy skipping until UTC rollover",
+      );
+      return;
+    }
 
     const lock = new DistributedLock(`polymarket_autonomy_user_${ownerUser.id}`);
     const acquired = await lock.acquire({ ttlMs: 5 * 60 * 1000 });

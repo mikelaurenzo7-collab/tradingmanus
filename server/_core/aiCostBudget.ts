@@ -31,6 +31,10 @@
  */
 
 import { logger } from "./logger";
+// Top-level import is safe even though dailyScoreboard imports back from us:
+// both ends export function declarations (hoisted), so neither side observes
+// an undefined binding during module init.
+import { getCachedScoreboard, getColdStartAiUsd } from "./dailyScoreboard";
 
 /** Per-million-token list pricing in USD. */
 type ModelPricing = {
@@ -165,6 +169,16 @@ const STATE: BudgetState = {
   dayBucketMs: utcDayBucketMs(),
 };
 
+/**
+ * Public read of today's AI spend in USD.  Used by dailyScoreboard to
+ * combine with realized P&L + fees into the running net.  Rolls with
+ * UTC midnight automatically.
+ */
+export function getSpentUsdToday(now: number = Date.now()): number {
+  maybeRoll(now);
+  return STATE.spentUsd;
+}
+
 function maybeRoll(now: number = Date.now()): void {
   const bucket = utcDayBucketMs(now);
   if (bucket !== STATE.dayBucketMs) {
@@ -186,16 +200,41 @@ function maybeRoll(now: number = Date.now()): void {
 /**
  * Throttle decision the schedulers consult before each autonomy tick.
  *
- *   proceed=false      → skip this tick entirely (>=100 % budget)
+ * Pay-for-yourself semantics:
+ *   The throttle is driven by `effectiveOverrun = max(0, ai_cost + fees − pnl)`,
+ *   not raw AI spend.  Profitable days never throttle regardless of how much
+ *   we spent on AI — we earned the overhead.  Losing days self-throttle as
+ *   the deficit widens.
+ *
+ *   Cold start: until the bot has spent at least the cold-start floor
+ *   (default $5) on AI today, the throttle stays off regardless of net.
+ *   This prevents the "no trades on day 1 because no P&L yet" deadlock.
+ *
+ *   When AI_DAILY_BUDGET_USD is unset (cap=0), this module is a no-op —
+ *   every tick proceeds with throttleFactor=1.
+ *
+ *   proceed=false      → skip this tick entirely (>=100 % effective overrun)
  *   throttleFactor=N   → multiply adaptive-cadence stale TTL by N
  *                        (>=1; 1 = no throttle)
  */
 export type BudgetDecision = {
   proceed: boolean;
   throttleFactor: number;
+  /** Raw AI spend USD today (informational; not the throttle driver). */
   spentUsd: number;
+  /** Configured daily cap. */
   capUsd: number;
+  /** ai_cost + fees − pnl, clamped to >= 0.  Drives the throttle. */
+  effectiveOverrunUsd: number;
+  /** effectiveOverrunUsd / capUsd, for telemetry / logging. */
   fractionSpent: number;
+  /** Why the throttle decided what it did — surfaces in audit logs. */
+  reason:
+    | "no_cap"
+    | "cold_start"
+    | "net_positive"
+    | "net_negative_throttle"
+    | "exhausted_skip";
 };
 
 export function checkBudgetForRun(now: number = Date.now()): BudgetDecision {
@@ -203,22 +242,84 @@ export function checkBudgetForRun(now: number = Date.now()): BudgetDecision {
   const capUsd = STATE.capUsd;
   const spentUsd = STATE.spentUsd;
   if (capUsd <= 0) {
-    return { proceed: true, throttleFactor: 1, spentUsd, capUsd, fractionSpent: 0 };
+    return {
+      proceed: true,
+      throttleFactor: 1,
+      spentUsd,
+      capUsd,
+      effectiveOverrunUsd: 0,
+      fractionSpent: 0,
+      reason: "no_cap",
+    };
   }
-  const fractionSpent = spentUsd / capUsd;
+
+  // Pull the latest daily scoreboard for P&L-aware throttling.  Cached
+  // value lives in dailyScoreboard.ts and is refreshed at the top of each
+  // scheduler tick before this fn is consulted.  Synchronous read.
+  const scoreboard = getCachedScoreboard();
+  const coldStartFloor = getColdStartAiUsd();
+
+  const effectiveOverrunUsd = scoreboard
+    ? scoreboard.effectiveOverrunUsd
+    : spentUsd; // legacy fallback when no scoreboard yet (first boot tick)
+
+  // Cold-start exemption: a brand-new day with minimal spend is the wrong
+  // place to enforce pay-for-yourself.
+  if (spentUsd < coldStartFloor) {
+    return {
+      proceed: true,
+      throttleFactor: 1,
+      spentUsd,
+      capUsd,
+      effectiveOverrunUsd,
+      fractionSpent: 0,
+      reason: "cold_start",
+    };
+  }
+
+  // Net-positive day: no throttle ever, regardless of AI spend magnitude.
+  if (scoreboard && scoreboard.netUsd > 0) {
+    return {
+      proceed: true,
+      throttleFactor: 1,
+      spentUsd,
+      capUsd,
+      effectiveOverrunUsd: 0,
+      fractionSpent: 0,
+      reason: "net_positive",
+    };
+  }
+
+  const fractionSpent = effectiveOverrunUsd / capUsd;
   if (fractionSpent >= 1.0) {
-    return { proceed: false, throttleFactor: 8, spentUsd, capUsd, fractionSpent };
+    return {
+      proceed: false,
+      throttleFactor: 8,
+      spentUsd,
+      capUsd,
+      effectiveOverrunUsd,
+      fractionSpent,
+      reason: "exhausted_skip",
+    };
   }
   if (fractionSpent >= 0.95) {
-    return { proceed: true, throttleFactor: 4, spentUsd, capUsd, fractionSpent };
+    return { proceed: true, throttleFactor: 4, spentUsd, capUsd, effectiveOverrunUsd, fractionSpent, reason: "net_negative_throttle" };
   }
   if (fractionSpent >= 0.8) {
-    return { proceed: true, throttleFactor: 2, spentUsd, capUsd, fractionSpent };
+    return { proceed: true, throttleFactor: 2, spentUsd, capUsd, effectiveOverrunUsd, fractionSpent, reason: "net_negative_throttle" };
   }
   if (fractionSpent >= 0.6) {
-    return { proceed: true, throttleFactor: 1.5, spentUsd, capUsd, fractionSpent };
+    return { proceed: true, throttleFactor: 1.5, spentUsd, capUsd, effectiveOverrunUsd, fractionSpent, reason: "net_negative_throttle" };
   }
-  return { proceed: true, throttleFactor: 1, spentUsd, capUsd, fractionSpent };
+  return {
+    proceed: true,
+    throttleFactor: 1,
+    spentUsd,
+    capUsd,
+    effectiveOverrunUsd,
+    fractionSpent,
+    reason: "net_negative_throttle",
+  };
 }
 
 /**

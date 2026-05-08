@@ -79,30 +79,105 @@ describe("aiCostBudget", () => {
   });
 
   describe("checkBudgetForRun + recordAiCallCost", () => {
+    // Reset the scoreboard cache before each budget test so prior tests
+    // don't leak a "net positive" state into the throttle logic.
+    beforeEach(async () => {
+      const sb = await import("./_core/dailyScoreboard");
+      sb.__TEST_ONLY__.reset();
+    });
+
     it("returns proceed=true and throttle=1 when no cap is configured", () => {
       __TEST_ONLY__.setCapUsd(0);
       const decision = checkBudgetForRun();
       expect(decision.proceed).toBe(true);
       expect(decision.throttleFactor).toBe(1);
+      expect(decision.reason).toBe("no_cap");
     });
 
-    it("escalates throttle factor as budget burns", () => {
+    it("cold-start exemption: under $5 AI spend, no throttle even when net-down", async () => {
+      const sb = await import("./_core/dailyScoreboard");
       __TEST_ONLY__.setCapUsd(10);
-      __TEST_ONLY__.setSpentUsd(2);
+      __TEST_ONLY__.setSpentUsd(2); // below $5 cold-start floor
+      sb.__TEST_ONLY__.setCached({
+        dayBucketMs: Date.now(),
+        realizedPnlUsd: 0,
+        estimatedFeesUsd: 0,
+        aiSpendUsd: 2,
+        netUsd: -2,
+        effectiveOverrunUsd: 2,
+        refreshedAtMs: Date.now(),
+      });
+      const decision = checkBudgetForRun();
+      expect(decision.proceed).toBe(true);
+      expect(decision.throttleFactor).toBe(1);
+      expect(decision.reason).toBe("cold_start");
+    });
+
+    it("net-positive day: never throttle regardless of AI spend", async () => {
+      const sb = await import("./_core/dailyScoreboard");
+      __TEST_ONLY__.setCapUsd(10);
+      __TEST_ONLY__.setSpentUsd(50); // 5x the cap, but…
+      sb.__TEST_ONLY__.setCached({
+        dayBucketMs: Date.now(),
+        realizedPnlUsd: 200, // …we made $200, so net-positive
+        estimatedFeesUsd: 5,
+        aiSpendUsd: 50,
+        netUsd: 145,
+        effectiveOverrunUsd: 0,
+        refreshedAtMs: Date.now(),
+      });
+      const decision = checkBudgetForRun();
+      expect(decision.proceed).toBe(true);
+      expect(decision.throttleFactor).toBe(1);
+      expect(decision.reason).toBe("net_positive");
+    });
+
+    it("escalates throttle factor as effective overrun burns through cap (net-negative day)", async () => {
+      const sb = await import("./_core/dailyScoreboard");
+      __TEST_ONLY__.setCapUsd(10);
+      // The scoreboard re-computes effectiveOverrun = aiSpend - realizedPnl
+      // live on every read, so we control it via (spentUsd, realizedPnlUsd).
+      // Past cold-start (spent >= $5) and net-negative (overrun > 0).
+      const setOverrun = (overrun: number) => {
+        const aiSpend = 7; // fixed; > $5 to clear cold start
+        __TEST_ONLY__.setSpentUsd(aiSpend);
+        sb.__TEST_ONLY__.setCached({
+          dayBucketMs: Date.now(),
+          realizedPnlUsd: aiSpend - overrun,
+          estimatedFeesUsd: 0,
+          aiSpendUsd: aiSpend,
+          netUsd: -overrun,
+          effectiveOverrunUsd: overrun,
+          refreshedAtMs: Date.now(),
+        });
+      };
+      setOverrun(2);  // 20% of cap=10
       expect(checkBudgetForRun().throttleFactor).toBe(1);
-      __TEST_ONLY__.setSpentUsd(6);
+      setOverrun(6);  // 60%
       expect(checkBudgetForRun().throttleFactor).toBe(1.5);
-      __TEST_ONLY__.setSpentUsd(8.1);
+      setOverrun(8.1); // 81%
       expect(checkBudgetForRun().throttleFactor).toBe(2);
-      __TEST_ONLY__.setSpentUsd(9.6);
+      setOverrun(9.6); // 96%
       expect(checkBudgetForRun().throttleFactor).toBe(4);
     });
 
-    it("returns proceed=false at 100% spent", () => {
+    it("returns proceed=false when effective overrun reaches cap", async () => {
+      const sb = await import("./_core/dailyScoreboard");
       __TEST_ONLY__.setCapUsd(10);
-      __TEST_ONLY__.setSpentUsd(10.01);
+      __TEST_ONLY__.setSpentUsd(20);
+      // overrun = 20 - 5 = 15 (150% of cap)
+      sb.__TEST_ONLY__.setCached({
+        dayBucketMs: Date.now(),
+        realizedPnlUsd: 5,
+        estimatedFeesUsd: 0,
+        aiSpendUsd: 20,
+        netUsd: -15,
+        effectiveOverrunUsd: 15,
+        refreshedAtMs: Date.now(),
+      });
       const decision = checkBudgetForRun();
       expect(decision.proceed).toBe(false);
+      expect(decision.reason).toBe("exhausted_skip");
     });
 
     it("recordAiCallCost accumulates spend against the running total", () => {

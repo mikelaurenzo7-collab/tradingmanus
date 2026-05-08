@@ -13,6 +13,8 @@ import {
   checkProfitGuardrails,
   checkPortfolioExposure,
 } from "./_core/profitGuardrails";
+import { __TEST_ONLY__ as SCOREBOARD } from "./_core/dailyScoreboard";
+import { __TEST_ONLY__ as BUDGET } from "./_core/aiCostBudget";
 
 const ORIGINAL = { ...ENV.profitGuardrails };
 
@@ -186,5 +188,94 @@ describe("env-var parsing fallbacks (env.ts)", () => {
     expect(ORIGINAL.minDualBotAgreement).toBeCloseTo(0.62, 5);
     expect(ORIGINAL.maxPortfolioExposurePct).toBeCloseTo(0.20, 5);
     expect(ORIGINAL.maxCorrelatedGroupPct).toBeCloseTo(0.10, 5);
+  });
+});
+
+describe("pay-for-yourself floor tightening (Layer 3)", () => {
+  // The PFY multiplier reads from dailyScoreboard's cached snapshot.
+  // We mutate that cache + ENV.aiDailyBudgetUsd directly to test the
+  // tightening in isolation.
+
+  afterEach(() => {
+    SCOREBOARD.reset();
+    BUDGET.setSpentUsd(0);
+    ENV.aiDailyBudgetUsd = 0;
+  });
+
+  // The PFY multiplier reads `getCachedScoreboard()` which RE-COMPUTES
+  // netUsd + effectiveOverrunUsd from the cache's realizedPnl/fees plus
+  // the LIVE aiSpend.  So tests must set both the scoreboard cache AND
+  // BUDGET.setSpentUsd to make the live overrun what we want.
+
+  it("does not tighten when net-positive (multiplier = 1.0)", () => {
+    ENV.aiDailyBudgetUsd = 10;
+    BUDGET.setSpentUsd(5);
+    SCOREBOARD.setCached({
+      dayBucketMs: Date.now(),
+      realizedPnlUsd: 50, // net = 50 - 5 = +45
+      estimatedFeesUsd: 0,
+      aiSpendUsd: 5,
+      netUsd: 45,
+      effectiveOverrunUsd: 0,
+      refreshedAtMs: Date.now(),
+    });
+    ENV.profitGuardrails.minPositiveEv = 0.04;
+    const result = checkProfitGuardrails({ expectedValue: 0.04, confidence: 0.80 });
+    expect(result.approved).toBe(true);
+  });
+
+  it("tightens floors when net-negative (overrun 100% → multiplier 1.5)", () => {
+    ENV.aiDailyBudgetUsd = 10;
+    BUDGET.setSpentUsd(20); // live overrun = 20 - 0 = 20 (200% clamped to 100%)
+    SCOREBOARD.setCached({
+      dayBucketMs: Date.now(),
+      realizedPnlUsd: 0,
+      estimatedFeesUsd: 0,
+      aiSpendUsd: 20,
+      netUsd: -20,
+      effectiveOverrunUsd: 20,
+      refreshedAtMs: Date.now(),
+    });
+    ENV.profitGuardrails.minPositiveEv = 0.04;
+    // Effective floor: 0.04 × 1.5 = 0.06.  EV = 0.05 should now be vetoed.
+    const result = checkProfitGuardrails({ expectedValue: 0.05, confidence: 0.80 });
+    expect(result.approved).toBe(false);
+    expect(result.reason).toContain("EV 0.050 below high-leverage minimum");
+  });
+
+  it("does not tighten when AI_DAILY_BUDGET_USD is unset (multiplier = 1.0)", () => {
+    ENV.aiDailyBudgetUsd = 0; // operator opted out of the cap
+    BUDGET.setSpentUsd(100);
+    SCOREBOARD.setCached({
+      dayBucketMs: Date.now(),
+      realizedPnlUsd: 0,
+      estimatedFeesUsd: 0,
+      aiSpendUsd: 100,
+      netUsd: -100,
+      effectiveOverrunUsd: 100,
+      refreshedAtMs: Date.now(),
+    });
+    ENV.profitGuardrails.minPositiveEv = 0.04;
+    const result = checkProfitGuardrails({ expectedValue: 0.04, confidence: 0.80 });
+    expect(result.approved).toBe(true);
+  });
+
+  it("caps confidence floor at 0.95 even at maximum tightening", () => {
+    ENV.aiDailyBudgetUsd = 10;
+    BUDGET.setSpentUsd(20);
+    SCOREBOARD.setCached({
+      dayBucketMs: Date.now(),
+      realizedPnlUsd: 0,
+      estimatedFeesUsd: 0,
+      aiSpendUsd: 20,
+      netUsd: -20,
+      effectiveOverrunUsd: 20,
+      refreshedAtMs: Date.now(),
+    });
+    ENV.profitGuardrails.minConfidenceAfterAdjust = 0.7;
+    // 0.7 × 1.5 = 1.05, but clamped to 0.95.  Confidence 0.96 should clear.
+    ENV.profitGuardrails.minPositiveEv = 0.001;
+    const result = checkProfitGuardrails({ expectedValue: 0.10, confidence: 0.96 });
+    expect(result.approved).toBe(true);
   });
 });

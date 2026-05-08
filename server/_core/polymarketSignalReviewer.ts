@@ -25,6 +25,7 @@ import {
   buildCachedSystemPrompt,
   buildExtendedThinking,
   buildMemorySystemBlock,
+  buildScoreboardSystemBlock,
   buildToolList,
   callAnthropicWithTimeout,
   extractAnthropicText,
@@ -41,6 +42,7 @@ import {
   type StakesContext,
   type TriageCandidate,
 } from "./aiToolbelt";
+import { formatScoreboardForPrompt, getCachedScoreboard } from "./dailyScoreboard";
 import {
   classifyMarketCategory,
   groupByCategory,
@@ -332,6 +334,8 @@ async function requestLLMReviews(
     ? buildCachedSystemPrompt(buildReviewerBaseMandate(persona))
     : null;
   const memoryBlock = ENV.enableAiDeskMemory ? buildMemorySystemBlock(memorySnippet) : null;
+  const scoreboardText = formatScoreboardForPrompt(getCachedScoreboard());
+  const scoreboardBlock = buildScoreboardSystemBlock(scoreboardText);
 
   const messageInput: Record<string, unknown> = {
     model,
@@ -352,11 +356,15 @@ async function requestLLMReviews(
     messageInput.temperature = 0;
   }
   if (personaBlocks) {
-    messageInput.system = memoryBlock ? [...personaBlocks, memoryBlock] : personaBlocks;
+    const blocks = [...personaBlocks];
+    if (memoryBlock) blocks.push(memoryBlock);
+    if (scoreboardBlock) blocks.push(scoreboardBlock);
+    messageInput.system = blocks;
   } else {
-    messageInput.system = memorySnippet
-      ? `${buildReviewerBaseMandate(persona)}\n\n${memorySnippet}`
-      : buildReviewerBaseMandate(persona);
+    const sections = [buildReviewerBaseMandate(persona)];
+    if (memorySnippet) sections.push(memorySnippet);
+    if (scoreboardText) sections.push(scoreboardText);
+    messageInput.system = sections.join("\n\n");
   }
   if (thinking) messageInput.thinking = thinking;
   if (tools) messageInput.tools = tools;
@@ -406,9 +414,14 @@ async function requestGrokPolymarketReviews(
     return { reviews: [], failed: false };
   }
 
-  const systemPrompt =
-    buildReviewerBaseMandate(persona) +
-    (memorySnippet ? `\n\n${memorySnippet}` : "");
+  const scoreboardText = formatScoreboardForPrompt(getCachedScoreboard());
+  const systemPrompt = [
+    buildReviewerBaseMandate(persona),
+    memorySnippet ?? null,
+    scoreboardText ?? null,
+  ]
+    .filter((s): s is string => Boolean(s))
+    .join("\n\n");
 
   try {
     const completion = await createGrokChatCompletion(
