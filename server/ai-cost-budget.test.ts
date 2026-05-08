@@ -23,22 +23,39 @@ describe("aiCostBudget", () => {
 
   describe("computeCallCostUsd", () => {
     it("computes Haiku 4.5 cost from input + output + cache hit/write tokens", () => {
+      // Anthropic billing contract: input_tokens is ALREADY the non-cached
+      // portion; cache_read and cache_creation are reported separately and
+      // billed at their own rates.  Total input = 1000 + 2000 + 1500 = 4500
+      // tokens spread across three rate buckets.
       // Pricing: input $0.80/M, output $4/M, cache read $0.08/M, cache write $1/M.
-      // 1000 input (excludes cache), 500 output, 2000 cache read, 1500 cache write.
-      // Anthropic reports input_tokens including cache reads/creates, so callsite
-      // sends inputTokens = 1000 + 2000 + 1500 = 4500 to mirror the real wire.
       const usd = computeCallCostUsd("claude-haiku-4-5-20251001", {
-        inputTokens: 4500,
+        inputTokens: 1000,
         outputTokens: 500,
         cacheReadInputTokens: 2000,
         cacheCreationInputTokens: 1500,
       });
-      // billable input = 1000 → 1000*0.8/1e6 = 0.0008
-      // output         = 500  → 500*4/1e6   = 0.002
-      // cache read     = 2000 → 2000*0.08/1e6 = 0.00016
-      // cache write    = 1500 → 1500*1/1e6   = 0.0015
-      // total          ≈ 0.00446
+      // base input  = 1000 → 1000*0.8/1e6   = 0.0008
+      // output      = 500  → 500*4/1e6      = 0.002
+      // cache read  = 2000 → 2000*0.08/1e6  = 0.00016
+      // cache write = 1500 → 1500*1/1e6     = 0.0015
+      // total       ≈ 0.00446
       expect(usd).toBeCloseTo(0.00446, 5);
+    });
+
+    it("does NOT subtract cache tokens from inputTokens (Codex regression)", () => {
+      // Regression for the prior bug where billable input was computed as
+      // input - cacheRead - cacheWrite, double-counting the cache discount
+      // and undercounting actual spend (could let autonomy run past the cap).
+      // input_tokens=1000 + cacheRead=5000.  Should bill 1000 at base rate
+      // PLUS 5000 at cache-read rate, NOT 0 (clamped) at base rate.
+      const usd = computeCallCostUsd("claude-haiku-4-5-20251001", {
+        inputTokens: 1000,
+        outputTokens: 0,
+        cacheReadInputTokens: 5000,
+        cacheCreationInputTokens: 0,
+      });
+      // 1000 * 0.80/1e6 + 5000 * 0.08/1e6 = 0.0008 + 0.0004 = 0.0012
+      expect(usd).toBeCloseTo(0.0012, 5);
     });
 
     it("falls back to conservative pricing for unknown models", () => {

@@ -46,6 +46,8 @@ import {
   getAdaptiveCadenceTelemetry,
 } from "./adaptiveCadence";
 import { classifyMarketCategory } from "./marketCategoryRouter";
+import { getDeskWeights, getCategoryWeight } from "./deskAttention";
+import { getCategoryPersona } from "./categoryPersonas";
 import { logger } from "./logger";
 
 const MAX_SCHEDULED_MARKETS = 80;
@@ -394,6 +396,8 @@ export async function runPolymarketAutonomousTrading(
   // SIGNAL_REVIEW_PRICE_DELTA_BPS / SIGNAL_REVIEW_STALE_TTL_MS controls
   // both platforms uniformly.  Per-category TTLs + near-resolution
   // acceleration are layered automatically when env overrides are unset.
+  const deskWeights = await getDeskWeights(userId, "polymarket");
+
   const cadencePassedSignals: typeof executableSignals = [];
   const cadenceSkippedMarketIds: string[] = [];
   for (const signal of executableSignals) {
@@ -406,7 +410,15 @@ export async function runPolymarketAutonomousTrading(
       market?.endDateIso
         ? Math.max(0, (new Date(market.endDateIso).getTime() - Date.now()) / (60 * 60 * 1000))
         : null;
-    if (shouldReviewMarketAt(signal.marketId, sidePrice, { category, hoursToResolution })) {
+    const deskId = category ? getCategoryPersona("polymarket", category).id : undefined;
+    const deskWeight = deskId ? getCategoryWeight(deskWeights, deskId) : 1.0;
+    if (
+      shouldReviewMarketAt(signal.marketId, sidePrice, {
+        category,
+        hoursToResolution,
+        deskWeight,
+      })
+    ) {
       cadencePassedSignals.push(signal);
       if (Number.isFinite(sidePrice)) recordMarketReview(signal.marketId, sidePrice);
     } else {

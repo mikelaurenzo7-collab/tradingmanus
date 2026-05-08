@@ -169,6 +169,64 @@ describe("per-category cadence", () => {
   });
 });
 
+describe("desk attention weight integration", () => {
+  it("hot desk (weight 0.5) tightens TTL → reviews more often", () => {
+    // Crypto base TTL: 60_000.  Weight 0.5 → effective 30_000.  But
+    // floored at MIN_TTL_MS=60_000, so this specific case still floors.
+    // Test instead with a category whose base*weight stays above floor:
+    // sports base 120_000 × 0.5 = 60_000 (right at floor — floors).
+    // weather base 900_000 × 0.5 = 450_000 (well above floor — observable).
+    recordMarketReview("WX-1", 0.5, T0);
+    // 6 min later, no price move, neutral weight: still under 15 min weather TTL.
+    expect(
+      shouldReviewMarketAt("WX-1", 0.5, { category: "weather", deskWeight: 1.0 }, T0 + 6 * 60_000),
+    ).toBe(false);
+    // Same time, hot desk weight 0.5 → effective TTL = 7.5 min → review.
+    expect(
+      shouldReviewMarketAt("WX-1", 0.5, { category: "weather", deskWeight: 0.5 }, T0 + 8 * 60_000),
+    ).toBe(true);
+  });
+
+  it("cold-losing desk (weight 2.0) loosens TTL → reviews less often", () => {
+    recordMarketReview("WX-1", 0.5, T0);
+    // 16 min later, no price move, neutral weight: past 15-min weather TTL → review.
+    expect(
+      shouldReviewMarketAt("WX-1", 0.5, { category: "weather", deskWeight: 1.0 }, T0 + 16 * 60_000),
+    ).toBe(true);
+    // Same time, losing desk weight 2.0 → effective TTL = 30 min → no review yet.
+    expect(
+      shouldReviewMarketAt("WX-1", 0.5, { category: "weather", deskWeight: 2.0 }, T0 + 16 * 60_000),
+    ).toBe(false);
+  });
+
+  it("clamps absurd weights to [0.25, 4]", () => {
+    recordMarketReview("WX-1", 0.5, T0);
+    // Weight 100 should clamp to 4 → 15min × 4 = 60 min effective TTL.
+    expect(
+      shouldReviewMarketAt("WX-1", 0.5, { category: "weather", deskWeight: 100 }, T0 + 30 * 60_000),
+    ).toBe(false);
+    expect(
+      shouldReviewMarketAt("WX-1", 0.5, { category: "weather", deskWeight: 100 }, T0 + 65 * 60_000),
+    ).toBe(true);
+  });
+
+  it("undefined / NaN / 0 / negative weights fall back to neutral 1.0", () => {
+    recordMarketReview("WX-1", 0.5, T0);
+    // 16 min later, no price move: neutral → review.  Each invalid weight
+    // value should also produce review (treated as neutral 1.0).
+    for (const bad of [undefined, NaN, 0, -1]) {
+      expect(
+        shouldReviewMarketAt(
+          "WX-1",
+          0.5,
+          { category: "weather", deskWeight: bad as number | undefined },
+          T0 + 16 * 60_000,
+        ),
+      ).toBe(true);
+    }
+  });
+});
+
 describe("getAdaptiveCadenceTelemetry", () => {
   it("reports zero when the cache is empty", () => {
     const t = getAdaptiveCadenceTelemetry(T0);

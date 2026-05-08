@@ -41,6 +41,8 @@ import {
   getAdaptiveCadenceTelemetry,
 } from "./adaptiveCadence";
 import { classifyMarketCategory } from "./marketCategoryRouter";
+import { getDeskWeights, getCategoryWeight } from "./deskAttention";
+import { getCategoryPersona } from "./categoryPersonas";
 import {
   alertIfConsecutiveFailures,
   alertEquityDrop,
@@ -626,6 +628,12 @@ async function generateScheduledSignals(userId: number, minConfidence: number, a
   // through quota.  Markets that pass the gate are recorded *before* the
   // call so a thrown reviewer error doesn't leave them re-reviewable on
   // the next tick (the staleness TTL still guarantees a heartbeat).
+  // Load per-desk attention weights from rolling win-rate (cached 5 min
+  // per user).  Winning desks get tighter TTL → reviewed more often;
+  // losing desks get looser TTL → reviewed less often.  Cold desks
+  // (<10 trades) stay neutral.
+  const deskWeights = await getDeskWeights(userId, "kalshi");
+
   const cadencePassed: typeof instructionFilteredSignals = [];
   const cadenceSkippedMarketIds: string[] = [];
   for (const signal of instructionFilteredSignals) {
@@ -633,9 +641,9 @@ async function generateScheduledSignals(userId: number, minConfidence: number, a
     const sidePrice = market
       ? Number(signal.side === "yes" ? market.yesPrice : market.noPrice)
       : NaN;
-    // Per-category cadence + near-resolution acceleration.  Crypto/sports
-    // get tighter TTLs than weather/politics; markets near resolution get
-    // a 2-10× tighter TTL.  See server/_core/adaptiveCadence.ts.
+    // Per-category cadence + near-resolution acceleration + win-rate
+    // attention weight.  See server/_core/adaptiveCadence.ts and
+    // server/_core/deskAttention.ts.
     const category = market
       ? classifyMarketCategory({ category: market.category, title: market.title })
       : undefined;
@@ -643,7 +651,15 @@ async function generateScheduledSignals(userId: number, minConfidence: number, a
       market?.resolutionDate
         ? Math.max(0, (new Date(market.resolutionDate).getTime() - Date.now()) / (60 * 60 * 1000))
         : null;
-    if (shouldReviewMarketAt(signal.marketId, sidePrice, { category, hoursToResolution })) {
+    const deskId = category ? getCategoryPersona("kalshi", category).id : undefined;
+    const deskWeight = deskId ? getCategoryWeight(deskWeights, deskId) : 1.0;
+    if (
+      shouldReviewMarketAt(signal.marketId, sidePrice, {
+        category,
+        hoursToResolution,
+        deskWeight,
+      })
+    ) {
       cadencePassed.push(signal);
       if (Number.isFinite(sidePrice)) recordMarketReview(signal.marketId, sidePrice);
     } else {

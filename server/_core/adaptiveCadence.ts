@@ -120,30 +120,48 @@ function readStaleTtlMs(): number {
 }
 
 /**
- * Optional context to bias the cadence per-market based on category and
- * proximity to resolution.  When omitted, the global env defaults apply
- * (legacy behaviour).
+ * Optional context to bias the cadence per-market based on category,
+ * proximity to resolution, and the desk's recent win-rate.  When omitted,
+ * the global env defaults apply (legacy behaviour).
  */
 export type ReviewContext = {
   /** Market domain — crypto/sports/etc. tightens or loosens base TTL. */
   category?: MarketCategory;
   /** Hours until the market resolves; <= 6 h tightens cadence aggressively. */
   hoursToResolution?: number | null;
+  /**
+   * Per-desk attention weight from rolling win-rate.
+   *   < 1   tightens cadence (winning desk → review more often)
+   *   = 1   neutral / cold desks
+   *   > 1   loosens cadence (losing desk → review less often)
+   * Computed in deskAttention.ts; loaded once per autonomy run.
+   */
+  deskWeight?: number;
 };
+
+function clampWeight(w: number | undefined): number {
+  if (typeof w !== "number" || !Number.isFinite(w) || w <= 0) return 1.0;
+  // Bound the weight so a runaway desk-memory record can't push attention
+  // to extremes — 0.25× to 4× is a reasonable rolling-window range.
+  return Math.max(0.25, Math.min(4, w));
+}
 
 /**
  * Compute the effective stale TTL (ms) for one market, layering:
  *   1. SIGNAL_REVIEW_STALE_TTL_MS env override (wins if set; legacy)
  *   2. Per-category base TTL  (e.g. crypto 1 min, weather 15 min)
  *   3. Near-resolution multiplier (×0.1 when <1 h to resolution)
- *   4. AI cost budget throttle (×1..×4 as the budget burns)
+ *   4. Per-desk attention weight (winning desks tighter, losing looser)
+ *   5. AI cost budget throttle (×1..×4 as the budget burns)
  */
 function effectiveStaleTtlMs(context: ReviewContext, throttle: number): number {
+  const deskWeight = clampWeight(context.deskWeight);
   // Env override always wins — operators tuning a global TTL should not
-  // be silently overridden by per-category defaults.
+  // be silently overridden by per-category defaults.  Desk weight + cost
+  // throttle still apply on top so the budget guardrail is never bypassed.
   const envOverride = (process.env.SIGNAL_REVIEW_STALE_TTL_MS ?? "").trim();
   if (envOverride) {
-    return readStaleTtlMs() * throttle;
+    return Math.max(MIN_TTL_MS, Math.round(readStaleTtlMs() * deskWeight * throttle));
   }
   const baseTtl =
     context.category && CATEGORY_BASE_TTL_MS[context.category] !== undefined
@@ -151,19 +169,20 @@ function effectiveStaleTtlMs(context: ReviewContext, throttle: number): number {
       : DEFAULT_STALE_TTL_MS;
   const accelerated = baseTtl * nearResolutionMultiplier(context.hoursToResolution ?? null);
   // Floor at MIN_TTL_MS so we never go below the safe minimum.
-  return Math.max(MIN_TTL_MS, Math.round(accelerated * throttle));
+  return Math.max(MIN_TTL_MS, Math.round(accelerated * deskWeight * throttle));
 }
 
 function effectivePriceDeltaBps(context: ReviewContext, throttle: number): number {
+  const deskWeight = clampWeight(context.deskWeight);
   const envOverride = (process.env.SIGNAL_REVIEW_PRICE_DELTA_BPS ?? "").trim();
   if (envOverride) {
-    return readPriceDeltaBps() * throttle;
+    return readPriceDeltaBps() * deskWeight * throttle;
   }
   const baseBps =
     context.category && CATEGORY_BASE_DELTA_BPS[context.category] !== undefined
       ? CATEGORY_BASE_DELTA_BPS[context.category]
       : DEFAULT_PRICE_DELTA_BPS;
-  return baseBps * throttle;
+  return baseBps * deskWeight * throttle;
 }
 
 /**

@@ -101,25 +101,32 @@ export type CostUsage = {
 
 /**
  * Compute the USD cost of one model call given the usage block returned
- * by Anthropic (or our normalised Grok counterpart).  Cache-read tokens
- * are billed at the discounted rate; cache-write tokens at the small
- * surcharge above input rate.  Output tokens at the output rate.
+ * by Anthropic (or our normalised Grok counterpart).
+ *
+ * Anthropic billing contract for prompt caching:
+ *   - `input_tokens`              = non-cached, non-cache-created input
+ *                                   (already net of cache reads/writes;
+ *                                   billed at the base input rate)
+ *   - `cache_creation_input_tokens` = tokens written to cache
+ *                                   (billed at the cache-write surcharge)
+ *   - `cache_read_input_tokens`   = tokens served from cache
+ *                                   (billed at the cache-read discount)
+ *
+ * Total input = input_tokens + cache_creation + cache_read.  Each part
+ * has its own rate, so we sum them directly without subtraction.
  */
 export function computeCallCostUsd(model: string, usage: CostUsage): number {
   const p = priceFor(model);
-  const input = Number(usage.inputTokens ?? 0) || 0;
+  const baseInput = Number(usage.inputTokens ?? 0) || 0;
   const output = Number(usage.outputTokens ?? 0) || 0;
   const cacheRead = Number(usage.cacheReadInputTokens ?? 0) || 0;
   const cacheWrite = Number(usage.cacheCreationInputTokens ?? 0) || 0;
-
-  // Anthropic reports input_tokens INCLUDING cache reads, so subtract them.
-  const billableInput = Math.max(0, input - cacheRead - cacheWrite);
 
   const cacheReadRate = p.cacheReadUsdPerMillion ?? p.inputUsdPerMillion;
   const cacheWriteRate = p.cacheWriteUsdPerMillion ?? p.inputUsdPerMillion;
 
   return (
-    (billableInput * p.inputUsdPerMillion +
+    (baseInput * p.inputUsdPerMillion +
       output * p.outputUsdPerMillion +
       cacheRead * cacheReadRate +
       cacheWrite * cacheWriteRate) /
