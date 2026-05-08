@@ -566,7 +566,14 @@ async function generateScheduledSignals(
   userId: number,
   minConfidence: number,
   activeInstructions: any[] = [],
-  options: { aggressiveMode?: boolean; moonshotMode?: boolean } = {},
+  options: {
+    aggressiveMode?: boolean;
+    moonshotMode?: boolean;
+    /** Live Kalshi balance for THIS user, fetched upstream with the user's
+     *  encrypted credentials (NOT the process-level KALSHI_KEY_ID). All
+     *  ensemble percentage thresholds derive from this value. */
+    liveCapitalUsd?: number;
+  } = {},
 ) {
   const markets = await fetchKalshiMarkets({ status: "open" });
   const filteredMarkets = applyInstructionsToMarkets(markets, activeInstructions);
@@ -793,7 +800,16 @@ async function generateScheduledSignals(
   let ensembleApproved = savedSignals;
   if (ENV.anthropicApiKey && savedSignals.length > 0) {
     try {
-      const liveCapitalUsd = await getLiveCapitalUsd().catch(() => 0);
+      // Prefer the per-user equity passed in by the caller (already
+      // fetched with this user's encrypted credentials). Fall back to the
+      // process-level balance ONLY if the caller didn't supply one — which
+      // means the path is a non-scheduled / test invocation. Without this
+      // fallback the ensemble would silently veto every signal in tests.
+      const liveCapitalUsd =
+        Number.isFinite(options.liveCapitalUsd) &&
+        (options.liveCapitalUsd ?? 0) > 0
+          ? (options.liveCapitalUsd as number)
+          : await getLiveCapitalUsd().catch(() => 0);
       const marketsByIdLocal = new Map(
         actionableMarkets.map((m) => [m.id, m]),
       );
@@ -896,11 +912,14 @@ async function generateScheduledSignals(
     `user:${userId}`,
   );
 
+  // CRITICAL: return the ENSEMBLE-FILTERED list — not `savedSignals`. The
+  // caller iterates these to place orders, so a Sonnet/Opus veto must
+  // remove the signal here too, not just from the saved-signals table.
   return {
     actionableMarkets,
-    savedSignals,
+    savedSignals: ensembleApproved,
     executionCandidates: getTopSignalsForExecution(
-      savedSignals,
+      ensembleApproved,
       5,
       Math.max(0.6, minConfidence)
     ),
@@ -1256,6 +1275,11 @@ export async function runScheduledAutonomousTrading(
       // Moonshot only takes effect when aggressiveMode is also on — it's an
       // advanced sleeve, not a beginner toggle.
       moonshotMode: preferences.aggressiveMode && preferences.moonshotMode,
+      // Pass the THIS-USER live equity (already fetched upstream at line
+      // ~1210 with the user's encrypted creds, not process-level
+      // KALSHI_KEY_ID) so the ensemble's capital-based gates score against
+      // the correct bankroll.
+      liveCapitalUsd: equityResult.equity,
     },
   );
   const candidateSet = executionCandidates.map(summarizeCandidate);
