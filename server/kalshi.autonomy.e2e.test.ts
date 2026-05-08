@@ -60,6 +60,7 @@ vi.mock("./db", () => ({
   getLatestAutonomyRun: mocks.getLatestAutonomyRun,
   getTodayKalshiOrderCount: mocks.getTodayKalshiOrderCount,
   getKalshiCapital: mocks.getKalshiCapital,
+  getKalshiTradeHistory: vi.fn().mockResolvedValue([]),
   syncKalshiCapitalWithLiveEquity: mocks.syncKalshiCapitalWithLiveEquity,
   getOpenKalshiPositions: mocks.getOpenKalshiPositions,
   getTodayRealizedLoss: mocks.getTodayRealizedLoss,

@@ -842,6 +842,11 @@ async function generateScheduledSignals(
         );
         return {
           marketId: sig.marketId,
+          // (marketId, side, signalType) is the stable composite identity
+          // used to match ensemble verdicts back to source signals. The
+          // signal generator can emit multiple signal types/sides per
+          // market — keying by marketId alone collapses them.
+          signalType: String(sig.signalType ?? "default"),
           ticker: sig.marketId,
           category: market?.category ?? "other",
           side: sig.side,
@@ -862,14 +867,17 @@ async function generateScheduledSignals(
       const ensembleResult = await applyEnsembleFilter(ensembleInputs, {
         liveCapitalUsd,
       });
-      // Build a map of marketId → ensemble-adjusted (confidence, EV,
-      // implied probability) so we can carry the Tier 2/3 trims into the
-      // saved signal. Filtering by ID alone (the prior approach) used the
-      // pre-ensemble values for downstream ranking + sizing, defeating
-      // the entire purpose of running Sonnet/Opus.
-      const adjustmentByMarket = new Map(
+      // Build a composite-key map (marketId:side:signalType) → ensemble-
+      // adjusted (confidence, EV, implied probability) so we can carry the
+      // Tier 2/3 trims into the saved signal. Keying by marketId alone
+      // would collapse multiple signals on the same market — Sonnet/Opus
+      // could veto one candidate but approve another with the same
+      // marketId, and the wrong one would survive.
+      const compositeKey = (s: { marketId: string; side: string; signalType?: string }) =>
+        `${s.marketId}::${s.side}::${String(s.signalType ?? "default")}`;
+      const adjustmentByKey = new Map(
         ensembleResult.approvedSignals.map((s) => [
-          s.marketId,
+          compositeKey(s),
           {
             confidence: s.confidence,
             expectedValue: s.expectedValue,
@@ -878,9 +886,17 @@ async function generateScheduledSignals(
         ]),
       );
       ensembleApproved = savedSignals
-        .filter((s) => adjustmentByMarket.has(s.marketId))
+        .filter((s) => adjustmentByKey.has(compositeKey({
+          marketId: s.marketId,
+          side: s.side,
+          signalType: s.signalType,
+        })))
         .map((s) => {
-          const adj = adjustmentByMarket.get(s.marketId);
+          const adj = adjustmentByKey.get(compositeKey({
+            marketId: s.marketId,
+            side: s.side,
+            signalType: s.signalType,
+          }));
           if (!adj) return s;
           return {
             ...s,
@@ -1755,17 +1771,56 @@ export async function runScheduledAutonomousTrading(
   }
 
   // ── New percentage-based drawdown breaker (additive to riskLimits) ──────
-  // Pauses new entries when daily loss exceeds 3% of LIVE capital (default)
-  // or weekly loss exceeds 8%. The dollar-based `riskLimits.maxLossPerDay`
-  // gate below stays as a hard backstop. This new gate scales automatically
-  // with deposits.
+  // Pauses new entries on:
+  //   - daily loss > DAILY_DRAWDOWN_PAUSE_FRAC of live capital (default 3 %)
+  //   - weekly loss > WEEKLY_DRAWDOWN_PAUSE_FRAC of live capital (default 8 %)
+  //   - consecutive losses ≥ COLD_STREAK_LOSS_COUNT (default 5)
+  //   - 7-day realized edge < COLD_STREAK_MIN_REALIZED_EDGE_PCT (default 3 %)
+  //
+  // Inputs are computed from the trailing 7-day closed-trade history. The
+  // dollar-based `riskLimits.maxLossPerDay` gate stays as a hard backstop.
+  const closedTrades7d = await db
+    .getKalshiTradeHistory(500, userId)
+    .then((rows: any[]) =>
+      rows.filter((t: any) => {
+        if (t.positionStatus !== "closed") return false;
+        const closedAt = t.closedAt ? new Date(t.closedAt).getTime() : 0;
+        return closedAt > Date.now() - 7 * 24 * 60 * 60 * 1000;
+      }),
+    )
+    .catch(() => [] as any[]);
+  // Weekly realized PnL = sum of realizedPnl across the trailing 7d window.
+  const weeklyPnlUsd = closedTrades7d.reduce(
+    (acc: number, t: any) => acc + Number(t.realizedPnl ?? 0),
+    0,
+  );
+  // Consecutive losses: walk newest-first; stop at first non-loss.
+  const newestFirst = [...closedTrades7d].sort((a: any, b: any) => {
+    const aTs = a.closedAt ? new Date(a.closedAt).getTime() : 0;
+    const bTs = b.closedAt ? new Date(b.closedAt).getTime() : 0;
+    return bTs - aTs;
+  });
+  let consecutiveLosses = 0;
+  for (const t of newestFirst) {
+    if (Number(t.realizedPnl ?? 0) < 0) consecutiveLosses += 1;
+    else break;
+  }
+  // 7-day realized edge: total notional traded vs realized PnL (return %).
+  const weeklyNotional = closedTrades7d.reduce(
+    (acc: number, t: any) =>
+      acc + Number(t.entryPrice ?? 0) * Number(t.quantity ?? 0),
+    0,
+  );
+  const weeklyRealizedEdgePct =
+    weeklyNotional > 0 ? weeklyPnlUsd / weeklyNotional : 1;
+
   const drawdown = await import("./drawdownBreaker").then((m) =>
     m.checkDrawdownBreaker({
       capitalUsd: equityResult.equity,
       todayPnlUsd: -todayRealizedLoss, // loss is positive in storage; PnL is negative
-      weeklyPnlUsd: 0, // weekly not yet wired into autonomy hot path
-      consecutiveLosses: 0, // cold-streak data not yet wired (follow-up)
-      weeklyRealizedEdgePct: 1, // default high so the cold-streak rule doesn't trip on cold start
+      weeklyPnlUsd,
+      consecutiveLosses,
+      weeklyRealizedEdgePct,
     }),
   );
   if (!drawdown.allowed) {

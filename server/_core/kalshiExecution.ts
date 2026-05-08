@@ -832,6 +832,11 @@ export async function closeKalshiPosition(
         yes_price: side === "yes" ? priceCents : undefined,
         no_price: side === "no" ? priceCents : undefined,
         time_in_force: "good_till_cancelled",
+        // Honor the same maker preference as opens — exits should also rest
+        // as a maker (cheaper fee tier) rather than crossing the book and
+        // paying taker fees. Without this, every close paid 4× more in fees
+        // even when PREFER_MAKER_ORDERS=true.
+        post_only: ENV.preferMakerOrders ? true : undefined,
       };
 
       const closeResult = await signedKalshiRequest<{ order?: { order_id?: string; id?: string } }>(
@@ -1097,9 +1102,11 @@ async function logCalibrationOutcomeFromClose(input: {
 }): Promise<void> {
   try {
     const { logTradeOutcome } = await import("./performanceTracker");
-    const { kalshiSignals } = await import("../../drizzle/schema");
+    const { kalshiSignals, kalshiMarkets } = await import(
+      "../../drizzle/schema"
+    );
     const { getDb } = await import("../db");
-    const { eq, desc } = await import("drizzle-orm");
+    const { and, eq, lte, desc } = await import("drizzle-orm");
     const database = await getDb();
 
     let predictedConfidence = 0;
@@ -1107,16 +1114,38 @@ async function logCalibrationOutcomeFromClose(input: {
     let predictedWinProbability = input.entryPrice;
     let category = "other";
     if (database) {
+      // Look up the ENTRY signal — the most recent signal for this user +
+      // market at-or-before the trade was placed. Without the time bound,
+      // a market reviewed multiple times before close would log the LATEST
+      // signal's prediction (which may differ from what the trader saw
+      // when the position opened) → corrupts Brier samples.
       const rows = await database
         .select({
           confidence: kalshiSignals.confidence,
           expectedValue: kalshiSignals.expectedValue,
           impliedProbability: kalshiSignals.impliedProbability,
+          signalType: kalshiSignals.signalType,
         })
         .from(kalshiSignals)
-        .where(eq(kalshiSignals.marketId, input.marketId))
+        .where(
+          and(
+            eq(kalshiSignals.userId, input.userId),
+            eq(kalshiSignals.marketId, input.marketId),
+            lte(kalshiSignals.createdAt, new Date(input.placedAtMs)),
+          ),
+        )
         .orderBy(desc(kalshiSignals.createdAt))
         .limit(1);
+      // `category` lives on the markets table (kalshiSignals doesn't carry
+      // it). Pull it separately so per-category Brier scoring works.
+      const marketRows = await database
+        .select({ category: kalshiMarkets.category })
+        .from(kalshiMarkets)
+        .where(eq(kalshiMarkets.marketId, input.marketId))
+        .limit(1);
+      if (marketRows[0]?.category) {
+        category = String(marketRows[0].category);
+      }
       if (rows[0]) {
         predictedConfidence = Number(rows[0].confidence ?? 0);
         predictedEvFraction = Number(rows[0].expectedValue ?? 0);

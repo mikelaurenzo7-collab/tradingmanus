@@ -375,6 +375,12 @@ import { calculateNetEv } from "./feeCalculator";
 
 export interface SignalForEnsemble {
   marketId: string;
+  /** Signal type from the originating generator (momentum / value /
+   *  contrarian / sentiment / etc). Combined with `marketId` + `side`
+   *  this forms the stable composite identity used by callers to match
+   *  ensemble verdicts back to source signals — multiple signals can
+   *  exist per market. */
+  signalType: string;
   ticker: string;
   category: string;
   side: "yes" | "no";
@@ -534,7 +540,15 @@ async function processOneSignalForEnsemble(
       },
       "[Ensemble] post-cost net EV below MIN_NET_EV floor after Tier 2/3 adjustment — vetoing",
     );
-    return { signal: s, ensemble, adjusted: null };
+    // Mark the ensemble as not approved and update the reasoning so the
+    // exported verdict trail reflects this gate. Without this, audit logs
+    // would still show `approved: true` for a signal we just vetoed.
+    const vetoedEnsemble: EnsembleVerdict = {
+      ...ensemble,
+      approved: false,
+      reasoning: `Post-cost net EV ${(net.netEvFraction * 100).toFixed(2)}% < MIN_NET_EV ${(minNetEv * 100).toFixed(2)}% (after Tier 2/3 cost ${ensemble.totalAiCostUsd.toFixed(4)}). ${ensemble.reasoning}`,
+    };
+    return { signal: s, ensemble: vetoedEnsemble, adjusted: null };
   }
 
   return { signal: s, ensemble, adjusted: adjustedSignal };

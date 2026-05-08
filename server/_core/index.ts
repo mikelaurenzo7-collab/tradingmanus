@@ -316,19 +316,30 @@ async function runWeeklyCalibration() {
   try {
     const eligibleUsers = await getUsersEligibleForAutomaticScheduledTrading();
     for (const user of eligibleUsers as Array<{ id: number }>) {
-      const report = await runCalibrationJob({ userId: user.id });
-      logger.info(
-        {
-          userId: user.id,
-          totalSamples: report.totalSamples,
-          overallBrier: Number(report.overallBrierScore.toFixed(4)),
-          evThresholdAdjustment: report.evThresholdAdjustment,
-        },
-        "[Calibration] weekly run complete for user %d",
-        user.id,
-      );
+      // Per-user try/catch — best-effort. One user's failure must not abort
+      // the rest of the sweep.
+      try {
+        const report = await runCalibrationJob({ userId: user.id });
+        logger.info(
+          {
+            userId: user.id,
+            totalSamples: report.totalSamples,
+            overallBrier: Number(report.overallBrierScore.toFixed(4)),
+            evThresholdAdjustment: report.evThresholdAdjustment,
+          },
+          "[Calibration] weekly run complete for user %d",
+          user.id,
+        );
+      } catch (err) {
+        logger.warn(
+          { err, userId: user.id },
+          "[Calibration] weekly run failed for user %d",
+          user.id,
+        );
+      }
     }
   } catch (err) {
+    // Outer catch covers fetch-level failures (e.g. eligibleUsers query).
     logger.warn({ err }, "[Calibration] weekly run failed");
   }
 }
