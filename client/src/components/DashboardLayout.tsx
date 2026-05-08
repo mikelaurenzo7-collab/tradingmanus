@@ -50,18 +50,9 @@ export default function DashboardLayout({
 
   const loginMutation = trpc.auth.login.useMutation({
     onSuccess: async (data: any) => {
-      if (
-        data &&
-        typeof data === "object" &&
-        "requiresSubscription" in data &&
-        data.requiresSubscription
-      ) {
-        const checkoutUrl = "checkoutUrl" in data ? data.checkoutUrl : null;
-        setLoginError(data.message || "Subscription required.");
-        if (checkoutUrl)
-          window.open(String(checkoutUrl), "_blank", "noopener,noreferrer");
-        return;
-      }
+      // Subscription gate removed in single-tenant cleanup; old payloads
+      // could still surface in flight during the deploy, so the 2FA branch
+      // below stays as the only special-case handling.
       if (
         data &&
         typeof data === "object" &&
@@ -86,9 +77,6 @@ export default function DashboardLayout({
       utils.auth.me.setData(undefined, data.user);
       setPassword("");
       setLoginError(null);
-      if (data.checkoutUrl) {
-        window.open(data.checkoutUrl, "_blank", "noopener,noreferrer");
-      }
       await utils.auth.me.invalidate();
     },
     onError: error =>
@@ -140,7 +128,8 @@ export default function DashboardLayout({
         name: name.trim(),
         email: email.trim(),
         password,
-        subscriptionTier: selectedTier,
+        // subscriptionTier kept on the procedure schema for backward
+        // compat (defaults to "starter" server-side); not surfaced in UI.
       });
       return;
     }

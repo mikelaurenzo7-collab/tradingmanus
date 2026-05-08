@@ -405,7 +405,6 @@ export default function TradingAutonomy() {
                   const active = form.executionCadence === c;
                   const cadenceDescriptions: Record<string, string> = {
                     manual_only: "Only acts during sessions you manually start.",
-                    session_assisted: "Stays active while you're guiding in-app.",
                     hourly_watch: "Scans markets once per hour automatically.",
                     continuous_watch: "Most proactive — scans as often as allowed.",
                   };

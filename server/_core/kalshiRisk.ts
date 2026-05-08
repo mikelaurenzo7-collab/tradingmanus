@@ -103,6 +103,15 @@ export function applyMarketImpactGuardrails(input: {
   dailyVolumeUsd: number;
   expectedValue: number;
   dailyVolatility?: number;
+  /**
+   * Aggressive Mode lets through small-impact orders that the standard
+   * guardrail would otherwise downsize.  Specifically, in aggressive mode
+   * we skip the EV-based 50% defensive reduction (the impact-on-EV check
+   * still computes telemetry but no longer halves the size).  Hard
+   * blocks (shouldBlockOrder from estimateMarketImpact, recommendedQuantity
+   * < 1) still apply — we only relax the soft downsize.
+   */
+  aggressiveMode?: boolean;
 }): MarketImpactGuardrailResult {
   const quantity = normalizeOrderQuantity(input.quantity);
   const limitPrice = normalizeLimitPrice(input.limitPrice);
@@ -134,7 +143,14 @@ export function applyMarketImpactGuardrails(input: {
 
   // Only apply extra EV-based reduction when impact is already in the
   // reduce-size regime; this avoids shrinking otherwise-acceptable orders.
-  if (evImpactExceeded && impact.shouldReduceSize && recommendedQuantity > 0) {
+  // Aggressive Mode skips this defensive halving — hard impact blocks
+  // still apply, but a small EV-vs-impact ratio no longer auto-downsizes.
+  if (
+    !input.aggressiveMode &&
+    evImpactExceeded &&
+    impact.shouldReduceSize &&
+    recommendedQuantity > 0
+  ) {
     recommendedQuantity = Math.max(1, Math.floor(recommendedQuantity * 0.5));
   }
 

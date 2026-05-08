@@ -1,13 +1,10 @@
 export const AUTONOMY_MODES = [
   "manual",
-  "approval_required",
-  "semi_autonomous",
   "fully_autonomous",
 ] as const;
 
 export const EXECUTION_CADENCES = [
   "manual_only",
-  "session_assisted",
   "hourly_watch",
   "continuous_watch",
 ] as const;
@@ -39,7 +36,7 @@ export type TradingPreferences = {
 };
 
 export const DEFAULT_TRADING_PREFERENCES: TradingPreferences = {
-  autonomyMode: "approval_required",
+  autonomyMode: "manual",
   liveTradingEnabled: false,
   paperTradeMode: false,
   executionCadence: "manual_only",
@@ -53,11 +50,7 @@ export const DEFAULT_TRADING_PREFERENCES: TradingPreferences = {
 export function getAutonomyModeLabel(mode: TradingAutonomyMode) {
   switch (mode) {
     case "manual":
-      return "Manual"
-    case "approval_required":
-      return "Approval required";
-    case "semi_autonomous":
-      return "Semi-autonomous";
+      return "Manual";
     case "fully_autonomous":
       return "Fully autonomous";
   }
@@ -67,10 +60,6 @@ export function getAutonomyModeDescription(mode: TradingAutonomyMode) {
   switch (mode) {
     case "manual":
       return "The agent may research and rank setups, but it will not place live orders.";
-    case "approval_required":
-      return "The agent may identify trades continuously, but every live order still needs your explicit approval before submission.";
-    case "semi_autonomous":
-      return "The agent may place smaller eligible live trades automatically within your thresholds, while larger trades still pause for approval.";
     case "fully_autonomous":
       return "The agent may place live orders automatically within your stored guardrails whenever your account settings allow direct autonomous trading.";
   }
@@ -80,8 +69,6 @@ export function getExecutionCadenceLabel(cadence: ExecutionCadence) {
   switch (cadence) {
     case "manual_only":
       return "Manual only";
-    case "session_assisted":
-      return "During guided sessions";
     case "hourly_watch":
       return "Hourly autonomous trading";
     case "continuous_watch":

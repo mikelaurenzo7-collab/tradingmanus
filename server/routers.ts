@@ -7,9 +7,7 @@ import {
   createOwnerSessionToken,
   createOwnerRefreshToken,
   createSessionTokenForUser,
-  getCheckoutUrlForTier,
   hashAccountPassword,
-  isSubscriptionEntitled,
   refreshAccessToken,
   ensureOwnerUser,
   validateOwnerCredentials,
@@ -154,15 +152,12 @@ function getRequiredUserId(ctx: { user: { id?: number | null } }) {
 const tradingPreferencesInput = z.object({
   autonomyMode: z.enum([
     "manual",
-    "approval_required",
-    "semi_autonomous",
     "fully_autonomous",
   ]),
   liveTradingEnabled: z.boolean(),
   paperTradeMode: z.boolean().optional(),
   executionCadence: z.enum([
     "manual_only",
-    "session_assisted",
     "hourly_watch",
     "continuous_watch",
   ]),
@@ -426,17 +421,8 @@ export const appRouter = router({
             });
           }
 
-          if (!isSubscriptionEntitled(user)) {
-            return {
-              requiresSubscription: true as const,
-              message:
-                "Your subscription is not active. Choose a plan to unlock the trading desk.",
-              checkoutUrl: getCheckoutUrlForTier(user.subscriptionTier),
-              billingPortalUrl: ENV.billingPortalUrl || null,
-              user,
-            };
-          }
-
+          // Subscription entitlement gate removed — single-tenant deployment
+          // has no paid-tier requirement, the owner is always entitled.
           await db.updateUser(user.id, { lastSignedIn: new Date() });
           user = (await db.getUserById(user.id)) ?? user;
         }
@@ -605,8 +591,6 @@ export const appRouter = router({
         return {
           user,
           trialEndsAt,
-          checkoutUrl: getCheckoutUrlForTier(input.subscriptionTier) || null,
-          billingPortalUrl: ENV.billingPortalUrl || null,
         };
       }),
 

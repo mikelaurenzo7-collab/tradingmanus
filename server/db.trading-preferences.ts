@@ -3,16 +3,23 @@ import { tradingPreferences } from "../drizzle/schema";
 import { getDb } from "./db";
 import { logger } from "./_core/logger";
 
+// Single-tenant simplification: removed `approval_required` and
+// `semi_autonomous` from the surface — they were friction modes designed
+// for hand-holding non-owner users, and the owner already has Aggressive
+// Mode + manual as the meaningful axes.  Existing DB rows holding the
+// removed values are coerced to `fully_autonomous` on read so behaviour
+// is well-defined; the underlying Postgres enum still has the old
+// labels for backward compat (PostgreSQL doesn't support DROP VALUE).
 export const AUTONOMY_MODES = [
   "manual",
-  "approval_required",
-  "semi_autonomous",
   "fully_autonomous",
 ] as const;
 
+// Same simplification for executionCadence: `session_assisted` was an
+// in-app-supervised mode that's pointless for an owner who isn't there
+// most of the time.  Coerced to `continuous_watch` on read.
 export const EXECUTION_CADENCES = [
   "manual_only",
-  "session_assisted",
   "hourly_watch",
   "continuous_watch",
 ] as const;
@@ -62,7 +69,7 @@ export type TradingPreferencesSettings = {
 };
 
 export const DEFAULT_TRADING_PREFERENCES: TradingPreferencesSettings = {
-  autonomyMode: "approval_required",
+  autonomyMode: "manual",
   liveTradingEnabled: false,
   paperTradeMode: false,
   aggressiveMode: true,
@@ -102,16 +109,31 @@ function clamp(value: number, minimum: number, maximum: number) {
 function normalizeTradingPreferences(
   input?: Partial<TradingPreferencesSettings> | null
 ): TradingPreferencesSettings {
+  // Coerce removed legacy values to their replacement before validation.
+  // Old DB rows or stale clients may still carry approval_required /
+  // semi_autonomous / session_assisted; map them so behaviour is
+  // well-defined.  approval_required and semi_autonomous both become
+  // "manual" (safe default — user must re-arm explicitly via Aggressive
+  // Mode rather than silently graduating to fully_autonomous).
+  const rawMode = input?.autonomyMode as string | undefined;
+  const coercedMode =
+    rawMode === "approval_required" || rawMode === "semi_autonomous"
+      ? "manual"
+      : rawMode;
+  const rawCadence = input?.executionCadence as string | undefined;
+  const coercedCadence =
+    rawCadence === "session_assisted" ? "continuous_watch" : rawCadence;
+
   const autonomyMode = AUTONOMY_MODES.includes(
-    input?.autonomyMode as TradingAutonomyMode
+    coercedMode as TradingAutonomyMode
   )
-    ? (input?.autonomyMode as TradingAutonomyMode)
+    ? (coercedMode as TradingAutonomyMode)
     : DEFAULT_TRADING_PREFERENCES.autonomyMode;
 
   const executionCadence = EXECUTION_CADENCES.includes(
-    input?.executionCadence as ExecutionCadence
+    coercedCadence as ExecutionCadence
   )
-    ? (input?.executionCadence as ExecutionCadence)
+    ? (coercedCadence as ExecutionCadence)
     : DEFAULT_TRADING_PREFERENCES.executionCadence;
 
   const riskPosture = RISK_POSTURES.includes(

@@ -60,11 +60,10 @@ export function deriveSetupStatus(input: DeriveInput): SetupStatus {
   const accountConnected = Boolean(input.accountStatus?.connected);
   const equity = input.accountStatus?.equity ?? 0;
   const funded = accountConnected && equity > 0;
-  const autonomyMode = input.tradingPreferences?.autonomyMode ?? "approval_required";
+  const autonomyMode = input.tradingPreferences?.autonomyMode ?? "manual";
   const executionCadence = input.tradingPreferences?.executionCadence ?? "manual_only";
   const configured =
     autonomyMode !== "manual" &&
-    autonomyMode !== "approval_required" &&
     executionCadence !== "manual_only";
   const armed = Boolean(input.tradingPreferences?.liveTradingEnabled);
 

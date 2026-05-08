@@ -103,24 +103,11 @@ export function verifyAccountPassword(
   return timingSafeEqualString(actualDigest, expectedDigest);
 }
 
-export function getCheckoutUrlForTier(tier: "starter" | "pro" | "fund") {
-  if (tier === "fund") return ENV.fundCheckoutUrl;
-  if (tier === "pro") return ENV.proCheckoutUrl;
-  return ENV.starterCheckoutUrl;
-}
-
-export function isSubscriptionEntitled(
-  user: Pick<
-    User,
-    "subscriptionStatus" | "subscriptionCurrentPeriodEnd" | "role"
-  >
-) {
-  if (user.role === "admin") return true;
-  const status = user.subscriptionStatus ?? "trialing";
-  if (status !== "active" && status !== "trialing") return false;
-  if (!user.subscriptionCurrentPeriodEnd) return true;
-  return new Date(user.subscriptionCurrentPeriodEnd).getTime() > Date.now();
-}
+// Subscription entitlement + tier-checkout helpers removed —
+// single-tenant deployment has no paid plans.  If you eventually
+// multi-tenant this, restore them from git history (the schema columns
+// subscriptionTier / subscriptionStatus / subscriptionCurrentPeriodEnd
+// remain intact in drizzle/schema.ts so the data path is preserved).
 
 export async function ensureOwnerUser() {
   // The owner is the operator: they deploy the system, set the env-level

@@ -157,9 +157,6 @@ function shouldSkip(
   if (preferences.executionCadence === "manual_only") {
     return "manual-only cadence skips away-from-chat execution";
   }
-  if (preferences.executionCadence === "session_assisted") {
-    return "session-assisted cadence only allows supervised in-app execution";
-  }
   return null;
 }
 
@@ -681,30 +678,7 @@ export async function runPolymarketAutonomousTrading(
     };
   }
 
-  // --- 5. Gating: semi-autonomous requires approval above threshold ---
-  if (
-    preferences.autonomyMode === "semi_autonomous" &&
-    scaledSize > preferences.requireApprovalAbove
-  ) {
-    await db.logAuditEvent(
-      "polymarket_order_blocked_or_failed",
-      JSON.stringify({
-        market: best.marketId,
-        side: best.side,
-        reason: "RISK_BLOCK_APPROVAL_REQUIRED",
-        size: scaledSize,
-      }),
-      triggeredByOpenId,
-    );
-    return {
-      success: true,
-      status: "blocked",
-      reason: "semi-autonomous mode requires manual approval for orders above threshold",
-      signalsGenerated: allSignals.length,
-      executionCandidates: candidates.length,
-      orderPlaced: false,
-    };
-  }
+  // (semi_autonomous approval gate removed — single-tenant simplification.)
 
   // --- 6. Place the order ---
   // Per-user paper-mode short-circuit: never hit the live Polymarket CLOB

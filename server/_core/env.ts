@@ -70,9 +70,6 @@ export const ENV = {
   grokTimeoutMs: normalizePositiveInt(process.env.GROK_TIMEOUT_MS, 15000),
   enableGrokSolo: normalizeBoolean(process.env.ENABLE_GROK_SOLO, false),
   enableGrokTeam: normalizeBoolean(process.env.ENABLE_GROK_TEAM, true),
-  // Paper graduation for non-owners
-  paperGraduationWinRate: normalizePositiveInt(process.env.PAPER_GRADUATION_WIN_RATE, 55) / 100,
-  paperMinTrades: normalizePositiveInt(process.env.PAPER_MIN_TRADES, 30),
   // High-leverage profit guardrails — owner can retune in Railway without a code change.
   // Values are read once at boot; redeploy after editing.  Out-of-range values fall back
   // to the defaults below (matches the prior hardcoded floor).
@@ -123,10 +120,6 @@ export const ENV = {
   // spent (resets at UTC midnight).  See server/_core/aiCostBudget.ts.
   // 0 (or unset) = unlimited.
   aiDailyBudgetUsd: normalizeFloat(process.env.AI_DAILY_BUDGET_USD, 0, { min: 0, max: 100000 }),
-  starterCheckoutUrl: normalize(process.env.STARTER_CHECKOUT_URL),
-  proCheckoutUrl: normalize(process.env.PRO_CHECKOUT_URL),
-  fundCheckoutUrl: normalize(process.env.FUND_CHECKOUT_URL),
-  billingPortalUrl: normalize(process.env.BILLING_PORTAL_URL),
 };
 
 const REQUIRED_SERVER_ENV = [

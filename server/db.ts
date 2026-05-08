@@ -365,10 +365,7 @@ export async function getUsersEligibleForAutomaticScheduledTrading() {
       and(
         inArray(users.role, ["user", "admin"]),
         eq(tradingPreferences.liveTradingEnabled, 1),
-        inArray(tradingPreferences.autonomyMode, [
-          "semi_autonomous",
-          "fully_autonomous",
-        ]),
+        eq(tradingPreferences.autonomyMode, "fully_autonomous"),
         inArray(tradingPreferences.executionCadence, [
           "hourly_watch",
           "continuous_watch",
@@ -1312,12 +1309,9 @@ export async function createAutonomyRun(run: {
   triggerSource: string;
   autonomyMode:
     | "manual"
-    | "approval_required"
-    | "semi_autonomous"
     | "fully_autonomous";
   executionCadence:
     | "manual_only"
-    | "session_assisted"
     | "hourly_watch"
     | "continuous_watch";
   appliedGuardrails?: string | null;

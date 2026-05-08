@@ -895,16 +895,7 @@ function evaluateExecutionCandidate(
     };
   }
 
-  if (
-    input.preferences.autonomyMode === "semi_autonomous" &&
-    input.maxBudget > input.preferences.requireApprovalAbove
-  ) {
-    return {
-      eligible: false as const,
-      blockedBy: "approval_threshold_exceeded",
-      reason: "semi-autonomous mode requires manual approval above the saved threshold",
-    };
-  }
+  // (semi_autonomous approval gate removed — single-tenant simplification.)
 
   if (signal.confidence < input.effectiveMinConfidence) {
     return {
@@ -964,9 +955,7 @@ async function shouldSkipScheduledRun(
     return "manual-only cadence skips away-from-chat execution";
   }
 
-  if (preferences.executionCadence === "session_assisted") {
-    return "session-assisted cadence only allows supervised in-app execution";
-  }
+  // (session_assisted cadence removed — single-tenant simplification.)
 
   if (preferences.executionCadence === "hourly_watch") {
     const latestRun = await db.getLatestAutonomyRun(user.id);
@@ -1243,22 +1232,7 @@ export async function runScheduledAutonomousTrading(
     });
   }
 
-  if (preferences.autonomyMode === "approval_required") {
-    return finalize({
-      status: "generated_only",
-      reason: "approval-required mode never auto-submits away-from-chat orders",
-      signalsGenerated: savedSignals.length,
-      executionCandidates: executionCandidates.length,
-      orderPlaced: false,
-      candidateMarketId: executionCandidates[0]?.marketId,
-      autonomyMode: preferences.autonomyMode,
-      executionCadence: preferences.executionCadence,
-      candidateSet,
-      decision: buildDecisionDetails(executionCandidates[0], {
-        blockedBy: "approval_required_mode",
-      }),
-    });
-  }
+  // (approval_required mode removed — single-tenant simplification.)
 
   // Serialise the risk-check-and-execute block per user to prevent TOCTOU
   // races where two concurrent autonomy runs both pass risk checks against
@@ -1525,6 +1499,7 @@ export async function runScheduledAutonomousTrading(
     dailyVolumeUsd: effectiveDailyVolumeUsd,
     dailyVolatility: Number(eligibleSignal.metadata?.volatility ?? Number.NaN),
     expectedValue: Number(eligibleSignal.expectedValue ?? 0),
+    aggressiveMode: preferences.aggressiveMode,
   });
   const quantity = impactGuardrail.shouldBlockOrder
     ? 0
