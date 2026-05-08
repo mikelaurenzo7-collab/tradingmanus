@@ -968,6 +968,10 @@ async function generateScheduledSignals(
       afterConditionFilter: conditionFilteredSignals.length,
       afterInstructionFilter: instructionFilteredSignals.length,
       afterReviewerFilter: savedSignals.length,
+      // Final-stage count after Tier 2/3 (Sonnet/Opus) ensemble vetoes.
+      // Equals afterReviewerFilter when ANTHROPIC_API_KEY is unset (the
+      // ensemble degrades to a Grok-only pass-through).
+      afterEnsembleFilter: ensembleApproved.length,
       activeInstructionCount: activeInstructions.length,
       minConfidence,
     }),
