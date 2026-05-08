@@ -220,6 +220,13 @@ export async function placeKalshiOrder(
       yes_price: side === "yes" ? priceCents : undefined,
       no_price: side === "no" ? priceCents : undefined,
       time_in_force: "good_till_cancelled",
+      // ENV.preferMakerOrders=true (default) → post-only. Forces the order
+      // to either rest as a maker (cheaper fee tier: 0.0175 × notional × p
+      // × (1−p)) or be cancelled outright by Kalshi if it would cross the
+      // book. The taker tier is 4× more expensive — a $4 trade pays $0.08
+      // vs $0.02 — so post-only is on by default. Disable via env when
+      // urgency outweighs fee savings.
+      post_only: ENV.preferMakerOrders ? true : undefined,
     };
 
     // Write the local ledger row BEFORE submitting to the exchange so we
@@ -1042,10 +1049,115 @@ export async function closePositionFromFill(
       })
       .where(eq(kalshiPositions.id, position.id));
 
+    // Log to the calibration / cost-vs-profit outcome stream. Best-effort —
+    // the calibration job uses this to compute Brier per reviewer per
+    // category. Fields that aren't directly on the position row (predicted
+    // EV/confidence from the original signal) are filled in by joining
+    // against `kalshiSignals` if available; otherwise we log 0 so calibration
+    // can still see the outcome.
+    void logCalibrationOutcomeFromClose({
+      userId: position.userId,
+      marketId,
+      side,
+      count: closeQuantity,
+      entryPrice,
+      exitPrice,
+      realizedPnl,
+      placedAtMs: position.openedAt
+        ? new Date(position.openedAt).getTime()
+        : Date.now(),
+      settledAtMs: Date.now(),
+    });
+
     return true;
   } catch (error) {
     logger.error({ err: error, marketId, side }, "[Kalshi] Close position from fill error");
     return false;
+  }
+}
+
+/**
+ * Best-effort outcome logger for the calibration job. Pulls
+ * predictedConfidence + impliedProbability + category from the most-recent
+ * kalshiSignals row for this market (if any) and writes a
+ * `kalshi_trade_outcome_log` audit event with realized P&L.
+ *
+ * Fire-and-forget: never blocks the close-position path.
+ */
+async function logCalibrationOutcomeFromClose(input: {
+  userId: number;
+  marketId: string;
+  side: "yes" | "no";
+  count: number;
+  entryPrice: number;
+  exitPrice: number;
+  realizedPnl: number;
+  placedAtMs: number;
+  settledAtMs: number;
+}): Promise<void> {
+  try {
+    const { logTradeOutcome } = await import("./performanceTracker");
+    const { kalshiSignals } = await import("../../drizzle/schema");
+    const { getDb } = await import("../db");
+    const { eq, desc } = await import("drizzle-orm");
+    const database = await getDb();
+
+    let predictedConfidence = 0;
+    let predictedEvFraction = 0;
+    let predictedWinProbability = input.entryPrice;
+    let category = "other";
+    if (database) {
+      const rows = await database
+        .select({
+          confidence: kalshiSignals.confidence,
+          expectedValue: kalshiSignals.expectedValue,
+          impliedProbability: kalshiSignals.impliedProbability,
+        })
+        .from(kalshiSignals)
+        .where(eq(kalshiSignals.marketId, input.marketId))
+        .orderBy(desc(kalshiSignals.createdAt))
+        .limit(1);
+      if (rows[0]) {
+        predictedConfidence = Number(rows[0].confidence ?? 0);
+        predictedEvFraction = Number(rows[0].expectedValue ?? 0);
+        predictedWinProbability = Number(rows[0].impliedProbability ?? input.entryPrice);
+      }
+    }
+
+    const notional = input.count * input.entryPrice;
+    const realizedReturnFraction =
+      notional > 0 ? input.realizedPnl / notional : 0;
+    const outcome: "win" | "loss" | "scratch" =
+      input.realizedPnl > 0.005
+        ? "win"
+        : input.realizedPnl < -0.005
+          ? "loss"
+          : "scratch";
+
+    await logTradeOutcome(input.userId, {
+      tradeId: `${input.marketId}_${input.placedAtMs}`,
+      ticker: input.marketId,
+      category,
+      side: input.side,
+      count: input.count,
+      entryPriceUsd: input.entryPrice,
+      exitPriceUsd: input.exitPrice,
+      predictedEvFraction,
+      predictedConfidence,
+      predictedWinProbability,
+      realizedPnlUsd: input.realizedPnl,
+      realizedReturnFraction,
+      feeUsd: 0, // best-effort: actual fees are aggregated via fills sync
+      grokCostUsd: ENV.grokCostPerReviewUsd,
+      placedAtMs: input.placedAtMs,
+      settledAtMs: input.settledAtMs,
+      outcome,
+    });
+  } catch (err) {
+    logger.warn(
+      { err, marketId: input.marketId },
+      "[Calibration] outcome log failed (best-effort)",
+    );
   }
 }
 

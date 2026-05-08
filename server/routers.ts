@@ -758,6 +758,84 @@ export const appRouter = router({
   advanced: advancedRouter,
 
   kalshi: router({
+    /**
+     * Live guardrails snapshot — surfaces all percentage thresholds in
+     * dollar terms based on the operator's current Kalshi balance.
+     * Drives the dashboard's "Guardrails Status" tab so the operator can
+     * see how thresholds scale as they deposit more capital.
+     */
+    getGuardrailsSnapshot: protectedProcedure.query(async () => {
+      const { ENV } = await import("./_core/env");
+      const { getLiveCapitalUsd } = await import("./_core/liveCapital");
+      const capitalUsd = await getLiveCapitalUsd().catch(() => 0);
+
+      const tier =
+        capitalUsd > ENV.scannerCapHighTierUsd
+          ? "high"
+          : capitalUsd > ENV.scannerCapMidTierUsd
+            ? "mid"
+            : "low";
+      const maxAnalysesPerDay =
+        tier === "high"
+          ? ENV.scannerMaxAnalysesPerDayHighTier
+          : tier === "mid"
+            ? ENV.scannerMaxAnalysesPerDayMidTier
+            : ENV.scannerMaxAnalysesPerDay;
+
+      return {
+        capitalUsd,
+        kelly: {
+          fraction: ENV.profitGuardrails.kellyFraction,
+          minPctOfCapital: ENV.profitGuardrails.kellyMinPctOfCapital,
+          maxPctOfCapital: ENV.profitGuardrails.kellyMaxPctOfCapital,
+          minDollarsPerPosition:
+            capitalUsd * ENV.profitGuardrails.kellyMinPctOfCapital,
+          maxDollarsPerPosition:
+            capitalUsd * ENV.profitGuardrails.kellyMaxPctOfCapital,
+        },
+        ev: {
+          minNetEv: ENV.profitGuardrails.minNetEv,
+          minConfidence: ENV.profitGuardrails.minConfidenceAfterAdjust,
+        },
+        exposure: {
+          maxPortfolioPct: ENV.profitGuardrails.maxPortfolioExposurePct,
+          maxPortfolioUsd:
+            capitalUsd * ENV.profitGuardrails.maxPortfolioExposurePct,
+          maxCorrelatedGroupPct:
+            ENV.profitGuardrails.maxCorrelatedGroupPct,
+          maxCorrelatedGroupUsd:
+            capitalUsd * ENV.profitGuardrails.maxCorrelatedGroupPct,
+        },
+        drawdown: {
+          dailyPauseFrac: ENV.profitGuardrails.dailyDrawdownPauseFrac,
+          dailyPauseUsd:
+            capitalUsd * ENV.profitGuardrails.dailyDrawdownPauseFrac,
+          weeklyPauseFrac: ENV.profitGuardrails.weeklyDrawdownPauseFrac,
+          weeklyPauseUsd:
+            capitalUsd * ENV.profitGuardrails.weeklyDrawdownPauseFrac,
+          coldStreakLossCount:
+            ENV.profitGuardrails.coldStreakLossCount,
+          coldStreakMinRealizedEdgePct:
+            ENV.profitGuardrails.coldStreakMinRealizedEdgePct,
+        },
+        ensemble: {
+          highStakesPctOfCapital: ENV.highStakesPctOfCapital,
+          highStakesUsd: capitalUsd * ENV.highStakesPctOfCapital,
+          catastrophicPctOfCapital: ENV.catastrophicPctOfCapital,
+          catastrophicUsd: capitalUsd * ENV.catastrophicPctOfCapital,
+          highStakesResolutionMinutes: ENV.highStakesResolutionMinutes,
+          anthropicConfigured: ENV.anthropicApiKey.length > 0,
+        },
+        scanner: {
+          tier,
+          baseAnalysesPerDay: ENV.scannerBaseAnalysesPerDay,
+          maxAnalysesPerDay,
+          midTierUsd: ENV.scannerCapMidTierUsd,
+          highTierUsd: ENV.scannerCapHighTierUsd,
+        },
+      };
+    }),
+
     // Market data
     getMarkets: protectedProcedure
       .input(

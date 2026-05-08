@@ -22,7 +22,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { ENV } from "./env";
 import { logger } from "./logger";
-import { getGrokPersona, injectVerbatimRulesBlock } from "./grokPersonas";
+import { getGrokPersona } from "./grokPersonas";
 import { logAuditEvent } from "../db";
 import type { MarketCategory } from "./marketCategoryRouter";
 
@@ -242,10 +242,9 @@ async function runClaudeReview(
   // turn (vary per market — would invalidate the prefix).
   const personaBlock = buildPersonaSystemBlock(input.category);
 
-  // Note: `injectVerbatimRulesBlock` is called inside the user prompt
-  // builder — keeping the persona stable in the system slot lets prompt
-  // caching kick in across all markets in the same category.
-  void injectVerbatimRulesBlock;
+  // Resolution rules are injected into the user prompt (vary per market) —
+  // keeping the persona stable in the system slot lets prompt caching
+  // hit across all markets in the same category.
 
   const userPrompt = buildUserPrompt(input);
 
@@ -347,8 +346,9 @@ async function runClaudeReview(
         );
       }
     } else if (block.type === "thinking") {
-      const t = (block as unknown as { thinking?: string }).thinking;
-      if (t) thinkingSummary = t;
+      // SDK narrows `block` to ThinkingBlock here; `.thinking` is a
+      // required string on that type.
+      thinkingSummary = block.thinking;
     }
   }
 

@@ -31,7 +31,7 @@ auto-scale as your account grows.
 | --- | --- |
 | Net EV (after exact Kalshi fees + amortized AI cost) | ≥ 6.5 % |
 | Confidence after ensemble adjustment + self-consistency | ≥ 76 % |
-| Position size: ¼ Kelly | clamped 0.5 %–2 % of live capital |
+| Position size: ½ Kelly (moderately aggressive default) | clamped 0.5 %–4 % of live capital |
 | Total open exposure | ≤ 20 % of live capital |
 | Per correlated category | ≤ 10 % of live capital |
 | Daily drawdown circuit breaker | pause new entries on > 3 % loss |
@@ -179,8 +179,8 @@ MIN_NET_EV                              # 0.065
 MIN_CONFIDENCE_AFTER_ADJUST             # 0.76
 MAX_PORTFOLIO_EXPOSURE_PCT              # 0.20
 MAX_CORRELATED_GROUP_PCT                # 0.10
-KELLY_FRACTION                          # 0.25
-KELLY_MAX_PCT_OF_CAPITAL                # 0.02
+KELLY_FRACTION                          # 0.5  (¼=0.25 conservative, ½=0.5 moderate, ¾=0.75 aggressive)
+KELLY_MAX_PCT_OF_CAPITAL                # 0.04
 KELLY_MIN_PCT_OF_CAPITAL                # 0.005
 DAILY_DRAWDOWN_PAUSE_FRAC               # 0.03
 WEEKLY_DRAWDOWN_PAUSE_FRAC              # 0.08
@@ -220,7 +220,7 @@ OWNER_OVERRIDE_DOMAINS                  # CSV, e.g. "weather,economics"
 | `server/_core/liveCapital.ts` | Live Kalshi balance reader (30s cache). All percentage thresholds derive from this. |
 | `server/_core/kalshiClient.ts` | RSA-PSS signed Kalshi Trade API client + demo toggle. |
 | `server/_core/feeCalculator.ts` | Exact Kalshi fee math (0.0175 maker / 0.07 taker, round-up to cent) + net EV. |
-| `server/_core/kellySizer.ts` | ¼ Kelly with 0.5 %–2 % live-capital clamp. |
+| `server/_core/kellySizer.ts` | ½ Kelly with 0.5 %–4 % live-capital clamp (env-overridable). |
 | `server/_core/drawdownBreaker.ts` | 3 %/8 % drawdown + cold-streak pause. |
 | `server/_core/dynamicScanner.ts` | 5-base / 8-10-12-conditional analysis budget (capital-tier-scaled). |
 | `server/_core/profitGuardrails.ts` | Single canonical entry-gate (`checkFullEntry`). |

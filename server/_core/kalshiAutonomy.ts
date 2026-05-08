@@ -851,10 +851,33 @@ async function generateScheduledSignals(
       const ensembleResult = await applyEnsembleFilter(ensembleInputs, {
         liveCapitalUsd,
       });
-      const approvedIds = new Set(
-        ensembleResult.approvedSignals.map((s) => s.marketId),
+      // Build a map of marketId → ensemble-adjusted (confidence, EV,
+      // implied probability) so we can carry the Tier 2/3 trims into the
+      // saved signal. Filtering by ID alone (the prior approach) used the
+      // pre-ensemble values for downstream ranking + sizing, defeating
+      // the entire purpose of running Sonnet/Opus.
+      const adjustmentByMarket = new Map(
+        ensembleResult.approvedSignals.map((s) => [
+          s.marketId,
+          {
+            confidence: s.confidence,
+            expectedValue: s.expectedValue,
+            impliedProbability: s.impliedProbability,
+          },
+        ]),
       );
-      ensembleApproved = savedSignals.filter((s) => approvedIds.has(s.marketId));
+      ensembleApproved = savedSignals
+        .filter((s) => adjustmentByMarket.has(s.marketId))
+        .map((s) => {
+          const adj = adjustmentByMarket.get(s.marketId);
+          if (!adj) return s;
+          return {
+            ...s,
+            confidence: adj.confidence,
+            expectedValue: adj.expectedValue,
+            impliedProbability: adj.impliedProbability,
+          };
+        });
 
       // Audit-log the per-signal trail so the calibration job can score
       // Brier per reviewer per category.
@@ -887,6 +910,18 @@ async function generateScheduledSignals(
         { err },
         "[Ensemble] post-filter failed; falling back to Grok-only signals",
       );
+      // Persist the failure to the audit trail per repo convention.
+      await db
+        .logAuditEvent(
+          "ai_reviewer_failure",
+          JSON.stringify({
+            phase: "ensemble_post_filter",
+            error: err instanceof Error ? err.message : String(err),
+            signalCount: savedSignals.length,
+          }),
+          `user:${userId}`,
+        )
+        .catch(() => {});
     }
   }
 
@@ -1702,6 +1737,42 @@ export async function runScheduledAutonomousTrading(
         orderExposure,
         maxLossOnTrade,
         blockedBy: "per_trade_risk_limit",
+      }),
+    }, {
+      appliedGuardrails: safeJsonStringify(buildAppliedGuardrails(preferences, riskLimits)),
+    });
+  }
+
+  // ── New percentage-based drawdown breaker (additive to riskLimits) ──────
+  // Pauses new entries when daily loss exceeds 3% of LIVE capital (default)
+  // or weekly loss exceeds 8%. The dollar-based `riskLimits.maxLossPerDay`
+  // gate below stays as a hard backstop. This new gate scales automatically
+  // with deposits.
+  const drawdown = await import("./drawdownBreaker").then((m) =>
+    m.checkDrawdownBreaker({
+      capitalUsd: equityResult.equity,
+      todayPnlUsd: -todayRealizedLoss, // loss is positive in storage; PnL is negative
+      weeklyPnlUsd: 0, // weekly not yet wired into autonomy hot path
+      consecutiveLosses: 0, // cold-streak data not yet wired (follow-up)
+      weeklyRealizedEdgePct: 1, // default high so the cold-streak rule doesn't trip on cold start
+    }),
+  );
+  if (!drawdown.allowed) {
+    return finalize({
+      status: "blocked",
+      reason: drawdown.reason,
+      signalsGenerated: savedSignals.length,
+      executionCandidates: executionCandidates.length,
+      orderPlaced: false,
+      candidateMarketId: eligibleSignal.marketId,
+      autonomyMode: preferences.autonomyMode,
+      executionCadence: preferences.executionCadence,
+      candidateSet,
+      rejectedCandidates,
+      decision: buildDecisionDetails(eligibleSignal, {
+        quantity,
+        confidence: eligibleSignal.confidence,
+        blockedBy: "drawdown_breaker",
       }),
     }, {
       appliedGuardrails: safeJsonStringify(buildAppliedGuardrails(preferences, riskLimits)),

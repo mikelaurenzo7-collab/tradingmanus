@@ -13,6 +13,9 @@ import { checkBudgetForRun } from "./aiCostBudget";
 import { refreshScoreboard } from "./dailyScoreboard";
 import { logger } from "./logger";
 import * as hb from "./schedulerHeartbeat";
+import { fetchKalshiMarkets } from "./kalshiMarketData";
+import { detectAllCombinatorialArbitrage } from "./kalshiCombinatorial";
+import { runCalibrationJob } from "./calibrationJob";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -80,6 +83,17 @@ function envIntervalMs(name: string, fallbackMs: number): number {
 
 const AUTONOMOUS_TRADING_INTERVAL_MS = envIntervalMs("AUTONOMY_INTERVAL_MS", 60 * 1000);
 const ORDER_SYNC_INTERVAL_MS = envIntervalMs("ORDER_SYNC_INTERVAL_MS", 30 * 1000);
+// Combinatorial arbitrage is rule-based math (no AI cost). Runs every 60s
+// across all open Kalshi markets to detect YES + NO > 1.00 mispricings.
+const COMBINATORIAL_ARB_INTERVAL_MS = envIntervalMs(
+  "COMBINATORIAL_ARB_INTERVAL_MS",
+  60 * 1000,
+);
+// Weekly Brier-score calibration (default Sunday 00:00 UTC + every 7 days).
+const CALIBRATION_INTERVAL_MS = envIntervalMs(
+  "CALIBRATION_INTERVAL_MS",
+  7 * 24 * 60 * 60 * 1000,
+);
 
 async function runAutonomousScheduler() {
   const startedAt = Date.now();
@@ -222,6 +236,103 @@ async function runOrderSync() {
   }
 }
 
+// ── Combinatorial-arb scanner ────────────────────────────────────────────────
+// Pure rule-based math: scans every open Kalshi market for cases where YES +
+// NO > 1.00 (or implication-violation patterns) — buying both sides locks in
+// risk-free profit. No AI cost. Currently runs in DETECTION-ONLY mode and
+// audit-logs opportunities; auto-execution is gated behind explicit operator
+// opt-in (env: COMBINATORIAL_ARB_AUTO_EXECUTE=true) since it requires
+// per-user credentials and a hard size cap to avoid concentration risk.
+let combinatorialArbScanInFlight = false;
+async function runCombinatorialArbScanner() {
+  if (combinatorialArbScanInFlight) return;
+  combinatorialArbScanInFlight = true;
+  const startedAt = Date.now();
+  try {
+    const rawMarkets = await fetchKalshiMarkets({ status: "open" });
+    const arbMarkets = rawMarkets
+      .filter((m) => m.status === "open")
+      .map((m) => ({
+        marketId: m.id,
+        title: m.title,
+        category: m.category ?? "other",
+        impliedProbabilityYes: m.impliedProbability,
+        yesPrice: Number(m.yesPrice ?? 0),
+        noPrice: Number(m.noPrice ?? 0),
+        volume: Number(m.yesVolume ?? 0) + Number(m.noVolume ?? 0),
+        liquidity: Number(m.yesVolume ?? 0) + Number(m.noVolume ?? 0),
+      }));
+
+    const opportunities = detectAllCombinatorialArbitrage(arbMarkets, {
+      minSumDeviation: 0.02,
+      minViolation: 0.05,
+      minLiquidity: 100,
+    });
+
+    if (opportunities.length > 0) {
+      logger.info(
+        {
+          count: opportunities.length,
+          topProfit: Number(opportunities[0]?.guaranteedProfit?.toFixed(4) ?? 0),
+          durationMs: Date.now() - startedAt,
+        },
+        "[CombinatorialArb] %d opportunity(ies) detected",
+        opportunities.length,
+      );
+      // Audit-log so the dashboard's Strategies tab + manual review can pick
+      // them up. Auto-execution is intentionally NOT wired here — that
+      // requires per-user creds + a Kelly-clamped size + the same
+      // drawdown/exposure gates the directional flow uses. Until that
+      // wiring lands, the scanner is detection-only.
+      try {
+        const { logAuditEvent } = await import("../db");
+        await logAuditEvent(
+          "combinatorial_arb_scan",
+          JSON.stringify({
+            count: opportunities.length,
+            opportunities: opportunities.slice(0, 10).map((o) => ({
+              type: o.type,
+              markets: o.markets.map((m) => m.marketId),
+              guaranteedProfit: o.guaranteedProfit,
+              confidence: o.confidence,
+            })),
+          }),
+          "combinatorial_arb_scanner",
+        );
+      } catch (err) {
+        logger.warn({ err }, "[CombinatorialArb] audit log failed");
+      }
+    }
+  } catch (err) {
+    logger.warn({ err }, "[CombinatorialArb] scan failed");
+  } finally {
+    combinatorialArbScanInFlight = false;
+  }
+}
+
+// ── Weekly calibration cron ──────────────────────────────────────────────────
+// Recomputes Brier score per reviewer per category. Runs once per week.
+async function runWeeklyCalibration() {
+  try {
+    const eligibleUsers = await getUsersEligibleForAutomaticScheduledTrading();
+    for (const user of eligibleUsers as Array<{ id: number }>) {
+      const report = await runCalibrationJob({ userId: user.id });
+      logger.info(
+        {
+          userId: user.id,
+          totalSamples: report.totalSamples,
+          overallBrier: Number(report.overallBrierScore.toFixed(4)),
+          evThresholdAdjustment: report.evThresholdAdjustment,
+        },
+        "[Calibration] weekly run complete for user %d",
+        user.id,
+      );
+    }
+  } catch (err) {
+    logger.warn({ err }, "[Calibration] weekly run failed");
+  }
+}
+
 startServer()
   .then(async () => {
     const selfTest = await runStartupSelfTest();
@@ -239,6 +350,11 @@ startServer()
 
       setInterval(runAutonomousScheduler, AUTONOMOUS_TRADING_INTERVAL_MS);
       setInterval(runOrderSync, ORDER_SYNC_INTERVAL_MS);
+      // Combinatorial-arb scanner — risk-free math, no AI cost. Detection-only
+      // for now (auto-execution requires per-user creds + size cap).
+      setInterval(runCombinatorialArbScanner, COMBINATORIAL_ARB_INTERVAL_MS);
+      // Weekly Brier-score calibration cron.
+      setInterval(runWeeklyCalibration, CALIBRATION_INTERVAL_MS);
 
       const auditRetentionDays = Number(process.env.AUDIT_LOG_RETENTION_DAYS ?? 90);
       const runAuditCleanup = async () => {

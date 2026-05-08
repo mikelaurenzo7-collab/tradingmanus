@@ -102,6 +102,27 @@ function checkGrokModel(): SelfTestCheck {
   };
 }
 
+function checkAnthropicKey(): SelfTestCheck {
+  if (ENV.anthropicApiKey.length > 0) {
+    return {
+      name: "anthropic_api_key",
+      status: "ok",
+      detail: `ANTHROPIC_API_KEY is set; ensemble Tier 2 (${ENV.claudeSonnetModel}) + Tier 3 (${ENV.claudeOpusModel}) active.`,
+    };
+  }
+  // Anthropic key is OPTIONAL — when unset the system silently degrades to
+  // Grok-only on high-stakes signals. Warn (don't fail) so the operator
+  // knows they're running without the cross-family second opinion.
+  return {
+    name: "anthropic_api_key",
+    status: "warn",
+    detail:
+      "ANTHROPIC_API_KEY unset — high-stakes signals will run Grok-only " +
+      "(no Claude Sonnet/Opus second opinion). Set ANTHROPIC_API_KEY to " +
+      "enable the 3-tier ensemble; cost ~$1/mo at default cadence.",
+  };
+}
+
 function checkAiDailyBudget(): SelfTestCheck {
   const cap = ENV.aiDailyBudgetUsd;
   if (cap <= 0) {
@@ -169,6 +190,7 @@ export async function runStartupSelfTest(): Promise<SelfTestResult> {
   }
   checks.push(checkGrokKey());
   checks.push(checkGrokModel());
+  checks.push(checkAnthropicKey());
   checks.push(checkAiDailyBudget());
   checks.push(checkCredentialEncryptionSecret());
   checks.push(checkPaperMode());

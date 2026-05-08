@@ -8,7 +8,7 @@
  *
  * Full Kelly: f* = (winProb × b - lossProb) / b
  *
- * We apply ¼ Kelly and clamp the result into [KELLY_MIN_PCT, KELLY_MAX_PCT]
+ * We apply fractional Kelly (default ½) and clamp the result into [KELLY_MIN_PCT, KELLY_MAX_PCT]
  * of capital (defaults: 0.5%–2%). Below the floor we return 0 instead of
  * the floor — never force a position when the edge is too thin to justify it.
  */
@@ -27,7 +27,7 @@ export interface KellySizeInput {
 export interface KellySizeResult {
   /** Full Kelly fraction (may be negative for negative-edge bets). */
   fullKelly: number;
-  /** Fractional (¼) Kelly fraction, clamped into [min, max]. */
+  /** Fractional Kelly (default ½) fraction, clamped into [min, max]. */
   fractionalKelly: number;
   /** USD position size. 0 when edge is below the floor. */
   positionUsd: number;
@@ -40,7 +40,7 @@ export interface KellySizeResult {
 }
 
 /**
- * Calculate ¼ Kelly position size, clamped to [floor, cap].
+ * Calculate fractional Kelly (default ½) position size, clamped to [floor, cap].
  *
  * Returns 0 when:
  *   - inputs are invalid / non-finite
@@ -54,9 +54,9 @@ export function calculateKellyPosition(
   const price = input.contractPrice;
   const cap = input.totalCapitalUsd;
 
-  const fraction = ENV.profitGuardrails.kellyFraction; // ¼ Kelly
+  const fraction = ENV.profitGuardrails.kellyFraction; // fractional Kelly (default ½)
   const min = ENV.profitGuardrails.kellyMinPctOfCapital; // 0.5 %
-  const max = ENV.profitGuardrails.kellyMaxPctOfCapital; // 2 %
+  const max = ENV.profitGuardrails.kellyMaxPctOfCapital; // default 4 %
 
   const empty = (reason: string): KellySizeResult => ({
     fullKelly: 0,
@@ -109,6 +109,6 @@ export function calculateKellyPosition(
     positionUsd: contractCount * price,
     contractCount,
     meetsMinFloor: true,
-    reason: `¼ Kelly = ${(clamped * 100).toFixed(2)}% of $${cap.toFixed(2)}`,
+    reason: `fractional Kelly (default ½) = ${(clamped * 100).toFixed(2)}% of $${cap.toFixed(2)}`,
   };
 }

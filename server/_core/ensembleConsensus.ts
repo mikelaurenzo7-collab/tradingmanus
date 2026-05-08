@@ -31,7 +31,18 @@ import {
   type ClaudeReviewVerdict,
 } from "./claudeReviewer";
 import { classifySignal, type HighStakesClassification } from "./highStakesDetector";
-import type { MarketCategory } from "./marketCategoryRouter";
+import {
+  MARKET_CATEGORIES,
+  type MarketCategory,
+} from "./marketCategoryRouter";
+
+function normalizeCategory(value: string | undefined): MarketCategory {
+  if (!value) return "other";
+  const lower = value.toLowerCase().trim();
+  return (MARKET_CATEGORIES as readonly string[]).includes(lower)
+    ? (lower as MarketCategory)
+    : "other";
+}
 
 export interface GrokVerdict {
   approved: boolean;
@@ -160,9 +171,57 @@ export async function runEnsemble(input: EnsembleInput): Promise<EnsembleVerdict
   }
 
   const sonnetReviewInput: ClaudeReviewInput = toClaudeReviewInput(input);
-  const sonnet = await reviewWithSonnet(sonnetReviewInput);
-  reviews.push({ reviewerId: "claude.sonnet-4-6", verdict: sonnet });
-  totalAiCostUsd += sonnet.costUsd;
+
+  // For CATASTROPHIC-BETS, run Sonnet TWICE in parallel as a self-consistency
+  // check. Both Sonnet passes must approve to advance to Opus. If they
+  // disagree, we treat it as an ambiguity-flag and veto outright. Costs ~2×
+  // Sonnet on catastrophic-bets only (~6 trades/mo × 2 = ~$0.10/mo extra).
+  let sonnet: ClaudeReviewVerdict;
+  if (classification.isCatastrophicBet) {
+    const [sonnetPass1, sonnetPass2] = await Promise.all([
+      reviewWithSonnet(sonnetReviewInput),
+      reviewWithSonnet(sonnetReviewInput),
+    ]);
+    reviews.push({ reviewerId: "claude.sonnet-4-6", verdict: sonnetPass1 });
+    reviews.push({ reviewerId: "claude.sonnet-4-6", verdict: sonnetPass2 });
+    totalAiCostUsd += sonnetPass1.costUsd + sonnetPass2.costUsd;
+
+    if (sonnetPass1.approved !== sonnetPass2.approved) {
+      // Self-consistency split → catastrophic-bet veto. The two passes
+      // disagreed on a trade large enough to materially dent the bankroll;
+      // refuse it and let the operator look at what happened.
+      return {
+        approved: false,
+        finalConfidenceAdjustment: avg(
+          sonnetPass1.confidenceAdjustment,
+          sonnetPass2.confidenceAdjustment,
+        ),
+        finalExpectedValueAdjustment: avg(
+          sonnetPass1.expectedValueAdjustment,
+          sonnetPass2.expectedValueAdjustment,
+        ),
+        finalImpliedProbability: avg(
+          sonnetPass1.impliedProbability,
+          sonnetPass2.impliedProbability,
+        ),
+        reasoning:
+          "Catastrophic-bet veto: Sonnet self-consistency split — two passes disagreed on direction.",
+        classification,
+        reviews,
+        totalAiCostUsd,
+      };
+    }
+    // Use whichever pass had the more conservative EV adjustment (lower of
+    // the two) so we don't average away a legitimate concern.
+    sonnet =
+      sonnetPass1.expectedValueAdjustment <= sonnetPass2.expectedValueAdjustment
+        ? sonnetPass1
+        : sonnetPass2;
+  } else {
+    sonnet = await reviewWithSonnet(sonnetReviewInput);
+    reviews.push({ reviewerId: "claude.sonnet-4-6", verdict: sonnet });
+    totalAiCostUsd += sonnet.costUsd;
+  }
 
   // Rule 3a: catastrophic-bet → demand unanimous (Sonnet approves AND Opus approves).
   if (classification.isCatastrophicBet) {
@@ -311,7 +370,7 @@ function avg(...nums: number[]): number {
 // adjusted EV/confidence. Per-signal reviewer trail is logged into the
 // audit table so the calibration job can score Brier per reviewer.
 
-import { logger as _logger } from "./logger";
+// (logger is already imported at the top of this file; no second import needed.)
 import { calculateNetEv } from "./feeCalculator";
 
 export interface SignalForEnsemble {
@@ -354,93 +413,131 @@ export async function applyEnsembleFilter(
   const approvedSignals: SignalForEnsemble[] = [];
   const verdicts: EnsembleFilterResult["verdicts"] = [];
 
-  for (const s of signals) {
-    const notionalUsd = s.count * s.marketPrice;
-    const grossEvFraction = s.expectedValue;
+  // Parallelize the per-signal ensemble. On a high-opportunity day with 8+
+  // high-stakes signals firing, sequential Sonnet calls would add 25-40s
+  // of latency — long enough for orderbook prices to drift. We chunk into
+  // groups of CONCURRENCY to bound peak load on the Anthropic API while
+  // still capturing most of the speedup.
+  const CONCURRENCY = 4;
+  const chunks: SignalForEnsemble[][] = [];
+  for (let i = 0; i < signals.length; i += CONCURRENCY) {
+    chunks.push(signals.slice(i, i + CONCURRENCY));
+  }
 
-    // Synthesise the GrokVerdict from the upstream-approved signal's
-    // existing fields. The autonomy already passed Grok's self-consistency
-    // check before we get here, so first/second pass are both treated as
-    // approved (the per-pass details aren't propagated through
-    // reviewSignalsWithTrader yet — see follow-up note in PR description).
-    const grokVerdict: GrokVerdict = {
-      approved: true,
-      confidenceAdjustment: 0,
-      expectedValueAdjustment: 0,
-      impliedProbability: s.impliedProbability,
-      reasoning: "Approved by Grok primary reviewer (Tier 1)",
-      firstPassApproved: true,
-      secondPassApproved: true,
-      firstPassEvAdjustment: 0,
-      secondPassEvAdjustment: 0,
-      costUsd: 0, // already counted upstream in tradingReviewer telemetry
-    };
-
-    const ensemble = await runEnsemble({
-      marketId: s.marketId,
-      ticker: s.ticker,
-      category: s.category as MarketCategory,
-      side: s.side,
-      count: s.count,
-      entryPrice: s.marketPrice,
-      grossEvFraction,
-      confidence: s.confidence,
-      resolutionPrimary: s.resolutionPrimary,
-      resolutionSecondary: s.resolutionSecondary,
-      capitalUsd: ctx.liveCapitalUsd,
-      resolutionAtMs: s.resolutionAtMs,
-      grokVerdict,
-      notionalUsd,
-    });
-
-    verdicts.push({ marketId: s.marketId, ensemble });
-
-    if (!ensemble.approved) {
-      _logger.info(
-        {
-          ticker: s.ticker,
-          reason: ensemble.reasoning,
-          tiersFired: ensemble.reviews.map((r) => r.reviewerId),
-        },
-        "[Ensemble] Tier 2/3 vetoed signal",
-      );
-      continue;
+  for (const chunk of chunks) {
+    const chunkResults = await Promise.all(
+      chunk.map((s) => processOneSignalForEnsemble(s, ctx)),
+    );
+    for (const result of chunkResults) {
+      verdicts.push({
+        marketId: result.signal.marketId,
+        ensemble: result.ensemble,
+      });
+      if (result.adjusted) {
+        approvedSignals.push(result.adjusted);
+      }
     }
-
-    // Apply ensemble adjustments to the signal before returning it.
-    const adjustedSignal: SignalForEnsemble = {
-      ...s,
-      confidence: clamp01(s.confidence + ensemble.finalConfidenceAdjustment),
-      expectedValue: s.expectedValue + ensemble.finalExpectedValueAdjustment,
-      impliedProbability: ensemble.finalImpliedProbability,
-    };
-
-    // Re-check the post-fee + post-AI-cost net EV against the gate. The
-    // gate amortizes Grok's review cost; here we additionally subtract the
-    // ensemble's incremental Tier 2/3 cost to be honest about what the
-    // trade actually has to clear.
-    const net = calculateNetEv({
-      count: adjustedSignal.count,
-      entryPrice: adjustedSignal.marketPrice,
-      grossEvFraction: adjustedSignal.expectedValue,
-      amortizedAiCostUsd: ensemble.totalAiCostUsd,
-    });
-    if (net.netEvFraction <= 0) {
-      _logger.info(
-        {
-          ticker: s.ticker,
-          netEv: net.netEvFraction,
-          ensembleCost: ensemble.totalAiCostUsd,
-        },
-        "[Ensemble] post-cost net EV ≤ 0 after Tier 2/3 cost — vetoing",
-      );
-      continue;
-    }
-
-    approvedSignals.push(adjustedSignal);
   }
 
   return { approvedSignals, verdicts };
+}
+
+/** Process one signal through the ensemble. Returns the verdict + an
+ *  adjusted signal (if approved) or null (if vetoed). Extracted out of
+ *  the serial loop so applyEnsembleFilter can run them in parallel. */
+async function processOneSignalForEnsemble(
+  s: SignalForEnsemble,
+  ctx: { liveCapitalUsd: number },
+): Promise<{
+  signal: SignalForEnsemble;
+  ensemble: EnsembleVerdict;
+  adjusted: SignalForEnsemble | null;
+}> {
+  const liveCapitalUsd = ctx.liveCapitalUsd;
+  // INNER: this body is identical to the prior serial-loop body (scoped to
+  // a single signal). Kept as a helper so we can Promise.all it.
+  const notionalUsd = s.count * s.marketPrice;
+  const grossEvFraction = s.expectedValue;
+
+  // Synthesise the GrokVerdict from the upstream-approved signal's
+  // existing fields. The autonomy already passed Grok's self-consistency
+  // check before we get here, so first/second pass are both treated as
+  // approved (the per-pass details aren't propagated through
+  // reviewSignalsWithTrader yet).
+  const grokVerdict: GrokVerdict = {
+    approved: true,
+    confidenceAdjustment: 0,
+    expectedValueAdjustment: 0,
+    impliedProbability: s.impliedProbability,
+    reasoning: "Approved by Grok primary reviewer (Tier 1)",
+    firstPassApproved: true,
+    secondPassApproved: true,
+    firstPassEvAdjustment: 0,
+    secondPassEvAdjustment: 0,
+    costUsd: 0, // already counted upstream in tradingReviewer telemetry
+  };
+
+  const ensemble = await runEnsemble({
+    marketId: s.marketId,
+    ticker: s.ticker,
+    category: normalizeCategory(s.category),
+    side: s.side,
+    count: s.count,
+    entryPrice: s.marketPrice,
+    grossEvFraction,
+    confidence: s.confidence,
+    resolutionPrimary: s.resolutionPrimary,
+    resolutionSecondary: s.resolutionSecondary,
+    capitalUsd: liveCapitalUsd,
+    resolutionAtMs: s.resolutionAtMs,
+    grokVerdict,
+    notionalUsd,
+  });
+
+  if (!ensemble.approved) {
+    logger.info(
+      {
+        ticker: s.ticker,
+        reason: ensemble.reasoning,
+        tiersFired: ensemble.reviews.map((r) => r.reviewerId),
+      },
+      "[Ensemble] Tier 2/3 vetoed signal",
+    );
+    return { signal: s, ensemble, adjusted: null };
+  }
+
+  // Apply ensemble adjustments to the signal before returning it.
+  const adjustedSignal: SignalForEnsemble = {
+    ...s,
+    confidence: clamp01(s.confidence + ensemble.finalConfidenceAdjustment),
+    expectedValue: s.expectedValue + ensemble.finalExpectedValueAdjustment,
+    impliedProbability: ensemble.finalImpliedProbability,
+  };
+
+  // Re-check the post-fee + post-AI-cost net EV against the configured hard
+  // floor (default MIN_NET_EV=0.065). Claude reviewers can trim EV; a
+  // previously valid 7% trade reduced to 4% must be vetoed.
+  const net = calculateNetEv({
+    count: adjustedSignal.count,
+    entryPrice: adjustedSignal.marketPrice,
+    grossEvFraction: adjustedSignal.expectedValue,
+    amortizedAiCostUsd: ensemble.totalAiCostUsd,
+  });
+  const minNetEv = ENV.profitGuardrails.minNetEv;
+  if (net.netEvFraction < minNetEv) {
+    logger.info(
+      {
+        ticker: s.ticker,
+        netEv: net.netEvFraction,
+        minNetEv,
+        ensembleCost: ensemble.totalAiCostUsd,
+      },
+      "[Ensemble] post-cost net EV below MIN_NET_EV floor after Tier 2/3 adjustment — vetoing",
+    );
+    return { signal: s, ensemble, adjusted: null };
+  }
+
+  return { signal: s, ensemble, adjusted: adjustedSignal };
 }
 
 function clamp01(n: number): number {
