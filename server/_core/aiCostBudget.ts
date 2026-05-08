@@ -17,11 +17,12 @@
  *    budget reflects actual spend without runtime lookups.  Update
  *    when prices change.
  *
- *  - Throttle factor scales the adaptive-cadence stale TTL — when the
- *    budget is 80 % spent, every market needs to wait 1.5 × longer
- *    before re-review.  At 100 % spent the autonomy run skips
- *    entirely (proceed=false) so no AI calls fire until the budget
- *    rolls over at next UTC midnight.
+ *  - Binary on/off semantics (single-tenant).  Either the day is OK
+ *    (profitable, or losing less than the cap) and the bot runs at
+ *    full speed, or the day has burned more than the cap on
+ *    AI-overhead-relative-to-PnL and the run skips entirely until UTC
+ *    rollover.  No progressive throttle — the bot never performs
+ *    "slightly worse" near the cap.
  *
  *  - Audit events: every recordCost() call also writes an
  *    `ai_cost_recorded` audit event with model + tokens + USD so the
@@ -290,26 +291,28 @@ export function checkBudgetForRun(now: number = Date.now()): BudgetDecision {
     };
   }
 
+  // Single-tenant model: full speed until the day is genuinely losing more
+  // than the operator-chosen cap, then hard stop.  No middle-ground
+  // progressive throttle — the prior ramp (×1.5 at 60 %, ×2 at 80 %, ×4 at
+  // 95 %) made the bot literally perform worse near the cap, which is the
+  // exact opposite of what an owner accepting the risk wants.  The cap is
+  // a "max acceptable daily loss attributable to AI overhead", not a soft
+  // ceiling to feather toward.
+  //
+  //   profit > 0                    → run (net_positive branch above)
+  //   profit ≤ 0, overrun < capUsd  → run at full speed (this branch)
+  //   profit ≤ 0, overrun ≥ capUsd  → hard skip (next tick re-checks)
   const fractionSpent = effectiveOverrunUsd / capUsd;
   if (fractionSpent >= 1.0) {
     return {
       proceed: false,
-      throttleFactor: 8,
+      throttleFactor: 1,
       spentUsd,
       capUsd,
       effectiveOverrunUsd,
       fractionSpent,
       reason: "exhausted_skip",
     };
-  }
-  if (fractionSpent >= 0.95) {
-    return { proceed: true, throttleFactor: 4, spentUsd, capUsd, effectiveOverrunUsd, fractionSpent, reason: "net_negative_throttle" };
-  }
-  if (fractionSpent >= 0.8) {
-    return { proceed: true, throttleFactor: 2, spentUsd, capUsd, effectiveOverrunUsd, fractionSpent, reason: "net_negative_throttle" };
-  }
-  if (fractionSpent >= 0.6) {
-    return { proceed: true, throttleFactor: 1.5, spentUsd, capUsd, effectiveOverrunUsd, fractionSpent, reason: "net_negative_throttle" };
   }
   return {
     proceed: true,
