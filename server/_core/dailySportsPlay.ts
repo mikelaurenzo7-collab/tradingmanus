@@ -334,10 +334,35 @@ export async function runDailySportsPlay(
     };
   }
 
-  const finalCount = Math.max(
-    1,
-    Math.floor(stakeUsd / Math.max(0.01, top.marketPrice)),
-  );
+  // Compute final count from stake. If stake can't even buy one contract,
+  // skip — forcing a 1-contract floor would silently exceed the configured
+  // 2.5 % cap (especially on high-priced markets or small accounts).
+  const rawCount = Math.floor(stakeUsd / Math.max(0.01, top.marketPrice));
+  if (rawCount < 1) {
+    return {
+      status: "no_qualifying_play",
+      reason: `Stake $${stakeUsd.toFixed(2)} cannot buy one contract at $${top.marketPrice.toFixed(2)} on ${top.marketId}`,
+    };
+  }
+  const finalCount = rawCount;
+  // Recompute true notional based on integer count + market price, then
+  // re-check the exposure caps. The earlier checks used `stakeUsd` (the
+  // intended target); rounding down to integer contracts can leave us
+  // BELOW or above stake, but if it pushes us above the per-category /
+  // total cap, we need to catch that here too.
+  const trueNotionalUsd = finalCount * top.marketPrice;
+  if (currentExposureUsd + trueNotionalUsd > maxPortfolioUsd) {
+    return {
+      status: "exposure_capped",
+      reason: `True notional $${(currentExposureUsd + trueNotionalUsd).toFixed(2)} would exceed ${(ENV.profitGuardrails.maxPortfolioExposurePct * 100).toFixed(0)}% portfolio cap ($${maxPortfolioUsd.toFixed(2)})`,
+    };
+  }
+  if (sportsExposureUsd + trueNotionalUsd > maxCategoryUsd) {
+    return {
+      status: "exposure_capped",
+      reason: `True sports notional $${(sportsExposureUsd + trueNotionalUsd).toFixed(2)} would exceed ${(ENV.profitGuardrails.maxCorrelatedGroupPct * 100).toFixed(0)}% per-category cap ($${maxCategoryUsd.toFixed(2)})`,
+    };
+  }
 
   await logAuditEvent(
     "kalshi_daily_sports_play_attempt",

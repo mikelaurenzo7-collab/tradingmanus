@@ -863,6 +863,184 @@ export const appRouter = router({
       };
     }),
 
+    /**
+     * Rolling AI-spend summary — answers "is the system paying for itself?"
+     * Pulls actual reviewer telemetry from the audit log and joins with
+     * realized P&L from closed positions over the same window.
+     *
+     * Returns:
+     *   - aiSpendUsd: total reviewer cost over the window
+     *   - realizedPnlUsd: closed-position P&L over the window (Kalshi only)
+     *   - feeEstimateUsd: rough Kalshi-fee accrual estimate
+     *   - netUsd: realized - (ai + fees) — positive means the system is
+     *     paying for itself + earning surplus
+     *   - dailyBreakdown: per-day rows so the dashboard can chart it
+     */
+    getAiSpendSummary: protectedProcedure
+      .input(
+        (await import("zod")).z
+          .object({
+            days: (await import("zod")).z
+              .number()
+              .int()
+              .min(1)
+              .max(90)
+              .default(7),
+          })
+          .optional(),
+      )
+      .query(async ({ ctx, input }) => {
+        const days = input?.days ?? 7;
+        const userId = Number(ctx.user?.id ?? 0);
+        if (userId <= 0) {
+          return {
+            windowDays: days,
+            aiSpendUsd: 0,
+            realizedPnlUsd: 0,
+            feeEstimateUsd: 0,
+            netUsd: 0,
+            payingForItself: false,
+            dailyBreakdown: [] as Array<{
+              date: string;
+              aiSpendUsd: number;
+              realizedPnlUsd: number;
+              feeEstimateUsd: number;
+              netUsd: number;
+            }>,
+          };
+        }
+
+        const { ENV } = await import("./_core/env");
+        const { getDb } = await import("./db");
+        const { auditLog, kalshiPositions } = await import(
+          "../drizzle/schema"
+        );
+        const { and, eq, gte, sql } = await import("drizzle-orm");
+        const database = await getDb();
+
+        const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+        let aiSpendByDay = new Map<string, number>();
+        let realizedByDay = new Map<string, number>();
+        let feesByDay = new Map<string, number>();
+
+        if (database) {
+          // 1. AI spend from kalshi_ensemble_review audit events
+          //    (totalAiCostUsd field captures Sonnet + Opus per-signal cost).
+          const aiRows = await database
+            .select({
+              createdAt: auditLog.createdAt,
+              details: auditLog.details,
+            })
+            .from(auditLog)
+            .where(
+              and(
+                eq(auditLog.eventType, "kalshi_ensemble_review"),
+                gte(auditLog.createdAt, cutoff),
+              ),
+            );
+          for (const row of aiRows) {
+            const day = new Date(row.createdAt).toISOString().slice(0, 10);
+            try {
+              const parsed = JSON.parse(String(row.details ?? "{}")) as {
+                totalAiCostUsd?: number;
+              };
+              const cost = Number(parsed.totalAiCostUsd ?? 0);
+              if (Number.isFinite(cost)) {
+                aiSpendByDay.set(day, (aiSpendByDay.get(day) ?? 0) + cost);
+              }
+            } catch {
+              // skip malformed rows
+            }
+          }
+
+          // 2. Realized P&L from closed positions in the window.
+          const closedRows = await database
+            .select({
+              closedAt: kalshiPositions.closedAt,
+              realizedPnl: kalshiPositions.realizedPnl,
+              entryPrice: kalshiPositions.entryPrice,
+              quantity: kalshiPositions.quantity,
+            })
+            .from(kalshiPositions)
+            .where(
+              and(
+                eq(kalshiPositions.userId, userId),
+                eq(kalshiPositions.positionStatus, "closed"),
+                gte(kalshiPositions.closedAt, cutoff),
+              ),
+            );
+          const KALSHI_FEE_MULT_TWO_LEG =
+            (ENV.kalshiMakerFeeMultiplier + ENV.kalshiTakerFeeMultiplier) /
+            2; // very rough — exits hit taker, entries hit maker on average
+          for (const row of closedRows) {
+            const day = row.closedAt
+              ? new Date(row.closedAt).toISOString().slice(0, 10)
+              : null;
+            if (!day) continue;
+            realizedByDay.set(
+              day,
+              (realizedByDay.get(day) ?? 0) + Number(row.realizedPnl ?? 0),
+            );
+            // Rough round-trip fee estimate: 2 × multiplier × notional ×
+            // p × (1-p) at entry. We don't have exit-fill data here so use
+            // entry as a proxy.
+            const entry = Number(row.entryPrice ?? 0);
+            const qty = Number(row.quantity ?? 0);
+            const notional = entry * qty;
+            const fee = 2 * KALSHI_FEE_MULT_TWO_LEG * notional * entry * (1 - entry);
+            feesByDay.set(day, (feesByDay.get(day) ?? 0) + Math.max(0, fee));
+          }
+          // suppress unused warning
+          void sql;
+        }
+
+        // Aggregate
+        const allDays = new Set<string>([
+          ...aiSpendByDay.keys(),
+          ...realizedByDay.keys(),
+          ...feesByDay.keys(),
+        ]);
+        const dailyBreakdown = Array.from(allDays)
+          .sort()
+          .map((date) => {
+            const ai = aiSpendByDay.get(date) ?? 0;
+            const pnl = realizedByDay.get(date) ?? 0;
+            const fees = feesByDay.get(date) ?? 0;
+            return {
+              date,
+              aiSpendUsd: Number(ai.toFixed(4)),
+              realizedPnlUsd: Number(pnl.toFixed(4)),
+              feeEstimateUsd: Number(fees.toFixed(4)),
+              netUsd: Number((pnl - ai - fees).toFixed(4)),
+            };
+          });
+
+        const totalAi = dailyBreakdown.reduce(
+          (a, d) => a + d.aiSpendUsd,
+          0,
+        );
+        const totalPnl = dailyBreakdown.reduce(
+          (a, d) => a + d.realizedPnlUsd,
+          0,
+        );
+        const totalFees = dailyBreakdown.reduce(
+          (a, d) => a + d.feeEstimateUsd,
+          0,
+        );
+        const netUsd = totalPnl - totalAi - totalFees;
+
+        return {
+          windowDays: days,
+          aiSpendUsd: Number(totalAi.toFixed(4)),
+          realizedPnlUsd: Number(totalPnl.toFixed(4)),
+          feeEstimateUsd: Number(totalFees.toFixed(4)),
+          netUsd: Number(netUsd.toFixed(4)),
+          payingForItself: netUsd >= 0,
+          dailyBreakdown,
+        };
+      }),
+
     // Market data
     getMarkets: protectedProcedure
       .input(

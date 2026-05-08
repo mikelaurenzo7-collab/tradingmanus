@@ -316,22 +316,33 @@ async function runCombinatorialArbScanner() {
 // Fires once per UTC day at ENV.dailySportsPlayHourUtc (default 14:00 UTC =
 // 10am ET). Tick rate is 5 minutes — when the current UTC hour matches AND
 // we haven't already fired today, run the play for every eligible user.
-let lastDailySportsPlayUtcDay: string | null = null;
+// Per-user gating instead of a global day-level marker. A transient
+// DB/API failure on the first 5-minute tick of the configured hour used
+// to set the global marker BEFORE the sweep ran, suppressing all later
+// retry attempts within the day. Now we mark per-user only after that
+// user's run finishes (without throwing). Failed runs leave the marker
+// unset so the next tick within the same hour retries them.
+const dailySportsPlayCompletedKeys = new Set<string>();
 async function maybeRunDailySportsPlay() {
   if (!ENV.enableDailySportsPlay) return;
   const now = new Date();
   const utcHour = now.getUTCHours();
   if (utcHour !== ENV.dailySportsPlayHourUtc) return;
-  // YYYY-MM-DD in UTC — gate so we only fire once per UTC day.
   const utcDay = now.toISOString().slice(0, 10);
-  if (lastDailySportsPlayUtcDay === utcDay) return;
-  lastDailySportsPlayUtcDay = utcDay;
 
   try {
     const eligibleUsers = await getUsersEligibleForAutomaticScheduledTrading();
     for (const user of eligibleUsers as Array<{ id: number }>) {
+      const key = `${user.id}:${utcDay}`;
+      // Skip users whose run already completed today.
+      if (dailySportsPlayCompletedKeys.has(key)) continue;
       try {
         const result = await runDailySportsPlay(user.id);
+        // Mark completed only AFTER the run returned (any status, even
+        // skip/blocked/no_qualifying_play, counts — those are intended
+        // outcomes, not failures). Exceptions below skip this line so
+        // the next 5-min tick retries.
+        dailySportsPlayCompletedKeys.add(key);
         logger.info(
           {
             userId: user.id,
