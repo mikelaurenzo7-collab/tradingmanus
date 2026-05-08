@@ -113,6 +113,10 @@ export const ENV = {
     process.env.CLAUDE_OPUS_TIMEOUT_MS,
     45000,
   ),
+  // Legacy escape hatch: when true, the autonomy loop's primary reviewer
+  // stays on Grok even if ANTHROPIC_API_KEY is also set. Default false —
+  // Claude is the primary trader when its key is present.
+  reviewerPreferGrok: normalizeBoolean(process.env.REVIEWER_PREFER_GROK, false),
 
   // ── High-stakes triggers (all percentages — auto-scale with live balance) ─
   // A signal is high-stakes (→ Sonnet review) if any of these hold:

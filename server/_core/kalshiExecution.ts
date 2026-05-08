@@ -1067,12 +1067,24 @@ export async function closePositionFromFill(
       const { getDb } = await import("../db");
       const database = await getDb();
       if (database) {
-        // Scope to orders created at-or-after THIS position's openedAt.
-        // Without this bound we'd sum every historical BUY for the same
-        // market+side+user — including ones that opened a PRIOR closed
-        // position, inflating the calibration count after re-entry.
+        // Scope to orders created within ~1 hour BEFORE the position
+        // opened. Two reasons for the back-slack:
+        //   1. The opening order row in `kalshiOrders` is created BEFORE
+        //      the position row (createPositionFromFill writes the
+        //      position only after the fill is processed). A strict
+        //      `gte(createdAt, position.openedAt)` excludes the opening
+        //      order itself, leaving the sum empty.
+        //   2. Prior closed positions on the same market+side are
+        //      typically hours-to-days older — well outside a 1h window.
+        const POSITION_OPENING_SLACK_MS = 60 * 60 * 1000;
         const positionOpenedAt = position.openedAt
-          ? new Date(position.openedAt)
+          ? new Date(
+              Math.max(
+                0,
+                new Date(position.openedAt).getTime() -
+                  POSITION_OPENING_SLACK_MS,
+              ),
+            )
           : new Date(0);
         const orderRows = await database
           .select({ filledQuantity: kalshiOrders.filledQuantity })

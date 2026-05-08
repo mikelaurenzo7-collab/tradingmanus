@@ -17,9 +17,12 @@ auto-scale as your account grows.
 
   | Tier | Model | Fires on | Avg / month |
   | --- | --- | --- | --- |
-  | 1 | **Grok 4.1 Fast** (xAI) | every reviewed signal | ~165 reviews |
-  | 2 | **Claude Sonnet 4.6** (Anthropic) | only on high-stakes signals | ~22 reviews |
-  | 3 | **Claude Opus 4.7** (Anthropic) | only on Tier-1↔Tier-2 disagreement, OR catastrophic-bet (≥10% of capital) unanimous gate | ~6 reviews |
+  | 1 | **Claude Sonnet 4.6** (Anthropic) | every reviewed signal | ~165 reviews |
+  | 2 | **Claude Opus 4.7** (Anthropic) | high-stakes signals (≥3% of capital, ≤24h to resolution, or self-consistency split) | ~22 reviews |
+  | 3 | **Claude Opus 4.7 unanimous gate** (Anthropic) | catastrophic-bet (≥10% of capital) — both passes must agree | ~6 reviews |
+
+  Grok 4.1 Fast (xAI) remains as a legacy fallback: when `ANTHROPIC_API_KEY`
+  is unset or `REVIEWER_PREFER_GROK=true`, the system uses Grok instead.
 
 - **Cost** (live, audited per trade): ~**$1/month** at the default cadence.
 - **Mode**: live only. The single owner trades live; the only "paper"
@@ -139,11 +142,12 @@ OWNER_EMAIL
 OWNER_PASSWORD                # 12+ chars in production
 NODE_ENV=production
 
-# Tier 1 (Grok) — required
-XAI_API_KEY                   # https://console.x.ai/
+# AI reviewer — Claude is the primary trader (default)
+ANTHROPIC_API_KEY             # https://console.anthropic.com/  (required for Claude-as-trader)
 
-# Tier 2/3 (Claude) — strongly recommended
-ANTHROPIC_API_KEY             # https://console.anthropic.com/
+# Optional: Grok legacy fallback. Used only when ANTHROPIC_API_KEY is unset
+# OR when REVIEWER_PREFER_GROK=true.
+XAI_API_KEY                   # https://console.x.ai/
 
 # Kalshi — required for trading
 KALSHI_KEY_ID
