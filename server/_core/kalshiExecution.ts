@@ -1184,6 +1184,12 @@ async function logCalibrationOutcomeFromClose(input: {
           and(
             eq(kalshiSignals.userId, input.userId),
             eq(kalshiSignals.marketId, input.marketId),
+            // Match SIDE too — a market can have both YES and NO signals
+            // before the position opens. Without this filter, the latest
+            // signal of the OPPOSITE side could be picked, then the
+            // outcome logger would flip probability based on the actual
+            // trade side, corrupting Brier samples.
+            eq(kalshiSignals.side, input.side),
             lte(kalshiSignals.createdAt, new Date(input.placedAtMs)),
           ),
         )

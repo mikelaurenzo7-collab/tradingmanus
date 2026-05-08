@@ -31,8 +31,16 @@ import {
 import { applyEnsembleFilter } from "./ensembleConsensus";
 import { fetchKalshiAccountEquity } from "./kalshiAuth";
 import { placeKalshiOrder } from "./kalshiExecution";
+import { checkDrawdownBreaker } from "./drawdownBreaker";
 import { getKalshiCredentials } from "../db.kalshi-credentials";
-import { logAuditEvent } from "../db";
+import {
+  logAuditEvent,
+  getOpenKalshiPositions,
+  getPendingKalshiOrders,
+  getTodayKalshiOrderCount,
+  getTodayRealizedLoss,
+  getKalshiTradeHistory,
+} from "../db";
 
 export interface DailySportsPlayResult {
   status:
@@ -173,6 +181,136 @@ export async function runDailySportsPlay(
     return {
       status: "no_qualifying_play",
       reason: "Ensemble approved 0 sports candidates",
+    };
+  }
+
+  // ── Pre-execution risk gates ─────────────────────────────────────────────
+  // Mirrors the regular autonomy candidate path. Without these checks
+  // `placeKalshiOrder` only normalizes + submits the order; the dollar caps,
+  // exposure caps, drawdown breakers, daily order cap, and same-market
+  // re-entry rules all live in the autonomy hot path. Inline them here so
+  // the daily play never trades when the regular executor would block the
+  // same market.
+  const [
+    openPositions,
+    pendingOrders,
+    todayOrderCount,
+    todayRealizedLoss,
+    closedTrades7d,
+  ] = await Promise.all([
+    getOpenKalshiPositions(userId).catch(() => [] as any[]),
+    getPendingKalshiOrders(userId).catch(() => [] as any[]),
+    getTodayKalshiOrderCount(userId).catch(() => 0),
+    getTodayRealizedLoss(userId).catch(() => 0),
+    getKalshiTradeHistory(500, userId)
+      .then((rows: any[]) =>
+        rows.filter((t: any) => {
+          if (t.positionStatus !== "closed") return false;
+          const closedAt = t.closedAt ? new Date(t.closedAt).getTime() : 0;
+          return closedAt > Date.now() - 7 * 24 * 60 * 60 * 1000;
+        }),
+      )
+      .catch(() => [] as any[]),
+  ]);
+
+  // Same market + side already has an open position?
+  const hasOpenSamePos = openPositions.some(
+    (p: any) =>
+      p.marketId === top.marketId &&
+      String(p.side).toLowerCase() === top.side &&
+      String(p.positionStatus).toLowerCase() !== "closed",
+  );
+  if (hasOpenSamePos) {
+    return {
+      status: "no_qualifying_play",
+      reason: `Already have an open ${top.side.toUpperCase()} position on ${top.marketId}`,
+    };
+  }
+
+  // Same market + side already has a pending order?
+  const hasPending = pendingOrders.some(
+    (o: any) =>
+      o.marketId === top.marketId &&
+      String(o.side).toLowerCase() === top.side &&
+      String(o.status).toLowerCase() === "pending",
+  );
+  if (hasPending) {
+    return {
+      status: "no_qualifying_play",
+      reason: `Already have a pending order for ${top.side.toUpperCase()} on ${top.marketId}`,
+    };
+  }
+
+  // Drawdown breaker (same 4 rules: daily, weekly, cold-streak count, edge).
+  const weeklyPnlUsd = closedTrades7d.reduce(
+    (acc: number, t: any) => acc + Number(t.realizedPnl ?? 0),
+    0,
+  );
+  const newestFirst = [...closedTrades7d].sort((a: any, b: any) => {
+    const aTs = a.closedAt ? new Date(a.closedAt).getTime() : 0;
+    const bTs = b.closedAt ? new Date(b.closedAt).getTime() : 0;
+    return bTs - aTs;
+  });
+  let consecutiveLosses = 0;
+  for (const t of newestFirst) {
+    if (Number(t.realizedPnl ?? 0) < 0) consecutiveLosses += 1;
+    else break;
+  }
+  const weeklyNotional = closedTrades7d.reduce(
+    (acc: number, t: any) =>
+      acc + Number(t.entryPrice ?? 0) * Number(t.quantity ?? 0),
+    0,
+  );
+  const weeklyRealizedEdgePct =
+    weeklyNotional > 0 ? weeklyPnlUsd / weeklyNotional : 1;
+
+  const drawdown = checkDrawdownBreaker({
+    capitalUsd: liveCapitalUsd,
+    todayPnlUsd: -Number(todayRealizedLoss ?? 0),
+    weeklyPnlUsd,
+    consecutiveLosses,
+    weeklyRealizedEdgePct,
+  });
+  if (!drawdown.allowed) {
+    return { status: "drawdown_paused", reason: drawdown.reason };
+  }
+
+  // Total open exposure cap.
+  const currentExposureUsd = openPositions.reduce(
+    (acc: number, p: any) =>
+      acc + Number(p.entryPrice ?? 0) * Number(p.quantity ?? 0),
+    0,
+  );
+  const maxPortfolioUsd =
+    liveCapitalUsd * ENV.profitGuardrails.maxPortfolioExposurePct;
+  if (currentExposureUsd + stakeUsd > maxPortfolioUsd) {
+    return {
+      status: "exposure_capped",
+      reason: `Total exposure $${(currentExposureUsd + stakeUsd).toFixed(2)} would exceed ${(ENV.profitGuardrails.maxPortfolioExposurePct * 100).toFixed(0)}% cap ($${maxPortfolioUsd.toFixed(2)})`,
+    };
+  }
+
+  // Per-category (sports) exposure cap.
+  const sportsExposureUsd = openPositions.reduce((acc: number, p: any) => {
+    if (String(p.category ?? "").toLowerCase() !== "sports") return acc;
+    return acc + Number(p.entryPrice ?? 0) * Number(p.quantity ?? 0);
+  }, 0);
+  const maxCategoryUsd =
+    liveCapitalUsd * ENV.profitGuardrails.maxCorrelatedGroupPct;
+  if (sportsExposureUsd + stakeUsd > maxCategoryUsd) {
+    return {
+      status: "exposure_capped",
+      reason: `Sports exposure $${(sportsExposureUsd + stakeUsd).toFixed(2)} would exceed ${(ENV.profitGuardrails.maxCorrelatedGroupPct * 100).toFixed(0)}% per-category cap ($${maxCategoryUsd.toFixed(2)})`,
+    };
+  }
+
+  // Daily order count cap (uses the env-default global cap; per-user
+  // preferences for maxDailyOrders aren't loaded here).
+  const dailyOrderCap = 50; // sane upper bound; per-user override not loaded
+  if (todayOrderCount >= dailyOrderCap) {
+    return {
+      status: "no_qualifying_play",
+      reason: `Daily order count ${todayOrderCount} ≥ cap ${dailyOrderCap}`,
     };
   }
 
