@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -37,12 +37,21 @@ import { EmptyState } from "@/components/EmptyStates";
 function KalshiConnectPanel() {
   const utils = trpc.useUtils();
   const [, setLocation] = useLocation();
+  const redirectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [apiKey, setApiKey] = useState("");
   const [privateKey, setPrivateKey] = useState("");
   const [connectionMessage, setConnectionMessage] = useState<string | null>(
     null
   );
   const [connected, setConnected] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      if (redirectTimerRef.current !== null) {
+        clearTimeout(redirectTimerRef.current);
+      }
+    };
+  }, []);
 
   const trimmedApiKey = apiKey.trim();
   const trimmedPrivateKey = privateKey.trim();
@@ -75,7 +84,7 @@ function KalshiConnectPanel() {
           utils.kalshi.getPerformanceOverview.invalidate(),
           utils.kalshi.getPositions.invalidate(),
         ]);
-        setTimeout(() => setLocation("/"), CONNECT_REDIRECT_DELAY_MS);
+        redirectTimerRef.current = setTimeout(() => setLocation("/"), CONNECT_REDIRECT_DELAY_MS);
         return;
       }
       setConnectionMessage(
