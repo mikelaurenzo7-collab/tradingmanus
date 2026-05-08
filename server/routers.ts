@@ -1233,6 +1233,14 @@ export const appRouter = router({
       }
     }),
 
+    getSchedulerHeartbeat: protectedProcedure.query(async () => {
+      // Lightweight read of in-memory scheduler state.  Designed to be polled
+      // by the dashboard every 5–10 s so the user can see live what the bot
+      // is doing between autonomy_runs writes.  No DB call.
+      const { getAllSchedulerSnapshots } = await import("./_core/schedulerHeartbeat");
+      return getAllSchedulerSnapshots();
+    }),
+
     getAutonomyActivity: protectedProcedure.query(async ({ ctx }) => {
       try {
         const runs = await db.getRecentAutonomyRuns(getRequiredUserId(ctx), 8);
@@ -2188,6 +2196,55 @@ export const appRouter = router({
             cause: error,
           });
         }
+      }),
+
+    setOwnerMode: protectedProcedure
+      .input(z.object({ enabled: z.boolean() }))
+      .mutation(async ({ ctx, input }) => {
+        const userId = getRequiredUserId(ctx);
+        const existing = await tradingPreferencesDb.getTradingPreferences(userId);
+
+        if (input.enabled) {
+          // Require connected Kalshi credentials before flipping the master
+          // switch on — Owner Mode immediately enables live trading.
+          const creds = await kalshiCredDb.getKalshiCredentials(userId);
+          if (
+            !creds ||
+            ("needsReauth" in creds && creds.needsReauth) ||
+            creds.accountStatus !== "connected"
+          ) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message:
+                "Connect a live Kalshi account before enabling Owner Mode.",
+            });
+          }
+
+          const overrides = tradingPreferencesDb.buildOwnerModePresetOverrides();
+          const saved = await tradingPreferencesDb.saveTradingPreferences(userId, {
+            ...existing,
+            ...overrides,
+          });
+          await db.logAuditEvent(
+            "owner_mode_enabled",
+            JSON.stringify({ overrides }),
+            ctx.user!.openId,
+          );
+          return { success: true, preferences: saved };
+        }
+
+        // Disabling: just flip the flag, leave the rest of the prefs alone
+        // so the user can keep whatever cadence/notional/etc. they had set.
+        const saved = await tradingPreferencesDb.saveTradingPreferences(userId, {
+          ...existing,
+          ownerMode: false,
+        });
+        await db.logAuditEvent(
+          "owner_mode_disabled",
+          "",
+          ctx.user!.openId,
+        );
+        return { success: true, preferences: saved };
       }),
 
     disconnectKalshiAccount: protectedProcedure.mutation(async ({ ctx }) => {

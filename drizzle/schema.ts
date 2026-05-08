@@ -404,6 +404,10 @@ export const tradingPreferences = pgTable("tradingPreferences", {
   // even in fully_autonomous mode.  Default 0 = live trading.  The env-level
   // PAPER_TRADE_MODE=true global override still wins over this when set.
   paperTradeMode: integer("paperTradeMode").default(0).notNull(),
+  // Owner Mode — single bypass switch for the policy gates an owner who
+  // accepts the risk would otherwise fight.  See drizzle/migrations/0007
+  // and the bypasses in server/_core/kalshiAutonomy.ts.  Default 0 = off.
+  ownerMode: integer("ownerMode").default(0).notNull(),
   executionCadence: executionCadenceEnum("executionCadence")
     .default("manual_only")
     .notNull(),

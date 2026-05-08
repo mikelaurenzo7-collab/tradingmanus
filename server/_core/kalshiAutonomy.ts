@@ -786,8 +786,15 @@ function evaluateExecutionCandidate(
 
   // Category concentration guard: prevent stacking too many correlated
   // positions from the same market category (e.g., multiple crypto markets).
+  // Owner Mode bypasses this — the owner has explicitly opted out of the
+  // correlation-protection hand-holding.
   const signalCategory = (signal.metadata?.marketCategory ?? "").toLowerCase();
-  if (signalCategory && signalCategory !== "unknown" && input.openPositionCategories) {
+  if (
+    !input.preferences.ownerMode &&
+    signalCategory &&
+    signalCategory !== "unknown" &&
+    input.openPositionCategories
+  ) {
     let sameCategory = 0;
     for (const cat of Array.from(input.openPositionCategories.values())) {
       if (cat.toLowerCase() === signalCategory) sameCategory++;
@@ -903,15 +910,21 @@ async function shouldSkipScheduledRun(
     }
   }
 
-  const latestManualOrder = await db.getLatestAuditEventByType(
-    "kalshi_order_placed",
-    user.openId
-  );
+  // Owner Mode bypasses the 5-min recent-manual-order cooldown.  The cooldown
+  // exists to avoid stepping on a user who's actively clicking buy/sell in
+  // the dashboard; an owner who flipped the master Owner Mode switch has
+  // explicitly opted out of that hand-holding.
+  if (!preferences.ownerMode) {
+    const latestManualOrder = await db.getLatestAuditEventByType(
+      "kalshi_order_placed",
+      user.openId
+    );
 
-  if (latestManualOrder?.createdAt) {
-    const latestManualOrderTime = new Date(latestManualOrder.createdAt).getTime();
-    if (Date.now() - latestManualOrderTime < RECENT_MANUAL_ORDER_COOLDOWN_MS) {
-      return "recent manual order detected; autonomy will wait for the next cycle";
+    if (latestManualOrder?.createdAt) {
+      const latestManualOrderTime = new Date(latestManualOrder.createdAt).getTime();
+      if (Date.now() - latestManualOrderTime < RECENT_MANUAL_ORDER_COOLDOWN_MS) {
+        return "recent manual order detected; autonomy will wait for the next cycle";
+      }
     }
   }
 
@@ -1244,9 +1257,14 @@ export async function runScheduledAutonomousTrading(
     });
   }
 
+  // Owner Mode skips the posture-driven confidence boost — under Owner Mode
+  // the user's raw minSignalConfidence is the floor, period.  The posture
+  // multipliers (conservative +0.08, aggressive -0.05) are paternal nudges
+  // an owner who toggled the master switch has explicitly opted out of.
+  const postureBoost = preferences.ownerMode ? 0 : riskLimits.effectiveMinConfidence;
   const effectiveMinConfidence = Math.min(
     0.99,
-    Math.max(0, preferences.minSignalConfidence + riskLimits.effectiveMinConfidence)
+    Math.max(0, preferences.minSignalConfidence + postureBoost)
   );
 
   const rejectedCandidates: AwayTradingRejectedCandidate[] = [];

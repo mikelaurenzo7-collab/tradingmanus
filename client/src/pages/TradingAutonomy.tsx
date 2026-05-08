@@ -69,6 +69,22 @@ export default function TradingAutonomy() {
     onError: (error) => setMessage(error.message),
   });
 
+  const ownerModeMutation = trpc.kalshi.setOwnerMode.useMutation({
+    onSuccess: async (result) => {
+      setForm(result.preferences);
+      setMessage(
+        result.preferences.ownerMode
+          ? "Owner Mode enabled — autonomy armed at maximum permission."
+          : "Owner Mode disabled.",
+      );
+      await Promise.all([
+        utils.kalshi.getTradingPreferences.invalidate(),
+        utils.kalshi.getKalshiAccountStatus.invalidate(),
+      ]);
+    },
+    onError: (error) => setMessage(error.message),
+  });
+
   const accountStatus = accountStatusQuery.data;
   const connected = accountStatus?.connected ?? false;
   const equity = accountStatus?.equity ?? 0;
@@ -118,6 +134,42 @@ export default function TradingAutonomy() {
           <AlertDescription>{message}</AlertDescription>
         </Alert>
       )}
+
+      {/* ── Owner Mode quick-arm ─────────────────────────────────────── */}
+      <Card className={`glass-panel border-l-4 ${form.ownerMode ? "border-l-rose-500 glow-destructive" : "border-l-amber-500/40"}`}>
+        <CardContent className="p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <Zap className={`h-4 w-4 ${form.ownerMode ? "text-rose-400" : "text-amber-400"}`} />
+              <span className="font-semibold text-sm">Owner Mode</span>
+              {form.ownerMode ? (
+                <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded bg-rose-500/15 text-rose-300">
+                  ON
+                </span>
+              ) : null}
+            </div>
+            <p className="text-xs text-muted-foreground max-w-2xl">
+              One-click switch that arms full autonomy at maximum permission and bypasses
+              the policy gates an owner who accepts the risk would otherwise fight: the 5-min
+              recent-manual-order cooldown, the per-category concentration cap, and the
+              posture-driven confidence floor boost. Hard safety gates (credentials, capital,
+              price drift, exchange rejection) stay enforced.
+            </p>
+          </div>
+          <Button
+            variant={form.ownerMode ? "outline" : "default"}
+            size="sm"
+            disabled={ownerModeMutation.isPending || (!connected && !form.ownerMode)}
+            onClick={() => ownerModeMutation.mutate({ enabled: !form.ownerMode })}
+            className={form.ownerMode ? "" : "bg-rose-500 hover:bg-rose-600 text-white"}
+          >
+            {ownerModeMutation.isPending ? (
+              <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+            ) : null}
+            {form.ownerMode ? "Disable Owner Mode" : "Enable Owner Mode"}
+          </Button>
+        </CardContent>
+      </Card>
 
       {/* ── Hero Status Card ─────────────────────────────────────────── */}
       <Card className={`glass-panel relative overflow-hidden ${isArmed ? 'glow-primary animate-pulse-glow' : ''}`}>

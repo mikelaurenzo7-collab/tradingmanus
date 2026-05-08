@@ -36,6 +36,14 @@ export type TradingPreferencesSettings = {
    * global override still wins when set.
    */
   paperTradeMode: boolean;
+  /**
+   * Owner Mode — bypass the policy gates an owner who accepts the risk
+   * would otherwise fight: the 5-min recent-manual-order cooldown, the
+   * per-category open-position concentration cap, and the posture-driven
+   * confidence floor boost.  Hard safety gates (credentials, capital,
+   * price drift, exchange rejection) remain unchanged.  Default false = off.
+   */
+  ownerMode: boolean;
   executionCadence: ExecutionCadence;
   riskPosture: RiskPosture;
   minSignalConfidence: number;
@@ -48,6 +56,7 @@ export const DEFAULT_TRADING_PREFERENCES: TradingPreferencesSettings = {
   autonomyMode: "approval_required",
   liveTradingEnabled: false,
   paperTradeMode: false,
+  ownerMode: false,
   executionCadence: "manual_only",
   riskPosture: "balanced",
   minSignalConfidence: 0.72,
@@ -55,6 +64,26 @@ export const DEFAULT_TRADING_PREFERENCES: TradingPreferencesSettings = {
   maxDailyOrders: 3,
   requireApprovalAbove: 8,
 };
+
+/**
+ * Permissive preset applied atomically when the user enables Owner Mode.
+ * Sets autonomy/cadence/notional/daily-cap to their max-permissive values
+ * so no follow-up tweaking is needed.  Pure function so callers (routers,
+ * tests) can reuse without side effects.
+ */
+export function buildOwnerModePresetOverrides(): Partial<TradingPreferencesSettings> {
+  return {
+    ownerMode: true,
+    autonomyMode: "fully_autonomous",
+    liveTradingEnabled: true,
+    executionCadence: "continuous_watch",
+    riskPosture: "aggressive",
+    minSignalConfidence: 0.55,
+    maxOrderNotional: 250,
+    maxDailyOrders: 48,
+    requireApprovalAbove: 250,
+  };
+}
 
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(maximum, Math.max(minimum, value));
@@ -108,6 +137,9 @@ function normalizeTradingPreferences(
     paperTradeMode: Boolean(
       input?.paperTradeMode ?? DEFAULT_TRADING_PREFERENCES.paperTradeMode,
     ),
+    ownerMode: Boolean(
+      input?.ownerMode ?? DEFAULT_TRADING_PREFERENCES.ownerMode,
+    ),
     executionCadence,
     riskPosture,
     minSignalConfidence: clamp(
@@ -141,6 +173,7 @@ function toDatabaseValues(input: TradingPreferencesSettings) {
     autonomyMode: input.autonomyMode,
     liveTradingEnabled: input.liveTradingEnabled ? 1 : 0,
     paperTradeMode: input.paperTradeMode ? 1 : 0,
+    ownerMode: input.ownerMode ? 1 : 0,
     executionCadence: input.executionCadence,
     riskPosture: input.riskPosture,
     minSignalConfidence: input.minSignalConfidence,
@@ -172,6 +205,7 @@ export async function getTradingPreferences(userId: number) {
       autonomyMode: record.autonomyMode,
       liveTradingEnabled: Boolean(record.liveTradingEnabled),
       paperTradeMode: Boolean((record as { paperTradeMode?: number }).paperTradeMode ?? 0),
+      ownerMode: Boolean((record as { ownerMode?: number }).ownerMode ?? 0),
       executionCadence: record.executionCadence,
       riskPosture: record.riskPosture,
       minSignalConfidence: record.minSignalConfidence,

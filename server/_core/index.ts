@@ -15,6 +15,7 @@ import { runStartupSelfTest } from "./startupSelfTest";
 import { checkBudgetForRun } from "./aiCostBudget";
 import { refreshScoreboard } from "./dailyScoreboard";
 import { logger } from "./logger";
+import * as hb from "./schedulerHeartbeat";
 import { fetchKalshiMarkets } from "./kalshiMarketData";
 import { fetchPolymarketMarkets } from "./polymarketAuth";
 import {
@@ -121,6 +122,8 @@ const CROSS_PLATFORM_ARB_INTERVAL_MS = envIntervalMs("CROSS_ARB_INTERVAL_MS", 10
 const POLYMARKET_MARKET_LIMIT = 80;
 
 async function runAutonomousScheduler() {
+  const startedAt = Date.now();
+  hb.markTickStart("autonomy_kalshi", "scanning", "Checking eligibility");
   try {
     const eligibleUsers = await getUsersEligibleForAutomaticScheduledTrading();
     // The local scheduler now runs autonomy for every eligible user.
@@ -132,7 +135,10 @@ async function runAutonomousScheduler() {
       "local_scheduler"
     );
 
-    if (scopedUsers.length === 0) return;
+    if (scopedUsers.length === 0) {
+      hb.setSkipped("autonomy_kalshi", "no eligible users (live trading disarmed or autonomy=manual)");
+      return;
+    }
 
     // Refresh the pay-for-yourself scoreboard before consulting the budget
     // throttle.  Scoreboard + AI cost budget are PROCESS-LEVEL counters
@@ -156,6 +162,10 @@ async function runAutonomousScheduler() {
           reason: budget.reason,
         },
         "[Scheduler] Pay-for-yourself overrun exceeded daily cap; Kalshi autonomy skipping until UTC rollover",
+      );
+      hb.setBlocked(
+        "autonomy_kalshi",
+        `AI daily budget overrun (${Math.round(budget.fractionSpent * 100)}%) — ${budget.reason}`,
       );
       return;
     }
@@ -182,15 +192,25 @@ async function runAutonomousScheduler() {
         skippedCount,
       );
     }
-    if (lockedUsers.length === 0) return;
+    if (lockedUsers.length === 0) {
+      hb.setSkipped("autonomy_kalshi", `${skippedCount} user(s) already running`);
+      return;
+    }
 
     try {
+      hb.setActivity("autonomy_kalshi", "evaluating", `Reviewing markets for ${lockedUsers.length} user(s)`);
       logger.info(
         { userCount: lockedUsers.length },
         "[Scheduler] Running autonomous trading for %d eligible user(s)",
         lockedUsers.length,
       );
-      await runScheduledAutonomousTradingBatch(lockedUsers as any, "local_scheduler");
+      const batchResult = await runScheduledAutonomousTradingBatch(lockedUsers as any, "local_scheduler");
+      hb.recordTickTelemetry("autonomy_kalshi", {
+        ordersPlaced: batchResult.executedUsers,
+      });
+      if (batchResult.executedUsers > 0) {
+        hb.setActivity("autonomy_kalshi", "placing", `Placed orders for ${batchResult.executedUsers} user(s)`);
+      }
     } finally {
       await Promise.all(
         locks.filter((l) => l.acquired).map((l) => l.lock.release()),
@@ -198,6 +218,9 @@ async function runAutonomousScheduler() {
     }
   } catch (error) {
     logger.error({ err: error }, "[Scheduler] Autonomous trading run failed");
+    hb.setError("autonomy_kalshi", error);
+  } finally {
+    hb.markTickComplete("autonomy_kalshi", startedAt);
   }
 }
 
@@ -207,6 +230,8 @@ async function runAutonomousScheduler() {
 // Trading internally guards subscription, credentials, and the in-process
 // withUserLock around the risk-check → place sequence.
 async function runPolymarketAutonomousScheduler() {
+  const startedAt = Date.now();
+  hb.markTickStart("autonomy_polymarket", "scanning", "Checking Polymarket eligibility");
   try {
     const eligibleUsers = await getUsersEligibleForAutomaticScheduledTrading();
     const scopedUsers = scopeScheduledUsersToTrigger(
@@ -214,7 +239,10 @@ async function runPolymarketAutonomousScheduler() {
       "local_scheduler"
     );
 
-    if (scopedUsers.length === 0) return;
+    if (scopedUsers.length === 0) {
+      hb.setSkipped("autonomy_polymarket", "no eligible users");
+      return;
+    }
 
     // Pay-for-yourself scoreboard refresh before the budget gate.  Single
     // process-level cap shared across users — sample once per tick.
@@ -233,8 +261,14 @@ async function runPolymarketAutonomousScheduler() {
         },
         "[PolymarketScheduler] Pay-for-yourself overrun exceeded daily cap; Polymarket autonomy skipping until UTC rollover",
       );
+      hb.setBlocked(
+        "autonomy_polymarket",
+        `AI daily budget overrun (${Math.round(budget.fractionSpent * 100)}%)`,
+      );
       return;
     }
+
+    hb.setActivity("autonomy_polymarket", "evaluating", `Reviewing markets for ${scopedUsers.length} user(s)`);
 
     // Per-user lock + run, in parallel across users.  runPolymarket-
     // AutonomousTrading internally guards credentials + uses withUserLock
@@ -256,22 +290,30 @@ async function runPolymarketAutonomousScheduler() {
         }
       }),
     );
+    let placedCount = 0;
     for (const run of runs) {
       if (run.skipped) {
         logger.info({ userId: run.userId }, "[PolymarketScheduler] previous run still in progress; skipped this user");
       } else {
+        if (run.result.orderPlaced) placedCount += 1;
         logger.info(
           { userId: run.userId, status: run.result.status, orderPlaced: run.result.orderPlaced },
           "[PolymarketScheduler] run complete",
         );
       }
     }
+    hb.recordTickTelemetry("autonomy_polymarket", { ordersPlaced: placedCount });
   } catch (error) {
     logger.error({ err: error }, "[PolymarketScheduler] Polymarket autonomous run failed");
+    hb.setError("autonomy_polymarket", error);
+  } finally {
+    hb.markTickComplete("autonomy_polymarket", startedAt);
   }
 }
 
 async function runOrderSync() {
+  const startedAt = Date.now();
+  hb.markTickStart("order_sync", "syncing", "Reconciling positions + checking exits");
   try {
     const eligibleUsers = await getUsersEligibleForAutomaticScheduledTrading();
     const scopedUsers = scopeScheduledUsersToTrigger(
@@ -279,6 +321,12 @@ async function runOrderSync() {
       "local_scheduler"
     );
 
+    if (scopedUsers.length === 0) {
+      hb.setSkipped("order_sync", "no eligible users");
+      return;
+    }
+
+    let exitTriggered = 0;
     for (const user of scopedUsers as Array<{ id: number; openId: string }>) {
       const lock = createOrderSyncLock(user.id);
       const acquired = await lock.acquire({ ttlMs: 60 * 1000 });
@@ -316,6 +364,7 @@ async function runOrderSync() {
         ]);
         const kTriggered = kalshiExits.filter((e) => e.decision.shouldExit);
         const pTriggered = polymarketExits.filter((e) => e.decision.shouldExit);
+        exitTriggered += kTriggered.length + pTriggered.length;
         if (kTriggered.length > 0) {
           logger.info(
             { userId: user.id, count: kTriggered.length, closed: kTriggered.filter((e) => e.closed).length },
@@ -338,8 +387,12 @@ async function runOrderSync() {
         await lock.release();
       }
     }
+    hb.recordTickTelemetry("order_sync", { ordersPlaced: exitTriggered });
   } catch (error) {
     logger.error({ err: error }, "[OrderSync] Order sync run failed");
+    hb.setError("order_sync", error);
+  } finally {
+    hb.markTickComplete("order_sync", startedAt);
   }
 }
 
@@ -351,9 +404,12 @@ let crossArbScanInFlight = false;
 
 async function runRealtimeCrossPlatformArbScan() {
   if (crossArbScanInFlight) {
+    hb.setSkipped("cross_arb", "previous scan still in flight");
     return;
   }
   crossArbScanInFlight = true;
+  const startedAt = Date.now();
+  hb.markTickStart("cross_arb", "scanning", "Scanning Kalshi ↔ Polymarket for arb");
   try {
     const [rawKalshi, rawPolymarket] = await Promise.all([
       fetchKalshiMarkets({ status: "open" }),
@@ -399,10 +455,16 @@ async function runRealtimeCrossPlatformArbScan() {
         summary.total,
       );
     }
+    hb.recordTickTelemetry("cross_arb", {
+      marketsScanned: kalshiMarkets.length + polymarketMarkets.length,
+      ordersPlaced: opportunities.length,
+    });
   } catch (error) {
     logger.warn({ err: error }, "[CrossArb] realtime scan failed");
+    hb.setError("cross_arb", error);
   } finally {
     crossArbScanInFlight = false;
+    hb.markTickComplete("cross_arb", startedAt);
   }
 }
 
@@ -424,6 +486,14 @@ startServer()
         "[Startup] Self-test FAILED in production — schedulers will NOT arm.  HTTP server stays up so /api/health/* and the dashboard remain reachable.  Fix the failures above (most commonly: set ANTHROPIC_API_KEY, run `pnpm db:push`, set DATABASE_URL) and redeploy.",
       );
     } else {
+      // Tell the heartbeat tracker what the actual configured intervals are
+      // so the dashboard "next tick ETA" badge is accurate rather than the
+      // 60/30/10 s defaults baked into schedulerHeartbeat.ts.
+      hb.configureSchedulerInterval("autonomy_kalshi", AUTONOMOUS_TRADING_INTERVAL_MS);
+      hb.configureSchedulerInterval("autonomy_polymarket", AUTONOMOUS_TRADING_INTERVAL_MS);
+      hb.configureSchedulerInterval("order_sync", ORDER_SYNC_INTERVAL_MS);
+      hb.configureSchedulerInterval("cross_arb", CROSS_PLATFORM_ARB_INTERVAL_MS);
+
       setInterval(runAutonomousScheduler, AUTONOMOUS_TRADING_INTERVAL_MS);
       setInterval(runPolymarketAutonomousScheduler, AUTONOMOUS_TRADING_INTERVAL_MS);
       setInterval(runOrderSync, ORDER_SYNC_INTERVAL_MS);

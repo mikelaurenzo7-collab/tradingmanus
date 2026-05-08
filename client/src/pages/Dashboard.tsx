@@ -20,6 +20,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { StatCard } from "@/components/widgets/StatCard";
 import { PerformanceChart } from "@/components/charts/PerformanceChart";
 import { StartTradingDialog } from "@/components/StartTradingDialog";
+import { LiveHeartbeat } from "@/components/LiveHeartbeat";
 import { DashboardSkeleton } from "@/components/enhanced/Skeletons";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
@@ -278,6 +279,8 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       )}
+
+      <LiveHeartbeat />
 
       <div className="grid md:grid-cols-2 gap-3">
         <PlatformStatusTile
