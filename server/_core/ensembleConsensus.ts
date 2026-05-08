@@ -65,9 +65,13 @@ export interface EnsembleVerdict {
   finalImpliedProbability: number;
   reasoning: string;
   classification: HighStakesClassification;
-  /** Stack of every reviewer that ran, in order. */
+  /** Stack of every reviewer that ran, in order. The first entry is the
+   *  Tier-1 marker (synthesized — the real Tier-1 review ran upstream in
+   *  reviewSignalsWithTrader). reviewerId reflects which provider was
+   *  active for Tier-1: `claude.sonnet-4-6` in the default Claude-as-trader
+   *  pivot, `grok.4-1-fast` in legacy mode. */
   reviews: Array<
-    | { reviewerId: "grok.4-1-fast"; verdict: GrokVerdict }
+    | { reviewerId: "grok.4-1-fast" | "claude.sonnet-4-6.tier1-synthetic"; verdict: GrokVerdict }
     | { reviewerId: ClaudeReviewVerdict["reviewerId"]; verdict: ClaudeReviewVerdict }
   >;
   totalAiCostUsd: number;
@@ -80,8 +84,13 @@ export interface EnsembleInput extends Omit<ClaudeReviewInput, "grokVerdict"> {
 }
 
 export async function runEnsemble(input: EnsembleInput): Promise<EnsembleVerdict> {
+  // Tier-1 reviewerId reflects the active provider, not always "Grok".
+  const tier1ReviewerId: "grok.4-1-fast" | "claude.sonnet-4-6.tier1-synthetic" =
+    ENV.anthropicApiKey.length > 0
+      ? "claude.sonnet-4-6.tier1-synthetic"
+      : "grok.4-1-fast";
   const reviews: EnsembleVerdict["reviews"] = [
-    { reviewerId: "grok.4-1-fast", verdict: input.grokVerdict },
+    { reviewerId: tier1ReviewerId, verdict: input.grokVerdict },
   ];
   let totalAiCostUsd = input.grokVerdict.costUsd;
 
@@ -400,9 +409,14 @@ export interface SignalForEnsemble {
 export interface EnsembleFilterResult {
   /** Signals that passed the ensemble (Grok + maybe Sonnet/Opus). */
   approvedSignals: SignalForEnsemble[];
-  /** Per-signal verdict trail for the audit log. */
+  /** Per-signal verdict trail for the audit log. Keyed by composite
+   *  (marketId, side, signalType) — matches the same key used downstream
+   *  in kalshiAutonomy.ts so multi-signal-per-market candidates don't
+   *  collide and adopt each other's verdicts. */
   verdicts: Array<{
     marketId: string;
+    side: "yes" | "no";
+    signalType: string;
     ensemble: EnsembleVerdict;
   }>;
 }
@@ -437,6 +451,8 @@ export async function applyEnsembleFilter(
     for (const result of chunkResults) {
       verdicts.push({
         marketId: result.signal.marketId,
+        side: result.signal.side,
+        signalType: String(result.signal.signalType ?? "default"),
         ensemble: result.ensemble,
       });
       if (result.adjusted) {

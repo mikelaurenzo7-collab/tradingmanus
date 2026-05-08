@@ -12,9 +12,11 @@
  *   - Price filter: marketPrice ≤ DAILY_MOONSHOT_MAX_PRICE
  *   - Probability ratio: AI confidence ≥ MIN_PROB_RATIO × market implied
  *     (default 1.5× — market thinks 10%, AI thinks ≥15%)
- *   - Net-EV floor: DAILY_MOONSHOT_MIN_NET_EV (default 4 %, looser than
- *     the main 6.5 % floor — moonshots have bad sharpe by design; the
- *     main system filter would reject them all)
+ *   - Net-EV floor: DAILY_MOONSHOT_MIN_NET_EV (default 15 %, STRICTER
+ *     than the main 5 % floor). The earlier 4 % floor was inert because
+ *     real moonshots produce 30-50 %+ net EV by structure (low contract
+ *     price × decent edge ratio = huge per-dollar EV). 15 % filters out
+ *     marginal candidates that just barely cleared the prob-ratio gate.
  *   - Side: typically YES (the underdog is "this unlikely thing happens").
  *     NO-side moonshots also work if the AI sees the favorite is
  *     overpriced — selection logic handles both.
@@ -289,7 +291,13 @@ export async function runDailyMoonshotPlay(
   // Moonshots are inherently low-sharpe; the main system floor would reject
   // every legitimate lottery ticket. Still rejects negative-EV trades.
   const moonshotApproved = ensembleResult.approvedSignals.filter((sig) => {
-    const verdict = ensembleResult.verdicts.find((v) => v.marketId === sig.marketId);
+    // Composite-key match — multiple signals can exist per market.
+    const verdict = ensembleResult.verdicts.find(
+      (v) =>
+        v.marketId === sig.marketId &&
+        v.side === sig.side &&
+        v.signalType === String(sig.signalType ?? "default"),
+    );
     const ensembleCost = verdict?.ensemble.totalAiCostUsd ?? 0;
     const net = calculateNetEv({
       count: sig.count,
@@ -539,8 +547,12 @@ export async function runDailyMoonshotPlay(
       impliedProbability: top.impliedProbability,
       payoutMultiple,
       category: top.category,
-      reasoning: ensembleResult.verdicts.find((v) => v.marketId === top.marketId)
-        ?.ensemble.reasoning,
+      reasoning: ensembleResult.verdicts.find(
+        (v) =>
+          v.marketId === top.marketId &&
+          v.side === top.side &&
+          v.signalType === top.signalType,
+      )?.ensemble.reasoning,
     }),
     `user:${userId}`,
   ).catch(() => {});

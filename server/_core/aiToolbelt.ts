@@ -88,9 +88,9 @@ export function isHighStakes(context: StakesContext): boolean {
 
 /**
  * Pick the right model for the given tier.  Returns the override if
- * provided, otherwise the configured Grok model.  Tiers used to map to
- * Anthropic Haiku/Opus; the Grok-only pivot collapses them to a single
- * model since Grok pricing is flat.
+ * provided, otherwise the configured Claude model when Claude is the
+ * active provider (Sonnet for routine review, Opus for deep / high-stakes
+ * tier). Falls back to the Grok model in legacy mode (no ANTHROPIC_API_KEY).
  */
 export function selectAnthropicModel(tier: ModelTier, override?: string): string {
   if (override && override.trim()) return override.trim();
@@ -174,9 +174,18 @@ export function isWebSearchEnabled(): boolean {
 }
 
 export function isExtendedThinkingEnabled(): boolean {
-  // Anthropic extended-thinking is a no-op in Grok-only mode.  Returning
-  // false keeps the trading reviewer on the simple JSON-only response path.
-  return false;
+  // Extended thinking is a real Anthropic-SDK feature. Enabled when
+  // ANTHROPIC_API_KEY is configured (Claude-as-trader mode); Grok
+  // doesn't support it. Operator can force-disable via
+  // ENABLE_EXTENDED_THINKING=false to fall back to the simpler JSON-only
+  // path (saves ~10-30 % on Opus deep-tier cost at the price of less
+  // careful reasoning on high-stakes trades).
+  if (!ENV.anthropicApiKey || ENV.anthropicApiKey.length === 0) return false;
+  const flag = (process.env.ENABLE_EXTENDED_THINKING ?? "").trim().toLowerCase();
+  if (flag === "0" || flag === "false" || flag === "no" || flag === "off") {
+    return false;
+  }
+  return true;
 }
 
 /**

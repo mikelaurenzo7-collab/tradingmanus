@@ -498,8 +498,12 @@ export async function runDailySportsPlay(
       liveCapitalUsd,
       confidence: top.confidence,
       expectedValue: top.expectedValue,
-      reasoning: ensembleResult.verdicts.find((v) => v.marketId === top.marketId)
-        ?.ensemble.reasoning,
+      reasoning: ensembleResult.verdicts.find(
+        (v) =>
+          v.marketId === top.marketId &&
+          v.side === top.side &&
+          v.signalType === top.signalType,
+      )?.ensemble.reasoning,
     }),
     `user:${userId}`,
   ).catch(() => {});
