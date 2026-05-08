@@ -465,17 +465,21 @@ async function processOneSignalForEnsemble(
   const notionalUsd = s.count * s.marketPrice;
   const grossEvFraction = s.expectedValue;
 
-  // Synthesise the GrokVerdict from the upstream-approved signal's
-  // existing fields. The autonomy already passed Grok's self-consistency
-  // check before we get here, so first/second pass are both treated as
-  // approved (the per-pass details aren't propagated through
-  // reviewSignalsWithTrader yet).
+  // Synthesise a Tier-1 approval marker from the upstream-approved signal.
+  // The actual Tier-1 review (Claude Sonnet by default in Claude-as-trader
+  // mode, or Grok in legacy mode) ran in `reviewSignalsWithTrader` before
+  // this code is reached — so any signal here is already Tier-1-approved
+  // by definition. This object exists only because the ensemble's veto
+  // logic was originally written when Grok was Tier-1; the field name
+  // `grokVerdict` is a historical artifact, not a claim that Grok ran.
   const grokVerdict: GrokVerdict = {
     approved: true,
     confidenceAdjustment: 0,
     expectedValueAdjustment: 0,
     impliedProbability: s.impliedProbability,
-    reasoning: "Approved by Grok primary reviewer (Tier 1)",
+    reasoning: ENV.anthropicApiKey
+      ? "Approved by primary reviewer (Tier 1: Claude Sonnet)"
+      : "Approved by primary reviewer (Tier 1: Grok)",
     firstPassApproved: true,
     secondPassApproved: true,
     firstPassEvAdjustment: 0,

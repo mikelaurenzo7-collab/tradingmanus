@@ -256,6 +256,43 @@ export const ENV = {
     { min: 0.005, max: 0.1 },
   ),
 
+  // ── Daily Moonshot Play (aggressive playground, opt-in) ───────────────
+  // Once per UTC day at the configured hour, picks the highest-edge
+  // underdog (any category) priced ≤ DAILY_MOONSHOT_MAX_PRICE where the
+  // AI sees materially more probability than the market. Sized at a small
+  // fraction of bankroll (lottery-ticket discipline). Same risk gates as
+  // Daily Sports Play. Calibration loop picks up outcomes automatically.
+  enableDailyMoonshot: normalizeBoolean(
+    process.env.ENABLE_DAILY_MOONSHOT,
+    false,
+  ),
+  dailyMoonshotHourUtc: (() => {
+    const raw = (process.env.DAILY_MOONSHOT_HOUR_UTC ?? "").trim();
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 23) return 16;
+    return parsed;
+  })(),
+  dailyMoonshotPctOfCapital: normalizeFloat(
+    process.env.DAILY_MOONSHOT_PCT_OF_CAPITAL,
+    0.015, // 1.5 % default — lottery-ticket sizing
+    { min: 0.001, max: 0.05 },
+  ),
+  dailyMoonshotMaxPrice: normalizeFloat(
+    process.env.DAILY_MOONSHOT_MAX_PRICE,
+    0.3, // YES contracts ≤ $0.30 (or NO equivalent ≥ $0.70) qualify
+    { min: 0.05, max: 0.45 },
+  ),
+  dailyMoonshotMinProbRatio: normalizeFloat(
+    process.env.DAILY_MOONSHOT_MIN_PROB_RATIO,
+    1.5, // AI prob must be ≥ 1.5× market implied (10 % market → 15 % AI)
+    { min: 1.05, max: 5 },
+  ),
+  dailyMoonshotMinNetEv: normalizeFloat(
+    process.env.DAILY_MOONSHOT_MIN_NET_EV,
+    0.04, // 4 % net-EV floor — looser than main 6.5 % since moonshots are low-sharpe
+    { min: 0, max: 0.5 },
+  ),
+
   // ── Dynamic scanner (5 base / 7-8 conditional) ───────────────────────────
   // Owner override: opt-in domains where the operator's domain knowledge
   // is high enough to relax the AI gate (still honors hard guardrails).
