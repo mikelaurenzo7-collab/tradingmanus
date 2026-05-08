@@ -105,18 +105,22 @@ export function LiveHeartbeat() {
   const headline = useMemo(() => {
     if (!schedulers) return { kind: "booting" as Activity, text: "Connecting to scheduler…" };
     const order: Activity[] = ["error", "blocked", "placing", "evaluating", "scanning", "syncing", "skipped", "idle", "booting"];
-    const all = Object.values(schedulers) as any[];
+    // Defensively filter out null/undefined snapshots before iterating so a
+    // partial heartbeat payload can't crash the whole headline memo.
+    const all = (Object.values(schedulers) as Array<any | null | undefined>).filter(
+      (s) => s != null,
+    );
     for (const want of order) {
-      const hit = all.find((s) => s.activity === want);
+      const hit = all.find((s) => s?.activity === want);
       if (hit) {
         const verbose: Record<string, string> = {
-          error: hit.message ?? "A scheduler errored",
-          blocked: hit.blockReason ?? "Blocked",
-          placing: hit.message ?? "Placing an order",
-          evaluating: hit.message ?? "Reviewing signals",
-          scanning: hit.message ?? "Scanning markets",
-          syncing: hit.message ?? "Reconciling positions",
-          skipped: hit.telemetry?.skipReason ?? "Skipped this tick",
+          error: hit?.message ?? "A scheduler errored",
+          blocked: hit?.blockReason ?? "Blocked",
+          placing: hit?.message ?? "Placing an order",
+          evaluating: hit?.message ?? "Reviewing signals",
+          scanning: hit?.message ?? "Scanning markets",
+          syncing: hit?.message ?? "Reconciling positions",
+          skipped: hit?.telemetry?.skipReason ?? "Skipped this tick",
           idle: "All schedulers idle — next tick scheduled",
           booting: "Scheduler warming up",
         };
