@@ -28,6 +28,13 @@ const kalshiOrderSyncBreaker = new CircuitBreaker({
 // Guards against two concurrent sync intervals processing the same user's pending orders
 const _syncRunningByUser = new Set<string>();
 
+// Per-orderId consecutive-failure counter.  When the same order fails to
+// sync for N consecutive ticks we escalate to an alert so the operator
+// learns the sync is broken (rather than silently logging warnings every
+// 30 s indefinitely).  Reset on the first successful sync.
+const ORDER_SYNC_ALERT_THRESHOLD = 3;
+const _orderSyncFailureCount = new Map<string, number>();
+
 function getUserSyncKey(userId: number) {
   return `user:${assertPositiveIntegerUserId(userId, "order sync userId")}`;
 }
@@ -108,8 +115,31 @@ export async function syncPendingOrders(userId: number): Promise<void> {
             fillPrice,
           );
         }
+        // Successful sync — reset any prior consecutive-failure count.
+        _orderSyncFailureCount.delete(order.orderId);
       } catch (err) {
-        logger.error({ err, orderId: order.orderId }, "[OrderSync] Failed to sync order %s", order.orderId);
+        const next = (_orderSyncFailureCount.get(order.orderId) ?? 0) + 1;
+        _orderSyncFailureCount.set(order.orderId, next);
+        logger.error(
+          { err, orderId: order.orderId, consecutiveFailures: next },
+          "[OrderSync] Failed to sync order %s (consecutive failures: %d)",
+          order.orderId,
+          next,
+        );
+        if (next === ORDER_SYNC_ALERT_THRESHOLD) {
+          // Lazy-import to avoid pulling alerting into the import graph at
+          // module load (alerting depends on env validation that some tests
+          // mock).  Fire-and-forget — alerting must never block sync.
+          import("./alerting").then(({ alertExchangeRejection }) => {
+            void alertExchangeRejection(scopedUserId, order.orderId, {
+              marketId: order.marketId,
+              side: order.side as "yes" | "no",
+              quantity: order.quantity ?? 0,
+              limitPrice: Number(order.limitPrice ?? 0),
+              error: `${ORDER_SYNC_ALERT_THRESHOLD} consecutive sync failures: ${err instanceof Error ? err.message : String(err)}`,
+            });
+          }).catch(() => {});
+        }
       }
     }
   } finally {

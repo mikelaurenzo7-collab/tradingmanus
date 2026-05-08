@@ -1485,11 +1485,17 @@ export async function getAuditLog(
     eq(auditLog.triggeredByOpenId, scopedOpenId)
   );
 
+  // Hard cap: the audit log can grow to millions of rows over months of
+  // continuous autonomy; an unbounded query under load can stall the
+  // dashboard and exhaust the Neon connection pool.  500 rows is enough
+  // for the UI's audit page (which paginates client-side anyway) and the
+  // 7-day cutoff already applied above.
   return await database
     .select()
     .from(auditLog)
     .where(conditions)
-    .orderBy(desc(auditLog.createdAt));
+    .orderBy(desc(auditLog.createdAt))
+    .limit(500);
 }
 
 /**

@@ -117,7 +117,11 @@ async function loadSnapshots(
       .where(
         inArray(kalshiMarketSnapshots.marketId, marketIdFilter),
       )
-      .orderBy(asc(kalshiMarketSnapshots.snapshotTime))) as Array<Record<string, unknown>>;
+      .orderBy(asc(kalshiMarketSnapshots.snapshotTime))
+      // Hard cap: kalshiMarketSnapshots is append-only and grows unboundedly.
+      // Without this an unfiltered backtest can OOM the process and stall
+      // the request thread.
+      .limit(100_000)) as Array<Record<string, unknown>>;
   } else {
     rows = (await database
       .select({
@@ -128,7 +132,8 @@ async function loadSnapshots(
       })
       .from(kalshiMarketSnapshots)
       .where(gte(kalshiMarketSnapshots.snapshotTime, since))
-      .orderBy(asc(kalshiMarketSnapshots.snapshotTime))) as Array<Record<string, unknown>>;
+      .orderBy(asc(kalshiMarketSnapshots.snapshotTime))
+      .limit(100_000)) as Array<Record<string, unknown>>;
   }
 
   return rows.map((r) => ({
