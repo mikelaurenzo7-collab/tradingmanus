@@ -37,9 +37,9 @@ import {
 import type { CrossPlatformArbitrageOpportunity } from "./crossPlatformArbitrage";
 
 const ARB_REVIEWER_MAX_OPPORTUNITIES = 8;
-// Must exceed the inline `thinking.budget_tokens: 3000` extended-thinking
-// budget below — Anthropic rejects requests where budget >= max_tokens.
-// 6000 leaves ~3000 tokens for the actual JSON review output.
+// Multi-leg arbitrage is always high-stakes and runs adaptive extended
+// thinking (effort=high).  6000 max_tokens gives the model room for
+// substantial reasoning while leaving headroom for the JSON review output.
 const ARB_REVIEWER_MAX_TOKENS = 6000;
 const ARB_REVIEWER_REASONING_CHARS = 320;
 
@@ -209,7 +209,9 @@ export async function reviewArbitrageOpportunities(
     messages: [{ role: "user", content: JSON.stringify(payload) }],
   };
   if (ENV.enableAiExtendedThinking) {
-    messageInput.thinking = { type: "enabled", budget_tokens: 3000 };
+    // Adaptive thinking — Opus 4.7+ rejects manual mode (400).  See
+    // https://docs.claude.com/en/docs/build-with-claude/adaptive-thinking
+    messageInput.thinking = { type: "adaptive", effort: "high" };
   }
   if (tools) messageInput.tools = tools;
 

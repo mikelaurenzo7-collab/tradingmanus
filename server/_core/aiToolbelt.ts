@@ -159,21 +159,27 @@ export function buildCachedSystemPrompt(staticMandate: string, dynamicPreamble?:
 }
 
 export type ExtendedThinkingConfig =
+  | { type: "adaptive"; effort: "low" | "medium" | "high" }
   | { type: "enabled"; budget_tokens: number }
   | undefined;
 
 /**
- * Extended-thinking budget on the deep tier.  Opus benefits sharply from
- * larger thinking budgets on quantitative reasoning; the prior 2048 cap
- * effectively limited it to a paragraph of plan + draft.  6000 tokens lets
- * Opus actually reason about base rates, line movement, and resolution
- * mechanics on a single contested trade.  Sonnet/Haiku do not benefit
- * proportionally on this task, so this budget only fires on the deep tier.
+ * Adaptive extended thinking on the deep tier.  Opus 4.7 (and later) rejects
+ * the legacy manual mode (`{type:"enabled", budget_tokens}`) with a 400 and
+ * requires `{type:"adaptive", effort}` — see Anthropic docs at
+ * https://docs.claude.com/en/docs/build-with-claude/adaptive-thinking
+ *
+ * Adaptive lets the model decide how much thinking to spend per call up to
+ * `max_tokens`.  We pin `effort: "high"` because this only fires on
+ * high-stakes trades (large notional, near-resolution, contested mid-stakes)
+ * where capital preservation outweighs thinking-token cost.  Sonnet/Haiku do
+ * not benefit proportionally on this task, so adaptive only fires on the
+ * deep tier (which currently maps to Opus by default).
  */
 export function buildExtendedThinking(stakes: StakesContext): ExtendedThinkingConfig {
   if (!isExtendedThinkingEnabled()) return undefined;
   if (!isHighStakes(stakes)) return undefined;
-  return { type: "enabled", budget_tokens: 6000 };
+  return { type: "adaptive", effort: "high" };
 }
 
 /**

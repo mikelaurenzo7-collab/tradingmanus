@@ -346,10 +346,10 @@ async function requestAnthropicReviews(
 
   const messageInput: Record<string, unknown> = {
     model,
-    // Deep tier max_tokens must exceed buildExtendedThinking's 6000-token
-    // budget (Anthropic API rejects requests where thinking.budget_tokens
-    // >= max_tokens).  8000 leaves ~2000 tokens for the actual JSON review
-    // output after thinking completes.
+    // Deep tier uses adaptive extended thinking (effort=high), which lets
+    // the model spend up to max_tokens on thinking + output.  8000 gives
+    // room for substantial reasoning while leaving headroom for the JSON
+    // review output.
     max_tokens: useDeepModel ? 8000 : 1800,
     temperature: 0,
     messages: [
