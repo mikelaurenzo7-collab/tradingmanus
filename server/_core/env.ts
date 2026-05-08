@@ -66,7 +66,7 @@ export const ENV = {
   // paths don't break. New deployments should use KALSHI_KEY_ID + key.
   kalshiApiKey: normalize(process.env.KALSHI_API_KEY),
 
-  // ── Grok (the ONLY AI reviewer) ──────────────────────────────────────────
+  // ── Grok (Tier 1, always-on primary reviewer) ───────────────────────────
   xaiApiKey: normalize(process.env.XAI_API_KEY),
   // Default to Grok 4.1 Fast — cheap + fast + strong reasoning floor.
   grokModel: normalize(process.env.GROK_MODEL) || "grok-4-1-fast",
@@ -90,6 +90,53 @@ export const ENV = {
     process.env.GROK_COST_PER_REVIEW_USD,
     0.0035,
     { min: 0, max: 1 },
+  ),
+
+  // ── Claude (Tier 2 + Tier 3 ensemble reviewers) ─────────────────────────
+  // ANTHROPIC_API_KEY is OPTIONAL but strongly recommended. When set, the
+  // ensemble runs:
+  //   Tier 1 — Grok 4.1 Fast        — every signal (cheap, has live X).
+  //   Tier 2 — Claude Sonnet 4.6    — only on high-stakes signals.
+  //   Tier 3 — Claude Opus 4.7      — only when Grok+Sonnet disagree, OR the
+  //                                   position is a catastrophic-bet
+  //                                   (≥10% of live Kalshi capital).
+  // When unset, the system silently degrades to Grok-only with a boot warning.
+  anthropicApiKey: normalize(process.env.ANTHROPIC_API_KEY),
+  claudeSonnetModel:
+    normalize(process.env.CLAUDE_SONNET_MODEL) || "claude-sonnet-4-6",
+  claudeOpusModel: normalize(process.env.CLAUDE_OPUS_MODEL) || "claude-opus-4-7",
+  claudeSonnetTimeoutMs: normalizePositiveInt(
+    process.env.CLAUDE_SONNET_TIMEOUT_MS,
+    20000,
+  ),
+  claudeOpusTimeoutMs: normalizePositiveInt(
+    process.env.CLAUDE_OPUS_TIMEOUT_MS,
+    45000,
+  ),
+
+  // ── High-stakes triggers (all percentages — auto-scale with live balance) ─
+  // A signal is high-stakes (→ Sonnet review) if any of these hold:
+  highStakesPctOfCapital: normalizeFloat(
+    process.env.HIGH_STAKES_PCT_OF_CAPITAL,
+    0.03, // 3% of live capital. At $200 = $6; at $1000 = $30; at $5000 = $150.
+    { min: 0.005, max: 0.5 },
+  ),
+  // Legacy hard-dollar threshold. Default `Infinity` so it's effectively off
+  // unless the operator opts in. Use the percentage knob above instead.
+  highStakesNotionalUsd: normalizeFloat(
+    process.env.HIGH_STAKES_NOTIONAL_USD,
+    Number.POSITIVE_INFINITY,
+    { min: 0, max: 1_000_000 },
+  ),
+  highStakesResolutionMinutes: normalizePositiveInt(
+    process.env.HIGH_STAKES_RESOLUTION_MINUTES,
+    1440, // 24 h
+  ),
+  // Catastrophic-bet trigger (→ Opus unanimous gate, 3-tier consensus).
+  catastrophicPctOfCapital: normalizeFloat(
+    process.env.CATASTROPHIC_PCT_OF_CAPITAL,
+    0.1, // 10% of live capital.
+    { min: 0.02, max: 0.5 },
   ),
 
   // ── Profit guardrails (high-edge, capital-preservation first) ────────────
@@ -197,6 +244,27 @@ export const ENV = {
     process.env.SCANNER_HIGH_OPP_WEEKLY_EDGE_PCT,
     0.08,
     { min: 0, max: 1 },
+  ),
+  // Capital-tier scaling: as the live Kalshi balance grows, the maximum
+  // ramp on a high-opportunity day grows too. Bottleneck is signal supply,
+  // not reviewer quality — so we don't scale the BASE rate, only the cap.
+  scannerCapMidTierUsd: normalizeFloat(
+    process.env.SCANNER_CAP_MID_TIER_USD,
+    500,
+    { min: 0, max: 1_000_000 },
+  ),
+  scannerCapHighTierUsd: normalizeFloat(
+    process.env.SCANNER_CAP_HIGH_TIER_USD,
+    2000,
+    { min: 0, max: 1_000_000 },
+  ),
+  scannerMaxAnalysesPerDayMidTier: normalizePositiveInt(
+    process.env.SCANNER_MAX_ANALYSES_PER_DAY_MID_TIER,
+    10,
+  ),
+  scannerMaxAnalysesPerDayHighTier: normalizePositiveInt(
+    process.env.SCANNER_MAX_ANALYSES_PER_DAY_HIGH_TIER,
+    12,
   ),
 
   // ── AI cost / cadence ────────────────────────────────────────────────────
