@@ -1910,10 +1910,13 @@ export const appRouter = router({
               { err: storageError },
               "[Kalshi] Failed to persist validated credentials"
             );
+            const storageMessage =
+              storageError instanceof Error
+                ? storageError.message
+                : "Your Kalshi credentials were validated, but the dashboard could not save the connection state. Please retry in a moment.";
             return {
               success: false,
-              error:
-                "Your Kalshi credentials were validated, but the dashboard could not save the connection state. Please retry in a moment.",
+              error: storageMessage,
             };
           }
 
