@@ -28,6 +28,8 @@ export type RiskPosture = (typeof RISK_POSTURES)[number];
 export type TradingPreferences = {
   autonomyMode: TradingAutonomyMode;
   liveTradingEnabled: boolean;
+  /** Per-user paper-trade opt-in.  Default false = live. */
+  paperTradeMode: boolean;
   executionCadence: ExecutionCadence;
   riskPosture: RiskPosture;
   minSignalConfidence: number;
@@ -39,6 +41,7 @@ export type TradingPreferences = {
 export const DEFAULT_TRADING_PREFERENCES: TradingPreferences = {
   autonomyMode: "approval_required",
   liveTradingEnabled: false,
+  paperTradeMode: false,
   executionCadence: "manual_only",
   riskPosture: "balanced",
   minSignalConfidence: 0.72,

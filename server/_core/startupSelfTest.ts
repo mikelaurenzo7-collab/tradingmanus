@@ -189,15 +189,14 @@ function checkPaperMode(): SelfTestCheck {
       name: "paper_trade_mode",
       status: "ok",
       detail:
-        "PAPER_TRADE_MODE=true (global override) — every user's orders simulated; no real exchange hits.",
+        "PAPER_TRADE_MODE=true (global override) — every user's orders simulated regardless of their per-user setting.  No real exchange hits.",
     };
   }
   return {
     name: "paper_trade_mode",
-    status: "warn",
+    status: "ok",
     detail:
-      `PAPER_TRADE_MODE is OFF — owner ${ENV.ownerEmail || "(unset)"} trades LIVE by default; ` +
-      "every other user is forced to paper.  Verify per-user `liveTradingEnabled` is set deliberately.",
+      "PAPER_TRADE_MODE OFF — paper-vs-live is per-user (Trading Preferences → Trade Mode toggle).  Default for new users is live.  Set PAPER_TRADE_MODE=true to halt all real trading site-wide.",
   };
 }
 

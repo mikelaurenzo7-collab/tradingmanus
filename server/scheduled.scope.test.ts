@@ -8,7 +8,11 @@ describe("scopeScheduledUsersToTrigger", () => {
     process.env = { ...ORIGINAL_ENV };
   });
 
-  it("scopes local-scheduler runs to the configured owner email", async () => {
+  it("returns every eligible user for local-scheduler runs (multi-user open trading)", async () => {
+    // The owner-only filter was removed when live trading was opened to
+    // every authenticated user.  The eligibility query upstream is what
+    // gates who appears in this list — by the time it reaches scope*,
+    // every user here is already configured + opted in.
     process.env.OWNER_EMAIL = "owner@example.com";
     const { scopeScheduledUsersToTrigger } = await import("./_core/app");
 
@@ -20,11 +24,16 @@ describe("scopeScheduledUsersToTrigger", () => {
       "local_scheduler"
     );
 
-    expect(scoped).toHaveLength(1);
-    expect(scoped[0].openId).toBe("owner-openid");
+    expect(scoped).toHaveLength(2);
+    expect(scoped.map((u) => u.openId).sort()).toEqual(
+      ["other-openid", "owner-openid"],
+    );
   });
 
-  it("returns an empty list when local-scheduler cannot find the owner among eligible users", async () => {
+  it("returns the input list as-is when there's no owner among eligible users", async () => {
+    // Previously this returned [] (gating local-scheduler runs to the
+    // owner specifically).  Now it just passes the list through —
+    // owner identity isn't special at the scheduler-scope layer.
     process.env.OWNER_EMAIL = "owner@example.com";
     const { scopeScheduledUsersToTrigger } = await import("./_core/app");
 
@@ -33,7 +42,8 @@ describe("scopeScheduledUsersToTrigger", () => {
       "local_scheduler"
     );
 
-    expect(scoped).toHaveLength(0);
+    expect(scoped).toHaveLength(1);
+    expect(scoped[0].openId).toBe("other-openid");
   });
 
   it("scopes authenticated manual trigger runs to the requester's openId", async () => {

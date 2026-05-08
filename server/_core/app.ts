@@ -76,15 +76,15 @@ export function scopeScheduledUsersToTrigger(
   users: EligibleScheduledUser[],
   triggerOpenId: string
 ) {
-  // The in-process Node scheduler scopes execution to the configured owner only.
+  // The in-process Node scheduler now runs autonomy for EVERY eligible
+  // user, not just the configured owner.  Eligibility is enforced
+  // server-side by getUsersEligibleForAutomaticScheduledTrading (live
+  // trading enabled + autonomy mode != manual + cadence != manual_only +
+  // Kalshi credentials connected), so the user list arriving here is
+  // already filtered to "configured + opted in" users.  Per-user locking
+  // (server/_core/userMutex.ts) keeps concurrent runs safe.
   if (triggerOpenId === "local_scheduler") {
-    const ownerEmail = ENV.ownerEmail.trim().toLowerCase();
-    if (!ownerEmail) {
-      return users;
-    }
-
-    const owner = users.find((user) => String(user.email ?? "").trim().toLowerCase() === ownerEmail);
-    return owner ? [owner] : [];
+    return users;
   }
 
   return users.filter((user) => user.openId === triggerOpenId);

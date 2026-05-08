@@ -123,20 +123,24 @@ const POLYMARKET_MARKET_LIMIT = 80;
 async function runAutonomousScheduler() {
   try {
     const eligibleUsers = await getUsersEligibleForAutomaticScheduledTrading();
-    // Mirror the HTTP handler: scope to the configured owner only.
+    // The local scheduler now runs autonomy for every eligible user.
+    // Eligibility was already filtered server-side (live trading enabled
+    // + autonomy mode != manual + cadence != manual_only + credentials
+    // connected), so this list is "everyone who's configured + opted in".
     const scopedUsers = scopeScheduledUsersToTrigger(
       eligibleUsers as Array<{ id: number; openId: string; email?: string | null }>,
       "local_scheduler"
     );
 
-    const ownerUser = scopedUsers[0];
-    if (!ownerUser) return;
+    if (scopedUsers.length === 0) return;
 
     // Refresh the pay-for-yourself scoreboard before consulting the budget
-    // throttle.  This pulls today's realized P&L + estimated fees from the
-    // DB and combines them with the in-memory AI spend counter so the
-    // throttle gate sees `effectiveOverrun = max(0, ai+fees-pnl)`.
-    await refreshScoreboard(ownerUser.id);
+    // throttle.  Scoreboard + AI cost budget are PROCESS-LEVEL counters
+    // (single env-configured cap shared across users), so we sample once
+    // per tick rather than per user.  When multi-user volume becomes
+    // material, switch to per-user scoreboards keyed by userId.
+    const firstUser = scopedUsers[0];
+    if (firstUser) await refreshScoreboard(firstUser.id);
 
     // AI daily cost budget gate.  No-op when AI_DAILY_BUDGET_USD is unset.
     // Profitable days never throttle; losing days self-throttle as the
@@ -156,18 +160,41 @@ async function runAutonomousScheduler() {
       return;
     }
 
-    const lock = createAutonomousTradingLock(ownerUser.id);
-    const acquired = await lock.acquire({ ttlMs: 5 * 60 * 1000 });
-    if (!acquired) {
-      logger.info("[Scheduler] Autonomous trading already in progress, skipping");
-      return;
+    // Per-user locks: each user's autonomy run is serialised against
+    // itself so two concurrent ticks for the same user can't race.
+    // Across users, runs proceed in parallel.
+    const userIds = scopedUsers.map((u) => u.id);
+    const locks = await Promise.all(
+      userIds.map(async (id) => {
+        const lock = createAutonomousTradingLock(id);
+        const acquired = await lock.acquire({ ttlMs: 5 * 60 * 1000 });
+        return { id, lock, acquired };
+      }),
+    );
+    const lockedUsers = scopedUsers.filter((u) =>
+      locks.find((l) => l.id === u.id)?.acquired,
+    );
+    const skippedCount = scopedUsers.length - lockedUsers.length;
+    if (skippedCount > 0) {
+      logger.info(
+        { skippedCount, runningCount: lockedUsers.length },
+        "[Scheduler] %d user(s) already had a run in progress; skipped",
+        skippedCount,
+      );
     }
+    if (lockedUsers.length === 0) return;
 
     try {
-      logger.info({ userCount: scopedUsers.length }, "[Scheduler] Running autonomous trading for %d eligible user(s)", scopedUsers.length);
-      await runScheduledAutonomousTradingBatch(scopedUsers as any, "local_scheduler");
+      logger.info(
+        { userCount: lockedUsers.length },
+        "[Scheduler] Running autonomous trading for %d eligible user(s)",
+        lockedUsers.length,
+      );
+      await runScheduledAutonomousTradingBatch(lockedUsers as any, "local_scheduler");
     } finally {
-      await lock.release();
+      await Promise.all(
+        locks.filter((l) => l.acquired).map((l) => l.lock.release()),
+      );
     }
   } catch (error) {
     logger.error({ err: error }, "[Scheduler] Autonomous trading run failed");
@@ -187,12 +214,12 @@ async function runPolymarketAutonomousScheduler() {
       "local_scheduler"
     );
 
-    const ownerUser = scopedUsers[0];
-    if (!ownerUser) return;
+    if (scopedUsers.length === 0) return;
 
-    // Pay-for-yourself scoreboard refresh before the budget gate.  See
-    // runAutonomousScheduler for the rationale.
-    await refreshScoreboard(ownerUser.id);
+    // Pay-for-yourself scoreboard refresh before the budget gate.  Single
+    // process-level cap shared across users — sample once per tick.
+    const firstUser = scopedUsers[0];
+    if (firstUser) await refreshScoreboard(firstUser.id);
 
     const budget = checkBudgetForRun();
     if (!budget.proceed) {
@@ -209,23 +236,35 @@ async function runPolymarketAutonomousScheduler() {
       return;
     }
 
-    const lock = new DistributedLock(`polymarket_autonomy_user_${ownerUser.id}`);
-    const acquired = await lock.acquire({ ttlMs: 5 * 60 * 1000 });
-    if (!acquired) {
-      logger.info("[PolymarketScheduler] Polymarket autonomous trading already in progress, skipping");
-      return;
-    }
-
-    try {
-      const result = await runPolymarketAutonomousTrading(ownerUser.id, {
-        triggeredByOpenId: "local_scheduler",
-      });
-      logger.info(
-        { status: result.status, orderPlaced: result.orderPlaced },
-        "[PolymarketScheduler] run complete"
-      );
-    } finally {
-      await lock.release();
+    // Per-user lock + run, in parallel across users.  runPolymarket-
+    // AutonomousTrading internally guards credentials + uses withUserLock
+    // around the risk-check → place sequence.
+    const runs = await Promise.all(
+      scopedUsers.map(async (user) => {
+        const lock = new DistributedLock(`polymarket_autonomy_user_${user.id}`);
+        const acquired = await lock.acquire({ ttlMs: 5 * 60 * 1000 });
+        if (!acquired) {
+          return { userId: user.id, skipped: true as const };
+        }
+        try {
+          const result = await runPolymarketAutonomousTrading(user.id, {
+            triggeredByOpenId: "local_scheduler",
+          });
+          return { userId: user.id, skipped: false as const, result };
+        } finally {
+          await lock.release();
+        }
+      }),
+    );
+    for (const run of runs) {
+      if (run.skipped) {
+        logger.info({ userId: run.userId }, "[PolymarketScheduler] previous run still in progress; skipped this user");
+      } else {
+        logger.info(
+          { userId: run.userId, status: run.result.status, orderPlaced: run.result.orderPlaced },
+          "[PolymarketScheduler] run complete",
+        );
+      }
     }
   } catch (error) {
     logger.error({ err: error }, "[PolymarketScheduler] Polymarket autonomous run failed");

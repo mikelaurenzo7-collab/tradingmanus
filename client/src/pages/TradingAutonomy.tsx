@@ -376,6 +376,62 @@ export default function TradingAutonomy() {
             </div>
           </div>
 
+          {/* Paper-mode toggle */}
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-3">
+              Trade Mode
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                disabled={policyLocked}
+                onClick={() => setForm((f) => ({ ...f, paperTradeMode: false }))}
+                className={`rounded-xl border px-4 py-3 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                  !form.paperTradeMode
+                    ? "border-emerald-400/60 bg-emerald-500/10"
+                    : "border-border/60 bg-background/40 hover:border-emerald-500/30"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold">Live trading</span>
+                  {!form.paperTradeMode ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  ) : (
+                    <Circle className="w-4 h-4 text-border/60 shrink-0" />
+                  )}
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Real orders against your Kalshi account.  Real P&L, real fees.
+                </p>
+              </button>
+              <button
+                type="button"
+                disabled={policyLocked}
+                onClick={() => setForm((f) => ({ ...f, paperTradeMode: true }))}
+                className={`rounded-xl border px-4 py-3 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                  form.paperTradeMode
+                    ? "border-amber-400/60 bg-amber-500/10"
+                    : "border-border/60 bg-background/40 hover:border-amber-500/30"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold">Paper (simulated)</span>
+                  {form.paperTradeMode ? (
+                    <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" />
+                  ) : (
+                    <Circle className="w-4 h-4 text-border/60 shrink-0" />
+                  )}
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Same logic, no real orders.  Outcomes record to performance for shadow-testing.
+                </p>
+              </button>
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Operator-level <code className="font-mono text-foreground/80">PAPER_TRADE_MODE=true</code> env still wins as a global kill switch over this per-user setting.
+            </p>
+          </div>
+
           {/* Numeric controls */}
           <div className="grid gap-5 sm:grid-cols-2">
             <label className="space-y-2 text-sm">

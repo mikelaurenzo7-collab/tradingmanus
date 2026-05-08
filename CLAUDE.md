@@ -92,7 +92,7 @@ used.  Never use `npm` or `yarn` in this repo — the lockfile is
 | `POLYMARKET_OWNER_ADDRESS` | optional but recommended | Polymarket EOA proxy wallet (the `0x…` address from your Polymarket account page).  Used by the position-sync reconciliation to detect manual UI closes and refresh mark prices.  When unset the sync silently no-ops; you'll see a `[SelfTest] WARN polymarket_owner_address` line at boot. |
 | `ALLOWED_ORIGIN` | optional | Extra CORS origin for production (e.g. Railway public URL) |
 | `ALERT_WEBHOOK_URL` | optional | Webhook URL for ops alerts (consecutive failures, equity drops) |
-| `PAPER_TRADE_MODE` | optional | `true` is a **global emergency override** — forces every user (including owner) into paper mode.  When unset/false, the configured `OWNER_EMAIL` user trades **live** by default; every other user is forced into paper.  See "Paper-mode policy" below. |
+| `PAPER_TRADE_MODE` | optional | `true` is a **global emergency override** — forces every user (including owner) into paper mode regardless of their per-user setting.  When unset/false, paper-vs-live is **per-user**: each user toggles `Trade Mode` in Trading Preferences (default = live).  See "Paper-mode policy" below. |
 
 See `.env.example` for the full set.
 
@@ -472,25 +472,34 @@ gate is working.
 `server/_core/effectivePaperMode.ts:getEffectivePaperTradeMode(userId)` resolves
 each order/cancel/close call to either paper or live, in this order:
 
-1. `ENV.paperTradeMode === true` → **everyone** is paper.  This is the
-   global emergency kill-switch — flip the env var, redeploy, all real
-   trading stops immediately without per-user changes.
-2. The user's email matches `OWNER_EMAIL` (case- and whitespace-insensitive)
-   → **live**.  The founder's bots place real orders by default.
-3. Anything else (any non-owner user) → **paper**.
+1. `ENV.paperTradeMode === true` → **everyone** is paper.  Global
+   emergency kill-switch — flip the env var, redeploy, all real trading
+   stops immediately regardless of per-user settings.
+2. `tradingPreferences.paperTradeMode === 1` for this user → **paper**.
+   Per-user opt-in toggle exposed in the dashboard's Trading Preferences
+   page ("Trade Mode" section).  Default is `0` (live).
+3. Otherwise → **live**.
 
-This shape lets the founder accept the risk for their own account while
-keeping any future invited user on the safe paper rails until they
-graduate.  The graduation path (UI toggle, time-in-paper minimum,
-win-rate threshold) is a follow-up; for now, only the owner can be live.
+This shape lets every authenticated user choose live or paper without
+operator intervention.  The closed-beta gate that previously blocked
+non-owners has been removed.  Owner identity is no longer special —
+just another user with their own preferences.
+
+Safety unchanged: live trading still requires the user to:
+- Connect Kalshi credentials (`accountStatus = 'connected'`)
+- Set `tradingPreferences.liveTradingEnabled = 1`
+- Set `autonomyMode != 'manual'` and `executionCadence != 'manual_only'`
+- Pass profitGuardrails (env-tunable EV/confidence floors, exposure caps)
+- Stay within their per-user `maxOrderNotional` + `maxDailyOrders` caps
 
 The result is cached per-userId for 5 minutes, so an autonomy run that
-opens one Kalshi order and one Polymarket order pays a single `users`
-table read regardless of how many positions are evaluated by exit
-monitors during the same tick.
+opens one Kalshi order + one Polymarket order pays a single
+`tradingPreferences` read regardless of how many positions are evaluated
+by exit monitors during the same tick.
 
-If `getUserById` fails or the user record is missing, the resolver
-returns `true` (paper) — the safer default for an unknown user.
+If the lookup fails (DB outage etc.), the resolver returns `true`
+(paper) — defaulting to live on failure would silently let real orders
+through during a transient outage.
 
 ---
 

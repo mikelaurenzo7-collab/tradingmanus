@@ -198,22 +198,50 @@ export async function deleteKalshiCredentials(userId: number) {
 }
 
 /**
- * Scan all stored Kalshi credentials and delete any that cannot be decrypted
- * with the current CREDENTIAL_ENCRYPTION_SECRET.
+ * Scan stored Kalshi credentials at startup and either log a warning for
+ * undecryptable rows (default, non-destructive) or actively mark them as
+ * disconnected (when CLEAR_INVALID_KALSHI_CREDENTIALS=true is set
+ * explicitly).
  *
- * This is run once on startup to purge credentials that were encrypted with a
- * different secret (e.g. after a secret rotation or environment mismatch).
- * Affected users will see a "re-authenticate" prompt on their next visit.
+ * Why this changed: the previous implementation DELETED any row that
+ * failed decryption, so a transient decrypt error (or a single
+ * inconsistency) on startup forced the user to re-paste their API key
+ * + private-key PEM block.  Operators reported having to reconnect on
+ * every redeploy.  The new default behaviour preserves the row and
+ * surfaces the issue in the audit log so the operator can triage
+ * without losing state.
  *
- * Returns the number of invalid credential rows that were removed.
+ * Returns { scanned, undecryptable, mutated }.  `mutated` is non-zero
+ * only when CLEAR_INVALID_KALSHI_CREDENTIALS=true; in that case rows
+ * are marked disconnected (encrypted blobs are NOT deleted, so a future
+ * secret-restore can still recover them).
  */
-export async function clearInvalidKalshiCredentials(): Promise<number> {
+export async function clearInvalidKalshiCredentials(): Promise<{
+  scanned: number;
+  undecryptable: number;
+  mutated: number;
+}> {
   const database = await getDb();
   if (!database) {
-    return 0;
+    return { scanned: 0, undecryptable: 0, mutated: 0 };
   }
 
-  let rows: Array<{ id: number; userId: number; apiKeyEncrypted: string; privateKeyEncrypted: string }>;
+  // Hard-disable destructive cleanup unless the operator explicitly
+  // opts in.  The env flag only takes effect when set to a truthy
+  // string ("1" / "true" / "yes" / "on").  Otherwise we just log.
+  const destructiveOptIn = (() => {
+    const raw = (process.env.CLEAR_INVALID_KALSHI_CREDENTIALS ?? "")
+      .trim()
+      .toLowerCase();
+    return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+  })();
+
+  let rows: Array<{
+    id: number;
+    userId: number;
+    apiKeyEncrypted: string;
+    privateKeyEncrypted: string;
+  }>;
   try {
     rows = await database
       .select({
@@ -224,11 +252,15 @@ export async function clearInvalidKalshiCredentials(): Promise<number> {
       })
       .from(kalshiCredentials);
   } catch (error) {
-    logger.error({ err: error }, "[Database] clearInvalidKalshiCredentials: failed to fetch rows");
-    return 0;
+    logger.error(
+      { err: error },
+      "[Database] clearInvalidKalshiCredentials: failed to fetch rows",
+    );
+    return { scanned: 0, undecryptable: 0, mutated: 0 };
   }
 
-  let cleared = 0;
+  let undecryptable = 0;
+  let mutated = 0;
 
   for (const row of rows) {
     let isValid = true;
@@ -240,32 +272,54 @@ export async function clearInvalidKalshiCredentials(): Promise<number> {
     }
 
     if (!isValid) {
-      try {
-        await database
-          .delete(kalshiCredentials)
-          .where(eq(kalshiCredentials.userId, row.userId));
-        cleared++;
+      undecryptable++;
+      if (destructiveOptIn) {
+        // Mark as disconnected — keep the encrypted blob in place so a
+        // secret-rotation recovery can still re-decrypt later.  The
+        // user will see a "reconnect" prompt because accountStatus is
+        // no longer 'connected'.
+        try {
+          await database
+            .update(kalshiCredentials)
+            .set({ accountStatus: "disconnected" })
+            .where(eq(kalshiCredentials.userId, row.userId));
+          mutated++;
+          logger.warn(
+            { userId: row.userId },
+            `[Database] Marked Kalshi credentials as disconnected (undecryptable) for user ${row.userId}. Encrypted blob preserved.`,
+          );
+        } catch (updateError) {
+          logger.error(
+            { err: updateError, userId: row.userId },
+            `[Database] Failed to mark invalid credentials disconnected for user ${row.userId}`,
+          );
+        }
+      } else {
+        // Default: log only.  The credential row stays intact; the user
+        // can still attempt to use it on their next API call (and will
+        // see a clear "decryption failed" error if it really is broken).
         logger.warn(
           { userId: row.userId },
-          `[Database] Removed undecryptable Kalshi credentials for user ${row.userId}. User must re-authenticate with Kalshi.`
-        );
-      } catch (deleteError) {
-        logger.error(
-          { err: deleteError, userId: row.userId },
-          `[Database] Failed to remove invalid credentials for user ${row.userId}`
+          `[Database] Kalshi credentials for user ${row.userId} failed decryption at startup.  ` +
+            `Row preserved (set CLEAR_INVALID_KALSHI_CREDENTIALS=true to actively disconnect).  ` +
+            `If the user reports trade failures, verify CREDENTIAL_ENCRYPTION_SECRET hasn't drifted.`,
         );
       }
     }
   }
 
-  if (cleared > 0) {
+  if (undecryptable > 0) {
     logger.warn(
-      { cleared },
-      `[Database] Credential cleanup complete: removed ${cleared} invalid Kalshi credential row(s). Affected users must re-authenticate with Kalshi.`
+      { scanned: rows.length, undecryptable, mutated, destructiveOptIn },
+      destructiveOptIn
+        ? `[Database] Credential cleanup: marked ${mutated}/${undecryptable} undecryptable Kalshi rows as disconnected.`
+        : `[Database] Credential cleanup: ${undecryptable} row(s) failed decryption.  Preserved (default non-destructive mode).`,
     );
   } else {
-    logger.info("[Database] Credential cleanup: all stored Kalshi credentials are valid.");
+    logger.info(
+      `[Database] Credential cleanup: all ${rows.length} stored Kalshi credentials decrypted successfully.`,
+    );
   }
 
-  return cleared;
+  return { scanned: rows.length, undecryptable, mutated };
 }
