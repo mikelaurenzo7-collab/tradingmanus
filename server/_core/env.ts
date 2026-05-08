@@ -387,12 +387,20 @@ export const ENV = {
   paperTradeMode: normalizeBoolean(process.env.PAPER_TRADE_MODE, false),
 };
 
+// Hard-required vars that must be present for any deploy.
 const REQUIRED_SERVER_ENV = [
   ["JWT_SECRET", ENV.cookieSecret],
   ["CREDENTIAL_ENCRYPTION_SECRET", ENV.credentialEncryptionSecret],
   ["DATABASE_URL", ENV.databaseUrl],
   ["OWNER_EMAIL", ENV.ownerEmail],
   ["OWNER_PASSWORD", ENV.ownerPassword],
+] as const;
+
+// At least ONE of these must be present — the AI reviewer pipeline needs
+// at least one provider to function. Default mode is Claude-as-trader
+// (ANTHROPIC_API_KEY); Grok (XAI_API_KEY) remains as a legacy fallback.
+const REQUIRED_AI_PROVIDERS = [
+  ["ANTHROPIC_API_KEY", ENV.anthropicApiKey],
   ["XAI_API_KEY", ENV.xaiApiKey],
 ] as const;
 
@@ -401,8 +409,19 @@ export function validateServerEnv() {
     ([, value]) => value.length === 0,
   ).map(([name]) => name);
 
+  // AI provider check — at least one of Anthropic or Grok must be set.
+  const hasAnyAiProvider = REQUIRED_AI_PROVIDERS.some(
+    ([, value]) => value.length > 0,
+  );
+  if (!hasAnyAiProvider) {
+    missing.push("ANTHROPIC_API_KEY (or XAI_API_KEY for legacy mode)");
+  }
+
   if (missing.length > 0) {
     const present = REQUIRED_SERVER_ENV.filter(
+      ([, value]) => value.length > 0,
+    ).map(([name]) => name);
+    const aiProvidersPresent = REQUIRED_AI_PROVIDERS.filter(
       ([, value]) => value.length > 0,
     ).map(([name]) => name);
     const otherEnvKeyCount = Object.keys(process.env).length;
@@ -411,6 +430,7 @@ export function validateServerEnv() {
       "[ENV] Missing required environment variables.\n" +
         `       Missing: ${missing.join(", ")}\n` +
         `       Present (from this required list): ${present.join(", ") || "(none)"}\n` +
+        `       AI providers present: ${aiProvidersPresent.join(", ") || "(none — at least one required)"}\n` +
         `       Total env vars visible to the process: ${otherEnvKeyCount}\n` +
         "       If the variables are configured in Railway but not visible here:\n" +
         "         1. Confirm they are attached to THIS service & environment.\n" +
