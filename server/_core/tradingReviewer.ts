@@ -351,7 +351,6 @@ async function requestAnthropicReviews(
     // room for substantial reasoning while leaving headroom for the JSON
     // review output.
     max_tokens: useDeepModel ? 8000 : 1800,
-    temperature: 0,
     messages: [
       {
         role: "user",
@@ -359,6 +358,15 @@ async function requestAnthropicReviews(
       },
     ],
   };
+  // Temperature is only set on non-thinking calls.  Anthropic's
+  // extended-thinking modes are designed to run at the default temperature
+  // (~1.0); setting temperature=0 alongside thinking is documented as
+  // incompatible on some models and is suboptimal even where accepted
+  // (constrains the reasoning chain).  Bulk Haiku review without thinking
+  // keeps temperature=0 for determinism.
+  if (!thinking) {
+    messageInput.temperature = 0;
+  }
   if (personaBlocks) {
     messageInput.system = memoryBlock ? [...personaBlocks, memoryBlock] : personaBlocks;
   } else {

@@ -204,14 +204,18 @@ export async function reviewArbitrageOpportunities(
     // by definition high-stakes; we want depth over speed.
     model: options.anthropicModel ?? ENV.anthropicDeepModel,
     max_tokens: ARB_REVIEWER_MAX_TOKENS,
-    temperature: 0,
     system: cachedSystem,
     messages: [{ role: "user", content: JSON.stringify(payload) }],
   };
   if (ENV.enableAiExtendedThinking) {
     // Adaptive thinking — Opus 4.7+ rejects manual mode (400).  See
     // https://docs.claude.com/en/docs/build-with-claude/adaptive-thinking
+    // Temperature is intentionally NOT set when thinking is enabled
+    // (extended thinking is designed for the default ~1.0 temperature).
     messageInput.thinking = { type: "adaptive", effort: "high" };
+  } else {
+    // No thinking → keep deterministic at temperature 0.
+    messageInput.temperature = 0;
   }
   if (tools) messageInput.tools = tools;
 
