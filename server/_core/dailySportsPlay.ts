@@ -213,17 +213,19 @@ export async function runDailySportsPlay(
       .catch(() => [] as any[]),
   ]);
 
-  // Same market + side already has an open position?
-  const hasOpenSamePos = openPositions.some(
+  // Any side already open on the same market? Block on marketId alone —
+  // a YES + NO on the same Kalshi contract is a structural error
+  // (you'd be hedged for no reason and pay double fees), not just a
+  // same-side conflict. Mirrors the autonomy candidate path's rule.
+  const hasOpenAnySide = openPositions.some(
     (p: any) =>
       p.marketId === top.marketId &&
-      String(p.side).toLowerCase() === top.side &&
       String(p.positionStatus).toLowerCase() !== "closed",
   );
-  if (hasOpenSamePos) {
+  if (hasOpenAnySide) {
     return {
       status: "no_qualifying_play",
-      reason: `Already have an open ${top.side.toUpperCase()} position on ${top.marketId}`,
+      reason: `Already have an open position on ${top.marketId} (any side)`,
     };
   }
 
@@ -291,8 +293,24 @@ export async function runDailySportsPlay(
   }
 
   // Per-category (sports) exposure cap.
+  // `kalshiPositions` has no category column, so we can't read it off
+  // the position row. Cross-reference against the open-Kalshi-markets
+  // list we just fetched + (for safety) all open Kalshi markets, since
+  // an open sports position might be on a market that's no longer in
+  // our top-N sports-markets cache.
+  const sportsMarketIds = new Set(
+    sportsMarkets.map((m) => String(m.id)),
+  );
+  // Also include any market in `allMarkets` whose category is "sports"
+  // — `sportsMarkets` was already filtered to that, but `allMarkets`
+  // covers the wider universe in case our local cache was bounded.
+  for (const m of allMarkets) {
+    if ((m.category ?? "").toLowerCase() === "sports") {
+      sportsMarketIds.add(String(m.id));
+    }
+  }
   const sportsExposureUsd = openPositions.reduce((acc: number, p: any) => {
-    if (String(p.category ?? "").toLowerCase() !== "sports") return acc;
+    if (!sportsMarketIds.has(String(p.marketId))) return acc;
     return acc + Number(p.entryPrice ?? 0) * Number(p.quantity ?? 0);
   }, 0);
   const maxCategoryUsd =

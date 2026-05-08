@@ -8,7 +8,7 @@ import { URL } from "url";
 import { db, logAuditEvent } from "../db";
 import * as kalshiCredDb from "../db.kalshi-credentials";
 import { kalshiOrders, kalshiFills, kalshiPositions } from "../../drizzle/schema";
-import { and, eq, inArray, lte } from "drizzle-orm";
+import { and, eq, gte, inArray, lte } from "drizzle-orm";
 import { calculateKalshiBuyOrderRisk, normalizeLimitPrice, normalizeOrderQuantity } from "./kalshiRisk";
 import { assertPositiveIntegerUserId } from "./userScope";
 import { logger } from "./logger";
@@ -1067,6 +1067,13 @@ export async function closePositionFromFill(
       const { getDb } = await import("../db");
       const database = await getDb();
       if (database) {
+        // Scope to orders created at-or-after THIS position's openedAt.
+        // Without this bound we'd sum every historical BUY for the same
+        // market+side+user — including ones that opened a PRIOR closed
+        // position, inflating the calibration count after re-entry.
+        const positionOpenedAt = position.openedAt
+          ? new Date(position.openedAt)
+          : new Date(0);
         const orderRows = await database
           .select({ filledQuantity: kalshiOrders.filledQuantity })
           .from(kalshiOrders)
@@ -1076,6 +1083,7 @@ export async function closePositionFromFill(
               eq(kalshiOrders.marketId, marketId),
               eq(kalshiOrders.side, side),
               eq(kalshiOrders.action, "buy"),
+              gte(kalshiOrders.createdAt, positionOpenedAt),
             ),
           );
         const summedOpened = orderRows.reduce(
