@@ -5,7 +5,6 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { PageHeader } from "@/components/PageHeader";
@@ -19,7 +18,6 @@ import {
   RefreshCw,
   Loader2,
   ChevronRight,
-  ChevronLeft,
   BarChart3,
   TrendingUp,
   Wallet,
@@ -29,21 +27,14 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-type Platform = "kalshi" | "polymarket";
+const PLATFORM = "kalshi" as const;
+type Platform = typeof PLATFORM;
 
-const PLATFORM_META: Record<Platform, { label: string; color: string; accent: string; desc: string }> = {
-  kalshi: {
-    label: "Kalshi",
-    color: "from-indigo-500/20 to-violet-500/20 border-indigo-400/30",
-    accent: "text-indigo-300",
-    desc: "Your Kalshi prediction-market specialist",
-  },
-  polymarket: {
-    label: "Polymarket",
-    color: "from-emerald-500/20 to-teal-500/20 border-emerald-400/30",
-    accent: "text-emerald-300",
-    desc: "Your Polymarket CLOB trading co-pilot",
-  },
+const PLATFORM_META = {
+  label: "Kalshi",
+  color: "from-indigo-500/20 to-violet-500/20 border-indigo-400/30",
+  accent: "text-indigo-300",
+  desc: "Your Kalshi prediction-market specialist",
 };
 
 const TONE_OPTIONS = [
@@ -53,24 +44,14 @@ const TONE_OPTIONS = [
   { value: "analytical", label: "Analytical", emoji: "🔬" },
 ] as const;
 
-const QUICK_PROMPTS: Record<Platform, string[]> = {
-  kalshi: [
-    "What are my top signals right now?",
-    "Run fresh signals and tell me what looks good",
-    "Show my open positions",
-    "What's my capital situation?",
-    "Scan for arbitrage opportunities",
-    "What's the market sentiment today?",
-  ],
-  polymarket: [
-    "Generate fresh Polymarket signals",
-    "What markets have the most volume right now?",
-    "Show my positions",
-    "Any cross-platform arbitrage with Kalshi?",
-    "What's your highest-conviction trade?",
-    "Explain the cluster monitor",
-  ],
-};
+const QUICK_PROMPTS: string[] = [
+  "What are my top signals right now?",
+  "Run fresh signals and tell me what looks good",
+  "Show my open positions",
+  "What's my capital situation?",
+  "Scan for arbitrage opportunities",
+  "What's the market sentiment today?",
+];
 
 type ChatMessage = {
   id: number;
@@ -120,7 +101,7 @@ function ActionCard({ actionType, actionData }: { actionType: string | null; act
 function MessageBubble({ msg, index }: { msg: ChatMessage; index: number }) {
   const isUser = msg.role === "user";
   return (
-    <div 
+    <div
       className={`flex gap-3 ${isUser ? "flex-row-reverse" : "flex-row"} items-start animate-fade-in`}
       style={{ animationDelay: `${index * 50}ms` }}
     >
@@ -159,7 +140,7 @@ function TypingIndicator() {
 }
 
 function PlatformChat({ platform }: { platform: Platform }) {
-  const meta = PLATFORM_META[platform];
+  const meta = PLATFORM_META;
   const [input, setInput] = useState("");
   const [configOpen, setConfigOpen] = useState(false);
   const [editPersona, setEditPersona] = useState("");
@@ -233,7 +214,7 @@ function PlatformChat({ platform }: { platform: Platform }) {
         {/* Header */}
         <div className={`flex items-center justify-between rounded-t-xl border-b border-white/10 bg-gradient-to-r ${meta.color} px-5 py-4`}>
           <div className="flex items-center gap-3">
-            <div className={`flex items-center justify-center w-9 h-9 rounded-lg bg-gradient-to-br ${platform === 'kalshi' ? 'from-indigo-500 to-violet-500' : 'from-emerald-500 to-teal-500'} shadow-md`}>
+            <div className="flex items-center justify-center w-9 h-9 rounded-lg bg-gradient-to-br from-indigo-500 to-violet-500 shadow-md">
               <Bot className="w-5 h-5 text-white" />
             </div>
             <div>
@@ -269,7 +250,7 @@ function PlatformChat({ platform }: { platform: Platform }) {
               message="Ask questions, run signals, check positions, or discuss strategy."
               action={
                 <div className="flex flex-wrap gap-2 justify-center max-w-md mt-2">
-                  {QUICK_PROMPTS[platform].slice(0, 3).map((p) => (
+                  {QUICK_PROMPTS.slice(0, 3).map((p) => (
                     <button
                       key={p}
                       onClick={() => { setInput(p); inputRef.current?.focus(); }}
@@ -289,7 +270,7 @@ function PlatformChat({ platform }: { platform: Platform }) {
 
         {/* Quick prompts bar */}
         <div className="flex gap-1.5 flex-wrap px-4 py-2 border-t border-white/5">
-          {QUICK_PROMPTS[platform].map((p) => (
+          {QUICK_PROMPTS.map((p) => (
             <button
               key={p}
               onClick={() => { setInput(p); inputRef.current?.focus(); }}
@@ -311,9 +292,9 @@ function PlatformChat({ platform }: { platform: Platform }) {
             disabled={sendMutation.isPending}
             className="flex-1 glass-panel border-white/10 focus:border-primary-400/50 focus:ring-2 focus:ring-violet-400/30 focus:glow-primary transition-all"
           />
-          <Button 
-            onClick={handleSend} 
-            disabled={!input.trim() || sendMutation.isPending} 
+          <Button
+            onClick={handleSend}
+            disabled={!input.trim() || sendMutation.isPending}
             size="icon"
             className="shrink-0 laurenzo-button"
           >
@@ -474,15 +455,13 @@ function PlatformChat({ platform }: { platform: Platform }) {
 }
 
 export default function Chat() {
-  const [activeTab, setActiveTab] = useState<Platform>("kalshi");
-
   return (
     <div className="flex flex-col h-full max-h-[calc(100vh-8rem)] p-0 gap-4">
       <div className="shrink-0 px-6 pt-6">
         <PageHeader
           icon={Bot}
-          title="AI Trading Bots"
-          description="Persistent-memory chatbots for Kalshi and Polymarket. Chat, trigger strategies, and get insights."
+          title="AI Trading Bot"
+          description="Persistent-memory chatbot for Kalshi. Chat, trigger strategies, and get insights."
           badge={
             <Badge variant="outline" className="border-primary-400/30 text-violet-300 gap-1.5 px-3 py-1.5">
               <Sparkles className="w-3.5 h-3.5" /> Powered by Claude
@@ -492,30 +471,9 @@ export default function Chat() {
         />
       </div>
 
-      <Tabs
-        value={activeTab}
-        onValueChange={(v) => setActiveTab(v as Platform)}
-        className="flex flex-col flex-1 min-h-0 px-6 pb-6"
-      >
-        <TabsList className="shrink-0 w-fit bg-white/5 border border-white/10">
-          <TabsTrigger value="kalshi" className="gap-2 data-[state=active]:bg-indigo-500/20 data-[state=active]:text-indigo-300">
-            <div className="w-2 h-2 rounded-full bg-indigo-400" />
-            Kalshi Bot
-          </TabsTrigger>
-          <TabsTrigger value="polymarket" className="gap-2 data-[state=active]:bg-emerald-500/20 data-[state=active]:text-emerald-300">
-            <div className="w-2 h-2 rounded-full bg-emerald-400" />
-            Polymarket Bot
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="kalshi" className="flex-1 min-h-0 mt-4">
-          <PlatformChat platform="kalshi" />
-        </TabsContent>
-
-        <TabsContent value="polymarket" className="flex-1 min-h-0 mt-4">
-          <PlatformChat platform="polymarket" />
-        </TabsContent>
-      </Tabs>
+      <div className="flex flex-col flex-1 min-h-0 px-6 pb-6">
+        <PlatformChat platform={PLATFORM} />
+      </div>
     </div>
   );
 }

@@ -12,7 +12,7 @@
 
 import type { MarketCategory } from "./marketCategoryRouter";
 
-export type Platform = "kalshi" | "polymarket";
+export type Platform = "kalshi";
 
 export type CategoryPersona = {
   platform: Platform;
@@ -142,82 +142,6 @@ const KALSHI_OTHER = compose(
   ],
 );
 
-const POLYMARKET_SPORTS = compose(
-  "You are a sportsbook trader reviewing Polymarket binary sports contracts on a CLOB. You think in true win probability and account for the fact that Polymarket settles in USDC against on-chain oracles.",
-  [
-    "Cross-check against sportsbook consensus odds in the payload before approving.",
-    "Prefer markets with deep two-sided book; reject thin books where exit risk dominates.",
-  ],
-  [
-    "Veto contracts with thin token-side liquidity (NO side trades < few hundred USDC).",
-    "Veto in-play markets without live data in the payload.",
-  ],
-);
-
-const POLYMARKET_CRYPTO = compose(
-  "You are a Polymarket crypto-event trader. You understand on-chain catalysts, ETF mechanics, and how Polymarket's USDC settlement interacts with USD price thresholds.",
-  [
-    "Treat price-threshold contracts as American-style options; respect path dependence.",
-    "Fade cluster_copy / cluster_fade signals if liquidity is bot-dominated.",
-  ],
-  [
-    "Veto signals that are exclusively wash-volume warnings — those are informational only.",
-    "Veto if the cluster monitor flagged coordinated activity and the trade direction matches the coordinated side.",
-  ],
-);
-
-const POLYMARKET_POLITICS = compose(
-  "You are a political analyst reviewing Polymarket political contracts. Polymarket is a leading venue for elections; you weigh polls, fundamentals, and the venue's known whale-driven flow.",
-  [
-    "Anchor on poll averages and prior base rates first; treat short-term flow with skepticism.",
-    "Beware whale-driven dislocations that revert: sometimes a deep pocket is wrong, sometimes informed.",
-    "Calibrate against Kalshi or PredictIt consensus when implied by the payload.",
-  ],
-  [
-    "Veto contracts with ambiguous resolution criteria (e.g., 'will X happen' without a concrete trigger).",
-    "Veto candidate dropout bets when the field is still in flux.",
-  ],
-);
-
-const POLYMARKET_ECONOMICS = compose(
-  "You are a macro trader reviewing Polymarket economic-data contracts. Settlement is USDC against published data, so you care about consensus, surprises, and revision risk.",
-  [
-    "Compare implied probability to consensus when present in the payload.",
-    "Avoid filling across a release; the print typically nukes spread.",
-  ],
-);
-
-const POLYMARKET_TECH = compose(
-  "You are a tech sector analyst reviewing Polymarket contracts on AI launches, big tech, and crypto-adjacent tech. You weigh announced timelines and execution track records.",
-  [
-    "Discount slip-prone launch deadlines.",
-    "Reward firm-dated catalysts where Polymarket's price hasn't priced in the announcement.",
-  ],
-);
-
-const POLYMARKET_CULTURE = compose(
-  "You are an entertainment-market trader reviewing Polymarket culture contracts. You weigh critic consensus, awards voter demographics, and on-chain liquidity reality.",
-  [
-    "Anchor on aggregator forecasts in the payload before approving.",
-    "Avoid deeply illiquid contracts where you cannot exit before resolution.",
-  ],
-);
-
-const POLYMARKET_WEATHER = compose(
-  "You are a weather-risk trader reviewing Polymarket temperature/storm contracts. Treat ensemble spread as your primary edge metric.",
-  [
-    "Trust ensemble consensus over a single model run.",
-  ],
-);
-
-const POLYMARKET_OTHER = compose(
-  "You are a generalist Polymarket trader reviewing contracts outside a covered specialty. Default to skepticism; demand a clear thesis.",
-  [
-    "Veto vague heuristic signals.",
-    "Veto if the cluster monitor flagged the market as wash-traded.",
-  ],
-);
-
 const PERSONAS: Record<Platform, Record<MarketCategory, CategoryPersona>> = {
   kalshi: {
     sports: { platform: "kalshi", category: "sports", id: "kalshi.sports", label: "Kalshi Sports Desk", systemMandate: KALSHI_SPORTS },
@@ -228,16 +152,6 @@ const PERSONAS: Record<Platform, Record<MarketCategory, CategoryPersona>> = {
     culture: { platform: "kalshi", category: "culture", id: "kalshi.culture", label: "Kalshi Culture Desk", systemMandate: KALSHI_CULTURE },
     weather: { platform: "kalshi", category: "weather", id: "kalshi.weather", label: "Kalshi Weather Desk", systemMandate: KALSHI_WEATHER },
     other: { platform: "kalshi", category: "other", id: "kalshi.other", label: "Kalshi Generalist Desk", systemMandate: KALSHI_OTHER },
-  },
-  polymarket: {
-    sports: { platform: "polymarket", category: "sports", id: "poly.sports", label: "Polymarket Sports Desk", systemMandate: POLYMARKET_SPORTS },
-    crypto: { platform: "polymarket", category: "crypto", id: "poly.crypto", label: "Polymarket Crypto Desk", systemMandate: POLYMARKET_CRYPTO },
-    politics: { platform: "polymarket", category: "politics", id: "poly.politics", label: "Polymarket Politics Desk", systemMandate: POLYMARKET_POLITICS },
-    economics: { platform: "polymarket", category: "economics", id: "poly.economics", label: "Polymarket Macro Desk", systemMandate: POLYMARKET_ECONOMICS },
-    tech: { platform: "polymarket", category: "tech", id: "poly.tech", label: "Polymarket Tech Desk", systemMandate: POLYMARKET_TECH },
-    culture: { platform: "polymarket", category: "culture", id: "poly.culture", label: "Polymarket Culture Desk", systemMandate: POLYMARKET_CULTURE },
-    weather: { platform: "polymarket", category: "weather", id: "poly.weather", label: "Polymarket Weather Desk", systemMandate: POLYMARKET_WEATHER },
-    other: { platform: "polymarket", category: "other", id: "poly.other", label: "Polymarket Generalist Desk", systemMandate: POLYMARKET_OTHER },
   },
 };
 

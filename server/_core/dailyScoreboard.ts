@@ -35,7 +35,7 @@
  */
 
 import { and, eq, gte } from "drizzle-orm";
-import { kalshiPositions, polymarketPositions, kalshiOrders } from "../../drizzle/schema";
+import { kalshiPositions, kalshiOrders } from "../../drizzle/schema";
 import { logger } from "./logger";
 import { getSpentUsdToday } from "./aiCostBudget";
 
@@ -101,8 +101,8 @@ export async function refreshScoreboard(
       return empty;
     }
 
-    // Sum realized P&L on positions closed since UTC midnight, both platforms.
-    const [kalshiClosed, polymarketClosed, kalshiFilledToday] = await Promise.all([
+    // Sum realized P&L on Kalshi positions closed since UTC midnight.
+    const [kalshiClosed, kalshiFilledToday] = await Promise.all([
       database
         .select({
           realizedPnl: kalshiPositions.realizedPnl,
@@ -113,18 +113,6 @@ export async function refreshScoreboard(
             eq(kalshiPositions.userId, userId),
             eq(kalshiPositions.positionStatus, "closed"),
             gte(kalshiPositions.closedAt, dayStart),
-          ),
-        ),
-      database
-        .select({
-          realizedPnl: polymarketPositions.realizedPnl,
-        })
-        .from(polymarketPositions)
-        .where(
-          and(
-            eq(polymarketPositions.userId, userId),
-            eq(polymarketPositions.positionStatus, "closed"),
-            gte(polymarketPositions.closedAt, dayStart),
           ),
         ),
       // Filled Kalshi orders today — used to estimate round-trip fees.
@@ -145,7 +133,7 @@ export async function refreshScoreboard(
 
     const sumRealized = (rows: Array<{ realizedPnl: number | null }>): number =>
       rows.reduce((sum: number, r) => sum + Number(r.realizedPnl ?? 0), 0);
-    const realizedPnlUsd = sumRealized(kalshiClosed) + sumRealized(polymarketClosed);
+    const realizedPnlUsd = sumRealized(kalshiClosed);
 
     // Notional that traded today = sum(filledQuantity × averagePrice).
     // Round-trip means we'd pay fees on both legs; use 2 × KALSHI_FEE_RATE / 2

@@ -38,11 +38,10 @@ describe("migration files", () => {
     expect(ifNotExistsCount).toBeGreaterThanOrEqual(alterCount);
   });
 
-  it("0001 adds exitState to BOTH kalshiPositions and polymarketPositions", () => {
+  it("0001 adds exitState to kalshiPositions", () => {
     const path = join(MIGRATIONS_DIR, "0001_pay_for_yourself.sql");
     const content = readFileSync(path, "utf-8");
     expect(content).toContain('"kalshiPositions"');
-    expect(content).toContain('"polymarketPositions"');
     expect(content).toMatch(/"exitState"\s+jsonb/);
   });
 });

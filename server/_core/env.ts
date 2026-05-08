@@ -1,3 +1,13 @@
+/**
+ * Environment configuration for the personal Kalshi-only trading dashboard.
+ *
+ * Pivot: this is a single-owner, Grok-only, Kalshi-only deployment optimized
+ * for a $200 starting capital. Anthropic / Claude / Polymarket env vars have
+ * been removed entirely; the Kalshi Trade API uses RSA-PSS signing with a
+ * private key loaded from `KALSHI_PRIVATE_KEY_PATH` (preferred) or inlined
+ * via `KALSHI_PRIVATE_KEY` (multi-line PEM).
+ */
+
 const normalize = (value: string | undefined) => value?.trim() ?? "";
 const normalizePositiveInt = (value: string | undefined, fallback: number) => {
   const parsed = Number.parseInt(value?.trim() ?? "", 10);
@@ -8,8 +18,7 @@ const normalizeFloat = (
   fallback: number,
   { min, max }: { min: number; max: number },
 ) => {
-  // Strict parse (Number, not Number.parseFloat) so trailing junk like
-  // "0.68abc" yields NaN → fallback, rather than silently parsing as 0.68.
+  // Strict parse so trailing junk like "0.68abc" yields NaN → fallback.
   const trimmed = value?.trim() ?? "";
   if (!trimmed) return fallback;
   const parsed = Number(trimmed);
@@ -28,98 +37,189 @@ const normalizeBoolean = (value: string | undefined, fallback = false) => {
   );
 };
 
-// Default Anthropic model IDs.  Default review tier is Haiku 4.5 — cheapest +
-// fastest model that still meets the trading reviewer's reasoning bar.  Triage
-// also uses Haiku.  Deep tier escalates to Opus 4.7 for high-stakes trades
-// (large notional, near-resolution, contested mid-stakes).  Override per-tier
-// via CLAUDE_MODEL / CLAUDE_TRIAGE_MODEL / CLAUDE_DEEP_MODEL.
-const DEFAULT_CLAUDE_MODEL = "claude-haiku-4-5-20251001";
-const DEFAULT_CLAUDE_TRIAGE_MODEL = "claude-haiku-4-5-20251001";
-const DEFAULT_CLAUDE_DEEP_MODEL = "claude-opus-4-7";
-
 export const ENV = {
+  // ── Core platform ────────────────────────────────────────────────────────
   cookieSecret: normalize(process.env.JWT_SECRET),
   credentialEncryptionSecret: normalize(
-    process.env.CREDENTIAL_ENCRYPTION_SECRET
+    process.env.CREDENTIAL_ENCRYPTION_SECRET,
   ),
   databaseUrl: normalize(process.env.DATABASE_URL),
   ownerEmail: normalize(process.env.OWNER_EMAIL),
   ownerPassword: normalize(process.env.OWNER_PASSWORD),
-  // Direct Anthropic API key.  Required for AI-reviewer-gated live trading.
-  // OpenRouter has been removed; ANTHROPIC_API_KEY is the only accepted source.
-  anthropicApiKey: normalize(process.env.ANTHROPIC_API_KEY),
-  // Tier-aware model selection.  Reviewers pick triage/review/deep via
-  // selectAnthropicModel() in aiToolbelt.ts.
-  anthropicModel: normalize(process.env.CLAUDE_MODEL) || DEFAULT_CLAUDE_MODEL,
-  anthropicTriageModel:
-    normalize(process.env.CLAUDE_TRIAGE_MODEL) || DEFAULT_CLAUDE_TRIAGE_MODEL,
-  anthropicDeepModel:
-    normalize(process.env.CLAUDE_DEEP_MODEL) || DEFAULT_CLAUDE_DEEP_MODEL,
-  anthropicTimeoutMs: normalizePositiveInt(
-    process.env.ANTHROPIC_TIMEOUT_MS,
-    12000
-  ),
-  anthropicDeepTimeoutMs: normalizePositiveInt(
-    process.env.ANTHROPIC_DEEP_TIMEOUT_MS,
-    25000
-  ),
-  // Grok (xAI) — direct API.  Optional; team mode is enabled by default but
-  // gracefully degrades to Claude-only when XAI_API_KEY is unset.
+  isProduction: process.env.NODE_ENV === "production",
+  allowedOrigin: normalize(process.env.ALLOWED_ORIGIN),
+  alertWebhookUrl: normalize(process.env.ALERT_WEBHOOK_URL),
+
+  // ── Kalshi (the ONLY trading platform) ───────────────────────────────────
+  // Production vs demo (https://demo-api.kalshi.co) toggle. Default false.
+  kalshiDemoMode: normalizeBoolean(process.env.DEMO_MODE, false),
+  // Trade API key id (the "KALSHI-ACCESS-KEY" header value).
+  kalshiKeyId: normalize(process.env.KALSHI_KEY_ID),
+  // Path to the RSA private key PEM (preferred for local dev).
+  kalshiPrivateKeyPath: normalize(process.env.KALSHI_PRIVATE_KEY_PATH),
+  // Inline PEM (for Railway-style envs where filesystem secrets are awkward).
+  // Either KALSHI_PRIVATE_KEY_PATH or KALSHI_PRIVATE_KEY must be set in prod.
+  kalshiPrivateKey: normalize(process.env.KALSHI_PRIVATE_KEY),
+  // Legacy single-key support; kept so existing tests/encrypted-credential
+  // paths don't break. New deployments should use KALSHI_KEY_ID + key.
+  kalshiApiKey: normalize(process.env.KALSHI_API_KEY),
+
+  // ── Grok (the ONLY AI reviewer) ──────────────────────────────────────────
   xaiApiKey: normalize(process.env.XAI_API_KEY),
-  grokModel: normalize(process.env.GROK_MODEL) || "grok-3-latest",
+  // Default to Grok 4.1 Fast — cheap + fast + strong reasoning floor.
+  grokModel: normalize(process.env.GROK_MODEL) || "grok-4-1-fast",
   grokTimeoutMs: normalizePositiveInt(process.env.GROK_TIMEOUT_MS, 15000),
-  enableGrokSolo: normalizeBoolean(process.env.ENABLE_GROK_SOLO, false),
-  enableGrokTeam: normalizeBoolean(process.env.ENABLE_GROK_TEAM, true),
-  // High-leverage profit guardrails — owner can retune in Railway without a code change.
-  // Values are read once at boot; redeploy after editing.  Out-of-range values fall back
-  // to the defaults below (matches the prior hardcoded floor).
+  // Self-consistency: re-run the same review at a different temperature and
+  // require both passes to agree before the trade clears the gate.
+  grokSelfConsistencyTemp1: normalizeFloat(
+    process.env.GROK_SELF_CONSISTENCY_TEMP1,
+    0.2,
+    { min: 0, max: 1.5 },
+  ),
+  grokSelfConsistencyTemp2: normalizeFloat(
+    process.env.GROK_SELF_CONSISTENCY_TEMP2,
+    0.7,
+    { min: 0, max: 1.5 },
+  ),
+  // Amortized per-review Grok cost (USD). Used to subtract from net EV in
+  // the post-fee guardrail and to budget the daily run-rate. Default $0.0035
+  // for grok-4-1-fast at typical prompt length; tune to actual usage.
+  grokCostPerReviewUsd: normalizeFloat(
+    process.env.GROK_COST_PER_REVIEW_USD,
+    0.0035,
+    { min: 0, max: 1 },
+  ),
+
+  // ── Profit guardrails (high-edge, capital-preservation first) ────────────
+  // Hard floor net EV after Kalshi fees + amortized Grok cost: 6.5%.
+  // Confidence floor: 76%. These are the post-pivot tighter thresholds.
   profitGuardrails: {
-    minPositiveEv: normalizeFloat(process.env.MIN_POSITIVE_EV, 0.035, { min: 0, max: 1 }),
-    minConfidenceAfterAdjust: normalizeFloat(process.env.MIN_CONFIDENCE_AFTER_ADJUST, 0.68, { min: 0, max: 1 }),
-    minDualBotAgreement: normalizeFloat(process.env.MIN_DUAL_BOT_AGREEMENT, 0.62, { min: 0, max: 1 }),
-    maxPortfolioExposurePct: normalizeFloat(process.env.MAX_PORTFOLIO_EXPOSURE_PCT, 0.20, { min: 0.01, max: 1 }),
-    maxCorrelatedGroupPct: normalizeFloat(process.env.MAX_CORRELATED_GROUP_PCT, 0.10, { min: 0.01, max: 1 }),
+    minNetEv: normalizeFloat(process.env.MIN_NET_EV, 0.065, { min: 0, max: 1 }),
+    minPositiveEv: normalizeFloat(process.env.MIN_NET_EV, 0.065, {
+      min: 0,
+      max: 1,
+    }),
+    minConfidenceAfterAdjust: normalizeFloat(
+      process.env.MIN_CONFIDENCE_AFTER_ADJUST,
+      0.76,
+      { min: 0, max: 1 },
+    ),
+    minDualBotAgreement: normalizeFloat(
+      process.env.MIN_DUAL_BOT_AGREEMENT,
+      0.62,
+      { min: 0, max: 1 },
+    ),
+    maxPortfolioExposurePct: normalizeFloat(
+      process.env.MAX_PORTFOLIO_EXPOSURE_PCT,
+      0.2,
+      { min: 0.01, max: 1 },
+    ),
+    maxCorrelatedGroupPct: normalizeFloat(
+      process.env.MAX_CORRELATED_GROUP_PCT,
+      0.1,
+      { min: 0.01, max: 1 },
+    ),
+    // Kelly sizing: ¼ Kelly capped at 2% of capital, floored at 0.5%.
+    kellyFraction: normalizeFloat(process.env.KELLY_FRACTION, 0.25, {
+      min: 0.05,
+      max: 1,
+    }),
+    kellyMaxPctOfCapital: normalizeFloat(
+      process.env.KELLY_MAX_PCT_OF_CAPITAL,
+      0.02,
+      { min: 0.005, max: 0.1 },
+    ),
+    kellyMinPctOfCapital: normalizeFloat(
+      process.env.KELLY_MIN_PCT_OF_CAPITAL,
+      0.005,
+      { min: 0, max: 0.05 },
+    ),
+    // Drawdown circuit breakers: pause new trades on these losses.
+    dailyDrawdownPauseFrac: normalizeFloat(
+      process.env.DAILY_DRAWDOWN_PAUSE_FRAC,
+      0.03,
+      { min: 0.005, max: 0.5 },
+    ),
+    weeklyDrawdownPauseFrac: normalizeFloat(
+      process.env.WEEKLY_DRAWDOWN_PAUSE_FRAC,
+      0.08,
+      { min: 0.01, max: 0.5 },
+    ),
+    // Cold streak: pause after N consecutive losses or if 7-day realized
+    // edge falls below this threshold.
+    coldStreakLossCount: normalizePositiveInt(
+      process.env.COLD_STREAK_LOSS_COUNT,
+      5,
+    ),
+    coldStreakMinRealizedEdgePct: normalizeFloat(
+      process.env.COLD_STREAK_MIN_REALIZED_EDGE_PCT,
+      0.03,
+      { min: 0, max: 1 },
+    ),
   },
+
+  // ── Kalshi fee schedule (override per Kalshi published rates) ────────────
+  // Maker multiplier: round_up_to_cent(0.0175 × notional × yesPrice × (1−yesPrice))
+  // Taker multiplier: round_up_to_cent(0.07   × notional × yesPrice × (1−yesPrice))
+  kalshiMakerFeeMultiplier: normalizeFloat(
+    process.env.KALSHI_MAKER_FEE_MULTIPLIER,
+    0.0175,
+    { min: 0, max: 1 },
+  ),
+  kalshiTakerFeeMultiplier: normalizeFloat(
+    process.env.KALSHI_TAKER_FEE_MULTIPLIER,
+    0.07,
+    { min: 0, max: 1 },
+  ),
+  // Strongly prefer maker (limit) orders for the lower fee.
+  preferMakerOrders: normalizeBoolean(process.env.PREFER_MAKER_ORDERS, true),
+
+  // ── Dynamic scanner (5 base / 7-8 conditional) ───────────────────────────
+  // Owner override: opt-in domains where the operator's domain knowledge
+  // is high enough to relax the AI gate (still honors hard guardrails).
+  ownerOverrideDomains: normalize(process.env.OWNER_OVERRIDE_DOMAINS),
+
+  scannerBaseAnalysesPerDay: normalizePositiveInt(
+    process.env.SCANNER_BASE_ANALYSES_PER_DAY,
+    5,
+  ),
+  scannerMaxAnalysesPerDay: normalizePositiveInt(
+    process.env.SCANNER_MAX_ANALYSES_PER_DAY,
+    8,
+  ),
+  scannerHighOpportunityLiquidMarkets: normalizePositiveInt(
+    process.env.SCANNER_HIGH_OPP_LIQUID_MARKETS,
+    18,
+  ),
+  scannerHighOpportunityWeeklyEdgePct: normalizeFloat(
+    process.env.SCANNER_HIGH_OPP_WEEKLY_EDGE_PCT,
+    0.08,
+    { min: 0, max: 1 },
+  ),
+
+  // ── AI cost / cadence ────────────────────────────────────────────────────
   enableAiPromptCache: normalizeBoolean(
     process.env.ENABLE_AI_PROMPT_CACHE,
-    true
+    true,
   ),
   enableAiCategoryRouting: normalizeBoolean(
     process.env.ENABLE_AI_CATEGORY_ROUTING,
-    true
+    true,
   ),
-  // Anthropic-native features — re-enabled now that we're on the direct SDK.
-  // Both default ON because they materially improve reviewer quality on the
-  // trades that matter (high stakes, fresh news), at modest cost.
   enableAiWebSearch: normalizeBoolean(process.env.ENABLE_AI_WEB_SEARCH, true),
-  enableAiExtendedThinking: normalizeBoolean(
-    process.env.ENABLE_AI_EXTENDED_THINKING,
-    true
-  ),
   enableAiDeskMemory: normalizeBoolean(process.env.ENABLE_AI_DESK_MEMORY, true),
-  enableAiTriage: normalizeBoolean(process.env.ENABLE_AI_TRIAGE, true),
-  aiTriageThreshold: normalizePositiveInt(process.env.AI_TRIAGE_THRESHOLD, 6),
-  enableAiCitations: normalizeBoolean(process.env.ENABLE_AI_CITATIONS, true),
-  enableAiIntraEscalation: normalizeBoolean(
-    process.env.ENABLE_AI_INTRA_ESCALATION,
-    true
-  ),
-  kalshiApiKey: normalize(process.env.KALSHI_API_KEY),
-  isProduction: process.env.NODE_ENV === "production",
+  // Daily AI cost cap in USD. Profitable days never throttle. Resets at UTC.
+  aiDailyBudgetUsd: normalizeFloat(process.env.AI_DAILY_BUDGET_USD, 0, {
+    min: 0,
+    max: 100000,
+  }),
+
+  // ── Misc ──────────────────────────────────────────────────────────────────
   gnewsApiKey: normalize(process.env.GNEWS_API_KEY),
-  // Polymarket proxy-wallet address used by the position-sync reconciliation.
-  // The Polymarket data-api keys positions by EOA address (not by API key),
-  // so without this set the sync silently no-ops.  Lower-cased on read so
-  // case-insensitive comparisons work downstream.
-  polymarketOwnerAddress: normalize(process.env.POLYMARKET_OWNER_ADDRESS).toLowerCase(),
-  allowedOrigin: normalize(process.env.ALLOWED_ORIGIN),
-  alertWebhookUrl: normalize(process.env.ALERT_WEBHOOK_URL),
+  // Global emergency kill-switch: when true, ALL trading is paused (still
+  // sees signals, never places live orders). For a single-owner live system
+  // this is the only "paper" toggle that matters.
   paperTradeMode: normalizeBoolean(process.env.PAPER_TRADE_MODE, false),
-  // Daily AI cost cap in USD.  When > 0, the scheduler throttles adaptive
-  // cadence as the budget burns and skips runs entirely once 100 %
-  // spent (resets at UTC midnight).  See server/_core/aiCostBudget.ts.
-  // 0 (or unset) = unlimited.
-  aiDailyBudgetUsd: normalizeFloat(process.env.AI_DAILY_BUDGET_USD, 0, { min: 0, max: 100000 }),
 };
 
 const REQUIRED_SERVER_ENV = [
@@ -128,16 +228,17 @@ const REQUIRED_SERVER_ENV = [
   ["DATABASE_URL", ENV.databaseUrl],
   ["OWNER_EMAIL", ENV.ownerEmail],
   ["OWNER_PASSWORD", ENV.ownerPassword],
+  ["XAI_API_KEY", ENV.xaiApiKey],
 ] as const;
 
 export function validateServerEnv() {
   const missing = REQUIRED_SERVER_ENV.filter(
-    ([, value]) => value.length === 0
+    ([, value]) => value.length === 0,
   ).map(([name]) => name);
 
   if (missing.length > 0) {
     const present = REQUIRED_SERVER_ENV.filter(
-      ([, value]) => value.length > 0
+      ([, value]) => value.length > 0,
     ).map(([name]) => name);
     const otherEnvKeyCount = Object.keys(process.env).length;
 
@@ -146,15 +247,14 @@ export function validateServerEnv() {
         `       Missing: ${missing.join(", ")}\n` +
         `       Present (from this required list): ${present.join(", ") || "(none)"}\n` +
         `       Total env vars visible to the process: ${otherEnvKeyCount}\n` +
-        "       If the variables are configured in Railway/Vercel but not visible here:\n" +
-        "         1. Confirm they are attached to THIS service & environment (not a sibling).\n" +
+        "       If the variables are configured in Railway but not visible here:\n" +
+        "         1. Confirm they are attached to THIS service & environment.\n" +
         "         2. Confirm there is no typo in the variable name (case-sensitive).\n" +
-        "         3. Redeploy the service — env vars only inject at container start.\n" +
-        "         4. If using shared variables, reference them as ${{shared.VAR_NAME}}\n            in the service's Variables tab, or attach the shared-variable group."
+        "         3. Redeploy the service — env vars only inject at container start.",
     );
 
     throw new Error(
-      `Missing required environment variables: ${missing.join(", ")}`
+      `Missing required environment variables: ${missing.join(", ")}`,
     );
   }
 
@@ -164,56 +264,104 @@ export function validateServerEnv() {
 
   if (ENV.isProduction && ENV.credentialEncryptionSecret.length < 32) {
     throw new Error(
-      "CREDENTIAL_ENCRYPTION_SECRET must be at least 32 characters in production"
+      "CREDENTIAL_ENCRYPTION_SECRET must be at least 32 characters in production",
     );
   }
 
   if (ENV.isProduction && ENV.ownerPassword.length < 12) {
     console.warn(
-      "[ENV] OWNER_PASSWORD is shorter than 12 characters. Consider using a longer password for better security in production."
+      "[ENV] OWNER_PASSWORD is shorter than 12 characters. Consider using a longer password for better security in production.",
     );
   }
 
-  if (ENV.isProduction && ENV.anthropicApiKey.length === 0) {
+  if (
+    ENV.isProduction &&
+    !ENV.kalshiPrivateKey &&
+    !ENV.kalshiPrivateKeyPath
+  ) {
     console.warn(
-      "[ENV] ANTHROPIC_API_KEY is not set. The AI trading reviewer requires this — autonomy will fail closed every cycle until it is configured."
+      "[ENV] Neither KALSHI_PRIVATE_KEY nor KALSHI_PRIVATE_KEY_PATH is set. " +
+        "Kalshi trading actions will fail until one is provided.",
     );
   }
 
-  if (ENV.isProduction && ENV.enableGrokSolo && !ENV.xaiApiKey) {
-    console.warn("[ENV] ENABLE_GROK_SOLO is true but XAI_API_KEY is not set. Grok solo mode will be disabled.");
-  }
-
-  if (ENV.isProduction && ENV.enableGrokTeam && !ENV.xaiApiKey) {
+  if (ENV.isProduction && !ENV.kalshiKeyId) {
     console.warn(
-      "[ENV] ENABLE_GROK_TEAM is true but XAI_API_KEY is not set. " +
-      "The reviewer will degrade to Claude-only and the audit log will record solo Claude reviews. " +
-      "Set XAI_API_KEY to enable true dual-bot consensus, or set ENABLE_GROK_TEAM=false to make intent explicit."
+      "[ENV] KALSHI_KEY_ID is not set. Kalshi private endpoints will fail closed.",
     );
   }
 }
 
 export function getCredentialEncryptionSecret() {
   const secret = ENV.credentialEncryptionSecret;
-
   if (!secret) {
     throw new Error(
-      "CREDENTIAL_ENCRYPTION_SECRET is required for credential encryption. " +
-      "Do not share this value with JWT_SECRET — they serve different purposes " +
-      "and rotating one without the other would make stored credentials unreadable."
+      "CREDENTIAL_ENCRYPTION_SECRET is required for credential encryption.",
     );
   }
-
   return secret;
 }
 
+/**
+ * Returns the Kalshi RSA private key as a PEM string.
+ *
+ * Resolution order:
+ *   1. `KALSHI_PRIVATE_KEY` — inline PEM (preferred for Railway).
+ *   2. `KALSHI_PRIVATE_KEY_PATH` — read from disk (preferred for local dev).
+ */
+export function getKalshiPrivateKeyPem(): string {
+  if (ENV.kalshiPrivateKey) {
+    // Railway-style env vars often arrive with literal "\n" sequences instead
+    // of real newlines. Restore them so crypto.createPrivateKey can parse the
+    // PEM correctly.
+    return ENV.kalshiPrivateKey.replace(/\\n/g, "\n");
+  }
+  if (ENV.kalshiPrivateKeyPath) {
+    // Lazy-import fs so non-Node environments (tests with custom env) don't
+    // crash on import.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const fs = require("fs") as typeof import("fs");
+    return fs.readFileSync(ENV.kalshiPrivateKeyPath, "utf8");
+  }
+  if (process.env.NODE_ENV === "test") {
+    return "test-private-key";
+  }
+  throw new Error(
+    "Kalshi private key missing — set KALSHI_PRIVATE_KEY (inline PEM) or KALSHI_PRIVATE_KEY_PATH",
+  );
+}
+
+export function getKalshiKeyId(): string {
+  if (!ENV.kalshiKeyId) {
+    if (process.env.NODE_ENV === "test") {
+      return "test-kalshi-key-id";
+    }
+    throw new Error("KALSHI_KEY_ID is required for Kalshi trading actions");
+  }
+  return ENV.kalshiKeyId;
+}
+
+/**
+ * Legacy: callers that used to read KALSHI_API_KEY for arbitrary public
+ * endpoints. Prefer getKalshiKeyId() for signed-call usage.
+ */
 export function getKalshiApiKey() {
   if (!ENV.kalshiApiKey) {
+    if (ENV.kalshiKeyId) return ENV.kalshiKeyId;
     if (process.env.NODE_ENV === "test") {
       return "test-kalshi-api-key";
     }
     throw new Error("KALSHI_API_KEY is required for Kalshi trading actions");
   }
-
   return ENV.kalshiApiKey;
+}
+
+/**
+ * Base URL for the Kalshi Trade API (production by default; demo when
+ * `DEMO_MODE=true`).
+ */
+export function getKalshiBaseUrl(): string {
+  return ENV.kalshiDemoMode
+    ? "https://demo-api.kalshi.co/trade-api/v2"
+    : "https://api.elections.kalshi.com/trade-api/v2";
 }

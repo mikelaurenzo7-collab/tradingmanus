@@ -150,9 +150,7 @@ export function LiveHeartbeat() {
         <div className={`text-sm ${headlineColor}`}>{headline.text}</div>
         <div className="border-t border-border/40 pt-2 space-y-0.5">
           <SchedulerRow name="Kalshi autonomy" snap={schedulers?.autonomy_kalshi} />
-          <SchedulerRow name="Polymarket autonomy" snap={schedulers?.autonomy_polymarket} />
           <SchedulerRow name="Order sync + exits" snap={schedulers?.order_sync} />
-          <SchedulerRow name="Cross-platform arb" snap={schedulers?.cross_arb} />
         </div>
       </CardContent>
     </Card>

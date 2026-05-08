@@ -21,7 +21,6 @@ const Analytics = lazy(() => import("./pages/Analytics"));
 const TradingAutonomy = lazy(() => import("./pages/TradingAutonomy"));
 const TradingReadiness = lazy(() => import("./pages/TradingReadiness"));
 const Funding = lazy(() => import("./pages/Funding"));
-const ClusterMonitor = lazy(() => import("./pages/ClusterMonitor"));
 const Strategies = lazy(() => import("./pages/Strategies"));
 const Chat = lazy(() => import("./pages/Chat"));
 const Setup = lazy(() => import("./pages/Setup"));
@@ -61,7 +60,6 @@ function Router() {
       <Route path={"/positions"} component={withLayout(Activity)} />
       <Route path={"/trades"} component={withLayout(Activity)} />
       <Route path={"/signals"} component={withLayout(Signals)} />
-      <Route path={"/cluster-monitor"} component={withLayout(ClusterMonitor)} />
       <Route path={"/strategies"} component={withLayout(Strategies)} />
       <Route path={"/risk-controls"} component={withLayout(RiskControls)} />
       <Route path={"/audit"} component={withLayout(AuditLog)} />

@@ -11,7 +11,3 @@ export function buildKalshiConnectionSuccessMessage({ equity, mode }: Connection
 
   return `Connected successfully${modeLabel}. Account equity synced: $${normalizedEquity.toFixed(2)}. Redirecting to the dashboard...`;
 }
-
-export function buildPolymarketConnectionSuccessMessage() {
-  return "Polymarket connected successfully. Your CLOB credentials are encrypted and saved.";
-}

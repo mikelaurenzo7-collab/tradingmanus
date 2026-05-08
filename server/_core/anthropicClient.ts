@@ -1,25 +1,20 @@
 /**
- * Anthropic SDK adapter.
+ * Anthropic SDK shim — Grok-backed.
  *
- * Thin wrapper around `@anthropic-ai/sdk` that exposes the same
- * `{messages: {create(...)}}` surface the trading reviewers use.  All
- * Anthropic-native features (prompt caching via `cache_control`, extended
- * thinking, hosted `web_search_20250305` tool, citations) are passed through
- * to the SDK directly — no shape conversion is needed because the reviewers
- * have always built Anthropic-shaped requests.
+ * The Kalshi-only pivot dropped Anthropic entirely; Grok (xAI) is the
+ * sole AI provider.  This file keeps the old `createAnthropicClient(...)`
+ * export so existing call sites compile, but routes all `messages.create`
+ * calls to the Grok chat-completion endpoint.  The shim translates
+ * Anthropic-shaped requests (system blocks, content arrays) into Grok's
+ * OpenAI-compatible shape, and translates the response back into the
+ * minimal Anthropic shape the reviewers expect.
  *
- * Why a wrapper at all?
- *   1. Keeps callsites short — reviewers do not need to import `Anthropic`
- *      themselves, and tests can swap in a mock client by passing
- *      `anthropicClient: ...` instead of the real one.
- *   2. Loosens the SDK's strict request typing at the boundary.  The
- *      reviewers build their request as `Record<string, unknown>` so they
- *      can conditionally omit `thinking`, `tools`, `system` blocks, etc.
- *      without per-feature type unions; the wrapper accepts that shape and
- *      forwards it untyped to the SDK, which validates at runtime.
+ * Anthropic-only features (prompt caching, extended thinking, hosted
+ * tools) are silently dropped — Grok does not support them.  Cache
+ * accounting therefore reports 0 cache hits.
  */
 
-import Anthropic from "@anthropic-ai/sdk";
+import { createGrokChatCompletion, type GrokMessage } from "./grokClient";
 
 type AnthropicMessageInput = Record<string, unknown>;
 
@@ -35,23 +30,88 @@ type AnthropicMessageOutput = {
   [key: string]: unknown;
 };
 
-export function createAnthropicClient(apiKey: string): {
+function flattenSystem(system: unknown): string | undefined {
+  if (system === undefined || system === null) return undefined;
+  if (typeof system === "string") return system;
+  if (Array.isArray(system)) {
+    return system
+      .map((b) => {
+        if (b && typeof b === "object" && "text" in b) {
+          const t = (b as { text?: unknown }).text;
+          return typeof t === "string" ? t : "";
+        }
+        return typeof b === "string" ? b : "";
+      })
+      .filter(Boolean)
+      .join("\n\n");
+  }
+  return undefined;
+}
+
+function flattenContent(content: unknown): string {
+  if (content === undefined || content === null) return "";
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((b) => {
+        if (b && typeof b === "object" && "text" in b) {
+          const t = (b as { text?: unknown }).text;
+          return typeof t === "string" ? t : "";
+        }
+        return typeof b === "string" ? b : "";
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+  return "";
+}
+
+export function createAnthropicClient(_apiKey: string): {
   messages: {
     create: (input: AnthropicMessageInput) => Promise<AnthropicMessageOutput>;
   };
 } {
-  const sdk = new Anthropic({ apiKey });
-
   return {
     messages: {
       async create(input: AnthropicMessageInput): Promise<AnthropicMessageOutput> {
-        // The SDK's typed signature is intentionally strict; the reviewers
-        // build their request dynamically (conditional `thinking`/`tools`/
-        // multi-block `system`) so we forward as-is and let the SDK validate.
-        const response = await sdk.messages.create(
-          input as unknown as Anthropic.MessageCreateParamsNonStreaming,
-        );
-        return response as unknown as AnthropicMessageOutput;
+        const grokMessages: GrokMessage[] = [];
+
+        const systemText = flattenSystem(input.system);
+        if (systemText) {
+          grokMessages.push({ role: "system", content: systemText });
+        }
+
+        const rawMessages = Array.isArray(input.messages) ? input.messages : [];
+        for (const m of rawMessages) {
+          if (!m || typeof m !== "object") continue;
+          const role = (m as { role?: string }).role;
+          const content = flattenContent((m as { content?: unknown }).content);
+          if (role === "user" || role === "assistant" || role === "system") {
+            grokMessages.push({ role, content });
+          }
+        }
+
+        const model = typeof input.model === "string" ? (input.model as string) : undefined;
+        const temperature = typeof input.temperature === "number" ? (input.temperature as number) : undefined;
+        const maxTokens =
+          typeof input.max_tokens === "number" ? (input.max_tokens as number) : undefined;
+
+        const completion = await createGrokChatCompletion(grokMessages, {
+          model,
+          temperature,
+          max_tokens: maxTokens,
+        });
+
+        const text = completion.choices?.[0]?.message?.content ?? "";
+        return {
+          content: [{ type: "text", text }],
+          usage: {
+            input_tokens: completion.usage?.prompt_tokens ?? 0,
+            output_tokens: completion.usage?.completion_tokens ?? 0,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+          },
+        };
       },
     },
   };

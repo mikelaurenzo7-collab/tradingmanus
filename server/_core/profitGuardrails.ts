@@ -1,179 +1,171 @@
 /**
- * Profit Guardrails — High Leverage Wins Only
+ * Profit Guardrails — capital-preservation first, $200-starting-capital tuned.
  *
- * Strict rules for live trading (owner or graduated users).
- * Higher thresholds = fewer but higher-quality trades.
- * NO GUARANTEES — trading involves risk of loss.
+ * Tighter post-pivot thresholds:
+ *   - Net EV (after exact Kalshi fees + amortized Grok cost): ≥ 6.5 %
+ *   - Confidence after Grok adjustment:                       ≥ 76 %
+ *   - Self-consistency: two Grok passes (different temps) must agree
+ *   - Drawdown circuit breakers: pause on 3 % daily / 8 % weekly loss
+ *   - Cold streak: pause after 5 consecutive losses or weekly edge < 3 %
+ *   - Position sizing: ¼ Kelly capped at 2 % of capital, floored at 0.5 %
+ *   - Total exposure: ≤ 20 % of capital, ≤ 10 % per correlated category
  *
- * Thresholds are env-tunable via Railway (MIN_POSITIVE_EV,
- * MIN_CONFIDENCE_AFTER_ADJUST, MIN_DUAL_BOT_AGREEMENT,
- * MAX_PORTFOLIO_EXPOSURE_PCT, MAX_CORRELATED_GROUP_PCT) — see env.ts.
- * Out-of-range values silently fall back to the defaults preserved below.
+ * Owner-override domains: env-listed categories where the operator's domain
+ * knowledge is trusted enough to relax the AI gate (still honors the hard
+ * fee/Kelly/drawdown rules — only the soft EV/confidence floors are loosened).
  */
 
 import { ENV } from "./env";
-import { getCachedScoreboard } from "./dailyScoreboard";
+import { calculateNetEv } from "./feeCalculator";
+import { calculateKellyPosition } from "./kellySizer";
+import { checkDrawdownBreaker } from "./drawdownBreaker";
 
-// Snapshot exports preserve the prior public surface (other modules / tests
-// that imported the constants by name).  They capture ENV.profitGuardrails
-// at module load only and will NOT reflect later mutations.  Runtime
-// mutation of ENV.profitGuardrails is intended for tests; production code
-// should call the get*() helpers below to read live values.
-export const MIN_POSITIVE_EV = ENV.profitGuardrails.minPositiveEv;
-export const MIN_CONFIDENCE_AFTER_ADJUST = ENV.profitGuardrails.minConfidenceAfterAdjust;
+// ── Snapshot exports kept for backwards compatibility ────────────────────────
+export const MIN_NET_EV = ENV.profitGuardrails.minNetEv;
+export const MIN_POSITIVE_EV = ENV.profitGuardrails.minNetEv;
+export const MIN_CONFIDENCE_AFTER_ADJUST =
+  ENV.profitGuardrails.minConfidenceAfterAdjust;
 export const MIN_DUAL_BOT_AGREEMENT = ENV.profitGuardrails.minDualBotAgreement;
-export const MAX_PORTFOLIO_EXPOSURE_PCT = ENV.profitGuardrails.maxPortfolioExposurePct;
-export const MAX_CORRELATED_GROUP_PCT = ENV.profitGuardrails.maxCorrelatedGroupPct;
+export const MAX_PORTFOLIO_EXPOSURE_PCT =
+  ENV.profitGuardrails.maxPortfolioExposurePct;
+export const MAX_CORRELATED_GROUP_PCT =
+  ENV.profitGuardrails.maxCorrelatedGroupPct;
 
-// Live getters — prefer these in new code.  They re-read ENV on each call so
-// tests can mock ENV.profitGuardrails between checks.
-export const getMinPositiveEv = () => ENV.profitGuardrails.minPositiveEv;
-export const getMinConfidenceAfterAdjust = () => ENV.profitGuardrails.minConfidenceAfterAdjust;
-export const getMinDualBotAgreement = () => ENV.profitGuardrails.minDualBotAgreement;
-export const getMaxPortfolioExposurePct = () => ENV.profitGuardrails.maxPortfolioExposurePct;
-export const getMaxCorrelatedGroupPct = () => ENV.profitGuardrails.maxCorrelatedGroupPct;
-
-/**
- * Pay-for-yourself floor multiplier.  When the day's running net is
- * negative (we've spent more on AI + fees than we've earned in P&L),
- * the post-review hard floors auto-tighten in proportion to the deficit.
- *
- *   net >= 0      → 1.0 × (no tightening)
- *   overrun 0-50% → 1.0..1.25 (linear ramp)
- *   overrun >=100%→ 1.5 ×  (hard cap)
- *
- * Capped at 1.5× so the gate never becomes impossibly tight (which would
- * just mean no trades all day).  Together with cadence throttling and the
- * reviewer-prompt awareness, this gives us a three-layer pay-for-yourself
- * defense:
- *   - Cadence layer (aiCostBudget): throttle reviews when overrunning
- *   - Reviewer layer: tighten judgment when net-negative
- *   - This (post-review) layer: hard veto on marginal approvals
- *
- * Returns 1.0 when no scoreboard cached (test path / first boot tick).
- */
-export function getPayForYourselfMultiplier(): number {
-  const sb = getCachedScoreboard();
-  if (!sb) return 1.0;
-  if (sb.netUsd >= 0) return 1.0;
-  const cap = ENV.aiDailyBudgetUsd;
-  if (cap <= 0) return 1.0; // operator opted out of cap → don't auto-tighten
-  const overrunFraction = Math.min(1, sb.effectiveOverrunUsd / cap);
-  // Linear ramp 1.0 → 1.5 across 0 → 100% overrun.
-  return 1.0 + overrunFraction * 0.5;
-}
+// ── Live getters (re-read ENV on each call) ──────────────────────────────────
+export const getMinNetEv = () => ENV.profitGuardrails.minNetEv;
+export const getMinPositiveEv = () => ENV.profitGuardrails.minNetEv;
+export const getMinConfidenceAfterAdjust = () =>
+  ENV.profitGuardrails.minConfidenceAfterAdjust;
+export const getMinDualBotAgreement = () =>
+  ENV.profitGuardrails.minDualBotAgreement;
+export const getMaxPortfolioExposurePct = () =>
+  ENV.profitGuardrails.maxPortfolioExposurePct;
+export const getMaxCorrelatedGroupPct = () =>
+  ENV.profitGuardrails.maxCorrelatedGroupPct;
 
 export const CORRELATED_CATEGORY_GROUPS: Record<string, string[]> = {
+  weather: ["weather"],
+  economics: ["economics", "macro"],
   politics: ["politics"],
-  macro: ["economics"],
-  tech_ai: ["tech"],
+  tech_ai: ["tech", "ai"],
   sports: ["sports"],
   crypto: ["crypto"],
+  entertainment: ["entertainment"],
 };
+
+function getOwnerOverrideDomains(): Set<string> {
+  if (!ENV.ownerOverrideDomains) return new Set();
+  return new Set(
+    ENV.ownerOverrideDomains
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean),
+  );
+}
+
+export function isOwnerOverrideCategory(category: string): boolean {
+  return getOwnerOverrideDomains().has(category.toLowerCase());
+}
+
+// ── Core check (single trade) ────────────────────────────────────────────────
 
 export type ProfitCheckResult = {
   approved: boolean;
   reason: string;
   adjustedEV: number;
   adjustedConfidence: number;
+  netEvFraction: number;
+  feeUsd: number;
+  aiCostUsd: number;
   grokVeto?: boolean;
 };
 
-/**
- * Core high-leverage gate.
- * Requires strong positive EV + high confidence + dual-bot consensus.
- */
-export function checkProfitGuardrails(input: {
-  expectedValue: number;
+export interface ProfitCheckInput {
+  expectedValue: number; // gross EV fraction (model edge)
   confidence: number;
-  grokApproved?: boolean;
-  grokEV?: number;
-  grokConfidence?: number;
-  isTeamMode?: boolean;
-  isOwner?: boolean;           // owner gate is clamped to legacy safety floors (0.03/0.65) but never looser than the configured env floor
-  recentWinRate?: number;
-}): ProfitCheckResult {
+  count: number;
+  entryPrice: number; // contract price 0..1
+  category: string;
+  liquidity?: "maker" | "taker";
+  /** Self-consistency: did the second Grok pass agree on direction + EV ≥ floor? */
+  selfConsistencyAgreement?: boolean;
+  /** Operator override flag — set true to bypass the soft EV/conf gates for
+   *  high-confidence personal-domain trades. Hard fee/Kelly checks still run. */
+  isOwnerOverride?: boolean;
+}
+
+export function checkProfitGuardrails(
+  input: ProfitCheckInput,
+): ProfitCheckResult {
   const ev = Number(input.expectedValue) || 0;
   const conf = Number(input.confidence) || 0;
 
-  // Pay-for-yourself: tighten floors when today's net is negative.  Returns
-  // 1.0 (no tightening) when net-positive, when no scoreboard cached, or
-  // when AI_DAILY_BUDGET_USD is unset.  Maxes at 1.5× to keep the gate
-  // sane.  Confidence floor is similarly tightened but capped at 0.95 so
-  // it never becomes mathematically impossible to clear.
-  const pfymult = getPayForYourselfMultiplier();
-  const evFloorBase = getMinPositiveEv();
-  const confFloorBase = getMinConfidenceAfterAdjust();
-  const evFloor = evFloorBase * pfymult;
-  const confFloor = Math.min(0.95, confFloorBase * pfymult);
-  // Owner gate: respects the (now PFY-adjusted) env floor with 0.03 / 0.65
-  // acting as a legacy safety floor against accidental over-lowering of
-  // the env value.
-  // - Default config + net-positive day (0.035 / 0.68) → owner sees the configured floor.
-  // - Raised env (e.g. 0.10) → owner respects the raised floor.
-  // - Lowered env below 0.03 / 0.65 → owner is clamped to the legacy floor.
-  // - Net-negative day → both branches see the PFY-multiplied floor.
-  // The owner never gets a lower floor than non-owner; tightening the env
-  // (or burning the day's budget) tightens the gate for everyone.
-  const minEV = input.isOwner ? Math.max(0.03, evFloor) : evFloor;
-  const minConf = input.isOwner ? Math.max(0.65, confFloor) : confFloor;
+  const net = calculateNetEv({
+    count: input.count,
+    entryPrice: input.entryPrice,
+    grossEvFraction: ev,
+    entryLiquidity: input.liquidity,
+  });
 
-  if (ev < minEV) {
+  const minNetEv = getMinNetEv();
+  const minConf = getMinConfidenceAfterAdjust();
+
+  // Owner-override domains: looser EV/conf floors but still positive.
+  const ownerOverride =
+    input.isOwnerOverride || isOwnerOverrideCategory(input.category);
+  const evFloor = ownerOverride ? Math.max(0.025, minNetEv * 0.5) : minNetEv;
+  const confFloor = ownerOverride ? Math.max(0.6, minConf - 0.08) : minConf;
+
+  if (net.netEvFraction < evFloor) {
     return {
       approved: false,
-      reason: `EV ${ev.toFixed(3)} below high-leverage minimum ${minEV} — edge too thin for live` ,
+      reason: `Net EV ${(net.netEvFraction * 100).toFixed(2)}% < ${(evFloor * 100).toFixed(2)}% floor (gross ${(ev * 100).toFixed(2)}% − fees $${net.feeUsd.toFixed(2)} − AI $${net.aiCostUsd.toFixed(4)})`,
       adjustedEV: ev,
       adjustedConfidence: conf,
+      netEvFraction: net.netEvFraction,
+      feeUsd: net.feeUsd,
+      aiCostUsd: net.aiCostUsd,
     };
   }
 
-  if (conf < minConf) {
+  if (conf < confFloor) {
     return {
       approved: false,
-      reason: `Confidence ${conf.toFixed(2)} below high-leverage floor ${minConf}`,
+      reason: `Confidence ${(conf * 100).toFixed(1)}% below ${(confFloor * 100).toFixed(1)}% floor`,
       adjustedEV: ev,
       adjustedConfidence: conf,
+      netEvFraction: net.netEvFraction,
+      feeUsd: net.feeUsd,
+      aiCostUsd: net.aiCostUsd,
     };
   }
 
-  // Dual-bot consensus required for non-owners (and recommended for owner)
-  if (input.isTeamMode && input.grokApproved === false) {
+  if (input.selfConsistencyAgreement === false) {
     return {
       approved: false,
-      reason: "Grok veto — dual-AI consensus required for high-leverage live trades",
+      reason:
+        "Self-consistency check failed — second Grok pass disagreed with first; SKIP per ambiguity rule",
       adjustedEV: ev,
       adjustedConfidence: conf,
-      grokVeto: true,
-    };
-  }
-
-  // If Grok confidence is available, require agreement
-  if (input.grokConfidence !== undefined && input.grokConfidence < getMinDualBotAgreement()) {
-    return {
-      approved: false,
-      reason: `Grok confidence ${input.grokConfidence.toFixed(2)} too low for high-leverage trade` ,
-      adjustedEV: ev,
-      adjustedConfidence: conf,
-    };
-  }
-
-  // Cold streak protection
-  if (input.recentWinRate !== undefined && input.recentWinRate < 0.48 && ev < 0.05) {
-    return {
-      approved: false,
-      reason: `Recent win rate ${(input.recentWinRate * 100).toFixed(0)}% — waiting for stronger high-leverage setup` ,
-      adjustedEV: ev,
-      adjustedConfidence: conf,
+      netEvFraction: net.netEvFraction,
+      feeUsd: net.feeUsd,
+      aiCostUsd: net.aiCostUsd,
     };
   }
 
   return {
     approved: true,
-    reason: "High-leverage guardrails passed — strong EV + confidence + dual-bot consensus",
+    reason: `Net EV ${(net.netEvFraction * 100).toFixed(2)}% ≥ ${(evFloor * 100).toFixed(2)}% + confidence ${(conf * 100).toFixed(1)}% ≥ ${(confFloor * 100).toFixed(1)}%${ownerOverride ? " (owner override)" : ""}`,
     adjustedEV: ev,
     adjustedConfidence: conf,
+    netEvFraction: net.netEvFraction,
+    feeUsd: net.feeUsd,
+    aiCostUsd: net.aiCostUsd,
   };
 }
+
+// ── Portfolio exposure ───────────────────────────────────────────────────────
+
 export function checkPortfolioExposure(
   currentOpenExposureUsd: number,
   newOrderExposureUsd: number,
@@ -184,30 +176,174 @@ export function checkPortfolioExposure(
   const totalAfter = currentOpenExposureUsd + newOrderExposureUsd;
   const portfolioPct = getMaxPortfolioExposurePct();
   const maxTotal = bankrollUsd * portfolioPct;
-
   if (totalAfter > maxTotal) {
     return {
       ok: false,
-      reason: `Total exposure would exceed ${(portfolioPct * 100).toFixed(0)}% of bankroll (high-leverage limit)` ,
+      reason: `Total exposure would exceed ${(portfolioPct * 100).toFixed(0)}% of bankroll`,
       maxAllowed: Math.max(0, maxTotal - currentOpenExposureUsd),
     };
   }
 
-  const group = Object.keys(CORRELATED_CATEGORY_GROUPS).find((g) =>
-    CORRELATED_CATEGORY_GROUPS[g].includes(category)
-  ) || "other";
-
-  const groupExposure = (openPositionsByCategory[group] || 0) + newOrderExposureUsd;
+  const group =
+    Object.keys(CORRELATED_CATEGORY_GROUPS).find((g) =>
+      CORRELATED_CATEGORY_GROUPS[g].includes(category),
+    ) || "other";
+  const groupExposure =
+    (openPositionsByCategory[group] || 0) + newOrderExposureUsd;
   const groupPct = getMaxCorrelatedGroupPct();
   const maxGroup = bankrollUsd * groupPct;
 
   if (groupExposure > maxGroup) {
     return {
       ok: false,
-      reason: `Correlated group '${group}' exposure would exceed ${(groupPct * 100).toFixed(0)}% of bankroll (high-leverage limit)` ,
-      maxAllowed: Math.max(0, maxGroup - (openPositionsByCategory[group] || 0)),
+      reason: `Correlated group '${group}' exposure would exceed ${(groupPct * 100).toFixed(0)}% of bankroll`,
+      maxAllowed: Math.max(
+        0,
+        maxGroup - (openPositionsByCategory[group] || 0),
+      ),
+    };
+  }
+  return { ok: true, maxAllowed: newOrderExposureUsd };
+}
+
+// ── Combined gate (the one the autonomy loop calls) ──────────────────────────
+
+export interface FullCheckInput extends ProfitCheckInput {
+  capitalUsd: number;
+  todayPnlUsd: number;
+  weeklyPnlUsd: number;
+  consecutiveLosses: number;
+  weeklyRealizedEdgePct: number;
+  currentOpenExposureUsd: number;
+  openPositionsByCategory: Record<string, number>;
+  /** Operator probability estimate for Kelly sizing (0..1). */
+  winProbability: number;
+}
+
+export interface FullCheckResult {
+  approved: boolean;
+  reason: string;
+  details: {
+    profit: ProfitCheckResult;
+    drawdown: ReturnType<typeof checkDrawdownBreaker>;
+    kelly: ReturnType<typeof calculateKellyPosition>;
+    exposure: ReturnType<typeof checkPortfolioExposure>;
+  };
+}
+
+/**
+ * The single canonical "should we place this order?" check. Combines net-EV
+ * gate, drawdown breakers, Kelly sizing, and portfolio exposure into one
+ * decision. The autonomy loop should call only this — never the individual
+ * checks — so the audit log captures a coherent reason on every reject.
+ */
+export function checkFullEntry(input: FullCheckInput): FullCheckResult {
+  const drawdown = checkDrawdownBreaker({
+    capitalUsd: input.capitalUsd,
+    todayPnlUsd: input.todayPnlUsd,
+    weeklyPnlUsd: input.weeklyPnlUsd,
+    consecutiveLosses: input.consecutiveLosses,
+    weeklyRealizedEdgePct: input.weeklyRealizedEdgePct,
+  });
+  if (!drawdown.allowed) {
+    return {
+      approved: false,
+      reason: `Drawdown breaker tripped: ${drawdown.reason}`,
+      details: {
+        profit: emptyProfitResult(input, "skipped — drawdown gate"),
+        drawdown,
+        kelly: emptyKelly(),
+        exposure: { ok: false, maxAllowed: 0, reason: "skipped — drawdown" },
+      },
     };
   }
 
-  return { ok: true, maxAllowed: newOrderExposureUsd };
+  const profit = checkProfitGuardrails(input);
+  if (!profit.approved) {
+    return {
+      approved: false,
+      reason: profit.reason,
+      details: {
+        profit,
+        drawdown,
+        kelly: emptyKelly(),
+        exposure: { ok: false, maxAllowed: 0, reason: "skipped — EV/conf" },
+      },
+    };
+  }
+
+  const kelly = calculateKellyPosition({
+    winProbability: input.winProbability,
+    contractPrice: input.entryPrice,
+    totalCapitalUsd: input.capitalUsd,
+  });
+  if (!kelly.meetsMinFloor) {
+    return {
+      approved: false,
+      reason: `Kelly below floor: ${kelly.reason}`,
+      details: {
+        profit,
+        drawdown,
+        kelly,
+        exposure: { ok: false, maxAllowed: 0, reason: "skipped — Kelly floor" },
+      },
+    };
+  }
+
+  const orderUsd = kelly.positionUsd;
+  const exposure = checkPortfolioExposure(
+    input.currentOpenExposureUsd,
+    orderUsd,
+    input.capitalUsd,
+    input.category,
+    input.openPositionsByCategory,
+  );
+  if (!exposure.ok) {
+    return {
+      approved: false,
+      reason: exposure.reason ?? "exposure cap exceeded",
+      details: { profit, drawdown, kelly, exposure },
+    };
+  }
+
+  return {
+    approved: true,
+    reason: "All capital-preservation gates passed",
+    details: { profit, drawdown, kelly, exposure },
+  };
+}
+
+function emptyKelly() {
+  return {
+    fullKelly: 0,
+    fractionalKelly: 0,
+    positionUsd: 0,
+    contractCount: 0,
+    meetsMinFloor: false,
+    reason: "skipped",
+  };
+}
+
+function emptyProfitResult(
+  input: ProfitCheckInput,
+  reason: string,
+): ProfitCheckResult {
+  return {
+    approved: false,
+    reason,
+    adjustedEV: input.expectedValue,
+    adjustedConfidence: input.confidence,
+    netEvFraction: 0,
+    feeUsd: 0,
+    aiCostUsd: 0,
+  };
+}
+
+/**
+ * Pay-for-yourself multiplier — kept as a no-op for backwards compat after
+ * the daily-budget refactor. Returns 1.0 (no tightening) until callers
+ * migrate to the drawdown breaker, which is the unified capital gate.
+ */
+export function getPayForYourselfMultiplier(): number {
+  return 1.0;
 }

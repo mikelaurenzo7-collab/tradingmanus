@@ -1,8 +1,10 @@
 /**
- * Chat Router
- * Per-platform AI chatbot with persistent memory, tool use, and strategy triggers.
- * Each platform (Kalshi / Polymarket) has its own workspace: history, memory
- * summary, persona, and system instructions.
+ * Chat Router (Kalshi-only, Grok-backed).
+ *
+ * AI chatbot with persistent memory and lightweight tool use.  The Anthropic
+ * provider was removed in the Kalshi-only pivot; the bot now talks to xAI's
+ * Grok API via the shared anthropicClient shim, which preserves the
+ * messages.create surface so this router didn't need rewriting end-to-end.
  */
 
 import { protectedProcedure, router } from "./_core/trpc";
@@ -16,28 +18,24 @@ import * as db from "./db";
 import { assertPositiveIntegerUserId } from "./_core/userScope";
 import { fetchKalshiMarkets } from "./_core/kalshiMarketData";
 import { generateSignalsForMarkets, filterSignalsByConfidence } from "./_core/kalshiSignals";
-import { fetchPolymarketMarkets } from "./_core/polymarketAuth";
-import { generatePolymarketSignals } from "./_core/polymarketSignals";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-const PLATFORM_SCHEMA = z.enum(["kalshi", "polymarket"]);
-type Platform = "kalshi" | "polymarket";
+const PLATFORM_SCHEMA = z.enum(["kalshi"]);
+type Platform = "kalshi";
 
 const MEMORY_COMPRESSION_THRESHOLD = 30; // compress after this many messages
 const MAX_CONTEXT_MESSAGES = 20; // messages to send to AI each turn
-// Use the configured Claude review-tier model for chat — same speed/cost
-// profile as the autonomy reviewer.
-const CHAT_MODEL = ENV.anthropicModel;
+const CHAT_MODEL = ENV.grokModel;
 
 // ---------------------------------------------------------------------------
 // System prompt builder
 // ---------------------------------------------------------------------------
 
 function buildSystemPrompt(
-  platform: Platform,
+  _platform: Platform,
   config: {
     persona?: string | null;
     systemInstructions?: string | null;
@@ -47,7 +45,7 @@ function buildSystemPrompt(
     triggerOrdersEnabled: number;
   }
 ): string {
-  const platformLabel = platform === "kalshi" ? "Kalshi" : "Polymarket";
+  const platformLabel = "Kalshi";
   const now = new Date().toISOString();
 
   const toneGuide: Record<string, string> = {
@@ -68,16 +66,11 @@ function buildSystemPrompt(
     .join("\n- ");
 
   const memoryBlock = config.memorySummary
-    ? `\n\n## Conversation Memory\nThe following is a compressed summary of your prior conversations with this user:\n${config.memorySummary}`
+    ? `\n\n## Conversation Memory\n${config.memorySummary}`
     : "";
 
-  const customPersona = config.persona
-    ? `\n\n## Your Persona\n${config.persona}`
-    : "";
-
-  const customInstructions = config.systemInstructions
-    ? `\n\n## Custom Instructions\n${config.systemInstructions}`
-    : "";
+  const customPersona = config.persona ? `\n\n## Your Persona\n${config.persona}` : "";
+  const customInstructions = config.systemInstructions ? `\n\n## Custom Instructions\n${config.systemInstructions}` : "";
 
   return `You are an expert AI trading assistant embedded in the Laurenzo prediction-market trading platform, specializing in ${platformLabel}.
 Current UTC time: ${now}
@@ -88,13 +81,12 @@ ${toneGuide[config.tone] ?? toneGuide.professional}
 You can:
 - ${capabilities}
 
-When the user asks you to perform an action (e.g. "run signals", "check my positions", "generate signals"), call the appropriate tool rather than just describing what you would do.${memoryBlock}${customPersona}${customInstructions}
+When the user asks you to perform an action (e.g. "run signals", "check my positions", "generate signals"), describe what you would do and ask the operator to trigger it from the dashboard.${memoryBlock}${customPersona}${customInstructions}
 
 ## Important Rules
-- Never fabricate market prices, positions, or account data. Use tools to fetch live data.
+- Never fabricate market prices, positions, or account data.
 - Be transparent about what you can and cannot do.
-- When order execution is disabled, explain the user can enable it in bot config.
-- Always cite the source of information (tool result, memory, etc.).`;
+- When order execution is disabled, explain the user can enable it in bot config.`;
 }
 
 function triggerCapLine(enabled: number, description: string): string | null {
@@ -102,168 +94,44 @@ function triggerCapLine(enabled: number, description: string): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// Tool definitions (Anthropic native tool format)
+// Lightweight, server-side helpers (the Grok shim does not expose tool_use,
+// so we surface "tool" results through targeted slash-commands instead).
 // ---------------------------------------------------------------------------
 
-type AnthropicTool = {
-  name: string;
-  description: string;
-  input_schema: {
-    type: "object";
-    properties: Record<string, unknown>;
-    required: string[];
-  };
-};
-
-const TOOL_GET_SIGNALS: AnthropicTool = {
-  name: "get_signals",
-  description:
-    "Fetch the latest trading signals for the current platform. Returns top opportunities ranked by confidence.",
-  input_schema: {
-    type: "object",
-    properties: {
-      limit: {
-        type: "number",
-        description: "Maximum number of signals to return (1-20). Default 10.",
-      },
-      minConfidence: {
-        type: "number",
-        description: "Minimum confidence threshold 0-1. Default 0.65.",
-      },
-    },
-    required: [],
-  },
-};
-
-const TOOL_GET_POSITIONS: AnthropicTool = {
-  name: "get_positions",
-  description:
-    "Fetch the user's current open positions and capital summary for the platform.",
-  input_schema: {
-    type: "object",
-    properties: {},
-    required: [],
-  },
-};
-
-const TOOL_GET_MARKETS: AnthropicTool = {
-  name: "get_markets",
-  description:
-    "Search active markets on the current platform. Useful for exploring opportunities.",
-  input_schema: {
-    type: "object",
-    properties: {
-      limit: {
-        type: "number",
-        description: "How many markets to return (1-30). Default 15.",
-      },
-    },
-    required: [],
-  },
-};
-
-const TOOL_RUN_SIGNALS: AnthropicTool = {
-  name: "run_signals",
-  description:
-    "Generate fresh AI trading signals by scanning live markets on the current platform. More thorough than get_signals.",
-  input_schema: {
-    type: "object",
-    properties: {},
-    required: [],
-  },
-};
-
-// ---------------------------------------------------------------------------
-// Tool execution
-// ---------------------------------------------------------------------------
-
-async function executeTool(
-  toolName: string,
-  toolInput: Record<string, unknown>,
-  platform: Platform,
-  userId: number
-): Promise<{ result: unknown; actionType: string }> {
-  if (toolName === "get_signals") {
-    const limit = Math.min(20, Math.max(1, Number(toolInput.limit ?? 10)));
-    const minConf = Number(toolInput.minConfidence ?? 0.65);
-
-    if (platform === "kalshi") {
-      const dbInst = await db.getDb();
-      if (!dbInst) return { result: { error: "Database unavailable" }, actionType: "get_signals" };
-      const { kalshiSignals } = await import("../drizzle/schema");
-      const { desc, eq } = await import("drizzle-orm");
-      const signals = await dbInst
-        .select()
-        .from(kalshiSignals)
-        .where(eq(kalshiSignals.userId, userId))
-        .orderBy(desc(kalshiSignals.createdAt))
-        .limit(limit);
-      const filtered = signals.filter((s: { confidence: number }) => s.confidence >= minConf);
-      return { result: filtered, actionType: "get_signals" };
-    }
-
-    if (platform === "polymarket") {
-      const dbInst = await db.getDb();
-      if (!dbInst) return { result: { error: "Database unavailable" }, actionType: "get_signals" };
-      return { result: { note: "Polymarket signals are generated on-demand via run_signals." }, actionType: "get_signals" };
-    }
-  }
-
-  if (toolName === "run_signals") {
-    if (platform === "kalshi") {
-      try {
-        const markets = await fetchKalshiMarkets({ status: "open" });
-        const slice = markets.slice(0, 30);
-        const signals = await generateSignalsForMarkets(slice, undefined, undefined, undefined, userId);
-        const top = filterSignalsByConfidence(signals, 0.65).slice(0, 10);
-        return { result: { signalsGenerated: signals.length, topSignals: top }, actionType: "run_signals" };
-      } catch (err) {
-        return { result: { error: String(err) }, actionType: "run_signals" };
-      }
-    }
-
-    if (platform === "polymarket") {
-      try {
-        const markets = await fetchPolymarketMarkets({ limit: 40 });
-        const signals = await generatePolymarketSignals(markets.slice(0, 30), { userId });
-        const top = signals.filter((s: { confidence?: number }) => (s.confidence ?? 0) >= 0.65).slice(0, 10);
-        return { result: { signalsGenerated: signals.length, topSignals: top }, actionType: "run_signals" };
-      } catch (err) {
-        return { result: { error: String(err) }, actionType: "run_signals" };
-      }
-    }
-  }
-
-  if (toolName === "get_positions") {
-    const dbInst = await db.getDb();
-    if (!dbInst) return { result: { error: "Database unavailable" }, actionType: "get_positions" };
-
-    if (platform === "kalshi") {
-      const { kalshiPositions, kalshiCapital } = await import("../drizzle/schema");
-      const { eq } = await import("drizzle-orm");
-      const [positions, [capital]] = await Promise.all([
-        dbInst.select().from(kalshiPositions).where(eq(kalshiPositions.userId, userId)),
-        dbInst.select().from(kalshiCapital).where(eq(kalshiCapital.userId, userId)),
-      ]);
-      return { result: { positions, capital: capital ?? null }, actionType: "get_positions" };
-    }
-
-    return { result: { note: "Polymarket positions are fetched live from the exchange." }, actionType: "get_positions" };
-  }
-
-  if (toolName === "get_markets") {
-    const limit = Math.min(30, Math.max(1, Number(toolInput.limit ?? 15)));
-
-    if (platform === "kalshi") {
+async function maybeRunSlashCommand(
+  content: string,
+  userId: number,
+): Promise<{ actionType: string; actionData: string } | null> {
+  const trimmed = content.trim().toLowerCase();
+  if (trimmed.startsWith("/signals") || trimmed.startsWith("/run signals")) {
+    try {
       const markets = await fetchKalshiMarkets({ status: "open" });
-      return { result: markets.slice(0, limit), actionType: "get_markets" };
+      const slice = markets.slice(0, 30);
+      const signals = await generateSignalsForMarkets(slice, undefined, undefined, undefined, userId);
+      const top = filterSignalsByConfidence(signals, 0.65).slice(0, 10);
+      return {
+        actionType: "run_signals",
+        actionData: JSON.stringify({ signalsGenerated: signals.length, topSignals: top }),
+      };
+    } catch (err) {
+      return { actionType: "run_signals", actionData: JSON.stringify({ error: String(err) }) };
     }
-
-    const markets = await fetchPolymarketMarkets({ limit });
-    return { result: markets, actionType: "get_markets" };
   }
-
-  return { result: { error: `Unknown tool: ${toolName}` }, actionType: toolName };
+  if (trimmed.startsWith("/positions")) {
+    const dbInst = await db.getDb();
+    if (!dbInst) return { actionType: "get_positions", actionData: JSON.stringify({ error: "Database unavailable" }) };
+    const { kalshiPositions, kalshiCapital } = await import("../drizzle/schema");
+    const { eq } = await import("drizzle-orm");
+    const [positions, [capital]] = await Promise.all([
+      dbInst.select().from(kalshiPositions).where(eq(kalshiPositions.userId, userId)),
+      dbInst.select().from(kalshiCapital).where(eq(kalshiCapital.userId, userId)),
+    ]);
+    return {
+      actionType: "get_positions",
+      actionData: JSON.stringify({ positions, capital: capital ?? null }),
+    };
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -275,16 +143,15 @@ async function maybeCompressMemory(
   platform: Platform,
   existingConfig: Awaited<ReturnType<typeof chatDb.getBotConfig>>
 ): Promise<void> {
-  if (!ENV.anthropicApiKey) return;
+  if (!ENV.xaiApiKey) return;
 
   const messages = await chatDb.getChatMessages(userId, platform, MEMORY_COMPRESSION_THRESHOLD + 10);
   if (messages.length < MEMORY_COMPRESSION_THRESHOLD) return;
 
-  // Only compress the older half; leave recent messages untouched
   const toCompress = messages.slice(0, Math.floor(messages.length / 2));
   if (toCompress.length === 0) return;
 
-  const client = createAnthropicClient(ENV.anthropicApiKey);
+  const client = createAnthropicClient(ENV.xaiApiKey);
   const transcript = toCompress
     .map((m: Pick<ChatMessage, "role" | "content">) => `${m.role.toUpperCase()}: ${m.content}`)
     .join("\n");
@@ -296,7 +163,7 @@ async function maybeCompressMemory(
       model: CHAT_MODEL,
       max_tokens: 512,
       system:
-        "You are a memory compressor. Summarize the conversation transcript into a concise paragraph (max 400 words) capturing: key topics discussed, decisions made, user preferences revealed, and any strategies or markets mentioned. Preserve facts, numbers, and dates. Be dense and specific.",
+        "You are a memory compressor. Summarize the conversation transcript into a concise paragraph (max 400 words) capturing: key topics, decisions, user preferences, strategies and markets mentioned. Be dense and specific.",
       messages: [
         {
           role: "user",
@@ -314,8 +181,8 @@ async function maybeCompressMemory(
     if (summary) {
       await chatDb.upsertBotConfig(userId, platform, { memorySummary: summary });
     }
-  } catch {
-    // Compression is best-effort — don't fail the request
+  } catch (err) {
+    logger.warn({ err }, "[Chat] memory compression failed");
   }
 }
 
@@ -324,8 +191,6 @@ async function maybeCompressMemory(
 // ---------------------------------------------------------------------------
 
 export const chatRouter = router({
-  // ── Config ────────────────────────────────────────────────────────────────
-
   getConfig: protectedProcedure
     .input(z.object({ platform: PLATFORM_SCHEMA }))
     .query(async ({ input, ctx }) => {
@@ -375,8 +240,6 @@ export const chatRouter = router({
       return { success: true };
     }),
 
-  // ── History ───────────────────────────────────────────────────────────────
-
   getHistory: protectedProcedure
     .input(z.object({ platform: PLATFORM_SCHEMA, limit: z.number().int().min(1).max(100).optional() }))
     .query(async ({ input, ctx }) => {
@@ -392,8 +255,6 @@ export const chatRouter = router({
       return { success: true };
     }),
 
-  // ── Send Message ──────────────────────────────────────────────────────────
-
   sendMessage: protectedProcedure
     .input(
       z.object({
@@ -404,11 +265,11 @@ export const chatRouter = router({
     .mutation(async ({ input, ctx }) => {
       const userId = assertPositiveIntegerUserId(ctx.user!.id, "chat sendMessage userId");
 
-      if (!ENV.anthropicApiKey) {
+      if (!ENV.xaiApiKey) {
         return {
           success: false,
           message: null,
-          error: "AI chat requires ANTHROPIC_API_KEY to be configured.",
+          error: "AI chat requires XAI_API_KEY to be configured.",
         };
       }
 
@@ -420,7 +281,11 @@ export const chatRouter = router({
         content: input.content,
       });
 
-      // 2. Load bot config + recent history
+      // 2. Slash-command shortcut: skip the LLM round-trip when the user is
+      // running a deterministic action.
+      const slash = await maybeRunSlashCommand(input.content, userId);
+
+      // 3. Load bot config + recent history
       const [config, history] = await Promise.all([
         chatDb.getBotConfig(userId, input.platform),
         chatDb.getChatMessages(userId, input.platform, MAX_CONTEXT_MESSAGES + 1),
@@ -437,21 +302,8 @@ export const chatRouter = router({
 
       const systemPrompt = buildSystemPrompt(input.platform, effectiveConfig);
 
-      // 3. Build message array for Anthropic (exclude the just-added user message from history
-      //    since we'll append it explicitly)
-      type AnthropicChatMessage = {
-        role: "user" | "assistant";
-        content:
-          | string
-          | Array<
-              | { type: "text"; text: string }
-              | { type: "tool_use"; id: string; name: string; input: unknown }
-              | { type: "tool_result"; tool_use_id: string; content: string }
-            >;
-      };
-
-      const contextMessages: AnthropicChatMessage[] = history
-        .slice(0, -1) // drop the message we just persisted
+      const contextMessages = history
+        .slice(0, -1)
         .slice(-MAX_CONTEXT_MESSAGES)
         .map((m: Pick<ChatMessage, "role" | "content">) => ({
           role: m.role as "user" | "assistant",
@@ -459,133 +311,46 @@ export const chatRouter = router({
         }));
 
       contextMessages.push({ role: "user", content: input.content });
+      if (slash) {
+        contextMessages.push({
+          role: "user",
+          content: `[tool result for ${slash.actionType}]\n${slash.actionData}`,
+        });
+      }
 
-      // 4. Tools available to the bot (Anthropic native tool format)
-      const tools: AnthropicTool[] = [
-        TOOL_GET_SIGNALS,
-        TOOL_GET_POSITIONS,
-        TOOL_GET_MARKETS,
-        TOOL_RUN_SIGNALS,
-      ];
+      const client = createAnthropicClient(ENV.xaiApiKey);
 
-      const client = createAnthropicClient(ENV.anthropicApiKey);
-
-      // 5. Agentic loop — handle Anthropic tool_use blocks
       let assistantContent = "";
-      let finalActionType: string | null = null;
-      let finalActionData: string | null = null;
-
-      const conversation: AnthropicChatMessage[] = [...contextMessages];
-
-      let iterations = 0;
-      const MAX_TOOL_ITERATIONS = 4;
-
-      while (iterations < MAX_TOOL_ITERATIONS) {
-        iterations++;
-
+      try {
         const response = await client.messages.create({
           model: CHAT_MODEL,
           max_tokens: 1024,
           system: systemPrompt,
-          messages: conversation,
-          tools,
+          messages: contextMessages,
         });
-
         const blocks = response.content ?? [];
-        const textBlocks = blocks.filter((b) => b.type === "text");
-        const toolUseBlocks = blocks.filter((b) => b.type === "tool_use");
-
-        const turnText = textBlocks
+        assistantContent = blocks
+          .filter((b) => b.type === "text")
           .map((b) => (typeof b.text === "string" ? b.text : ""))
           .join("\n")
           .trim();
-        if (turnText) {
-          assistantContent = turnText;
-        }
-
-        const rawStopReason = (response as unknown as { stop_reason?: unknown }).stop_reason;
-        const stopReason = typeof rawStopReason === "string" ? rawStopReason : undefined;
-
-        if (stopReason !== "tool_use" || toolUseBlocks.length === 0) {
-          break;
-        }
-
-        // Echo the assistant's tool_use turn back into the conversation so
-        // the next call has the same content to anchor tool_result blocks.
-        conversation.push({
-          role: "assistant",
-          content: blocks
-            .filter((b) => b.type === "text" || b.type === "tool_use")
-            .map((b) => {
-              if (b.type === "text") {
-                return { type: "text" as const, text: typeof b.text === "string" ? b.text : "" };
-              }
-              return {
-                type: "tool_use" as const,
-                id: String((b as { id?: unknown }).id ?? ""),
-                name: String((b as { name?: unknown }).name ?? ""),
-                input: (b as { input?: unknown }).input ?? {},
-              };
-            }),
-        });
-
-        // Execute each tool and append tool_result blocks in one user turn.
-        const toolResults: Array<{
-          type: "tool_result";
-          tool_use_id: string;
-          content: string;
-        }> = [];
-        for (const block of toolUseBlocks) {
-          const toolName = String((block as { name?: unknown }).name ?? "");
-          const toolUseId = String((block as { id?: unknown }).id ?? "");
-          const rawInput = (block as { input?: unknown }).input;
-          let toolInput: Record<string, unknown> = {};
-          if (rawInput && typeof rawInput === "object") {
-            toolInput = rawInput as Record<string, unknown>;
-          } else if (typeof rawInput === "string" && rawInput.length > 0) {
-            try {
-              toolInput = JSON.parse(rawInput) as Record<string, unknown>;
-            } catch (parseErr) {
-              logger.warn(
-                { err: parseErr, toolName, args: rawInput },
-                "[Chat] Failed to parse tool_use input as JSON; using empty input",
-              );
-            }
-          }
-          const { result, actionType } = await executeTool(
-            toolName,
-            toolInput,
-            input.platform,
-            userId,
-          );
-          finalActionType = actionType;
-          finalActionData = JSON.stringify(result);
-          toolResults.push({
-            type: "tool_result",
-            tool_use_id: toolUseId,
-            content: JSON.stringify(result),
-          });
-        }
-
-        conversation.push({ role: "user", content: toolResults });
+      } catch (err) {
+        logger.error({ err }, "[Chat] Grok call failed");
       }
 
-      // Fallback if we got no text content
       if (!assistantContent) {
         assistantContent = "I encountered an issue generating a response. Please try again.";
       }
 
-      // 6. Persist assistant reply
       const saved = await chatDb.addChatMessage({
         userId,
         platform: input.platform,
         role: "assistant",
         content: assistantContent,
-        actionType: finalActionType,
-        actionData: finalActionData,
+        actionType: slash?.actionType ?? null,
+        actionData: slash?.actionData ?? null,
       });
 
-      // 7. Maybe compress memory (fire-and-forget, background)
       maybeCompressMemory(userId, input.platform, config).catch(() => {});
 
       return { success: true, message: saved, error: null };

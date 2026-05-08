@@ -66,10 +66,6 @@ export default function Dashboard() {
   const performanceOverviewQuery =
     trpc.kalshi.getPerformanceOverview.useQuery();
   const accountStatusQuery = trpc.kalshi.getKalshiAccountStatus.useQuery();
-  const polymarketStatusQuery =
-    trpc.polymarket.getPolymarketAccountStatus.useQuery(undefined, {
-      retry: false,
-    });
   const { data: instructions } = trpc.training.getInstructions.useQuery();
   const autonomyActivityQuery = trpc.kalshi.getAutonomyActivity.useQuery();
   const equityCurveQuery = trpc.kalshi.getEquityCurve.useQuery({ days: 7 });
@@ -121,7 +117,6 @@ export default function Dashboard() {
   if (
     performanceOverviewQuery.isLoading ||
     accountStatusQuery.isLoading ||
-    polymarketStatusQuery.isLoading ||
     autonomyActivityQuery.isLoading
   ) {
     return <DashboardSkeleton />;
@@ -163,15 +158,13 @@ export default function Dashboard() {
   if (performanceOverviewQuery.isError)
     degradedSources.push("performance overview");
   if (autonomyActivityQuery.isError) degradedSources.push("autonomy activity");
-  if (polymarketStatusQuery.isError) degradedSources.push("Polymarket status");
 
   const accountStatus = accountStatusQuery.data;
   const performanceOverview = performanceOverviewQuery.data;
   const metrics = performanceOverview?.metrics;
 
   const kalshiConnected = accountStatus?.connected || false;
-  const polymarketConnected = polymarketStatusQuery.data?.connected || false;
-  const isConnected = kalshiConnected || polymarketConnected;
+  const isConnected = kalshiConnected;
   const equity = isConnected ? accountStatus?.equity || 0 : 0;
   const isFunded = equity > 0;
   const hasInstructions = (instructions?.length || 0) > 0;
@@ -213,7 +206,6 @@ export default function Dashboard() {
   const handleRefreshDashboard = () => {
     performanceOverviewQuery.refetch();
     accountStatusQuery.refetch();
-    polymarketStatusQuery.refetch();
     autonomyActivityQuery.refetch();
     equityCurveQuery.refetch();
   };
@@ -221,7 +213,6 @@ export default function Dashboard() {
   const isRefreshing =
     performanceOverviewQuery.isFetching ||
     accountStatusQuery.isFetching ||
-    polymarketStatusQuery.isFetching ||
     autonomyActivityQuery.isFetching ||
     equityCurveQuery.isFetching;
 
@@ -231,7 +222,7 @@ export default function Dashboard() {
     return <ConnectionGate onConnect={() => navigate("/connect")} />;
   }
 
-  if (kalshiConnected && !isFunded && !polymarketConnected) {
+  if (kalshiConnected && !isFunded) {
     return <FundingGate equity={equity} />;
   }
 
@@ -282,28 +273,16 @@ export default function Dashboard() {
 
       <LiveHeartbeat />
 
-      <div className="grid md:grid-cols-2 gap-3">
-        <PlatformStatusTile
-          platform="Kalshi"
-          connected={kalshiConnected}
-          detail={
-            kalshiConnected
-              ? `$${equity.toFixed(2)} synced capital`
-              : "Connect RSA API credentials"
-          }
-          onConnect={() => navigate("/connect")}
-        />
-        <PlatformStatusTile
-          platform="Polymarket"
-          connected={polymarketConnected}
-          detail={
-            polymarketConnected
-              ? "CLOB credentials ready"
-              : "Connect L2 CLOB API keys"
-          }
-          onConnect={() => navigate("/connect")}
-        />
-      </div>
+      <PlatformStatusTile
+        platform="Kalshi"
+        connected={kalshiConnected}
+        detail={
+          kalshiConnected
+            ? `$${equity.toFixed(2)} synced capital`
+            : "Connect RSA API credentials"
+        }
+        onConnect={() => navigate("/connect")}
+      />
 
       {/* Row 1: Hero KPI strip */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -688,7 +667,7 @@ function ConnectionGate({ onConnect }: { onConnect: () => void }) {
         </h1>
         <p className="text-sm text-muted-foreground max-w-md mx-auto">
           Let's get your trading desk live in three steps. Start by connecting
-          Kalshi, Polymarket, or both bots.
+          your Kalshi account.
         </p>
       </div>
 
@@ -703,7 +682,7 @@ function ConnectionGate({ onConnect }: { onConnect: () => void }) {
         <OnboardingStep
           number={2}
           title="Fund"
-          subtitle="Kalshi or Polymarket"
+          subtitle="Fund Kalshi"
         />
         <OnboardingStep number={3} title="Arm" subtitle="Configure & go live" />
       </div>
@@ -713,12 +692,12 @@ function ConnectionGate({ onConnect }: { onConnect: () => void }) {
           <div>
             <h2 className="text-base font-semibold flex items-center gap-2">
               <Plug className="w-4 h-4 text-primary" />
-              Step 1 · Connect Kalshi and Polymarket
+              Step 1 · Connect Kalshi
             </h2>
             <p className="text-sm text-muted-foreground mt-1">
-              Generate a Kalshi RSA key pair and/or Polymarket L2 CLOB keys,
-              then paste the credentials. Both bots are shown during onboarding,
-              validated live, and stored AES-256-GCM encrypted.
+              Generate a Kalshi RSA key pair and paste your API Key ID + private
+              key. Credentials are validated live and stored AES-256-GCM
+              encrypted.
             </p>
           </div>
           <Button
@@ -726,13 +705,9 @@ function ConnectionGate({ onConnect }: { onConnect: () => void }) {
             size="lg"
             className="w-full gap-2 bg-gradient-to-r from-primary to-accent hover:opacity-90"
           >
-            Connect exchanges
+            Connect Kalshi
             <ArrowRight className="w-4 h-4" />
           </Button>
-          <p className="text-xs text-muted-foreground text-center">
-            Kalshi and Polymarket can be connected on the same screen; use one
-            or both based on your subscription and funded venues.
-          </p>
         </CardContent>
       </Card>
     </div>
@@ -748,8 +723,8 @@ function FundingGate({ equity }: { equity: number }) {
         </div>
         <h1 className="text-2xl font-bold">Fund your account</h1>
         <p className="text-sm text-muted-foreground max-w-md mx-auto">
-          Connection successful. Deposit funds on the venue you plan to trade
-          before arming live autonomy.
+          Connection successful. Deposit funds in Kalshi before arming live
+          autonomy.
         </p>
       </div>
 
@@ -763,7 +738,7 @@ function FundingGate({ equity }: { equity: number }) {
         <OnboardingStep
           number={2}
           title="Fund"
-          subtitle="Fund target venue"
+          subtitle="Fund Kalshi"
           active
         />
         <OnboardingStep number={3} title="Arm" subtitle="Configure & go live" />

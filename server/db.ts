@@ -10,7 +10,6 @@ import {
   kalshiPerformance,
   kalshiCapital,
   kalshiCredentials,
-  polymarketCredentials,
   tradingPreferences,
   marketTimeframeAnalysis,
   marketMicrostructure,
@@ -20,7 +19,6 @@ import {
   mlEnsembleModels,
   marketSentimentHistory,
   executionQualityMetrics,
-  crossPlatformArbitrageExecutions,
   onlineLearningUpdates,
   performanceAttribution,
 } from "../drizzle/schema";
@@ -378,10 +376,10 @@ export async function getUsersEligibleForAutomaticScheduledTrading() {
 }
 
 /**
- * Returns true if at least one user has BOTH Kalshi and Polymarket
- * credentials connected.  Used to gate the cross-platform arbitrage
- * scanner — running it without dual connectivity wastes Kalshi /
- * Polymarket fetch quotas on opportunities the user can't act on.
+ * Returns true if at least one user has Kalshi credentials connected.
+ * Kept as a compatibility shim for callers that previously gated
+ * cross-platform arbitrage on dual connectivity; in the Kalshi-only
+ * pivot any connected Kalshi user counts.
  */
 export async function hasAnyDualConnectedUser(): Promise<boolean> {
   const database = await getDb();
@@ -389,13 +387,7 @@ export async function hasAnyDualConnectedUser(): Promise<boolean> {
   const [hit] = await database
     .select({ userId: kalshiCredentials.userId })
     .from(kalshiCredentials)
-    .innerJoin(polymarketCredentials, eq(kalshiCredentials.userId, polymarketCredentials.userId))
-    .where(
-      and(
-        eq(kalshiCredentials.accountStatus, "connected"),
-        eq(polymarketCredentials.accountStatus, "connected"),
-      ),
-    )
+    .where(eq(kalshiCredentials.accountStatus, "connected"))
     .limit(1);
   return Boolean(hit);
 }
@@ -1856,46 +1848,9 @@ export async function saveExecutionQuality(data: {
   });
 }
 
-export async function saveCrossPlatformArbitrageExecution(data: {
-  userId: number;
-  kalshiMarketId: string;
-  polymarketMarketId: string;
-  buyPlatform: "kalshi" | "polymarket";
-  netEdge: number;
-  feeBurden: number;
-  executionRisk: number;
-  hedgeRatio: number;
-  bothLegsExecuted: boolean;
-  kalshiOrderId?: string | null;
-  polymarketOrderId?: string | null;
-  partialLegAction?: "hold" | "hedge" | "exit" | null;
-  pnlAttributionArb?: number;
-  pnlAttributionMarketMove?: number;
-}): Promise<void> {
-  const database = await getDb();
-  if (!database) return;
-
-  await database.insert(crossPlatformArbitrageExecutions).values({
-    userId: data.userId,
-    kalshiMarketId: data.kalshiMarketId,
-    polymarketMarketId: data.polymarketMarketId,
-    buyPlatform: data.buyPlatform,
-    netEdge: data.netEdge,
-    feeBurden: data.feeBurden,
-    executionRisk: data.executionRisk,
-    hedgeRatio: data.hedgeRatio,
-    bothLegsExecuted: data.bothLegsExecuted ? 1 : 0,
-    kalshiOrderId: data.kalshiOrderId ?? null,
-    polymarketOrderId: data.polymarketOrderId ?? null,
-    partialLegAction: data.partialLegAction ?? null,
-    pnlAttributionArb: data.pnlAttributionArb ?? data.netEdge,
-    pnlAttributionMarketMove: data.pnlAttributionMarketMove ?? 0,
-  });
-}
-
 export async function saveOnlineLearningUpdate(data: {
   userId: number;
-  platform: "kalshi" | "polymarket";
+  platform: "kalshi";
   signalType: string;
   outcome: "win" | "loss" | "breakeven";
   pnl: number;
@@ -1930,7 +1885,7 @@ export async function saveOnlineLearningUpdate(data: {
 
 export async function getRecentOnlineLearningUpdates(
   userId: number,
-  platform: "kalshi" | "polymarket",
+  platform: "kalshi",
   limit: number = 200
 ) {
   const scopedUserId = assertPositiveIntegerUserId(
@@ -1955,7 +1910,7 @@ export async function getRecentOnlineLearningUpdates(
 
 export async function savePerformanceAttribution(data: {
   userId: number;
-  platform: "kalshi" | "polymarket";
+  platform: "kalshi";
   marketId: string;
   signalType: string;
   category: string;
@@ -1984,7 +1939,7 @@ export async function savePerformanceAttribution(data: {
 
 export async function getPerformanceAttributionHistory(
   userId: number,
-  platform: "kalshi" | "polymarket",
+  platform: "kalshi",
   limit: number = 200
 ) {
   const scopedUserId = assertPositiveIntegerUserId(
