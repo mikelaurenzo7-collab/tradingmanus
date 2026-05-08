@@ -37,7 +37,10 @@ import {
 import type { CrossPlatformArbitrageOpportunity } from "./crossPlatformArbitrage";
 
 const ARB_REVIEWER_MAX_OPPORTUNITIES = 8;
-const ARB_REVIEWER_MAX_TOKENS = 2400;
+// Must exceed the inline `thinking.budget_tokens: 3000` extended-thinking
+// budget below — Anthropic rejects requests where budget >= max_tokens.
+// 6000 leaves ~3000 tokens for the actual JSON review output.
+const ARB_REVIEWER_MAX_TOKENS = 6000;
 const ARB_REVIEWER_REASONING_CHARS = 320;
 
 const ARBITRAGE_DESK_MANDATE = [

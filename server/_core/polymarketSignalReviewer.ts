@@ -334,7 +334,11 @@ async function requestLLMReviews(
 
   const messageInput: Record<string, unknown> = {
     model,
-    max_tokens: useDeepModel ? 3200 : 1800,
+    // Deep tier max_tokens must exceed buildExtendedThinking's 6000-token
+    // budget (Anthropic API rejects requests where thinking.budget_tokens
+    // >= max_tokens).  8000 leaves ~2000 tokens for the actual JSON review
+    // output after thinking completes.
+    max_tokens: useDeepModel ? 8000 : 1800,
     temperature: 0,
     messages: [{ role: "user", content: JSON.stringify(reviewPayload) }],
   };
@@ -433,18 +437,24 @@ async function requestGrokPolymarketReviews(
 /**
  * Intersect Claude + Grok reviews into a single map keyed by marketId.  A
  * trade is "approved" only if BOTH bots return approved=true (true dual-bot
- * consensus).  When Grok is unavailable (no XAI_API_KEY or runtime failure),
- * Claude's verdict carries the trade — graceful degradation rather than
- * fail-closed, since the user opted into "Claude-only fallback" semantics.
+ * consensus).
  *
  * Confidence/EV adjustments take the more conservative of the two when both
  * approve: min of confidenceAdjustments, min of expectedValueAdjustments.
+ *
+ * @param strict  When true (Grok succeeded with at least one verdict), a
+ *                missing-from-Grok market is a veto — protects against
+ *                partial / parse-truncated Grok responses that would
+ *                otherwise let solo Claude approval reach execution under
+ *                the team-mode banner.  When false (Grok unavailable
+ *                entirely), Claude's verdict carries — graceful degradation.
  */
 function intersectReviews(
   claudeReviewsByMarket: Map<string, TradingSignalReview>,
   grokReviews: TradingSignalReview[],
+  strict: boolean,
 ): Map<string, TradingSignalReview> {
-  if (grokReviews.length === 0) {
+  if (!strict && grokReviews.length === 0) {
     return claudeReviewsByMarket;
   }
   const grokByMarket = new Map(grokReviews.map((r) => [r.marketId, r]));
@@ -452,8 +462,20 @@ function intersectReviews(
   for (const [marketId, claudeReview] of claudeReviewsByMarket) {
     const grokReview = grokByMarket.get(marketId);
     if (!grokReview) {
-      // Grok had no opinion on this market — keep Claude's verdict.
-      merged.set(marketId, claudeReview);
+      if (strict) {
+        // Team mode armed and Grok ran but did not return a verdict for
+        // this market.  Veto rather than letting solo Claude approval
+        // through under the dual-bot consensus banner.
+        merged.set(marketId, {
+          marketId,
+          approved: false,
+          reasoning: "Grok omitted this market from its response; dual-bot consensus requires both verdicts.",
+        });
+      } else {
+        // Grok unavailable entirely — keep Claude's verdict (graceful
+        // degrade; audit log already records grokFailures).
+        merged.set(marketId, claudeReview);
+      }
       continue;
     }
     if (!claudeReview.approved || !grokReview.approved) {
@@ -531,8 +553,13 @@ async function callReviewer(
 ): Promise<ReviewBatchResult> {
   // Run Claude (primary) and Grok (parallel consensus) concurrently when team
   // mode is enabled and Grok is configured.  Both must approve for the trade
-  // to pass; either-side veto drops the signal.  If Grok is missing or fails
-  // at runtime, Claude's verdict carries (graceful degradation).
+  // to pass; either-side veto drops the signal.  Strict-mode rules:
+  //   - Grok ran and returned >=1 verdict → strict intersection: any market
+  //     missing from Grok's response is a veto (protects against partial /
+  //     parse-truncated Grok output reaching execution as solo-Claude under
+  //     the team-mode banner).
+  //   - Grok unavailable entirely (no XAI_API_KEY, network error, parse
+  //     failure → empty reviews) → graceful degrade to Claude solo.
   const grokInTeam = ENV.enableGrokTeam && ENV.xaiApiKey.length > 0;
   try {
     const [claudeResp, grokResp] = await Promise.all([
@@ -542,7 +569,11 @@ async function callReviewer(
         : Promise.resolve({ reviews: [], failed: false }),
     ]);
     const claudeMap = new Map(claudeResp.reviews.map((r) => [r.marketId, r]));
-    const merged = grokInTeam ? intersectReviews(claudeMap, grokResp.reviews) : claudeMap;
+    const grokRanSuccessfully =
+      grokInTeam && !grokResp.failed && grokResp.reviews.length > 0;
+    const merged = grokInTeam
+      ? intersectReviews(claudeMap, grokResp.reviews, grokRanSuccessfully)
+      : claudeMap;
     return {
       reviewsByMarket: merged,
       failed: false,
