@@ -20,6 +20,16 @@ export default function AuditLog() {
   const auditLog = trpc.kalshi.getAuditLog.useQuery();
   const autonomyActivity = trpc.kalshi.getAutonomyActivity.useQuery();
 
+  // useMemo MUST run on every render (including loading/error renders) so
+  // the hook count stays stable across renders.  React error #310 fires
+  // when a render path skips hooks that ran on a prior render.  Safe to
+  // run early — handles undefined data internally.
+  const filteredEvents = useMemo(() => {
+    if (!auditLog.data) return [];
+    if (eventTypeFilter === "all") return auditLog.data;
+    return auditLog.data.filter((e: any) => e.eventType.includes(eventTypeFilter));
+  }, [auditLog.data, eventTypeFilter]);
+
   if (auditLog.isLoading || autonomyActivity.isLoading) {
     return (
       <div className="space-y-6">
@@ -98,13 +108,6 @@ export default function AuditLog() {
   const lastEventTime = auditLog.data?.[0]?.createdAt 
     ? new Date(auditLog.data[0].createdAt).toLocaleString()
     : "No events yet";
-
-  // Filter events
-  const filteredEvents = useMemo(() => {
-    if (!auditLog.data) return [];
-    if (eventTypeFilter === "all") return auditLog.data;
-    return auditLog.data.filter((e: any) => e.eventType.includes(eventTypeFilter));
-  }, [auditLog.data, eventTypeFilter]);
 
   // Define table columns
   const columns: Column<any>[] = [
