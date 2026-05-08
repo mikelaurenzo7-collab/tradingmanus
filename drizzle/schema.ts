@@ -404,11 +404,16 @@ export const tradingPreferences = pgTable("tradingPreferences", {
   // even in fully_autonomous mode.  Default 0 = live trading.  The env-level
   // PAPER_TRADE_MODE=true global override still wins over this when set.
   paperTradeMode: integer("paperTradeMode").default(0).notNull(),
-  // Owner Mode — single bypass switch for the policy gates an owner who
-  // accepts the risk would otherwise fight.  See drizzle/migrations/0007
-  // and the bypasses in server/_core/kalshiAutonomy.ts.  Default 0 = off.
-  ownerMode: integer("ownerMode").default(0).notNull(),
-  // Moonshot Mode — when both ownerMode and moonshotMode are on, the
+  // Aggressive Mode — single "training wheels off" toggle that bypasses
+  // the recent-manual-order cooldown, the per-category open-position
+  // concentration cap, and the posture-driven confidence floor boost,
+  // and tightens the adaptive cadence ×0.5.  See migrations 0007 (added
+  // as ownerMode) and 0010 (rename + default-on).  Hard safety gates
+  // (credentials, capital, price drift, exchange rejection) stay
+  // enforced.  Default 1 = on for single-tenant; flip off if you want
+  // training wheels temporarily.
+  aggressiveMode: integer("aggressiveMode").default(1).notNull(),
+  // Moonshot Mode — when both aggressiveMode and moonshotMode are on, the
   // bot also hunts low-probability asymmetric plays.  See drizzle/
   // migrations/0009 and the moonshot path in kalshiAutonomy.ts.
   moonshotMode: integer("moonshotMode").default(0).notNull(),

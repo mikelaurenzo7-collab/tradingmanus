@@ -2198,7 +2198,7 @@ export const appRouter = router({
         }
       }),
 
-    setOwnerMode: protectedProcedure
+    setAggressiveMode: protectedProcedure
       .input(z.object({ enabled: z.boolean() }))
       .mutation(async ({ ctx, input }) => {
         const userId = getRequiredUserId(ctx);
@@ -2206,7 +2206,7 @@ export const appRouter = router({
 
         if (input.enabled) {
           // Require connected Kalshi credentials before flipping the master
-          // switch on — Owner Mode immediately enables live trading.
+          // switch on — Aggressive Mode immediately enables live trading.
           const creds = await kalshiCredDb.getKalshiCredentials(userId);
           if (
             !creds ||
@@ -2216,17 +2216,17 @@ export const appRouter = router({
             throw new TRPCError({
               code: "BAD_REQUEST",
               message:
-                "Connect a live Kalshi account before enabling Owner Mode.",
+                "Connect a live Kalshi account before enabling Aggressive Mode.",
             });
           }
 
-          const overrides = tradingPreferencesDb.buildOwnerModePresetOverrides();
+          const overrides = tradingPreferencesDb.buildAggressiveModePresetOverrides();
           const saved = await tradingPreferencesDb.saveTradingPreferences(userId, {
             ...existing,
             ...overrides,
           });
           await db.logAuditEvent(
-            "owner_mode_enabled",
+            "aggressive_mode_enabled",
             JSON.stringify({ overrides }),
             ctx.user!.openId,
           );
@@ -2237,10 +2237,10 @@ export const appRouter = router({
         // so the user can keep whatever cadence/notional/etc. they had set.
         const saved = await tradingPreferencesDb.saveTradingPreferences(userId, {
           ...existing,
-          ownerMode: false,
+          aggressiveMode: false,
         });
         await db.logAuditEvent(
-          "owner_mode_disabled",
+          "aggressive_mode_disabled",
           "",
           ctx.user!.openId,
         );
@@ -2253,13 +2253,13 @@ export const appRouter = router({
         const userId = getRequiredUserId(ctx);
         const existing = await tradingPreferencesDb.getTradingPreferences(userId);
 
-        // Moonshot Mode requires Owner Mode to be on first — it's an
+        // Moonshot Mode requires Aggressive Mode to be on first — it's an
         // advanced sleeve, not a beginner toggle.  Reject the enable
-        // attempt rather than silently flipping ownerMode for the user.
-        if (input.enabled && !existing.ownerMode) {
+        // attempt rather than silently flipping aggressiveMode for the user.
+        if (input.enabled && !existing.aggressiveMode) {
           throw new TRPCError({
             code: "BAD_REQUEST",
-            message: "Enable Owner Mode before turning on Moonshot Mode.",
+            message: "Enable Aggressive Mode before turning on Moonshot Mode.",
           });
         }
 

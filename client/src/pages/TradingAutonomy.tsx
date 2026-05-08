@@ -69,13 +69,13 @@ export default function TradingAutonomy() {
     onError: (error) => setMessage(error.message),
   });
 
-  const ownerModeMutation = trpc.kalshi.setOwnerMode.useMutation({
+  const aggressiveModeMutation = trpc.kalshi.setAggressiveMode.useMutation({
     onSuccess: async (result) => {
       setForm(result.preferences);
       setMessage(
-        result.preferences.ownerMode
-          ? "Owner Mode enabled — autonomy armed at maximum permission."
-          : "Owner Mode disabled.",
+        result.preferences.aggressiveMode
+          ? "Aggressive Mode enabled — training wheels off, full autonomy at max permission."
+          : "Aggressive Mode disabled — training wheels on (cooldown + concentration cap + posture floor active)."
       );
       await Promise.all([
         utils.kalshi.getTradingPreferences.invalidate(),
@@ -148,44 +148,44 @@ export default function TradingAutonomy() {
         </Alert>
       )}
 
-      {/* ── Owner Mode quick-arm ─────────────────────────────────────── */}
-      <Card className={`glass-panel border-l-4 ${form.ownerMode ? "border-l-rose-500 glow-destructive" : "border-l-amber-500/40"}`}>
+      {/* ── Aggressive Mode (training wheels off) ───────────────────── */}
+      <Card className={`glass-panel border-l-4 ${form.aggressiveMode ? "border-l-rose-500 glow-destructive" : "border-l-amber-500/40"}`}>
         <CardContent className="p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
           <div className="space-y-1">
             <div className="flex items-center gap-2">
-              <Zap className={`h-4 w-4 ${form.ownerMode ? "text-rose-400" : "text-amber-400"}`} />
-              <span className="font-semibold text-sm">Owner Mode</span>
-              {form.ownerMode ? (
+              <Zap className={`h-4 w-4 ${form.aggressiveMode ? "text-rose-400" : "text-amber-400"}`} />
+              <span className="font-semibold text-sm">Aggressive Mode</span>
+              {form.aggressiveMode ? (
                 <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded bg-rose-500/15 text-rose-300">
                   ON
                 </span>
               ) : null}
             </div>
             <p className="text-xs text-muted-foreground max-w-2xl">
-              One-click switch that arms full autonomy at maximum permission and bypasses
-              the policy gates an owner who accepts the risk would otherwise fight: the 5-min
-              recent-manual-order cooldown, the per-category concentration cap, and the
-              posture-driven confidence floor boost. Hard safety gates (credentials, capital,
-              price drift, exchange rejection) stay enforced.
+              Training wheels off. Bypasses the 5-min recent-manual-order cooldown, the
+              per-category concentration cap, and the posture-driven confidence floor boost;
+              tightens adaptive cadence ×0.5; arms Moonshot Mode. Hard safety gates
+              (credentials, capital, price drift, exchange rejection) stay enforced.
+              Default ON for single-tenant — flip off to put training wheels back on.
             </p>
           </div>
           <Button
-            variant={form.ownerMode ? "outline" : "default"}
+            variant={form.aggressiveMode ? "outline" : "default"}
             size="sm"
-            disabled={ownerModeMutation.isPending || (!connected && !form.ownerMode)}
-            onClick={() => ownerModeMutation.mutate({ enabled: !form.ownerMode })}
-            className={form.ownerMode ? "" : "bg-rose-500 hover:bg-rose-600 text-white"}
+            disabled={aggressiveModeMutation.isPending || (!connected && !form.aggressiveMode)}
+            onClick={() => aggressiveModeMutation.mutate({ enabled: !form.aggressiveMode })}
+            className={form.aggressiveMode ? "" : "bg-rose-500 hover:bg-rose-600 text-white"}
           >
-            {ownerModeMutation.isPending ? (
+            {aggressiveModeMutation.isPending ? (
               <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
             ) : null}
-            {form.ownerMode ? "Disable Owner Mode" : "Enable Owner Mode"}
+            {form.aggressiveMode ? "Disable Aggressive Mode" : "Enable Aggressive Mode"}
           </Button>
         </CardContent>
       </Card>
 
-      {/* ── Moonshot Mode (advanced sleeve, requires Owner Mode) ────── */}
-      <Card className={`glass-panel border-l-4 ${form.moonshotMode ? "border-l-fuchsia-500 glow-primary" : "border-l-fuchsia-500/30"} ${form.ownerMode ? "" : "opacity-60"}`}>
+      {/* ── Moonshot Mode (advanced sleeve, requires Aggressive Mode) ── */}
+      <Card className={`glass-panel border-l-4 ${form.moonshotMode ? "border-l-fuchsia-500 glow-primary" : "border-l-fuchsia-500/30"} ${form.aggressiveMode ? "" : "opacity-60"}`}>
         <CardContent className="p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
           <div className="space-y-1">
             <div className="flex items-center gap-2">
@@ -196,9 +196,9 @@ export default function TradingAutonomy() {
                   ON
                 </span>
               ) : null}
-              {!form.ownerMode ? (
+              {!form.aggressiveMode ? (
                 <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded bg-amber-500/15 text-amber-300">
-                  Requires Owner Mode
+                  Requires Aggressive Mode
                 </span>
               ) : null}
             </div>
@@ -215,7 +215,7 @@ export default function TradingAutonomy() {
             size="sm"
             disabled={
               moonshotModeMutation.isPending ||
-              (!form.ownerMode && !form.moonshotMode)
+              (!form.aggressiveMode && !form.moonshotMode)
             }
             onClick={() => moonshotModeMutation.mutate({ enabled: !form.moonshotMode })}
             className={form.moonshotMode ? "" : "bg-fuchsia-500 hover:bg-fuchsia-600 text-white"}

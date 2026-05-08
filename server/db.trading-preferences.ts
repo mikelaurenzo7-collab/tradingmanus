@@ -37,15 +37,16 @@ export type TradingPreferencesSettings = {
    */
   paperTradeMode: boolean;
   /**
-   * Owner Mode — bypass the policy gates an owner who accepts the risk
-   * would otherwise fight: the 5-min recent-manual-order cooldown, the
-   * per-category open-position concentration cap, and the posture-driven
-   * confidence floor boost.  Hard safety gates (credentials, capital,
-   * price drift, exchange rejection) remain unchanged.  Default false = off.
+   * Aggressive Mode — single "training wheels off" toggle.  Bypasses the
+   * 5-min recent-manual-order cooldown, the per-category concentration
+   * cap, and the posture-driven confidence floor boost.  Tightens the
+   * adaptive cadence ×0.5.  Hard safety gates (credentials, capital,
+   * price drift, exchange rejection) remain unchanged.  Default true =
+   * on for single-tenant.  (Was named ownerMode pre-migration 0010.)
    */
-  ownerMode: boolean;
+  aggressiveMode: boolean;
   /**
-   * Moonshot Mode — only effective when ownerMode is also true.  Lets the
+   * Moonshot Mode — only effective when aggressiveMode is also true.  Lets the
    * bot hunt low-probability asymmetric plays (2-20¢ / 80-98¢ markets).
    * Each moonshot trade is capped at MOONSHOT_MAX_NOTIONAL ($5) and total
    * open moonshot exposure is capped at MOONSHOT_MAX_TOTAL_USD ($25), so
@@ -64,7 +65,7 @@ export const DEFAULT_TRADING_PREFERENCES: TradingPreferencesSettings = {
   autonomyMode: "approval_required",
   liveTradingEnabled: false,
   paperTradeMode: false,
-  ownerMode: false,
+  aggressiveMode: true,
   moonshotMode: false,
   executionCadence: "manual_only",
   riskPosture: "balanced",
@@ -75,14 +76,14 @@ export const DEFAULT_TRADING_PREFERENCES: TradingPreferencesSettings = {
 };
 
 /**
- * Permissive preset applied atomically when the user enables Owner Mode.
+ * Permissive preset applied atomically when the user enables Aggressive Mode.
  * Sets autonomy/cadence/notional/daily-cap to their max-permissive values
  * so no follow-up tweaking is needed.  Pure function so callers (routers,
  * tests) can reuse without side effects.
  */
-export function buildOwnerModePresetOverrides(): Partial<TradingPreferencesSettings> {
+export function buildAggressiveModePresetOverrides(): Partial<TradingPreferencesSettings> {
   return {
-    ownerMode: true,
+    aggressiveMode: true,
     autonomyMode: "fully_autonomous",
     liveTradingEnabled: true,
     executionCadence: "continuous_watch",
@@ -146,8 +147,8 @@ function normalizeTradingPreferences(
     paperTradeMode: Boolean(
       input?.paperTradeMode ?? DEFAULT_TRADING_PREFERENCES.paperTradeMode,
     ),
-    ownerMode: Boolean(
-      input?.ownerMode ?? DEFAULT_TRADING_PREFERENCES.ownerMode,
+    aggressiveMode: Boolean(
+      input?.aggressiveMode ?? DEFAULT_TRADING_PREFERENCES.aggressiveMode,
     ),
     moonshotMode: Boolean(
       input?.moonshotMode ?? DEFAULT_TRADING_PREFERENCES.moonshotMode,
@@ -185,7 +186,7 @@ function toDatabaseValues(input: TradingPreferencesSettings) {
     autonomyMode: input.autonomyMode,
     liveTradingEnabled: input.liveTradingEnabled ? 1 : 0,
     paperTradeMode: input.paperTradeMode ? 1 : 0,
-    ownerMode: input.ownerMode ? 1 : 0,
+    aggressiveMode: input.aggressiveMode ? 1 : 0,
     moonshotMode: input.moonshotMode ? 1 : 0,
     executionCadence: input.executionCadence,
     riskPosture: input.riskPosture,
@@ -218,7 +219,9 @@ export async function getTradingPreferences(userId: number) {
       autonomyMode: record.autonomyMode,
       liveTradingEnabled: Boolean(record.liveTradingEnabled),
       paperTradeMode: Boolean((record as { paperTradeMode?: number }).paperTradeMode ?? 0),
-      ownerMode: Boolean((record as { ownerMode?: number }).ownerMode ?? 0),
+      aggressiveMode: Boolean(
+        (record as { aggressiveMode?: number }).aggressiveMode ?? 1,
+      ),
       moonshotMode: Boolean((record as { moonshotMode?: number }).moonshotMode ?? 0),
       executionCadence: record.executionCadence,
       riskPosture: record.riskPosture,

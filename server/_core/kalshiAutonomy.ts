@@ -60,6 +60,19 @@ const BASE_RISK_LIMITS = {
   maxOpenPositions: 5,
 } as const;
 
+// Aggressive Mode loosens the dollar caps on the dynamic risk limits.
+// The capital-fraction multipliers stay the same (still 5%/10%/20% of
+// equity) — what changes is the absolute ceiling those fractions clamp
+// to, plus the open-position count.  An owner accepting the risk earns
+// the right to scale up as their bankroll grows past the conservative
+// hard ceilings without having to redeploy.
+const AGGRESSIVE_RISK_LIMITS = {
+  maxLossPerTrade: 10,    // up from 5
+  maxLossPerDay: 20,      // up from 10
+  maxPositionSize: 50,    // up from 20
+  maxOpenPositions: 10,   // up from 5
+} as const;
+
 const SCHEDULED_SCAN_EVENT = "scheduled_autonomy_scan_completed";
 const HOURLY_SCAN_MIN_INTERVAL_MS = 55 * 60 * 1000;
 const RECENT_MANUAL_ORDER_COOLDOWN_MS = 5 * 60 * 1000;
@@ -184,13 +197,18 @@ const POSTURE_MULTIPLIERS: Record<RiskPosture, { positionScale: number; confiden
   aggressive:   { positionScale: 1.4, confidenceBoost: -0.05 },
 };
 
-async function getDynamicRiskLimits(riskPosture: RiskPosture, userId: number) {
+async function getDynamicRiskLimits(
+  riskPosture: RiskPosture,
+  userId: number,
+  options: { aggressiveMode?: boolean } = {},
+) {
   const scopedUserId = assertPositiveIntegerUserId(userId, "autonomy risk limits userId");
   const capital = await db.getKalshiCapital(scopedUserId);
   const maxCapital = Math.max(
     0,
     Number(capital?.currentBalance ?? capital?.startingBalance ?? 0)
   );
+  const limits = options.aggressiveMode ? AGGRESSIVE_RISK_LIMITS : BASE_RISK_LIMITS;
 
   if (maxCapital <= 0) {
     return {
@@ -207,10 +225,10 @@ async function getDynamicRiskLimits(riskPosture: RiskPosture, userId: number) {
 
   return {
     maxCapital,
-    maxLossPerTrade: clampRiskLimit(maxCapital * 0.05 * positionScale, 1, BASE_RISK_LIMITS.maxLossPerTrade),
-    maxLossPerDay: clampRiskLimit(maxCapital * 0.1, 2, BASE_RISK_LIMITS.maxLossPerDay),
-    maxPositionSize: clampRiskLimit(maxCapital * 0.2 * positionScale, 2, BASE_RISK_LIMITS.maxPositionSize),
-    maxOpenPositions: BASE_RISK_LIMITS.maxOpenPositions,
+    maxLossPerTrade: clampRiskLimit(maxCapital * 0.05 * positionScale, 1, limits.maxLossPerTrade),
+    maxLossPerDay: clampRiskLimit(maxCapital * 0.1, 2, limits.maxLossPerDay),
+    maxPositionSize: clampRiskLimit(maxCapital * 0.2 * positionScale, 2, limits.maxPositionSize),
+    maxOpenPositions: limits.maxOpenPositions,
     effectiveMinConfidence: confidenceBoost,
   };
 }
@@ -394,16 +412,23 @@ function getMarketTotalVolume(market: { yesVolume?: unknown; noVolume?: unknown 
 
 export function extractActionableMarkets(
   markets: Awaited<ReturnType<typeof fetchKalshiMarkets>>,
-  options: { moonshotMode?: boolean } = {},
+  options: { moonshotMode?: boolean; aggressiveMode?: boolean } = {},
 ) {
-  const minResolutionTime = Date.now() + MIN_RESOLUTION_HOURS_AHEAD * 60 * 60 * 1000;
+  // Aggressive Mode tightens the resolution-hours-ahead floor (1h vs 2h)
+  // and lowers the volume threshold (200 vs 500) so the bot can see more
+  // candidate markets — including imminent-resolution ones that often
+  // carry the highest convexity.  Hard safety stops still apply downstream
+  // (price drift, daily loss cap, exchange rejection).
+  const aggressiveResolutionFloorHours = options.aggressiveMode ? 1 : MIN_RESOLUTION_HOURS_AHEAD;
+  const minResolutionTime = Date.now() + aggressiveResolutionFloorHours * 60 * 60 * 1000;
   // Moonshot Mode loosens the actionable filter so the bot can also see
   // 2-20¢ longshots and 80-98¢ shortshots; the position-sizing path uses
   // the fixed MOONSHOT_MAX_NOTIONAL so the loosened filter cannot blow up
   // notional risk.  Without moonshot mode the prior tight bounds apply.
   const minPrice = options.moonshotMode ? MOONSHOT_PRICE_MIN : 0.01;
   const maxPrice = options.moonshotMode ? 1 - MOONSHOT_PRICE_MIN : 0.99;
-  const minVol = options.moonshotMode ? MOONSHOT_MIN_VOLUME : MIN_SCHEDULED_MARKET_VOLUME;
+  const aggressiveVolFloor = options.aggressiveMode ? 200 : MIN_SCHEDULED_MARKET_VOLUME;
+  const minVol = options.moonshotMode ? MOONSHOT_MIN_VOLUME : aggressiveVolFloor;
 
   return markets.filter((market) => {
     const yesPrice = Number(market.yesPrice);
@@ -539,12 +564,15 @@ async function generateScheduledSignals(
   userId: number,
   minConfidence: number,
   activeInstructions: any[] = [],
-  options: { ownerMode?: boolean; moonshotMode?: boolean } = {},
+  options: { aggressiveMode?: boolean; moonshotMode?: boolean } = {},
 ) {
   const markets = await fetchKalshiMarkets({ status: "open" });
   const filteredMarkets = applyInstructionsToMarkets(markets, activeInstructions);
   const actionableMarkets = selectDiverseMarkets(
-    extractActionableMarkets(filteredMarkets, { moonshotMode: options.moonshotMode }),
+    extractActionableMarkets(filteredMarkets, {
+      moonshotMode: options.moonshotMode,
+      aggressiveMode: options.aggressiveMode,
+    }),
     MAX_SCHEDULED_MARKETS,
     MAX_MARKETS_PER_CATEGORY
   );
@@ -698,7 +726,7 @@ async function generateScheduledSignals(
         category,
         hoursToResolution,
         deskWeight,
-        ownerMode: options.ownerMode,
+        aggressiveMode: options.aggressiveMode,
       })
     ) {
       cadencePassed.push(signal);
@@ -827,11 +855,11 @@ function evaluateExecutionCandidate(
 
   // Category concentration guard: prevent stacking too many correlated
   // positions from the same market category (e.g., multiple crypto markets).
-  // Owner Mode bypasses this — the owner has explicitly opted out of the
+  // Aggressive Mode bypasses this — the owner has explicitly opted out of the
   // correlation-protection hand-holding.
   const signalCategory = (signal.metadata?.marketCategory ?? "").toLowerCase();
   if (
-    !input.preferences.ownerMode &&
+    !input.preferences.aggressiveMode &&
     signalCategory &&
     signalCategory !== "unknown" &&
     input.openPositionCategories
@@ -951,11 +979,11 @@ async function shouldSkipScheduledRun(
     }
   }
 
-  // Owner Mode bypasses the 5-min recent-manual-order cooldown.  The cooldown
+  // Aggressive Mode bypasses the 5-min recent-manual-order cooldown.  The cooldown
   // exists to avoid stepping on a user who's actively clicking buy/sell in
-  // the dashboard; an owner who flipped the master Owner Mode switch has
+  // the dashboard; an owner who flipped the master Aggressive Mode switch has
   // explicitly opted out of that hand-holding.
-  if (!preferences.ownerMode) {
+  if (!preferences.aggressiveMode) {
     const latestManualOrder = await db.getLatestAuditEventByType(
       "kalshi_order_placed",
       user.openId
@@ -1129,7 +1157,9 @@ export async function runScheduledAutonomousTrading(
       userId,
       startingBalance,
       equityResult.equity,
-      BASE_RISK_LIMITS.maxLossPerDay
+      preferences.aggressiveMode
+        ? AGGRESSIVE_RISK_LIMITS.maxLossPerDay
+        : BASE_RISK_LIMITS.maxLossPerDay,
     );
   }
 
@@ -1141,10 +1171,10 @@ export async function runScheduledAutonomousTrading(
     preferences.minSignalConfidence,
     activeInstructions,
     {
-      ownerMode: preferences.ownerMode,
-      // Moonshot only takes effect when ownerMode is also on — it's an
+      aggressiveMode: preferences.aggressiveMode,
+      // Moonshot only takes effect when aggressiveMode is also on — it's an
       // advanced sleeve, not a beginner toggle.
-      moonshotMode: preferences.ownerMode && preferences.moonshotMode,
+      moonshotMode: preferences.aggressiveMode && preferences.moonshotMode,
     },
   );
   const candidateSet = executionCandidates.map(summarizeCandidate);
@@ -1257,7 +1287,7 @@ export async function runScheduledAutonomousTrading(
       db.getKalshiCapital(userId),
       db.getOpenKalshiPositions(userId),
       db.getTodayRealizedLoss(userId),
-      getDynamicRiskLimits(preferences.riskPosture, userId),
+      getDynamicRiskLimits(preferences.riskPosture, userId, { aggressiveMode: preferences.aggressiveMode }),
       db.getTodayKalshiOrderCount(userId),
       db.getPendingKalshiOrders(userId),
     ]);
@@ -1304,11 +1334,11 @@ export async function runScheduledAutonomousTrading(
     });
   }
 
-  // Owner Mode skips the posture-driven confidence boost — under Owner Mode
+  // Aggressive Mode skips the posture-driven confidence boost — under Aggressive Mode
   // the user's raw minSignalConfidence is the floor, period.  The posture
   // multipliers (conservative +0.08, aggressive -0.05) are paternal nudges
   // an owner who toggled the master switch has explicitly opted out of.
-  const postureBoost = preferences.ownerMode ? 0 : riskLimits.effectiveMinConfidence;
+  const postureBoost = preferences.aggressiveMode ? 0 : riskLimits.effectiveMinConfidence;
   const effectiveMinConfidence = Math.min(
     0.99,
     Math.max(0, preferences.minSignalConfidence + postureBoost)
@@ -1403,11 +1433,11 @@ export async function runScheduledAutonomousTrading(
   const limitPrice = Number(eligibleSignal.marketPrice);
 
   // Moonshot path: the candidate's price sits in the moonshot band AND the
-  // user has both ownerMode + moonshotMode on.  Replace Kelly-sized notional
+  // user has both aggressiveMode + moonshotMode on.  Replace Kelly-sized notional
   // with the fixed MOONSHOT_MAX_NOTIONAL and refuse if the open moonshot
   // exposure has already hit the bucket cap.  Hard-bounds the downside on
   // the riskier sleeve.
-  const moonshotEnabled = preferences.ownerMode && preferences.moonshotMode;
+  const moonshotEnabled = preferences.aggressiveMode && preferences.moonshotMode;
   const isMoonshotCandidate = moonshotEnabled && isMoonshotPrice(limitPrice);
 
   if (isMoonshotCandidate) {

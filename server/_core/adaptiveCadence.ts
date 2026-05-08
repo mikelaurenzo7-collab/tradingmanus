@@ -138,12 +138,12 @@ export type ReviewContext = {
    */
   deskWeight?: number;
   /**
-   * Owner Mode tightens cadence: half the price-delta threshold (so a
+   * Aggressive Mode tightens cadence: half the price-delta threshold (so a
    * smaller move triggers re-review) and half the stale TTL (so a quiet
    * market gets revisited faster).  The owner has explicitly accepted the
    * higher AI cost in exchange for closer supervision.
    */
-  ownerMode?: boolean;
+  aggressiveMode?: boolean;
 };
 
 function clampWeight(w: number | undefined): number {
@@ -163,15 +163,15 @@ function clampWeight(w: number | undefined): number {
  */
 function effectiveStaleTtlMs(context: ReviewContext, throttle: number): number {
   const deskWeight = clampWeight(context.deskWeight);
-  // Owner Mode multiplier: ×0.5 = quiet markets get re-reviewed twice as
+  // Aggressive Mode multiplier: ×0.5 = quiet markets get re-reviewed twice as
   // often.  Bypassed when the owner hasn't enabled it.
-  const ownerModeMultiplier = context.ownerMode ? 0.5 : 1.0;
+  const aggressiveModeMultiplier = context.aggressiveMode ? 0.5 : 1.0;
   // Env override always wins — operators tuning a global TTL should not
   // be silently overridden by per-category defaults.  Desk weight + cost
   // throttle still apply on top so the budget guardrail is never bypassed.
   const envOverride = (process.env.SIGNAL_REVIEW_STALE_TTL_MS ?? "").trim();
   if (envOverride) {
-    return Math.max(MIN_TTL_MS, Math.round(readStaleTtlMs() * deskWeight * throttle * ownerModeMultiplier));
+    return Math.max(MIN_TTL_MS, Math.round(readStaleTtlMs() * deskWeight * throttle * aggressiveModeMultiplier));
   }
   const baseTtl =
     context.category && CATEGORY_BASE_TTL_MS[context.category] !== undefined
@@ -179,22 +179,22 @@ function effectiveStaleTtlMs(context: ReviewContext, throttle: number): number {
       : DEFAULT_STALE_TTL_MS;
   const accelerated = baseTtl * nearResolutionMultiplier(context.hoursToResolution ?? null);
   // Floor at MIN_TTL_MS so we never go below the safe minimum.
-  return Math.max(MIN_TTL_MS, Math.round(accelerated * deskWeight * throttle * ownerModeMultiplier));
+  return Math.max(MIN_TTL_MS, Math.round(accelerated * deskWeight * throttle * aggressiveModeMultiplier));
 }
 
 function effectivePriceDeltaBps(context: ReviewContext, throttle: number): number {
   const deskWeight = clampWeight(context.deskWeight);
-  // Owner Mode multiplier: ×0.5 = a smaller price move triggers re-review.
-  const ownerModeMultiplier = context.ownerMode ? 0.5 : 1.0;
+  // Aggressive Mode multiplier: ×0.5 = a smaller price move triggers re-review.
+  const aggressiveModeMultiplier = context.aggressiveMode ? 0.5 : 1.0;
   const envOverride = (process.env.SIGNAL_REVIEW_PRICE_DELTA_BPS ?? "").trim();
   if (envOverride) {
-    return readPriceDeltaBps() * deskWeight * throttle * ownerModeMultiplier;
+    return readPriceDeltaBps() * deskWeight * throttle * aggressiveModeMultiplier;
   }
   const baseBps =
     context.category && CATEGORY_BASE_DELTA_BPS[context.category] !== undefined
       ? CATEGORY_BASE_DELTA_BPS[context.category]
       : DEFAULT_PRICE_DELTA_BPS;
-  return baseBps * deskWeight * throttle * ownerModeMultiplier;
+  return baseBps * deskWeight * throttle * aggressiveModeMultiplier;
 }
 
 /**
