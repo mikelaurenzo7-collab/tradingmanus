@@ -634,7 +634,9 @@ describe("execution guardrails — safety blocking paths", () => {
     const result = await runScheduledAutonomousTrading(testUser);
 
     expect(result.status).toBe("blocked");
-    expect(result.reason).toContain("daily loss limit");
+    // Either the new percentage-based drawdown breaker (3% default) OR the
+    // legacy dollar-based maxLossPerDay can trip first; both correctly block.
+    expect(result.reason.toLowerCase()).toMatch(/daily (loss|drawdown)/);
     expect(mocks.placeKalshiOrder).not.toHaveBeenCalled();
   });
 

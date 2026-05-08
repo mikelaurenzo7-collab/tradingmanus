@@ -66,7 +66,7 @@ export const ENV = {
   // paths don't break. New deployments should use KALSHI_KEY_ID + key.
   kalshiApiKey: normalize(process.env.KALSHI_API_KEY),
 
-  // ── Grok (the ONLY AI reviewer) ──────────────────────────────────────────
+  // ── Grok (Tier 1, always-on primary reviewer) ───────────────────────────
   xaiApiKey: normalize(process.env.XAI_API_KEY),
   // Default to Grok 4.1 Fast — cheap + fast + strong reasoning floor.
   grokModel: normalize(process.env.GROK_MODEL) || "grok-4-1-fast",
@@ -92,12 +92,70 @@ export const ENV = {
     { min: 0, max: 1 },
   ),
 
+  // ── Claude (Tier 2 + Tier 3 ensemble reviewers) ─────────────────────────
+  // ANTHROPIC_API_KEY is OPTIONAL but strongly recommended. When set, the
+  // ensemble runs:
+  //   Tier 1 — Grok 4.1 Fast        — every signal (cheap, has live X).
+  //   Tier 2 — Claude Sonnet 4.6    — only on high-stakes signals.
+  //   Tier 3 — Claude Opus 4.7      — only when Grok+Sonnet disagree, OR the
+  //                                   position is a catastrophic-bet
+  //                                   (≥10% of live Kalshi capital).
+  // When unset, the system silently degrades to Grok-only with a boot warning.
+  anthropicApiKey: normalize(process.env.ANTHROPIC_API_KEY),
+  claudeSonnetModel:
+    normalize(process.env.CLAUDE_SONNET_MODEL) || "claude-sonnet-4-6",
+  claudeOpusModel: normalize(process.env.CLAUDE_OPUS_MODEL) || "claude-opus-4-7",
+  claudeSonnetTimeoutMs: normalizePositiveInt(
+    process.env.CLAUDE_SONNET_TIMEOUT_MS,
+    20000,
+  ),
+  claudeOpusTimeoutMs: normalizePositiveInt(
+    process.env.CLAUDE_OPUS_TIMEOUT_MS,
+    45000,
+  ),
+  // Legacy escape hatch: when true, the autonomy loop's primary reviewer
+  // stays on Grok even if ANTHROPIC_API_KEY is also set. Default false —
+  // Claude is the primary trader when its key is present.
+  reviewerPreferGrok: normalizeBoolean(process.env.REVIEWER_PREFER_GROK, false),
+
+  // ── High-stakes triggers (all percentages — auto-scale with live balance) ─
+  // A signal is high-stakes (→ Sonnet review) if any of these hold:
+  highStakesPctOfCapital: normalizeFloat(
+    process.env.HIGH_STAKES_PCT_OF_CAPITAL,
+    0.03, // 3% of live capital. At $200 = $6; at $1000 = $30; at $5000 = $150.
+    { min: 0.005, max: 0.5 },
+  ),
+  // Legacy hard-dollar threshold. Default `Infinity` so it's effectively off
+  // unless the operator opts in. Use the percentage knob above instead.
+  highStakesNotionalUsd: normalizeFloat(
+    process.env.HIGH_STAKES_NOTIONAL_USD,
+    Number.POSITIVE_INFINITY,
+    { min: 0, max: 1_000_000 },
+  ),
+  highStakesResolutionMinutes: normalizePositiveInt(
+    process.env.HIGH_STAKES_RESOLUTION_MINUTES,
+    1440, // 24 h
+  ),
+  // Catastrophic-bet trigger (→ Opus unanimous gate, 3-tier consensus).
+  catastrophicPctOfCapital: normalizeFloat(
+    process.env.CATASTROPHIC_PCT_OF_CAPITAL,
+    0.1, // 10% of live capital.
+    { min: 0.02, max: 0.5 },
+  ),
+
   // ── Profit guardrails (high-edge, capital-preservation first) ────────────
   // Hard floor net EV after Kalshi fees + amortized Grok cost: 6.5%.
   // Confidence floor: 76%. These are the post-pivot tighter thresholds.
   profitGuardrails: {
-    minNetEv: normalizeFloat(process.env.MIN_NET_EV, 0.065, { min: 0, max: 1 }),
-    minPositiveEv: normalizeFloat(process.env.MIN_NET_EV, 0.065, {
+    // Net-EV floor (after fees + amortized AI cost). Default 5 % — was
+    // 6.5 %, which empirically rejected 5-7 % edge trades that are
+    // legitimately profitable on a calibrated reviewer. The
+    // MIN_CONFIDENCE_AFTER_ADJUST floor + drawdown breakers are the
+    // real miscalibration safety net; layering a tight EV floor on top
+    // costs ~30-40 % of legitimate volume. Set higher for conservative
+    // mode, lower for more volume.
+    minNetEv: normalizeFloat(process.env.MIN_NET_EV, 0.05, { min: 0, max: 1 }),
+    minPositiveEv: normalizeFloat(process.env.MIN_NET_EV, 0.05, {
       min: 0,
       max: 1,
     }),
@@ -113,7 +171,7 @@ export const ENV = {
     ),
     maxPortfolioExposurePct: normalizeFloat(
       process.env.MAX_PORTFOLIO_EXPOSURE_PCT,
-      0.2,
+      0.25,
       { min: 0.01, max: 1 },
     ),
     maxCorrelatedGroupPct: normalizeFloat(
@@ -121,15 +179,20 @@ export const ENV = {
       0.1,
       { min: 0.01, max: 1 },
     ),
-    // Kelly sizing: ¼ Kelly capped at 2% of capital, floored at 0.5%.
-    kellyFraction: normalizeFloat(process.env.KELLY_FRACTION, 0.25, {
+    // Kelly sizing: ½ Kelly capped at 4% of capital, floored at 0.5%.
+    // ½ Kelly is the "moderately aggressive" point — gives up ~30% of the
+    // long-run growth Full Kelly would achieve in exchange for ~5× lower
+    // drawdown variance, robust to ±5% reviewer probability calibration
+    // error. Override with KELLY_FRACTION=0.25 for the conservative ¼ Kelly
+    // default the original pivot used.
+    kellyFraction: normalizeFloat(process.env.KELLY_FRACTION, 0.5, {
       min: 0.05,
       max: 1,
     }),
     kellyMaxPctOfCapital: normalizeFloat(
       process.env.KELLY_MAX_PCT_OF_CAPITAL,
-      0.02,
-      { min: 0.005, max: 0.1 },
+      0.05,
+      { min: 0.005, max: 0.15 },
     ),
     kellyMinPctOfCapital: normalizeFloat(
       process.env.KELLY_MIN_PCT_OF_CAPITAL,
@@ -176,6 +239,72 @@ export const ENV = {
   // Strongly prefer maker (limit) orders for the lower fee.
   preferMakerOrders: normalizeBoolean(process.env.PREFER_MAKER_ORDERS, true),
 
+  // ── Daily Sports Play (playground mode, opt-in) ──────────────────────────
+  // When ENABLE_DAILY_SPORTS_PLAY=true, places ONE Kalshi sports trade per
+  // UTC day at the configured hour (default 14:00 UTC = 10am ET / 7am PT).
+  // Sized at DAILY_SPORTS_PLAY_PCT_OF_CAPITAL (default 2.5 %) of LIVE
+  // Kalshi balance. Routes through the same ensemble (Sonnet/Opus) and
+  // the same risk gate stack (drawdown breakers, exposure caps,
+  // MIN_NET_EV, MIN_CONFIDENCE_AFTER_ADJUST) as the regular autonomy
+  // loop. Calibration loop picks up outcomes automatically.
+  enableDailySportsPlay: normalizeBoolean(
+    process.env.ENABLE_DAILY_SPORTS_PLAY,
+    false,
+  ),
+  dailySportsPlayHourUtc: (() => {
+    const raw = (process.env.DAILY_SPORTS_PLAY_HOUR_UTC ?? "").trim();
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 23) return 14;
+    return parsed;
+  })(),
+  dailySportsPlayPctOfCapital: normalizeFloat(
+    process.env.DAILY_SPORTS_PLAY_PCT_OF_CAPITAL,
+    0.025,
+    { min: 0.005, max: 0.1 },
+  ),
+
+  // ── Daily Moonshot Play (aggressive playground, opt-in) ───────────────
+  // Once per UTC day at the configured hour, picks the highest-edge
+  // underdog (any category) priced ≤ DAILY_MOONSHOT_MAX_PRICE where the
+  // AI sees materially more probability than the market. Sized at a small
+  // fraction of bankroll (lottery-ticket discipline). Same risk gates as
+  // Daily Sports Play. Calibration loop picks up outcomes automatically.
+  enableDailyMoonshot: normalizeBoolean(
+    process.env.ENABLE_DAILY_MOONSHOT,
+    false,
+  ),
+  dailyMoonshotHourUtc: (() => {
+    const raw = (process.env.DAILY_MOONSHOT_HOUR_UTC ?? "").trim();
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 23) return 16;
+    return parsed;
+  })(),
+  dailyMoonshotPctOfCapital: normalizeFloat(
+    process.env.DAILY_MOONSHOT_PCT_OF_CAPITAL,
+    0.015, // 1.5 % default — lottery-ticket sizing
+    { min: 0.001, max: 0.05 },
+  ),
+  dailyMoonshotMaxPrice: normalizeFloat(
+    process.env.DAILY_MOONSHOT_MAX_PRICE,
+    0.3, // YES contracts ≤ $0.30 (or NO equivalent ≥ $0.70) qualify
+    { min: 0.05, max: 0.45 },
+  ),
+  dailyMoonshotMinProbRatio: normalizeFloat(
+    process.env.DAILY_MOONSHOT_MIN_PROB_RATIO,
+    1.75, // AI prob must be ≥ 1.75× market implied (10 % market → 17.5 % AI).
+    // The earlier 1.5× threshold was too permissive — pairs with the
+    // higher MIN_NET_EV below to filter for genuine underdog edge.
+    { min: 1.05, max: 5 },
+  ),
+  dailyMoonshotMinNetEv: normalizeFloat(
+    process.env.DAILY_MOONSHOT_MIN_NET_EV,
+    0.15, // 15 % net-EV floor — was 4 %, which did NOTHING. Real moonshots
+    // produce 30-50 % net EV by structure (low-priced contract × decent
+    // edge ratio = huge per-dollar EV). Below 15 % means the prob ratio
+    // is barely above the gate and the trade is marginal noise.
+    { min: 0, max: 1 },
+  ),
+
   // ── Dynamic scanner (5 base / 7-8 conditional) ───────────────────────────
   // Owner override: opt-in domains where the operator's domain knowledge
   // is high enough to relax the AI gate (still honors hard guardrails).
@@ -198,6 +327,27 @@ export const ENV = {
     0.08,
     { min: 0, max: 1 },
   ),
+  // Capital-tier scaling: as the live Kalshi balance grows, the maximum
+  // ramp on a high-opportunity day grows too. Bottleneck is signal supply,
+  // not reviewer quality — so we don't scale the BASE rate, only the cap.
+  scannerCapMidTierUsd: normalizeFloat(
+    process.env.SCANNER_CAP_MID_TIER_USD,
+    500,
+    { min: 0, max: 1_000_000 },
+  ),
+  scannerCapHighTierUsd: normalizeFloat(
+    process.env.SCANNER_CAP_HIGH_TIER_USD,
+    2000,
+    { min: 0, max: 1_000_000 },
+  ),
+  scannerMaxAnalysesPerDayMidTier: normalizePositiveInt(
+    process.env.SCANNER_MAX_ANALYSES_PER_DAY_MID_TIER,
+    10,
+  ),
+  scannerMaxAnalysesPerDayHighTier: normalizePositiveInt(
+    process.env.SCANNER_MAX_ANALYSES_PER_DAY_HIGH_TIER,
+    12,
+  ),
 
   // ── AI cost / cadence ────────────────────────────────────────────────────
   enableAiPromptCache: normalizeBoolean(
@@ -210,8 +360,21 @@ export const ENV = {
   ),
   enableAiWebSearch: normalizeBoolean(process.env.ENABLE_AI_WEB_SEARCH, true),
   enableAiDeskMemory: normalizeBoolean(process.env.ENABLE_AI_DESK_MEMORY, true),
-  // Daily AI cost cap in USD. Profitable days never throttle. Resets at UTC.
-  aiDailyBudgetUsd: normalizeFloat(process.env.AI_DAILY_BUDGET_USD, 0, {
+  // ── AI cost: PAY-FOR-YOURSELF cap (NOT a hard spend cap) ───────────────
+  // Per the impl in aiCostBudget.ts + dailyScoreboard.ts: this is the
+  // daily soft cap on `effectiveOverrun = max(0, ai_cost + fees − realized_pnl)`.
+  // Profitable days NEVER throttle no matter how much we spent on AI —
+  // we earned the overhead. Net-negative days self-throttle as the
+  // deficit widens (×1.5 at 60 % overrun, ×2 at 80 %, ×4 at 95 %, hard
+  // skip at 100 %). Cold-start exemption: under $5 AI spend, no throttle.
+  // Resets at UTC midnight.
+  //
+  // Default $5: small enough that the throttle engages quickly when AI
+  // burn meaningfully outpaces realized P&L, but high enough that the
+  // cold-start exemption ($5 floor) covers normal warm-up days.
+  // Set to `0` to disable the cap entirely (hot days run unbounded);
+  // raise to e.g. `20` if you want more room for variance before throttling.
+  aiDailyBudgetUsd: normalizeFloat(process.env.AI_DAILY_BUDGET_USD, 5, {
     min: 0,
     max: 100000,
   }),
@@ -222,24 +385,54 @@ export const ENV = {
   // sees signals, never places live orders). For a single-owner live system
   // this is the only "paper" toggle that matters.
   paperTradeMode: normalizeBoolean(process.env.PAPER_TRADE_MODE, false),
+
+  // ── Single-owner lockdown ────────────────────────────────────────────
+  // Default true: only the owner (matched by OWNER_EMAIL) can register.
+  // Set ALLOW_PUBLIC_REGISTRATION=true to open the public registration
+  // endpoint to anyone (multi-tenant SaaS mode). Default protects against
+  // attackers registering against your shared ANTHROPIC_API_KEY budget,
+  // CRED_ENCRYPTION_SECRET, audit log, and DB.
+  allowPublicRegistration: normalizeBoolean(
+    process.env.ALLOW_PUBLIC_REGISTRATION,
+    false,
+  ),
 };
 
+// Hard-required vars that must be present for any deploy.
 const REQUIRED_SERVER_ENV = [
   ["JWT_SECRET", ENV.cookieSecret],
   ["CREDENTIAL_ENCRYPTION_SECRET", ENV.credentialEncryptionSecret],
   ["DATABASE_URL", ENV.databaseUrl],
   ["OWNER_EMAIL", ENV.ownerEmail],
   ["OWNER_PASSWORD", ENV.ownerPassword],
+] as const;
+
+// At least ONE of these must be present — the AI reviewer pipeline needs
+// at least one provider to function. Default mode is Claude-as-trader
+// (ANTHROPIC_API_KEY); Grok (XAI_API_KEY) remains as a legacy fallback.
+const REQUIRED_AI_PROVIDERS = [
+  ["ANTHROPIC_API_KEY", ENV.anthropicApiKey],
   ["XAI_API_KEY", ENV.xaiApiKey],
 ] as const;
 
 export function validateServerEnv() {
-  const missing = REQUIRED_SERVER_ENV.filter(
-    ([, value]) => value.length === 0,
-  ).map(([name]) => name);
+  const missing: string[] = REQUIRED_SERVER_ENV
+    .filter(([, value]) => value.length === 0)
+    .map(([name]) => String(name));
+
+  // AI provider check — at least one of Anthropic or Grok must be set.
+  const hasAnyAiProvider = REQUIRED_AI_PROVIDERS.some(
+    ([, value]) => value.length > 0,
+  );
+  if (!hasAnyAiProvider) {
+    missing.push("ANTHROPIC_API_KEY (or XAI_API_KEY for legacy mode)");
+  }
 
   if (missing.length > 0) {
     const present = REQUIRED_SERVER_ENV.filter(
+      ([, value]) => value.length > 0,
+    ).map(([name]) => name);
+    const aiProvidersPresent = REQUIRED_AI_PROVIDERS.filter(
       ([, value]) => value.length > 0,
     ).map(([name]) => name);
     const otherEnvKeyCount = Object.keys(process.env).length;
@@ -248,6 +441,7 @@ export function validateServerEnv() {
       "[ENV] Missing required environment variables.\n" +
         `       Missing: ${missing.join(", ")}\n` +
         `       Present (from this required list): ${present.join(", ") || "(none)"}\n` +
+        `       AI providers present: ${aiProvidersPresent.join(", ") || "(none — at least one required)"}\n` +
         `       Total env vars visible to the process: ${otherEnvKeyCount}\n` +
         "       If the variables are configured in Railway but not visible here:\n" +
         "         1. Confirm they are attached to THIS service & environment.\n" +

@@ -151,8 +151,11 @@ export function createTradingReviewer(options: TradingReviewerOptions = {}): Tra
  * option on TradingReviewerOptions is now a no-op shim.
  */
 export function isTradingReviewerConfigured(_options: TradingReviewerOptions = {}) {
+  // Either provider keeps the autonomy alive. Anthropic (Claude) is the
+  // default trader; Grok is the legacy fallback / escape hatch.
+  const hasAnthropic = ENV.anthropicApiKey.trim().length > 0;
   const hasGrok = ENV.xaiApiKey.trim().length > 0;
-  return hasGrok;
+  return hasAnthropic || hasGrok;
 }
 
 function clamp(value: number, minimum: number, maximum: number) {
@@ -315,13 +318,24 @@ async function requestAnthropicReviews(
   forceDeep = false,
 ) {
   const client = options.anthropicClient ?? createAnthropicClient(
-    (options.anthropicApiKey ?? ENV.xaiApiKey).trim(),
+    (options.anthropicApiKey ?? ENV.anthropicApiKey ?? ENV.xaiApiKey).trim(),
   );
 
   const useDeepModel = forceDeep || isHighStakes(stakes);
-  // Grok has a single flat-priced model; the legacy deep-tier timeout
-  // override is preserved for callers that pass a custom value.
-  const timeoutMs = options.anthropicTimeoutMs ?? ENV.grokTimeoutMs;
+  // Pick the right timeout for the active provider. When ANTHROPIC_API_KEY
+  // is set, the underlying call goes to Claude — Sonnet routine timeout
+  // (default 20 s) or Opus deep-tier timeout (default 45 s). Grok's
+  // 15 s default is too tight for Claude (especially Opus with extended
+  // thinking + web_search), causing slow-but-successful reviews to be
+  // counted as failures and the autonomy to fail closed. Operator
+  // overrides via options.anthropicTimeoutMs still win.
+  const claudeProviderActive = ENV.anthropicApiKey.length > 0;
+  const defaultTimeoutMs = claudeProviderActive
+    ? useDeepModel
+      ? ENV.claudeOpusTimeoutMs
+      : ENV.claudeSonnetTimeoutMs
+    : ENV.grokTimeoutMs;
+  const timeoutMs = options.anthropicTimeoutMs ?? defaultTimeoutMs;
   const tier = useDeepModel ? "deep" : "review";
   const model = selectAnthropicModel(tier, options.anthropicModel);
   // When forcing deep review (intra-Claude escalation), promote the stakes
@@ -583,19 +597,22 @@ async function callReviewer(
   memorySnippet: string | null = null,
   forceDeep = false,
 ): Promise<ReviewBatchResult> {
-  // Routing precedence:
-  //   1. forceGrokSolo / ENABLE_GROK_SOLO  → Grok-only (legacy single-bot path)
-  //   2. Persona is a Grok persona (id starts with "grok.")  → Grok-only
-  //      (per-desk routing for narrowly Grok-tuned desks)
-  //   3. ENABLE_GROK_TEAM + XAI_API_KEY    → parallel Claude+Grok intersection
-  //                                         (matches Polymarket dual-bot consensus)
-  //   4. otherwise                         → Claude-only
+  // Routing precedence (Claude-first pivot):
+  //   1. ANTHROPIC_API_KEY set + !REVIEWER_PREFER_GROK → Claude as primary
+  //      (default — Claude is "your trader")
+  //   2. ANTHROPIC_API_KEY unset + XAI_API_KEY set     → Grok fallback
+  //   3. forceGrokSolo / per-desk Grok persona         → Grok (legacy escape hatch)
+  //   4. neither key set                                → fail closed
   const isGrokPersona = Boolean(persona && (persona as any).id?.startsWith?.("grok."));
-  // Grok-only pivot: every review is a solo Grok call.  ENABLE_GROK_SOLO /
-  // ENABLE_GROK_TEAM env vars were removed; the legacy `forceGrokSolo` opt
-  // remains a no-op since solo is the only mode.
+  const hasAnthropic = ENV.anthropicApiKey.length > 0;
+  const hasGrok = ENV.xaiApiKey.length > 0;
+  // Use Grok only when:
+  //   - operator opted in via REVIEWER_PREFER_GROK (legacy mode), OR
+  //   - they explicitly requested it (forceGrokSolo / Grok-typed persona), OR
+  //   - Anthropic is unset and Grok is available (graceful fallback).
   const useGrokSolo =
-    Boolean(options.forceGrokSolo) || isGrokPersona || ENV.xaiApiKey.length > 0;
+    (Boolean(options.forceGrokSolo) || isGrokPersona || ENV.reviewerPreferGrok || !hasAnthropic) &&
+    hasGrok;
   const useTeamConsensus = false;
 
   try {
@@ -943,8 +960,17 @@ export async function reviewSignalsWithTrader(
       return check.approved;
     });
 
-  // Grok-only mode (the only AI path in the Kalshi-only pivot).
-  if (options.forceGrokSolo || ENV.xaiApiKey) {
+  // Solo-Grok mode (legacy escape hatch). Triggered when:
+  //   - operator opted in via REVIEWER_PREFER_GROK=true, OR
+  //   - operator passed `forceGrokSolo: true` programmatically, OR
+  //   - ANTHROPIC_API_KEY is unset and only XAI_API_KEY is available.
+  // When ANTHROPIC_API_KEY is set (the default Claude-as-trader mode), we
+  // skip this branch and fall through to category-routed Anthropic review.
+  const shouldUseGrokSolo =
+    Boolean(options.forceGrokSolo) ||
+    ENV.reviewerPreferGrok ||
+    (!ENV.anthropicApiKey && ENV.xaiApiKey.length > 0);
+  if (shouldUseGrokSolo) {
     if (!ENV.xaiApiKey) {
       logger.error("[TradingReviewer] No XAI_API_KEY configured; AI review disabled.");
     } else {

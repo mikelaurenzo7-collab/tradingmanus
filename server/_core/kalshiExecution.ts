@@ -8,7 +8,7 @@ import { URL } from "url";
 import { db, logAuditEvent } from "../db";
 import * as kalshiCredDb from "../db.kalshi-credentials";
 import { kalshiOrders, kalshiFills, kalshiPositions } from "../../drizzle/schema";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, gte, inArray, lte } from "drizzle-orm";
 import { calculateKalshiBuyOrderRisk, normalizeLimitPrice, normalizeOrderQuantity } from "./kalshiRisk";
 import { assertPositiveIntegerUserId } from "./userScope";
 import { logger } from "./logger";
@@ -205,6 +205,14 @@ export async function placeKalshiOrder(
     return simulateKalshiOrderFill(userId, marketId, side, quantity, limitPrice);
   }
 
+  // Per-user mutex is acquired by CALLERS that don't already hold one:
+  //   - server/_core/dailySportsPlay.ts (wraps its execute path in withUserLock)
+  //   - server/_core/dailyMoonshotPlay.ts (same)
+  //   - tRPC manual-place handler (also wraps)
+  // The scheduled autonomy already wraps placeKalshiOrder in
+  // withUserLock at runScheduledAutonomousTrading, so we don't acquire
+  // again here — the userMutex queue is non-reentrant and a re-entry
+  // attempt from the same async chain would deadlock.
   try {
     const risk = calculateKalshiBuyOrderRisk({ quantity, limitPrice });
     const priceCents = toCents(risk.limitPrice);
@@ -220,6 +228,13 @@ export async function placeKalshiOrder(
       yes_price: side === "yes" ? priceCents : undefined,
       no_price: side === "no" ? priceCents : undefined,
       time_in_force: "good_till_cancelled",
+      // ENV.preferMakerOrders=true (default) → post-only. Forces the order
+      // to either rest as a maker (cheaper fee tier: 0.0175 × notional × p
+      // × (1−p)) or be cancelled outright by Kalshi if it would cross the
+      // book. The taker tier is 4× more expensive — a $4 trade pays $0.08
+      // vs $0.02 — so post-only is on by default. Disable via env when
+      // urgency outweighs fee savings.
+      post_only: ENV.preferMakerOrders ? true : undefined,
     };
 
     // Write the local ledger row BEFORE submitting to the exchange so we
@@ -825,6 +840,17 @@ export async function closeKalshiPosition(
         yes_price: side === "yes" ? priceCents : undefined,
         no_price: side === "no" ? priceCents : undefined,
         time_in_force: "good_till_cancelled",
+        // Risk exits (stop-loss, profit-target, trailing-stop, kill-switch
+        // via activateKalshiKillSwitch, and the auto-close path in
+        // exitMonitor.ts) ALL flow through this function. They must be
+        // able to take liquidity — Kalshi rejects post-only orders that
+        // would cross the book, so a maker-only stop-loss can leave you
+        // holding a losing position past your trigger. The 4× taker-fee
+        // premium is a small price for guaranteed exit fills.
+        //
+        // Entry orders (placeKalshiOrder) still honor PREFER_MAKER_ORDERS
+        // — opens are voluntary and can wait for better fills. Closes
+        // can't.
       };
 
       const closeResult = await signedKalshiRequest<{ order?: { order_id?: string; id?: string } }>(
@@ -1031,21 +1057,233 @@ export async function closePositionFromFill(
       return true;
     }
 
+    // Compute the FULL trade aggregate before persisting `closed`. Earlier
+    // partial-fill tranches accumulated into `position.realizedPnl`; this
+    // tranche's PnL is in `realizedPnl` (local). The total realized PnL
+    // for the whole trade is the sum.
+    const totalRealizedPnl = Number(position.realizedPnl ?? 0) + realizedPnl;
+    // Recover the ORIGINAL opened size by summing filled quantities of
+    // every BUY order on this market+side+user that filled at-or-before
+    // the position's openedAt → now. The position row alone can't
+    // recover this after partial closes (its `quantity` field is the
+    // REMAINING size, not the original), and we don't currently persist
+    // an `openedQuantity` column. Reading from kalshiOrders gives us the
+    // true total. Falls back to closeQuantity + currentQuantity if the
+    // orders lookup fails.
+    let originalCount = closeQuantity + Math.max(0, currentQuantity - closeQuantity);
+    try {
+      const { getDb } = await import("../db");
+      const database = await getDb();
+      if (database) {
+        // Scope to orders created within ~1 hour BEFORE the position
+        // opened. Two reasons for the back-slack:
+        //   1. The opening order row in `kalshiOrders` is created BEFORE
+        //      the position row (createPositionFromFill writes the
+        //      position only after the fill is processed). A strict
+        //      `gte(createdAt, position.openedAt)` excludes the opening
+        //      order itself, leaving the sum empty.
+        //   2. Prior closed positions on the same market+side are
+        //      typically hours-to-days older — well outside a 1h window.
+        const POSITION_OPENING_SLACK_MS = 60 * 60 * 1000;
+        const positionOpenedAt = position.openedAt
+          ? new Date(
+              Math.max(
+                0,
+                new Date(position.openedAt).getTime() -
+                  POSITION_OPENING_SLACK_MS,
+              ),
+            )
+          : new Date(0);
+        const orderRows = await database
+          .select({ filledQuantity: kalshiOrders.filledQuantity })
+          .from(kalshiOrders)
+          .where(
+            and(
+              eq(kalshiOrders.userId, position.userId),
+              eq(kalshiOrders.marketId, marketId),
+              eq(kalshiOrders.side, side),
+              eq(kalshiOrders.action, "buy"),
+              gte(kalshiOrders.createdAt, positionOpenedAt),
+            ),
+          );
+        const summedOpened = orderRows.reduce(
+          (acc: number, r: { filledQuantity: number | null }) =>
+            acc + Number(r.filledQuantity ?? 0),
+          0,
+        );
+        // Only override the fallback if the orders lookup found something
+        // sensible (≥ this tranche's close size). Otherwise stick with
+        // the lower-bound estimate.
+        if (summedOpened >= closeQuantity) {
+          originalCount = summedOpened;
+        }
+      }
+    } catch (err) {
+      logger.warn(
+        { err, marketId, side },
+        "[Calibration] originalCount lookup from kalshiOrders failed; using fallback estimate",
+      );
+    }
+
     await db
       .update(kalshiPositions)
       .set({
         currentPrice: exitPrice,
         unrealizedPnl: 0,
-        realizedPnl: Number(position.realizedPnl ?? 0) + realizedPnl,
+        realizedPnl: totalRealizedPnl,
         positionStatus: "closed",
         closedAt: new Date(),
       })
       .where(eq(kalshiPositions.id, position.id));
 
+    // Log to the calibration / cost-vs-profit outcome stream with the
+    // FULL accumulated trade — total realized PnL across all fills, total
+    // closed size. Logging only this final tranche's slice would corrupt
+    // Brier scoring: a winning trade with a small money-losing closing
+    // tranche would be classified as a loss.
+    void logCalibrationOutcomeFromClose({
+      userId: position.userId,
+      marketId,
+      side,
+      count: originalCount,
+      entryPrice,
+      exitPrice,
+      realizedPnl: totalRealizedPnl,
+      placedAtMs: position.openedAt
+        ? new Date(position.openedAt).getTime()
+        : Date.now(),
+      settledAtMs: Date.now(),
+    });
+
     return true;
   } catch (error) {
     logger.error({ err: error, marketId, side }, "[Kalshi] Close position from fill error");
     return false;
+  }
+}
+
+/**
+ * Best-effort outcome logger for the calibration job. Pulls
+ * predictedConfidence + impliedProbability + category from the most-recent
+ * kalshiSignals row for this market (if any) and writes a
+ * `kalshi_trade_outcome_log` audit event with realized P&L.
+ *
+ * Fire-and-forget: never blocks the close-position path.
+ */
+async function logCalibrationOutcomeFromClose(input: {
+  userId: number;
+  marketId: string;
+  side: "yes" | "no";
+  count: number;
+  entryPrice: number;
+  exitPrice: number;
+  realizedPnl: number;
+  placedAtMs: number;
+  settledAtMs: number;
+}): Promise<void> {
+  try {
+    const { logTradeOutcome } = await import("./performanceTracker");
+    const { kalshiSignals, kalshiMarkets } = await import(
+      "../../drizzle/schema"
+    );
+    const { getDb } = await import("../db");
+    const { and, eq, lte, desc } = await import("drizzle-orm");
+    const database = await getDb();
+
+    let predictedConfidence = 0;
+    let predictedEvFraction = 0;
+    let predictedWinProbability = input.entryPrice;
+    let category = "other";
+    if (database) {
+      // Look up the ENTRY signal — the most recent signal for this user +
+      // market at-or-before the trade was placed. Without the time bound,
+      // a market reviewed multiple times before close would log the LATEST
+      // signal's prediction (which may differ from what the trader saw
+      // when the position opened) → corrupts Brier samples.
+      const rows = await database
+        .select({
+          confidence: kalshiSignals.confidence,
+          expectedValue: kalshiSignals.expectedValue,
+          impliedProbability: kalshiSignals.impliedProbability,
+          signalType: kalshiSignals.signalType,
+        })
+        .from(kalshiSignals)
+        .where(
+          and(
+            eq(kalshiSignals.userId, input.userId),
+            eq(kalshiSignals.marketId, input.marketId),
+            // Match SIDE too — a market can have both YES and NO signals
+            // before the position opens. Without this filter, the latest
+            // signal of the OPPOSITE side could be picked, then the
+            // outcome logger would flip probability based on the actual
+            // trade side, corrupting Brier samples.
+            eq(kalshiSignals.side, input.side),
+            lte(kalshiSignals.createdAt, new Date(input.placedAtMs)),
+          ),
+        )
+        .orderBy(desc(kalshiSignals.createdAt))
+        .limit(1);
+      // `category` lives on the markets table (kalshiSignals doesn't carry
+      // it). Pull it separately so per-category Brier scoring works.
+      const marketRows = await database
+        .select({ category: kalshiMarkets.category })
+        .from(kalshiMarkets)
+        .where(eq(kalshiMarkets.marketId, input.marketId))
+        .limit(1);
+      if (marketRows[0]?.category) {
+        category = String(marketRows[0].category);
+      }
+      if (rows[0]) {
+        predictedConfidence = Number(rows[0].confidence ?? 0);
+        predictedEvFraction = Number(rows[0].expectedValue ?? 0);
+        // `impliedProbability` in kalshiSignals is always the YES-side
+        // probability (signal generation stores `market.impliedProbability`
+        // regardless of trade side). For a NO-side trade, the probability
+        // that THIS trade wins is `1 - YES_implied` — flip it so the
+        // calibration job's Brier scoring compares apples-to-apples
+        // against the realized win/loss outcome.
+        const yesProb = Number(rows[0].impliedProbability ?? input.entryPrice);
+        predictedWinProbability =
+          input.side === "no"
+            ? Math.min(1, Math.max(0, 1 - yesProb))
+            : Math.min(1, Math.max(0, yesProb));
+      }
+    }
+
+    const notional = input.count * input.entryPrice;
+    const realizedReturnFraction =
+      notional > 0 ? input.realizedPnl / notional : 0;
+    const outcome: "win" | "loss" | "scratch" =
+      input.realizedPnl > 0.005
+        ? "win"
+        : input.realizedPnl < -0.005
+          ? "loss"
+          : "scratch";
+
+    await logTradeOutcome(input.userId, {
+      tradeId: `${input.marketId}_${input.placedAtMs}`,
+      ticker: input.marketId,
+      category,
+      side: input.side,
+      count: input.count,
+      entryPriceUsd: input.entryPrice,
+      exitPriceUsd: input.exitPrice,
+      predictedEvFraction,
+      predictedConfidence,
+      predictedWinProbability,
+      realizedPnlUsd: input.realizedPnl,
+      realizedReturnFraction,
+      feeUsd: 0, // best-effort: actual fees are aggregated via fills sync
+      grokCostUsd: ENV.grokCostPerReviewUsd,
+      placedAtMs: input.placedAtMs,
+      settledAtMs: input.settledAtMs,
+      outcome,
+    });
+  } catch (err) {
+    logger.warn(
+      { err, marketId: input.marketId },
+      "[Calibration] outcome log failed (best-effort)",
+    );
   }
 }
 

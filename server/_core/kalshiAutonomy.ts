@@ -32,6 +32,8 @@ import { calculateKelly, applyKellyToPositionSize } from "./kellyCriterion";
 import { assertPositiveIntegerUserId } from "./userScope";
 import { withUserLock } from "./userMutex";
 import { reviewSignalsWithTrader } from "./tradingReviewer";
+import { applyEnsembleFilter } from "./ensembleConsensus";
+import { getLiveCapitalUsd } from "./liveCapital";
 import { getCacheHitRatio, newReviewerTelemetry } from "./aiToolbelt";
 import { createOrderSyncLock } from "./distributedLock";
 import { getEffectivePaperTradeMode } from "./effectivePaperMode";
@@ -564,7 +566,14 @@ async function generateScheduledSignals(
   userId: number,
   minConfidence: number,
   activeInstructions: any[] = [],
-  options: { aggressiveMode?: boolean; moonshotMode?: boolean } = {},
+  options: {
+    aggressiveMode?: boolean;
+    moonshotMode?: boolean;
+    /** Live Kalshi balance for THIS user, fetched upstream with the user's
+     *  encrypted credentials (NOT the process-level KALSHI_KEY_ID). All
+     *  ensemble percentage thresholds derive from this value. */
+    liveCapitalUsd?: number;
+  } = {},
 ) {
   const markets = await fetchKalshiMarkets({ status: "open" });
   const filteredMarkets = applyInstructionsToMarkets(markets, activeInstructions);
@@ -782,7 +791,181 @@ async function generateScheduledSignals(
     `user:${userId}`,
   );
 
-  await saveSignals(savedSignals, userId);
+  // ── Tier 2/3 ensemble post-filter ──────────────────────────────────────
+  // Grok already approved each `savedSignal`. We now run them through
+  // the cross-family ensemble: high-stakes signals get Sonnet review;
+  // catastrophic-bets demand unanimous Grok+Sonnet+Opus. Vetoed signals
+  // are dropped here; approved signals carry the ensemble's adjusted
+  // EV/confidence into execution.
+  let ensembleApproved = savedSignals;
+  if (ENV.anthropicApiKey && savedSignals.length > 0) {
+    try {
+      // Prefer the per-user equity passed in by the caller (already
+      // fetched with this user's encrypted credentials). Fall back to the
+      // process-level balance ONLY if the caller didn't supply one — which
+      // means the path is a non-scheduled / test invocation. Without this
+      // fallback the ensemble would silently veto every signal in tests.
+      const liveCapitalUsd =
+        Number.isFinite(options.liveCapitalUsd) &&
+        (options.liveCapitalUsd ?? 0) > 0
+          ? (options.liveCapitalUsd as number)
+          : await getLiveCapitalUsd().catch(() => 0);
+      const marketsByIdLocal = new Map(
+        actionableMarkets.map((m) => [m.id, m]),
+      );
+      // Lazy-import the Kelly sizer so the closure stays small in test
+      // builds that don't exercise this path.
+      const { calculateKellyPosition } = await import("./kellySizer");
+      const ensembleInputs = savedSignals.map((sig) => {
+        const market = marketsByIdLocal.get(sig.marketId);
+        // KalshiMarket exposes resolutionDate (ISO string), not closeTime.
+        const closeMs = market?.resolutionDate
+          ? new Date(market.resolutionDate).getTime()
+          : null;
+        // Estimate the actual stake the executor will use. Kelly alone
+        // overestimates because the real executor also caps by
+        // `preferences.maxOrderNotional`, `riskLimits.maxPositionSize`,
+        // and `riskLimits.maxLossPerTrade` — none of which are in scope
+        // here (they're loaded by the caller). Without modeling those, a
+        // $1k account in non-aggressive mode can place a real $5–$10
+        // trade while Kelly says $40 and the 3 % high-stakes gate
+        // over-fires.
+        //
+        // Conservative heuristic: shrink Kelly's recommendation by 50 %.
+        // On non-aggressive setups the per-user caps typically halve the
+        // Kelly stake; on aggressive setups they don't, but those are
+        // genuinely high-stakes and the gate firing is correct.
+        // For NO-side trades, signal.confidence is already side-aware.
+        const kellySizing = calculateKellyPosition({
+          winProbability: sig.confidence,
+          contractPrice: Math.max(0.01, sig.marketPrice),
+          totalCapitalUsd: liveCapitalUsd,
+        });
+        const HIGH_STAKES_ESTIMATOR_SHRINK = 0.5;
+        const cappedNotionalUsd = Math.max(
+          0,
+          Math.min(
+            kellySizing.positionUsd * HIGH_STAKES_ESTIMATOR_SHRINK,
+            liveCapitalUsd, // can never exceed total capital
+          ),
+        );
+        const estimatedCount = Math.max(
+          1,
+          Math.floor(cappedNotionalUsd / Math.max(0.01, sig.marketPrice)),
+        );
+        return {
+          marketId: sig.marketId,
+          // (marketId, side, signalType) is the stable composite identity
+          // used to match ensemble verdicts back to source signals. The
+          // signal generator can emit multiple signal types/sides per
+          // market — keying by marketId alone collapses them.
+          signalType: String(sig.signalType ?? "default"),
+          ticker: sig.marketId,
+          category: market?.category ?? "other",
+          side: sig.side,
+          confidence: sig.confidence,
+          impliedProbability: sig.impliedProbability,
+          marketPrice: sig.marketPrice,
+          expectedValue: sig.expectedValue,
+          count: estimatedCount,
+          resolutionAtMs:
+            Number.isFinite(closeMs) && closeMs !== null ? closeMs : null,
+          // KalshiMarket has `description` but not separate primary/secondary
+          // rule blocks. Pass it as the primary rules text — the persona
+          // mandate's `${RULES_BLOCK}` slot accepts a single block.
+          resolutionPrimary: market?.description ?? null,
+          resolutionSecondary: null,
+        };
+      });
+      const ensembleResult = await applyEnsembleFilter(ensembleInputs, {
+        liveCapitalUsd,
+      });
+      // Build a composite-key map (marketId:side:signalType) → ensemble-
+      // adjusted (confidence, EV, implied probability) so we can carry the
+      // Tier 2/3 trims into the saved signal. Keying by marketId alone
+      // would collapse multiple signals on the same market — Sonnet/Opus
+      // could veto one candidate but approve another with the same
+      // marketId, and the wrong one would survive.
+      const compositeKey = (s: { marketId: string; side: string; signalType?: string }) =>
+        `${s.marketId}::${s.side}::${String(s.signalType ?? "default")}`;
+      const adjustmentByKey = new Map(
+        ensembleResult.approvedSignals.map((s) => [
+          compositeKey(s),
+          {
+            confidence: s.confidence,
+            expectedValue: s.expectedValue,
+            impliedProbability: s.impliedProbability,
+          },
+        ]),
+      );
+      ensembleApproved = savedSignals
+        .filter((s) => adjustmentByKey.has(compositeKey({
+          marketId: s.marketId,
+          side: s.side,
+          signalType: s.signalType,
+        })))
+        .map((s) => {
+          const adj = adjustmentByKey.get(compositeKey({
+            marketId: s.marketId,
+            side: s.side,
+            signalType: s.signalType,
+          }));
+          if (!adj) return s;
+          return {
+            ...s,
+            confidence: adj.confidence,
+            expectedValue: adj.expectedValue,
+            impliedProbability: adj.impliedProbability,
+          };
+        });
+
+      // Audit-log the per-signal trail so the calibration job can score
+      // Brier per reviewer per category.
+      await db.logAuditEvent(
+        "kalshi_ensemble_review",
+        JSON.stringify({
+          liveCapitalUsd,
+          totalCandidates: savedSignals.length,
+          ensembleApproved: ensembleApproved.length,
+          totalAiCostUsd: ensembleResult.verdicts.reduce(
+            (a, v) => a + v.ensemble.totalAiCostUsd,
+            0,
+          ),
+          verdicts: ensembleResult.verdicts.map((v) => ({
+            marketId: v.marketId,
+            approved: v.ensemble.approved,
+            reasoning: v.ensemble.reasoning,
+            reviewers: v.ensemble.reviews.map((r) => r.reviewerId),
+            classification: {
+              isHighStakes: v.ensemble.classification.isHighStakes,
+              isCatastrophicBet: v.ensemble.classification.isCatastrophicBet,
+              triggers: v.ensemble.classification.triggers,
+            },
+          })),
+        }),
+        `user:${userId}`,
+      );
+    } catch (err) {
+      logger.warn(
+        { err },
+        "[Ensemble] post-filter failed; falling back to Grok-only signals",
+      );
+      // Persist the failure to the audit trail per repo convention.
+      await db
+        .logAuditEvent(
+          "ai_reviewer_failure",
+          JSON.stringify({
+            phase: "ensemble_post_filter",
+            error: err instanceof Error ? err.message : String(err),
+            signalCount: savedSignals.length,
+          }),
+          `user:${userId}`,
+        )
+        .catch(() => {});
+    }
+  }
+
+  await saveSignals(ensembleApproved, userId);
 
   // Emit a single structured audit event capturing every filter stage count.
   // This answers "why did we end up with N signals?" without requiring log
@@ -798,17 +981,24 @@ async function generateScheduledSignals(
       afterConditionFilter: conditionFilteredSignals.length,
       afterInstructionFilter: instructionFilteredSignals.length,
       afterReviewerFilter: savedSignals.length,
+      // Final-stage count after Tier 2/3 (Sonnet/Opus) ensemble vetoes.
+      // Equals afterReviewerFilter when ANTHROPIC_API_KEY is unset (the
+      // ensemble degrades to a Grok-only pass-through).
+      afterEnsembleFilter: ensembleApproved.length,
       activeInstructionCount: activeInstructions.length,
       minConfidence,
     }),
     `user:${userId}`,
   );
 
+  // CRITICAL: return the ENSEMBLE-FILTERED list — not `savedSignals`. The
+  // caller iterates these to place orders, so a Sonnet/Opus veto must
+  // remove the signal here too, not just from the saved-signals table.
   return {
     actionableMarkets,
-    savedSignals,
+    savedSignals: ensembleApproved,
     executionCandidates: getTopSignalsForExecution(
-      savedSignals,
+      ensembleApproved,
       5,
       Math.max(0.6, minConfidence)
     ),
@@ -1164,6 +1354,11 @@ export async function runScheduledAutonomousTrading(
       // Moonshot only takes effect when aggressiveMode is also on — it's an
       // advanced sleeve, not a beginner toggle.
       moonshotMode: preferences.aggressiveMode && preferences.moonshotMode,
+      // Pass the THIS-USER live equity (already fetched upstream at line
+      // ~1210 with the user's encrypted creds, not process-level
+      // KALSHI_KEY_ID) so the ensemble's capital-based gates score against
+      // the correct bankroll.
+      liveCapitalUsd: equityResult.equity,
     },
   );
   const candidateSet = executionCandidates.map(summarizeCandidate);
@@ -1586,6 +1781,113 @@ export async function runScheduledAutonomousTrading(
         orderExposure,
         maxLossOnTrade,
         blockedBy: "per_trade_risk_limit",
+      }),
+    }, {
+      appliedGuardrails: safeJsonStringify(buildAppliedGuardrails(preferences, riskLimits)),
+    });
+  }
+
+  // ── New percentage-based drawdown breaker (additive to riskLimits) ──────
+  // Pauses new entries on:
+  //   - daily loss > DAILY_DRAWDOWN_PAUSE_FRAC of live capital (default 3 %)
+  //   - weekly loss > WEEKLY_DRAWDOWN_PAUSE_FRAC of live capital (default 8 %)
+  //   - consecutive losses ≥ COLD_STREAK_LOSS_COUNT (default 5)
+  //   - 7-day realized edge < COLD_STREAK_MIN_REALIZED_EDGE_PCT (default 3 %)
+  //
+  // Inputs are computed from the trailing 7-day closed-trade history. The
+  // dollar-based `riskLimits.maxLossPerDay` gate stays as a hard backstop.
+  const closedTrades7d = await db
+    .getKalshiTradeHistory(500, userId)
+    .then((rows: any[]) =>
+      rows.filter((t: any) => {
+        if (t.positionStatus !== "closed") return false;
+        const closedAt = t.closedAt ? new Date(t.closedAt).getTime() : 0;
+        return closedAt > Date.now() - 7 * 24 * 60 * 60 * 1000;
+      }),
+    )
+    .catch((err: unknown) => {
+      logger.warn(
+        { err, userId, op: "getKalshiTradeHistory" },
+        "[Autonomy] trade history fetch failed for drawdown breaker; failing closed",
+      );
+      // FAIL CLOSED: returning [] would make weekly PnL, consecutive
+      // losses, and realized edge all evaluate as "safe" — opposite of
+      // intent. Sentinel `null` triggers the abort branch below.
+      return null;
+    });
+
+  if (closedTrades7d === null) {
+    return finalize({
+      status: "blocked",
+      reason:
+        "Trade history unavailable (DB outage); refusing to trade until weekly drawdown breaker has real data",
+      signalsGenerated: savedSignals.length,
+      executionCandidates: executionCandidates.length,
+      orderPlaced: false,
+      candidateMarketId: eligibleSignal.marketId,
+      autonomyMode: preferences.autonomyMode,
+      executionCadence: preferences.executionCadence,
+      candidateSet,
+      rejectedCandidates,
+      decision: buildDecisionDetails(eligibleSignal, {
+        quantity,
+        confidence: eligibleSignal.confidence,
+        blockedBy: "trade_history_unavailable",
+      }),
+    }, {
+      appliedGuardrails: safeJsonStringify(buildAppliedGuardrails(preferences, riskLimits)),
+    });
+  }
+  // Weekly realized PnL = sum of realizedPnl across the trailing 7d window.
+  const weeklyPnlUsd = closedTrades7d.reduce(
+    (acc: number, t: any) => acc + Number(t.realizedPnl ?? 0),
+    0,
+  );
+  // Consecutive losses: walk newest-first; stop at first non-loss.
+  const newestFirst = [...closedTrades7d].sort((a: any, b: any) => {
+    const aTs = a.closedAt ? new Date(a.closedAt).getTime() : 0;
+    const bTs = b.closedAt ? new Date(b.closedAt).getTime() : 0;
+    return bTs - aTs;
+  });
+  let consecutiveLosses = 0;
+  for (const t of newestFirst) {
+    if (Number(t.realizedPnl ?? 0) < 0) consecutiveLosses += 1;
+    else break;
+  }
+  // 7-day realized edge: total notional traded vs realized PnL (return %).
+  const weeklyNotional = closedTrades7d.reduce(
+    (acc: number, t: any) =>
+      acc + Number(t.entryPrice ?? 0) * Number(t.quantity ?? 0),
+    0,
+  );
+  const weeklyRealizedEdgePct =
+    weeklyNotional > 0 ? weeklyPnlUsd / weeklyNotional : 1;
+
+  const drawdown = await import("./drawdownBreaker").then((m) =>
+    m.checkDrawdownBreaker({
+      capitalUsd: equityResult.equity,
+      todayPnlUsd: -todayRealizedLoss, // loss is positive in storage; PnL is negative
+      weeklyPnlUsd,
+      consecutiveLosses,
+      weeklyRealizedEdgePct,
+    }),
+  );
+  if (!drawdown.allowed) {
+    return finalize({
+      status: "blocked",
+      reason: drawdown.reason,
+      signalsGenerated: savedSignals.length,
+      executionCandidates: executionCandidates.length,
+      orderPlaced: false,
+      candidateMarketId: eligibleSignal.marketId,
+      autonomyMode: preferences.autonomyMode,
+      executionCadence: preferences.executionCadence,
+      candidateSet,
+      rejectedCandidates,
+      decision: buildDecisionDetails(eligibleSignal, {
+        quantity,
+        confidence: eligibleSignal.confidence,
+        blockedBy: "drawdown_breaker",
       }),
     }, {
       appliedGuardrails: safeJsonStringify(buildAppliedGuardrails(preferences, riskLimits)),

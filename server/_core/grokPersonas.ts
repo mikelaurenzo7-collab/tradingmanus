@@ -51,7 +51,7 @@ const SHARED_GROK_FOOTER = [
   "- Exact Kalshi fee math: maker = round_up_to_cent(0.0175 × count × p × (1−p)),",
   "  taker = round_up_to_cent(0.07 × count × p × (1−p)). Subtract round-trip",
   "  fee + amortized Grok cost ($0.0035) before reporting expectedValueAdjustment.",
-  "- Position sizing is ¼ Kelly clamped to 0.5 %–2 % of capital — never approve",
+  "- Position sizing is ½ Kelly (default; env-overridable) clamped to 0.5 %–4 % of live capital — never approve",
   "  a trade your sizing model can't fund within those caps.",
   "- Self-consistency: this is one of two passes. If your second pass disagrees",
   "  on direction or your EV adjustment differs by > 0.03, the trade is SKIPPED.",

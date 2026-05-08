@@ -80,18 +80,35 @@ async function checkExitStateColumn(table: string): Promise<SelfTestCheck> {
 }
 
 function checkGrokKey(): SelfTestCheck {
+  // Grok is now the OPTIONAL legacy fallback. When ANTHROPIC_API_KEY is
+  // also set, Claude is the primary reviewer and Grok is silent. When
+  // ANTHROPIC_API_KEY is unset, Grok becomes the primary; in that case
+  // its absence is a fail in production.
+  const hasAnthropic = ENV.anthropicApiKey.length > 0;
   if (ENV.xaiApiKey.length > 0) {
-    return { name: "grok_api_key", status: "ok", detail: "XAI_API_KEY is set." };
+    return {
+      name: "grok_api_key",
+      status: "ok",
+      detail: hasAnthropic
+        ? "XAI_API_KEY is set (legacy fallback; Claude is primary)."
+        : "XAI_API_KEY is set; Grok is acting as primary reviewer (no ANTHROPIC_API_KEY).",
+    };
   }
-  if (ENV.isProduction) {
+  if (!hasAnthropic && ENV.isProduction) {
     return {
       name: "grok_api_key",
       status: "fail",
       detail:
-        "XAI_API_KEY is unset in production.  Grok is the AI reviewer gate before any live order — every autonomy cycle will fail closed until this is set.",
+        "Neither ANTHROPIC_API_KEY nor XAI_API_KEY is set in production. AI review is disabled — every autonomy cycle will fail closed.",
     };
   }
-  return { name: "grok_api_key", status: "warn", detail: "XAI_API_KEY unset (dev mode — autonomy will skip AI review)." };
+  return {
+    name: "grok_api_key",
+    status: "warn",
+    detail: hasAnthropic
+      ? "XAI_API_KEY unset — Grok fallback unavailable. Claude is the sole reviewer (this is the default Claude-as-trader mode)."
+      : "XAI_API_KEY unset (dev mode — autonomy will skip AI review).",
+  };
 }
 
 function checkGrokModel(): SelfTestCheck {
@@ -99,6 +116,47 @@ function checkGrokModel(): SelfTestCheck {
     name: "grok_model",
     status: "ok",
     detail: `GROK_MODEL = ${ENV.grokModel}`,
+  };
+}
+
+function checkAnthropicKey(): SelfTestCheck {
+  // Claude is now the PRIMARY reviewer when ANTHROPIC_API_KEY is set.
+  // Grok is the legacy fallback (used only when this key is unset, or
+  // when REVIEWER_PREFER_GROK=true).
+  if (ENV.anthropicApiKey.length > 0) {
+    const mode = ENV.reviewerPreferGrok
+      ? `legacy mode active (REVIEWER_PREFER_GROK=true) — Grok is primary, Claude on high-stakes only`
+      : `Claude is the primary reviewer (Sonnet=${ENV.claudeSonnetModel}, Opus on high-stakes=${ENV.claudeOpusModel})`;
+    return {
+      name: "anthropic_api_key",
+      status: "ok",
+      detail: `ANTHROPIC_API_KEY is set; ${mode}.`,
+    };
+  }
+  // Without ANTHROPIC_API_KEY, the system falls back to Grok as primary
+  // (if XAI_API_KEY is set). In production this is a downgrade — Claude
+  // is the recommended primary trader.
+  if (ENV.xaiApiKey.length > 0) {
+    return {
+      name: "anthropic_api_key",
+      status: "warn",
+      detail:
+        "ANTHROPIC_API_KEY unset — system is falling back to Grok as primary reviewer. " +
+        "Set ANTHROPIC_API_KEY to use Claude as the trader (recommended; ~$5/mo at default cadence).",
+    };
+  }
+  if (ENV.isProduction) {
+    return {
+      name: "anthropic_api_key",
+      status: "fail",
+      detail:
+        "Neither ANTHROPIC_API_KEY nor XAI_API_KEY is set in production. AI review is disabled — every autonomy cycle will fail closed.",
+    };
+  }
+  return {
+    name: "anthropic_api_key",
+    status: "warn",
+    detail: "ANTHROPIC_API_KEY unset (dev mode — autonomy will skip AI review).",
   };
 }
 
@@ -169,6 +227,7 @@ export async function runStartupSelfTest(): Promise<SelfTestResult> {
   }
   checks.push(checkGrokKey());
   checks.push(checkGrokModel());
+  checks.push(checkAnthropicKey());
   checks.push(checkAiDailyBudget());
   checks.push(checkCredentialEncryptionSecret());
   checks.push(checkPaperMode());

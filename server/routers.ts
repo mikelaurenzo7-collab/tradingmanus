@@ -499,6 +499,22 @@ export const appRouter = router({
       )
       .mutation(async ({ input, ctx }) => {
         const normalizedEmail = input.email.trim().toLowerCase();
+        // Single-owner lockdown: by default only the configured OWNER_EMAIL
+        // can register. ALLOW_PUBLIC_REGISTRATION=true reopens it for
+        // multi-tenant SaaS deployments. Without this gate, anyone with
+        // the public URL could register a free account, connect their own
+        // Kalshi creds (encrypted with the shared CRED_ENCRYPTION_SECRET),
+        // and burn the owner's ANTHROPIC_API_KEY budget on AI reviews.
+        if (
+          !ENV.allowPublicRegistration &&
+          normalizedEmail !== ENV.ownerEmail.trim().toLowerCase()
+        ) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message:
+              "Public registration is disabled in single-owner mode. Set ALLOW_PUBLIC_REGISTRATION=true to enable.",
+          });
+        }
         const existingUser = await db.getUserByEmail(normalizedEmail);
         if (existingUser) {
           throw new TRPCError({
@@ -758,6 +774,297 @@ export const appRouter = router({
   advanced: advancedRouter,
 
   kalshi: router({
+    /**
+     * Live guardrails snapshot — surfaces all percentage thresholds in
+     * dollar terms based on the operator's current Kalshi balance.
+     * Drives the dashboard's "Guardrails Status" tab so the operator can
+     * see how thresholds scale as they deposit more capital.
+     */
+    getGuardrailsSnapshot: protectedProcedure.query(async ({ ctx }) => {
+      const { ENV } = await import("./_core/env");
+      // Use the AUTHENTICATED USER'S Kalshi credentials, not process-level
+      // KALSHI_KEY_ID. The rest of this router's capital paths do the same;
+      // without this, the snapshot reads someone else's account or 0.
+      const userId = Number(ctx.user?.id ?? 0);
+      let capitalUsd = 0;
+      if (userId > 0) {
+        try {
+          const creds = await kalshiCredDb.getKalshiCredentials(userId);
+          // Narrow against the union {needsReauth} | {apiKey, privateKey, ...}
+          if (creds && !("needsReauth" in creds && creds.needsReauth)) {
+            const decrypted = creds as {
+              apiKey?: string;
+              privateKey?: string;
+            };
+            if (decrypted.apiKey && decrypted.privateKey) {
+              const equityResult = await fetchKalshiAccountEquity(
+                decrypted.apiKey,
+                decrypted.privateKey,
+              );
+              if (!equityResult.error) {
+                capitalUsd = Number(equityResult.equity ?? 0);
+              }
+            }
+          }
+        } catch {
+          // best-effort: fall through with 0 so the snapshot still renders
+          capitalUsd = 0;
+        }
+      }
+
+      const tier =
+        capitalUsd > ENV.scannerCapHighTierUsd
+          ? "high"
+          : capitalUsd > ENV.scannerCapMidTierUsd
+            ? "mid"
+            : "low";
+      const maxAnalysesPerDay =
+        tier === "high"
+          ? ENV.scannerMaxAnalysesPerDayHighTier
+          : tier === "mid"
+            ? ENV.scannerMaxAnalysesPerDayMidTier
+            : ENV.scannerMaxAnalysesPerDay;
+
+      return {
+        capitalUsd,
+        kelly: {
+          fraction: ENV.profitGuardrails.kellyFraction,
+          minPctOfCapital: ENV.profitGuardrails.kellyMinPctOfCapital,
+          maxPctOfCapital: ENV.profitGuardrails.kellyMaxPctOfCapital,
+          minDollarsPerPosition:
+            capitalUsd * ENV.profitGuardrails.kellyMinPctOfCapital,
+          maxDollarsPerPosition:
+            capitalUsd * ENV.profitGuardrails.kellyMaxPctOfCapital,
+        },
+        ev: {
+          minNetEv: ENV.profitGuardrails.minNetEv,
+          minConfidence: ENV.profitGuardrails.minConfidenceAfterAdjust,
+        },
+        exposure: {
+          maxPortfolioPct: ENV.profitGuardrails.maxPortfolioExposurePct,
+          maxPortfolioUsd:
+            capitalUsd * ENV.profitGuardrails.maxPortfolioExposurePct,
+          maxCorrelatedGroupPct:
+            ENV.profitGuardrails.maxCorrelatedGroupPct,
+          maxCorrelatedGroupUsd:
+            capitalUsd * ENV.profitGuardrails.maxCorrelatedGroupPct,
+        },
+        drawdown: {
+          dailyPauseFrac: ENV.profitGuardrails.dailyDrawdownPauseFrac,
+          dailyPauseUsd:
+            capitalUsd * ENV.profitGuardrails.dailyDrawdownPauseFrac,
+          weeklyPauseFrac: ENV.profitGuardrails.weeklyDrawdownPauseFrac,
+          weeklyPauseUsd:
+            capitalUsd * ENV.profitGuardrails.weeklyDrawdownPauseFrac,
+          coldStreakLossCount:
+            ENV.profitGuardrails.coldStreakLossCount,
+          coldStreakMinRealizedEdgePct:
+            ENV.profitGuardrails.coldStreakMinRealizedEdgePct,
+        },
+        ensemble: {
+          highStakesPctOfCapital: ENV.highStakesPctOfCapital,
+          highStakesUsd: capitalUsd * ENV.highStakesPctOfCapital,
+          catastrophicPctOfCapital: ENV.catastrophicPctOfCapital,
+          catastrophicUsd: capitalUsd * ENV.catastrophicPctOfCapital,
+          highStakesResolutionMinutes: ENV.highStakesResolutionMinutes,
+          anthropicConfigured: ENV.anthropicApiKey.length > 0,
+        },
+        scanner: {
+          tier,
+          baseAnalysesPerDay: ENV.scannerBaseAnalysesPerDay,
+          maxAnalysesPerDay,
+          midTierUsd: ENV.scannerCapMidTierUsd,
+          highTierUsd: ENV.scannerCapHighTierUsd,
+        },
+      };
+    }),
+
+    /**
+     * Rolling AI-spend summary — answers "is the system paying for itself?"
+     * Pulls actual reviewer telemetry from the audit log and joins with
+     * realized P&L from closed positions over the same window.
+     *
+     * Returns:
+     *   - aiSpendUsd: total reviewer cost over the window
+     *   - realizedPnlUsd: closed-position P&L over the window (Kalshi only)
+     *   - feeEstimateUsd: rough Kalshi-fee accrual estimate
+     *   - netUsd: realized - (ai + fees) — positive means the system is
+     *     paying for itself + earning surplus
+     *   - dailyBreakdown: per-day rows so the dashboard can chart it
+     */
+    getAiSpendSummary: protectedProcedure
+      .input(
+        (await import("zod")).z
+          .object({
+            days: (await import("zod")).z
+              .number()
+              .int()
+              .min(1)
+              .max(90)
+              .default(7),
+          })
+          .optional(),
+      )
+      .query(async ({ ctx, input }) => {
+        const days = input?.days ?? 7;
+        const userId = Number(ctx.user?.id ?? 0);
+        if (userId <= 0) {
+          return {
+            windowDays: days,
+            aiSpendUsd: 0,
+            realizedPnlUsd: 0,
+            feeEstimateUsd: 0,
+            netUsd: 0,
+            payingForItself: false,
+            dailyBreakdown: [] as Array<{
+              date: string;
+              aiSpendUsd: number;
+              realizedPnlUsd: number;
+              feeEstimateUsd: number;
+              netUsd: number;
+            }>,
+          };
+        }
+
+        const { ENV } = await import("./_core/env");
+        const { getDb } = await import("./db");
+        const { auditLog, kalshiPositions } = await import(
+          "../drizzle/schema"
+        );
+        const { and, eq, gte, sql } = await import("drizzle-orm");
+        const database = await getDb();
+
+        const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+        let aiSpendByDay = new Map<string, number>();
+        let realizedByDay = new Map<string, number>();
+        let feesByDay = new Map<string, number>();
+
+        if (database) {
+          // 1. AI spend from kalshi_ensemble_review audit events
+          //    (totalAiCostUsd field captures Sonnet + Opus per-signal cost).
+          // Scope to THIS user's reviewer events. Audit rows are tagged
+          // with `triggeredByOpenId = "user:${userId}"` when the autonomy
+          // logs them (see kalshi_ensemble_review emission in
+          // kalshiAutonomy.ts and kalshi_daily_sports_play_executed in
+          // dailySportsPlay.ts). Without this filter, the dashboard
+          // would compare global AI spend to user-scoped P&L → wrong.
+          const userOpenIdMarker = `user:${userId}`;
+          const aiRows = await database
+            .select({
+              createdAt: auditLog.createdAt,
+              details: auditLog.details,
+            })
+            .from(auditLog)
+            .where(
+              and(
+                eq(auditLog.eventType, "kalshi_ensemble_review"),
+                eq(auditLog.triggeredByOpenId, userOpenIdMarker),
+                gte(auditLog.createdAt, cutoff),
+              ),
+            );
+          for (const row of aiRows) {
+            const day = new Date(row.createdAt).toISOString().slice(0, 10);
+            try {
+              const parsed = JSON.parse(String(row.details ?? "{}")) as {
+                totalAiCostUsd?: number;
+              };
+              const cost = Number(parsed.totalAiCostUsd ?? 0);
+              if (Number.isFinite(cost)) {
+                aiSpendByDay.set(day, (aiSpendByDay.get(day) ?? 0) + cost);
+              }
+            } catch {
+              // skip malformed rows
+            }
+          }
+
+          // 2. Realized P&L from closed positions in the window.
+          const closedRows = await database
+            .select({
+              closedAt: kalshiPositions.closedAt,
+              realizedPnl: kalshiPositions.realizedPnl,
+              entryPrice: kalshiPositions.entryPrice,
+              quantity: kalshiPositions.quantity,
+            })
+            .from(kalshiPositions)
+            .where(
+              and(
+                eq(kalshiPositions.userId, userId),
+                eq(kalshiPositions.positionStatus, "closed"),
+                gte(kalshiPositions.closedAt, cutoff),
+              ),
+            );
+          const KALSHI_FEE_MULT_TWO_LEG =
+            (ENV.kalshiMakerFeeMultiplier + ENV.kalshiTakerFeeMultiplier) /
+            2; // very rough — exits hit taker, entries hit maker on average
+          for (const row of closedRows) {
+            const day = row.closedAt
+              ? new Date(row.closedAt).toISOString().slice(0, 10)
+              : null;
+            if (!day) continue;
+            realizedByDay.set(
+              day,
+              (realizedByDay.get(day) ?? 0) + Number(row.realizedPnl ?? 0),
+            );
+            // Rough round-trip fee estimate: 2 × multiplier × notional ×
+            // p × (1-p) at entry. We don't have exit-fill data here so use
+            // entry as a proxy.
+            const entry = Number(row.entryPrice ?? 0);
+            const qty = Number(row.quantity ?? 0);
+            const notional = entry * qty;
+            const fee = 2 * KALSHI_FEE_MULT_TWO_LEG * notional * entry * (1 - entry);
+            feesByDay.set(day, (feesByDay.get(day) ?? 0) + Math.max(0, fee));
+          }
+          // suppress unused warning
+          void sql;
+        }
+
+        // Aggregate
+        const allDays = new Set<string>([
+          ...aiSpendByDay.keys(),
+          ...realizedByDay.keys(),
+          ...feesByDay.keys(),
+        ]);
+        const dailyBreakdown = Array.from(allDays)
+          .sort()
+          .map((date) => {
+            const ai = aiSpendByDay.get(date) ?? 0;
+            const pnl = realizedByDay.get(date) ?? 0;
+            const fees = feesByDay.get(date) ?? 0;
+            return {
+              date,
+              aiSpendUsd: Number(ai.toFixed(4)),
+              realizedPnlUsd: Number(pnl.toFixed(4)),
+              feeEstimateUsd: Number(fees.toFixed(4)),
+              netUsd: Number((pnl - ai - fees).toFixed(4)),
+            };
+          });
+
+        const totalAi = dailyBreakdown.reduce(
+          (a, d) => a + d.aiSpendUsd,
+          0,
+        );
+        const totalPnl = dailyBreakdown.reduce(
+          (a, d) => a + d.realizedPnlUsd,
+          0,
+        );
+        const totalFees = dailyBreakdown.reduce(
+          (a, d) => a + d.feeEstimateUsd,
+          0,
+        );
+        const netUsd = totalPnl - totalAi - totalFees;
+
+        return {
+          windowDays: days,
+          aiSpendUsd: Number(totalAi.toFixed(4)),
+          realizedPnlUsd: Number(totalPnl.toFixed(4)),
+          feeEstimateUsd: Number(totalFees.toFixed(4)),
+          netUsd: Number(netUsd.toFixed(4)),
+          payingForItself: netUsd >= 0,
+          dailyBreakdown,
+        };
+      }),
+
     // Market data
     getMarkets: protectedProcedure
       .input(
