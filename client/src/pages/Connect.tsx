@@ -27,13 +27,16 @@ import { Badge } from "@/components/ui/badge";
 import {
   buildKalshiConnectionSuccessMessage,
   buildPolymarketConnectionSuccessMessage,
+  CONNECT_REDIRECT_DELAY_MS,
 } from "@/lib/connectFlow";
 import { trpc } from "@/lib/trpc";
+import { useLocation } from "wouter";
 import { EmptyState } from "@/components/EmptyStates";
 
 // ---------- Kalshi panel ----------
 function KalshiConnectPanel() {
   const utils = trpc.useUtils();
+  const [, setLocation] = useLocation();
   const [apiKey, setApiKey] = useState("");
   const [privateKey, setPrivateKey] = useState("");
   const [connectionMessage, setConnectionMessage] = useState<string | null>(
@@ -72,6 +75,7 @@ function KalshiConnectPanel() {
           utils.kalshi.getPerformanceOverview.invalidate(),
           utils.kalshi.getPositions.invalidate(),
         ]);
+        setTimeout(() => setLocation("/"), CONNECT_REDIRECT_DELAY_MS);
         return;
       }
       setConnectionMessage(
@@ -95,6 +99,8 @@ function KalshiConnectPanel() {
   });
 
   const isAlreadyConnected = statusQuery.data?.connected === true;
+  const needsReauth = (statusQuery.data as any)?.needsReauth === true;
+  const reauthMessage = (statusQuery.data as any)?.reauthMessage as string | undefined;
 
   const handleConnect = () => {
     if (!trimmedApiKey || !trimmedPrivateKey) {
@@ -170,11 +176,21 @@ function KalshiConnectPanel() {
           </Alert>
         ) : (
           <>
-            <EmptyState
-              icon={WifiOff}
-              title="Not connected"
-              message="Add your Kalshi API credentials to enable autonomous trading"
-            />
+            {needsReauth ? (
+              <Alert variant="destructive" className="glow-destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>Re-authentication required</AlertTitle>
+                <AlertDescription>
+                  {reauthMessage ?? "Your stored Kalshi credentials could not be decrypted. Paste your API Key ID and private key below to reconnect."}
+                </AlertDescription>
+              </Alert>
+            ) : (
+              <EmptyState
+                icon={WifiOff}
+                title="Not connected"
+                message="Add your Kalshi API credentials to enable autonomous trading"
+              />
+            )}
 
             <Alert className="border-indigo-400/30 bg-indigo-500/10">
               <Laptop className="h-4 w-4 text-indigo-400" />
