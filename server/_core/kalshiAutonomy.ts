@@ -813,12 +813,33 @@ async function generateScheduledSignals(
       const marketsByIdLocal = new Map(
         actionableMarkets.map((m) => [m.id, m]),
       );
+      // Lazy-import the Kelly sizer so the closure stays small in test
+      // builds that don't exercise this path.
+      const { calculateKellyPosition } = await import("./kellySizer");
       const ensembleInputs = savedSignals.map((sig) => {
         const market = marketsByIdLocal.get(sig.marketId);
         // KalshiMarket exposes resolutionDate (ISO string), not closeTime.
         const closeMs = market?.resolutionDate
           ? new Date(market.resolutionDate).getTime()
           : null;
+        // Estimate the actual stake the executor will use (½ Kelly clamped
+        // 0.5%–4% of capital by default). This matches the real sizing,
+        // so the high-stakes percent trigger fires only on signals that
+        // will be sized large — not on every approved candidate. Using
+        // `kellyMaxPctOfCapital` here would overestimate to 4% on
+        // every signal and trip the 3% high-stakes gate universally.
+        // For NO-side trades, Kelly's edge math uses the win probability
+        // = 1 - YES_implied. Use signal.confidence as the win probability
+        // (reviewer-adjusted, side-aware).
+        const sizing = calculateKellyPosition({
+          winProbability: sig.confidence,
+          contractPrice: Math.max(0.01, sig.marketPrice),
+          totalCapitalUsd: liveCapitalUsd,
+        });
+        const estimatedCount = Math.max(
+          1,
+          Math.floor(sizing.positionUsd / Math.max(0.01, sig.marketPrice)),
+        );
         return {
           marketId: sig.marketId,
           ticker: sig.marketId,
@@ -828,17 +849,7 @@ async function generateScheduledSignals(
           impliedProbability: sig.impliedProbability,
           marketPrice: sig.marketPrice,
           expectedValue: sig.expectedValue,
-          // Sizing is finalised downstream; for the high-stakes detector we
-          // estimate notional at the configured per-position cap. This
-          // overestimates for thin-edge signals (good — we'd rather over-
-          // trigger Sonnet review than miss a catastrophic-bet).
-          count: Math.max(
-            1,
-            Math.floor(
-              (liveCapitalUsd * ENV.profitGuardrails.kellyMaxPctOfCapital) /
-                Math.max(0.01, sig.marketPrice),
-            ),
-          ),
+          count: estimatedCount,
           resolutionAtMs:
             Number.isFinite(closeMs) && closeMs !== null ? closeMs : null,
           // KalshiMarket has `description` but not separate primary/secondary

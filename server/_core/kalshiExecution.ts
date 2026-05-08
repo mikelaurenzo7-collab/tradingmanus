@@ -1120,7 +1120,17 @@ async function logCalibrationOutcomeFromClose(input: {
       if (rows[0]) {
         predictedConfidence = Number(rows[0].confidence ?? 0);
         predictedEvFraction = Number(rows[0].expectedValue ?? 0);
-        predictedWinProbability = Number(rows[0].impliedProbability ?? input.entryPrice);
+        // `impliedProbability` in kalshiSignals is always the YES-side
+        // probability (signal generation stores `market.impliedProbability`
+        // regardless of trade side). For a NO-side trade, the probability
+        // that THIS trade wins is `1 - YES_implied` — flip it so the
+        // calibration job's Brier scoring compares apples-to-apples
+        // against the realized win/loss outcome.
+        const yesProb = Number(rows[0].impliedProbability ?? input.entryPrice);
+        predictedWinProbability =
+          input.side === "no"
+            ? Math.min(1, Math.max(0, 1 - yesProb))
+            : Math.min(1, Math.max(0, yesProb));
       }
     }
 
