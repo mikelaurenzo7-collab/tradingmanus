@@ -317,12 +317,51 @@ async function runCombinatorialArbScanner() {
 // Fires once per UTC day at ENV.dailySportsPlayHourUtc (default 14:00 UTC =
 // 10am ET). Tick rate is 5 minutes — when the current UTC hour matches AND
 // we haven't already fired today, run the play for every eligible user.
-// Per-user gating instead of a global day-level marker. A transient
-// DB/API failure on the first 5-minute tick of the configured hour used
-// to set the global marker BEFORE the sweep ran, suppressing all later
-// retry attempts within the day. Now we mark per-user only after that
-// user's run finishes (without throwing). Failed runs leave the marker
-// unset so the next tick within the same hour retries them.
+// Per-user gating with in-process AND Postgres-backed checks. The
+// in-process Set is fast (avoids a DB round-trip every 5-min tick) but
+// gets wiped on container restart. The DB check via auditLog is the
+// source of truth — even if the container restarts mid-hour, we won't
+// re-fire a play that already fired today.
+//
+// We scan the audit log for ANY same-user, same-day, same-play-type
+// event (attempt / executed / blocked / skipped). The first call for
+// each user+day populates the Set; subsequent ticks read from memory.
+async function dailyPlayAlreadyRanToday(
+  userId: number,
+  utcDay: string,
+  eventTypes: string[],
+): Promise<boolean> {
+  try {
+    const { getDb } = await import("../db");
+    const { auditLog } = await import("../../drizzle/schema");
+    const { and, eq, gte, inArray } = await import("drizzle-orm");
+    const database = await getDb();
+    if (!database) return false;
+    const dayStart = new Date(`${utcDay}T00:00:00.000Z`);
+    const rows = await database
+      .select({ id: auditLog.id })
+      .from(auditLog)
+      .where(
+        and(
+          inArray(auditLog.eventType, eventTypes),
+          eq(auditLog.triggeredByOpenId, `user:${userId}`),
+          gte(auditLog.createdAt, dayStart),
+        ),
+      )
+      .limit(1);
+    return rows.length > 0;
+  } catch (err) {
+    // Fail open on lookup errors — better to potentially re-fire than to
+    // permanently suppress on a transient DB hiccup. The in-process Set
+    // catches the same-tick redundant case.
+    logger.warn(
+      { err, userId, utcDay },
+      "[DailyPlay] auditLog dedup lookup failed; falling back to in-process Set only",
+    );
+    return false;
+  }
+}
+
 const dailySportsPlayCompletedKeys = new Set<string>();
 async function maybeRunDailySportsPlay() {
   if (!ENV.enableDailySportsPlay) return;
@@ -335,8 +374,19 @@ async function maybeRunDailySportsPlay() {
     const eligibleUsers = await getUsersEligibleForAutomaticScheduledTrading();
     for (const user of eligibleUsers as Array<{ id: number }>) {
       const key = `${user.id}:${utcDay}`;
-      // Skip users whose run already completed today.
+      // Skip users whose run already completed today (in-process fast path).
       if (dailySportsPlayCompletedKeys.has(key)) continue;
+      // Postgres-backed cross-restart check. If the audit log shows a
+      // play already ran for this user today, skip and seed the Set.
+      const alreadyRan = await dailyPlayAlreadyRanToday(user.id, utcDay, [
+        "kalshi_daily_sports_play_executed",
+        "kalshi_daily_sports_play_attempt",
+        "kalshi_daily_sports_play_blocked",
+      ]);
+      if (alreadyRan) {
+        dailySportsPlayCompletedKeys.add(key);
+        continue;
+      }
       try {
         const result = await runDailySportsPlay(user.id);
         // Mark completed only AFTER the run returned (any status, even
@@ -389,6 +439,15 @@ async function maybeRunDailyMoonshotPlay() {
     for (const user of eligibleUsers as Array<{ id: number }>) {
       const key = `${user.id}:${utcDay}`;
       if (dailyMoonshotCompletedKeys.has(key)) continue;
+      const alreadyRan = await dailyPlayAlreadyRanToday(user.id, utcDay, [
+        "kalshi_daily_moonshot_play_executed",
+        "kalshi_daily_moonshot_play_attempt",
+        "kalshi_daily_moonshot_play_blocked",
+      ]);
+      if (alreadyRan) {
+        dailyMoonshotCompletedKeys.add(key);
+        continue;
+      }
       try {
         const result = await runDailyMoonshotPlay(user.id);
         dailyMoonshotCompletedKeys.add(key);

@@ -499,6 +499,22 @@ export const appRouter = router({
       )
       .mutation(async ({ input, ctx }) => {
         const normalizedEmail = input.email.trim().toLowerCase();
+        // Single-owner lockdown: by default only the configured OWNER_EMAIL
+        // can register. ALLOW_PUBLIC_REGISTRATION=true reopens it for
+        // multi-tenant SaaS deployments. Without this gate, anyone with
+        // the public URL could register a free account, connect their own
+        // Kalshi creds (encrypted with the shared CRED_ENCRYPTION_SECRET),
+        // and burn the owner's ANTHROPIC_API_KEY budget on AI reviews.
+        if (
+          !ENV.allowPublicRegistration &&
+          normalizedEmail !== ENV.ownerEmail.trim().toLowerCase()
+        ) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message:
+              "Public registration is disabled in single-owner mode. Set ALLOW_PUBLIC_REGISTRATION=true to enable.",
+          });
+        }
         const existingUser = await db.getUserByEmail(normalizedEmail);
         if (existingUser) {
           throw new TRPCError({

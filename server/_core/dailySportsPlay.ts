@@ -35,6 +35,7 @@ import { fetchKalshiAccountEquity } from "./kalshiAuth";
 import { placeKalshiOrder } from "./kalshiExecution";
 import { checkDrawdownBreaker } from "./drawdownBreaker";
 import { getKalshiCredentials } from "../db.kalshi-credentials";
+import { getTradingPreferences } from "../db.trading-preferences";
 import {
   logAuditEvent,
   getOpenKalshiPositions,
@@ -74,6 +75,30 @@ export async function runDailySportsPlay(
     return {
       status: "disabled",
       reason: "ENABLE_DAILY_SPORTS_PLAY is not set",
+    };
+  }
+
+  // Honor the user's trading-preferences arm/disarm switch. The autonomy
+  // path checks all three via shouldSkipScheduledRun; the daily play must
+  // respect them too — a user who toggled liveTradingEnabled=0 or
+  // autonomyMode=manual must NOT have a daily play placed.
+  const prefs = await getTradingPreferences(userId).catch(() => null);
+  if (!prefs || !prefs.liveTradingEnabled) {
+    return {
+      status: "disabled",
+      reason: "liveTradingEnabled=0 — operator has disarmed live trading",
+    };
+  }
+  if (prefs.autonomyMode === "manual") {
+    return {
+      status: "disabled",
+      reason: "autonomyMode=manual — operator opt-out of automated trading",
+    };
+  }
+  if (prefs.executionCadence === "manual_only") {
+    return {
+      status: "disabled",
+      reason: "executionCadence=manual_only — operator opt-out of cron-driven trades",
     };
   }
 

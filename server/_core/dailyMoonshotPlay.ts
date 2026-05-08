@@ -51,6 +51,7 @@ import { placeKalshiOrder } from "./kalshiExecution";
 import { checkDrawdownBreaker } from "./drawdownBreaker";
 import { calculateNetEv } from "./feeCalculator";
 import { getKalshiCredentials } from "../db.kalshi-credentials";
+import { getTradingPreferences } from "../db.trading-preferences";
 import {
   logAuditEvent,
   getOpenKalshiPositions,
@@ -88,6 +89,28 @@ export async function runDailyMoonshotPlay(
     return {
       status: "disabled",
       reason: "ENABLE_DAILY_MOONSHOT is not set",
+    };
+  }
+
+  // Honor the user's trading-preferences arm/disarm switch (mirrors the
+  // autonomy path's shouldSkipScheduledRun gates).
+  const prefs = await getTradingPreferences(userId).catch(() => null);
+  if (!prefs || !prefs.liveTradingEnabled) {
+    return {
+      status: "disabled",
+      reason: "liveTradingEnabled=0 — operator has disarmed live trading",
+    };
+  }
+  if (prefs.autonomyMode === "manual") {
+    return {
+      status: "disabled",
+      reason: "autonomyMode=manual — operator opt-out of automated trading",
+    };
+  }
+  if (prefs.executionCadence === "manual_only") {
+    return {
+      status: "disabled",
+      reason: "executionCadence=manual_only — operator opt-out of cron-driven trades",
     };
   }
 
