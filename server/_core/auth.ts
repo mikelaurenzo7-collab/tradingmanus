@@ -123,12 +123,19 @@ export function isSubscriptionEntitled(
 }
 
 export async function ensureOwnerUser() {
+  // The owner is the operator: they deploy the system, set the env-level
+  // policy, and own the Kalshi/Polymarket accounts.  Always grant them
+  // role=admin + betaAccessLevel=internal so they're never blocked by
+  // gates designed for downstream beta users.  Idempotent — refreshed
+  // on every login.
   await db.upsertUser({
     openId: OWNER_OPEN_ID,
     name: OWNER_NAME,
     email: ENV.ownerEmail,
     loginMethod: "owner_password",
     lastSignedIn: new Date(),
+    role: "admin",
+    betaAccessLevel: "internal",
   });
 
   const user = await db.getUserByOpenId(OWNER_OPEN_ID);

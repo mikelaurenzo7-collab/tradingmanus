@@ -140,6 +140,8 @@ export async function upsertUser(payload: {
   twoFactorEnabled?: number;
   backupCodesHash?: string | null;
   passwordHash?: string | null;
+  role?: "user" | "admin";
+  betaAccessLevel?: "none" | "internal" | "invited" | "public";
   subscriptionTier?: "starter" | "pro" | "fund";
   subscriptionStatus?:
     | "trialing"
@@ -177,6 +179,9 @@ export async function upsertUser(payload: {
     values.subscriptionTier = payload.subscriptionTier;
   if (payload.passwordHash !== undefined)
     values.passwordHash = payload.passwordHash;
+  if (payload.role !== undefined) values.role = payload.role;
+  if (payload.betaAccessLevel !== undefined)
+    values.betaAccessLevel = payload.betaAccessLevel;
 
   const updates: any = {};
   if (payload.name !== undefined) updates.name = payload.name;
@@ -199,6 +204,9 @@ export async function upsertUser(payload: {
     updates.subscriptionTier = payload.subscriptionTier;
   if (payload.passwordHash !== undefined)
     updates.passwordHash = payload.passwordHash;
+  if (payload.role !== undefined) updates.role = payload.role;
+  if (payload.betaAccessLevel !== undefined)
+    updates.betaAccessLevel = payload.betaAccessLevel;
 
   try {
     const existingUser = await database
