@@ -6,6 +6,7 @@ import {
   Brain,
   Briefcase,
   CheckCircle2,
+  Compass,
   Cpu,
   FileText,
   LayoutDashboard,
@@ -16,7 +17,6 @@ import {
   PieChart,
   Plug,
   Shield,
-  TrendingUp,
   Wallet,
   Zap,
 } from "lucide-react";
@@ -36,30 +36,38 @@ export type NavSection = {
 };
 
 /**
- * Flat, grouped navigation. Replaces the previous 4-level dropdown structure.
- * Designed for a vertical sidebar with at-a-glance access to every page.
+ * Action-oriented navigation: section labels are verbs (START / TRADE /
+ * ANALYZE / CONFIGURE), so users see *what they can do* rather than
+ * *where things are filed*.
+ *
+ * Setup lives at the top so first-time users find it instantly.  Audit
+ * Log moves into TRADE because it's a daily-monitoring page, not a
+ * configuration page.  /connect, /funding, /trading-readiness are still
+ * routes (deep-link compatible) but the sidebar funnels everyone through
+ * /setup which orchestrates them.
  */
 export const navSections: NavSection[] = [
   {
-    label: "Overview",
+    label: "Start",
     items: [
+      { icon: Compass, label: "Setup", path: "/setup", hint: "Get to live trading in 4 steps" },
       { icon: LayoutDashboard, label: "Dashboard", path: "/dashboard", hint: "Home + key metrics" },
       { icon: MessageSquare, label: "Chat", path: "/chat", hint: "Talk to the desk AI" },
     ],
   },
   {
-    label: "Trading",
+    label: "Trade",
     items: [
       { icon: Zap, label: "Signals", path: "/signals", hint: "Latest reviewed signals" },
       { icon: ListChecks, label: "Positions", path: "/positions", hint: "Open positions" },
       { icon: Activity, label: "Trades", path: "/trades", hint: "Trade history" },
-      { icon: Bot, label: "Strategies", path: "/strategies", hint: "User-defined strategies" },
+      { icon: FileText, label: "Audit Log", path: "/audit", hint: "Every cycle, review, order" },
     ],
   },
   {
-    label: "Analytics",
+    label: "Analyze",
     items: [
-      { icon: BarChart3, label: "Performance", path: "/performance", hint: "PnL and risk-adjusted metrics" },
+      { icon: BarChart3, label: "Performance", path: "/performance", hint: "P&L and risk-adjusted metrics" },
       { icon: PieChart, label: "Markets", path: "/analytics", hint: "Liquidity and microstructure" },
       { icon: Brain, label: "Sentiment", path: "/sentiment", hint: "Multi-source sentiment" },
       { icon: Network, label: "Cluster Monitor", path: "/cluster-monitor", hint: "Wash-trade detection" },
@@ -68,12 +76,12 @@ export const navSections: NavSection[] = [
     ],
   },
   {
-    label: "Control",
+    label: "Configure",
     items: [
-      { icon: Cpu, label: "Autonomy", path: "/autonomy", hint: "Autonomy mode + thresholds" },
-      { icon: Shield, label: "Risk Controls", path: "/risk-controls", hint: "Guardrails and alerts" },
+      { icon: Cpu, label: "Autonomy", path: "/autonomy", hint: "Mode + sizing + cadence" },
+      { icon: Bot, label: "Strategies", path: "/strategies", hint: "User-defined strategies" },
       { icon: BookOpen, label: "Training", path: "/training", hint: "Custom rules and filters" },
-      { icon: FileText, label: "Audit Log", path: "/audit", hint: "Immutable event ledger" },
+      { icon: Shield, label: "Risk Controls", path: "/risk-controls", hint: "Guardrails and alerts" },
     ],
   },
   {

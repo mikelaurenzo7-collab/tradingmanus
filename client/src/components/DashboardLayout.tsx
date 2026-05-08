@@ -9,6 +9,7 @@ import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
 import { LoginScreen } from "./shell/LoginScreen";
 import { Sidebar, SIDEBAR_COLLAPSED_KEY } from "./shell/Sidebar";
 import { Topbar } from "./shell/Topbar";
+import { deriveSetupStatus } from "@/lib/setupStatus";
 
 export default function DashboardLayout({
   children,
@@ -125,6 +126,12 @@ export default function DashboardLayout({
   const accountStatus = accountStatusQuery.data;
   const equity = accountStatus?.equity ?? null;
 
+  // Drives the topbar Setup pill + the /setup page from a single source.
+  const setupStatus = deriveSetupStatus({
+    accountStatus,
+    tradingPreferences: tradingPreferencesQuery.data,
+  });
+
   const handleLogin = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setLoginError(null);
@@ -201,6 +208,7 @@ export default function DashboardLayout({
           onKillSwitch={handleKillSwitch}
           onLogout={() => logout()}
           onOpenMobileNav={() => setMobileNavOpen(true)}
+          setupStatus={setupStatus}
         />
 
         <main className="flex-1 px-4 lg:px-6 py-5">{children}</main>

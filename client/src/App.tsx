@@ -25,6 +25,7 @@ const Funding = lazy(() => import("./pages/Funding"));
 const ClusterMonitor = lazy(() => import("./pages/ClusterMonitor"));
 const Strategies = lazy(() => import("./pages/Strategies"));
 const Chat = lazy(() => import("./pages/Chat"));
+const Setup = lazy(() => import("./pages/Setup"));
 
 function PageFallback() {
   return (
@@ -49,6 +50,7 @@ function Router() {
     <Switch>
       <Route path={"/"} component={withLayout(Dashboard)} />
       <Route path={"/dashboard"} component={withLayout(Dashboard)} />
+      <Route path={"/setup"} component={withLayout(Setup)} />
       <Route path={"/connect"} component={withLayout(Connect)} />
       <Route path={"/autonomy"} component={withLayout(TradingAutonomy)} />
       <Route path={"/trading-readiness"} component={withLayout(TradingReadiness)} />

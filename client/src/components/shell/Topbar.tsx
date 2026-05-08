@@ -20,6 +20,8 @@ import {
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { cn } from "@/lib/utils";
 import { findNavMatch, getPageLabel } from "./navigation";
+import { SetupStatusPill } from "./SetupStatusPill";
+import type { SetupStatus } from "@/lib/setupStatus";
 
 interface TopbarProps {
   user: { name?: string | null; email?: string | null } | null;
@@ -31,6 +33,8 @@ interface TopbarProps {
   /** Optional refresh handler (page-aware) — when null, button is hidden. */
   onRefresh?: () => void;
   refreshing?: boolean;
+  /** Setup-status snapshot — shows a checklist pill until all steps complete. */
+  setupStatus?: SetupStatus;
 }
 
 /**
@@ -50,6 +54,7 @@ export function Topbar({
   onOpenMobileNav,
   onRefresh,
   refreshing,
+  setupStatus,
 }: TopbarProps) {
   const [location] = useLocation();
   const [isMac, setIsMac] = useState(false);
@@ -129,6 +134,9 @@ export function Topbar({
         >
           <Search className="w-4 h-4" />
         </button>
+
+        {/* Setup-status pill (hidden when all 4 onboarding steps complete) */}
+        {setupStatus && <SetupStatusPill status={setupStatus} />}
 
         {/* Live armed pill (when armed) */}
         {liveTradingArmed && (
