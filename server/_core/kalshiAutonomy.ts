@@ -40,6 +40,7 @@ import {
   recordMarketReview,
   getAdaptiveCadenceTelemetry,
 } from "./adaptiveCadence";
+import { classifyMarketCategory } from "./marketCategoryRouter";
 import {
   alertIfConsecutiveFailures,
   alertEquityDrop,
@@ -632,7 +633,17 @@ async function generateScheduledSignals(userId: number, minConfidence: number, a
     const sidePrice = market
       ? Number(signal.side === "yes" ? market.yesPrice : market.noPrice)
       : NaN;
-    if (shouldReviewMarketAt(signal.marketId, sidePrice)) {
+    // Per-category cadence + near-resolution acceleration.  Crypto/sports
+    // get tighter TTLs than weather/politics; markets near resolution get
+    // a 2-10× tighter TTL.  See server/_core/adaptiveCadence.ts.
+    const category = market
+      ? classifyMarketCategory({ category: market.category, title: market.title })
+      : undefined;
+    const hoursToResolution =
+      market?.resolutionDate
+        ? Math.max(0, (new Date(market.resolutionDate).getTime() - Date.now()) / (60 * 60 * 1000))
+        : null;
+    if (shouldReviewMarketAt(signal.marketId, sidePrice, { category, hoursToResolution })) {
       cadencePassed.push(signal);
       if (Number.isFinite(sidePrice)) recordMarketReview(signal.marketId, sidePrice);
     } else {

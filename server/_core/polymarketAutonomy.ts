@@ -45,6 +45,7 @@ import {
   recordMarketReview,
   getAdaptiveCadenceTelemetry,
 } from "./adaptiveCadence";
+import { classifyMarketCategory } from "./marketCategoryRouter";
 import { logger } from "./logger";
 
 const MAX_SCHEDULED_MARKETS = 80;
@@ -391,12 +392,21 @@ export async function runPolymarketAutonomousTrading(
   // moved materially since their last review.  Mirror of the Kalshi gate
   // — same env vars, same in-memory cache, so a deploy-wide tuning of
   // SIGNAL_REVIEW_PRICE_DELTA_BPS / SIGNAL_REVIEW_STALE_TTL_MS controls
-  // both platforms uniformly.
+  // both platforms uniformly.  Per-category TTLs + near-resolution
+  // acceleration are layered automatically when env overrides are unset.
   const cadencePassedSignals: typeof executableSignals = [];
   const cadenceSkippedMarketIds: string[] = [];
   for (const signal of executableSignals) {
     const sidePrice = Number(signal.limitPrice);
-    if (shouldReviewMarketAt(signal.marketId, sidePrice)) {
+    const market = markets.find((m) => m.marketId === signal.marketId);
+    const category = market
+      ? classifyMarketCategory({ category: market.category, question: market.question })
+      : undefined;
+    const hoursToResolution =
+      market?.endDateIso
+        ? Math.max(0, (new Date(market.endDateIso).getTime() - Date.now()) / (60 * 60 * 1000))
+        : null;
+    if (shouldReviewMarketAt(signal.marketId, sidePrice, { category, hoursToResolution })) {
       cadencePassedSignals.push(signal);
       if (Number.isFinite(sidePrice)) recordMarketReview(signal.marketId, sidePrice);
     } else {
