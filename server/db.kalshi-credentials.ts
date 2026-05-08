@@ -21,6 +21,26 @@ export async function saveKalshiCredentials(
   const encryptedApiKey = encryptCredential(apiKey, userId);
   const encryptedPrivateKey = encryptCredential(privateKey, userId);
 
+  // Verify the round-trip immediately so a CREDENTIAL_ENCRYPTION_SECRET
+  // mismatch (e.g. Railway timing during a deploy) surfaces here as a
+  // connection error rather than silently surfacing at the next autonomy run.
+  try {
+    const roundTripApiKey = decryptCredential(encryptedApiKey, userId);
+    const roundTripPrivateKey = decryptCredential(encryptedPrivateKey, userId);
+    if (roundTripApiKey !== apiKey || roundTripPrivateKey !== privateKey) {
+      throw new Error("Credential round-trip mismatch after encryption");
+    }
+  } catch (verifyError) {
+    logger.error(
+      { err: verifyError, userId },
+      "[Database] Kalshi credential encrypt/decrypt round-trip failed — CREDENTIAL_ENCRYPTION_SECRET may be misconfigured"
+    );
+    throw new Error(
+      "Credentials could not be securely stored: the server encryption secret appears misconfigured. " +
+        "Verify CREDENTIAL_ENCRYPTION_SECRET is set correctly in Railway and redeploy, then try again."
+    );
+  }
+
   try {
     await database
       .insert(kalshiCredentials)
