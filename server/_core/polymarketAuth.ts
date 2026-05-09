@@ -8,6 +8,7 @@
  * Reference: https://docs.polymarket.com/#authentication
  */
 
+import { createHmac } from "crypto";
 import { CircuitBreaker } from "./circuitBreaker";
 import { fetchWithRetry } from "./fetchWithRetry";
 import { logger } from "./logger";
@@ -25,39 +26,45 @@ export const polymarketBreaker = new CircuitBreaker({
   cooldownMs: 30_000,
 });
 
-// Polymarket uses USDC.e (bridged USDC) on Polygon as collateral.
-const POLYGON_RPC = "https://polygon-rpc.com";
-const USDC_E_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174";
-const USDC_DECIMALS = 6;
+const CLOB_HOST = "https://clob.polymarket.com";
 
 /**
- * Fetch the on-chain USDC.e balance for a Polymarket proxy wallet address.
- * Uses a public Polygon JSON-RPC node — no API key required.
+ * Fetch the user's available USDC balance from Polymarket's CLOB API.
+ * Polymarket holds collateral inside their CTF Exchange contract — the
+ * wallet's on-chain USDC balance is always near-zero.  The CLOB /balance
+ * endpoint returns the actual tradeable collateral regardless of deposit
+ * method (USDC, BTC-converted-to-USDC, etc.).
+ *
+ * Uses L2 HMAC auth: HMAC-SHA256(base64-decoded apiSecret, ts+method+path)
  * Returns the balance in USD (float), or null on error.
  */
 export async function fetchPolymarketUsdcBalance(
+  apiKey: string,
+  apiSecret: string,
   walletAddress: string,
 ): Promise<number | null> {
-  if (!walletAddress || !/^0x[0-9a-fA-F]{40}$/.test(walletAddress)) return null;
+  if (!apiKey || !apiSecret || !walletAddress) return null;
   try {
-    // ERC-20 balanceOf(address) selector = 0x70a08231
-    const paddedAddr = walletAddress.slice(2).toLowerCase().padStart(64, "0");
-    const resp = await fetch(POLYGON_RPC, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        method: "eth_call",
-        params: [{ to: USDC_E_ADDRESS, data: `0x70a08231${paddedAddr}` }, "latest"],
-        id: 1,
-      }),
+    const ts = Math.floor(Date.now() / 1000).toString();
+    const path = "/balance";
+    const sig = createHmac("sha256", Buffer.from(apiSecret, "base64"))
+      .update(ts + "GET" + path)
+      .digest("base64");
+    const resp = await fetch(`${CLOB_HOST}${path}`, {
+      method: "GET",
+      headers: {
+        "POLY_ADDRESS": walletAddress,
+        "POLY_SIGNATURE": sig,
+        "POLY_TIMESTAMP": ts,
+        "POLY_NONCE": "0",
+      },
       signal: AbortSignal.timeout(5_000),
     });
     if (!resp.ok) return null;
-    const json = (await resp.json()) as { result?: string };
-    if (!json.result || json.result === "0x") return 0;
-    const raw = BigInt(json.result);
-    return Number(raw) / 10 ** USDC_DECIMALS;
+    const json = (await resp.json()) as { balance?: string | number };
+    if (json.balance == null) return null;
+    const parsed = parseFloat(String(json.balance));
+    return Number.isFinite(parsed) ? parsed : null;
   } catch {
     return null;
   }

@@ -222,27 +222,20 @@ export function buildCachedSystemPrompt(staticMandate: string, dynamicPreamble?:
 }
 
 export type ExtendedThinkingConfig =
-  | { type: "adaptive"; effort: "low" | "medium" | "high" }
+  | { type: "adaptive" }
   | { type: "enabled"; budget_tokens: number }
   | undefined;
 
 /**
- * Adaptive extended thinking on the deep tier.  Opus 4.7 (and later) rejects
- * the legacy manual mode (`{type:"enabled", budget_tokens}`) with a 400 and
- * requires `{type:"adaptive", effort}` — see Anthropic docs at
- * https://docs.claude.com/en/docs/build-with-claude/adaptive-thinking
- *
- * Adaptive lets the model decide how much thinking to spend per call up to
- * `max_tokens`.  We pin `effort: "high"` because this only fires on
- * high-stakes trades (large notional, near-resolution, contested mid-stakes)
- * where capital preservation outweighs thinking-token cost.  Sonnet/Haiku do
- * not benefit proportionally on this task, so adaptive only fires on the
- * deep tier (which currently maps to Opus by default).
+ * Adaptive extended thinking on the deep tier (Opus 4.7+).
+ * The API accepts `{type:"adaptive"}` without an `effort` field — the `effort`
+ * param was removed from the schema and returns a 400 "Extra inputs are not
+ * permitted" if included.  Sonnet/Haiku never reach this path.
  */
 export function buildExtendedThinking(stakes: StakesContext): ExtendedThinkingConfig {
   if (!isExtendedThinkingEnabled()) return undefined;
   if (!isHighStakes(stakes)) return undefined;
-  return { type: "adaptive", effort: "high" };
+  return { type: "adaptive" };
 }
 
 /**
