@@ -108,7 +108,16 @@ export async function getPerformanceSummary(
     const wins = rows.filter((r) => r.outcome === "win").length;
     const losses = rows.filter((r) => r.outcome === "loss").length;
     const realized = rows.reduce((acc, r) => acc + r.realizedPnlUsd, 0);
-    const aiCost = rows.reduce((acc, r) => acc + r.aiCostUsd, 0);
+    // Phase 1 renamed `grokCostUsd` → `aiCostUsd`. Existing audit-log rows
+    // written before Phase 1 still carry the legacy field name; coalesce so
+    // historical rows don't surface `NaN` in the totals.
+    const aiCostOf = (r: TradeOutcomeRecord): number => {
+      const direct = Number(r.aiCostUsd);
+      if (Number.isFinite(direct)) return direct;
+      const legacy = Number((r as unknown as { grokCostUsd?: number }).grokCostUsd);
+      return Number.isFinite(legacy) ? legacy : 0;
+    };
+    const aiCost = rows.reduce((acc, r) => acc + aiCostOf(r), 0);
     const feeUsd = rows.reduce((acc, r) => acc + r.feeUsd, 0);
 
     const byCategoryMap = new Map<string, TradeOutcomeRecord[]>();
@@ -123,7 +132,7 @@ export async function getPerformanceSummary(
       const cWins = list.filter((r) => r.outcome === "win").length;
       const cReal = list.reduce((a, r) => a + r.realizedPnlUsd, 0);
       const cFee = list.reduce((a, r) => a + r.feeUsd, 0);
-      const cAi = list.reduce((a, r) => a + r.aiCostUsd, 0);
+      const cAi = list.reduce((a, r) => a + aiCostOf(r), 0);
       const cPredictedEv =
         list.reduce((a, r) => a + r.predictedEvFraction, 0) / list.length;
       const cReturnFrac =
