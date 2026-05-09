@@ -68,10 +68,11 @@ export interface EnsembleVerdict {
   /** Stack of every reviewer that ran, in order. The first entry is the
    *  Tier-1 marker (synthesized — the real Tier-1 review ran upstream in
    *  reviewSignalsWithTrader). reviewerId reflects which provider was
-   *  active for Tier-1: `claude.sonnet-4-6` in the default Claude-as-trader
-   *  pivot, `grok.4-1-fast` in legacy mode. */
+   *  active for Tier-1: `claude.haiku-4-5` in the default Claude-as-trader
+   *  pivot (Haiku is the routine reviewer; Sonnet/Opus reserve for
+   *  Tier-2/Tier-3 escalations only), `grok.4-1-fast` in legacy mode. */
   reviews: Array<
-    | { reviewerId: "grok.4-1-fast" | "claude.sonnet-4-6.tier1-synthetic"; verdict: GrokVerdict }
+    | { reviewerId: "grok.4-1-fast" | "claude.haiku-4-5.tier1-synthetic"; verdict: GrokVerdict }
     | { reviewerId: ClaudeReviewVerdict["reviewerId"]; verdict: ClaudeReviewVerdict }
   >;
   totalAiCostUsd: number;
@@ -85,9 +86,9 @@ export interface EnsembleInput extends Omit<ClaudeReviewInput, "grokVerdict"> {
 
 export async function runEnsemble(input: EnsembleInput): Promise<EnsembleVerdict> {
   // Tier-1 reviewerId reflects the active provider, not always "Grok".
-  const tier1ReviewerId: "grok.4-1-fast" | "claude.sonnet-4-6.tier1-synthetic" =
+  const tier1ReviewerId: "grok.4-1-fast" | "claude.haiku-4-5.tier1-synthetic" =
     ENV.anthropicApiKey.length > 0
-      ? "claude.sonnet-4-6.tier1-synthetic"
+      ? "claude.haiku-4-5.tier1-synthetic"
       : "grok.4-1-fast";
   const reviews: EnsembleVerdict["reviews"] = [
     { reviewerId: tier1ReviewerId, verdict: input.grokVerdict },
@@ -519,7 +520,7 @@ async function processOneSignalForEnsemble(
     expectedValueAdjustment: 0,
     impliedProbability: s.impliedProbability,
     reasoning: ENV.anthropicApiKey
-      ? "Approved by primary reviewer (Tier 1: Claude Sonnet)"
+      ? "Approved by primary reviewer (Tier 1: Claude Haiku)"
       : "Approved by primary reviewer (Tier 1: Grok)",
     firstPassApproved: true,
     secondPassApproved: true,

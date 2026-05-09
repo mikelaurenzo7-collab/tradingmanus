@@ -79,9 +79,35 @@ export function listGrokPersonasForPlatform(
 }
 
 /** Substitute the verbatim resolution-rules text into the persona's
- *  ${RULES_BLOCK} placeholder. Kept as a no-op style helper for any
- *  callers that still rely on it; the single-persona mandate doesn't
- *  template per-market because that breaks prompt caching. */
-export function injectVerbatimRulesBlock(mandate: string, _rulesText: string): string {
+ *  ${RULES_BLOCK} placeholder if present. The current single-persona
+ *  mandate does NOT contain that placeholder — rules text is now
+ *  injected into the user prompt by the reviewer instead, where it
+ *  doesn't invalidate the cached system block.
+ *
+ *  Behavior:
+ *  - If the mandate contains `${RULES_BLOCK}`: substitute rulesText
+ *    (preserves backward compatibility with any callers still using
+ *    the placeholder pattern).
+ *  - If the mandate has no placeholder AND rulesText is non-empty:
+ *    THROW. Silently dropping the rules text would let the reviewer
+ *    operate without resolution-criteria context, defeating the
+ *    skip-on-ambiguity discipline. Caller must move rules into the
+ *    user prompt before calling, or pass an empty rulesText.
+ *  - If the mandate has no placeholder AND rulesText is empty: return
+ *    mandate unchanged (the expected single-persona happy path). */
+export function injectVerbatimRulesBlock(mandate: string, rulesText: string): string {
+  const trimmed = (rulesText ?? "").trim();
+  if (mandate.includes("${RULES_BLOCK}")) {
+    return mandate.replace("${RULES_BLOCK}", trimmed || "(no rules text supplied)");
+  }
+  if (trimmed.length > 0) {
+    throw new Error(
+      "injectVerbatimRulesBlock: mandate contains no `${RULES_BLOCK}` placeholder " +
+        "but non-empty rulesText was supplied. The single-persona mandate now " +
+        "expects rules to be injected into the USER prompt (not the system " +
+        "block) so the persona stays prompt-cacheable. Move the rules " +
+        "block out of this call site.",
+    );
+  }
   return mandate;
 }

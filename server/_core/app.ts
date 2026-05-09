@@ -371,7 +371,7 @@ export async function createApp(options: { runStartupMigrations?: boolean } = {}
       status: db.status === "ok" ? "ok" : "degraded",
       runtime: "node",
       scheduler: "node-interval",
-      interval_minutes: 15,
+      interval_minutes: 10,
       checks: {
         database: {
           status: db.status,
@@ -416,7 +416,7 @@ export async function createApp(options: { runStartupMigrations?: boolean } = {}
   logger.info(
     {
       nodeEnv: process.env.NODE_ENV,
-      runtime: process.env.VERCEL ? "vercel" : "node",
+      runtime: "node",
     },
     "Application initialized successfully"
   );

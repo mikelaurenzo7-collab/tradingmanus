@@ -73,18 +73,21 @@ const PROFIT_PERSONA_MANDATE = [
   "Output: a single JSON verdict matching the schema. No prose outside JSON.",
 ].join("\n");
 
-const PROFIT_PERSONA: CategoryPersona = {
-  platform: "kalshi",
-  category: "other",
+const PROFIT_PERSONA_BASE = {
+  platform: "kalshi" as const,
   id: "kalshi.profit-reviewer",
   label: "Profit Reviewer",
   systemMandate: PROFIT_PERSONA_MANDATE,
 };
 
-export function getCategoryPersona(_platform: Platform, _category: MarketCategory): CategoryPersona {
-  return PROFIT_PERSONA;
+export function getCategoryPersona(_platform: Platform, category: MarketCategory): CategoryPersona {
+  // Stamp the caller-supplied category onto the returned persona so
+  // downstream consumers (deskMemory keyed by category, audit labels,
+  // per-category caches) don't collapse every market into "other".
+  // The persona content is shared; only the category field varies.
+  return { ...PROFIT_PERSONA_BASE, category };
 }
 
 export function listPersonasForPlatform(_platform: Platform): CategoryPersona[] {
-  return [PROFIT_PERSONA];
+  return [{ ...PROFIT_PERSONA_BASE, category: "other" }];
 }

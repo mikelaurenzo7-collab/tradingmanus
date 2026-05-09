@@ -32,7 +32,7 @@ auto-scale as your account grows.
 
 | Gate | Floor (auto-scales with live Kalshi capital) |
 | --- | --- |
-| Net EV (after exact Kalshi fees + amortized AI cost) | ≥ 6.5 % |
+| Net EV (after exact Kalshi fees + amortized AI cost) | ≥ 5 % |
 | Confidence after ensemble adjustment + self-consistency | ≥ 76 % |
 | Position size: ½ Kelly (moderately aggressive default) | clamped 0.5 %–4 % of live capital |
 | Total open exposure | ≤ 20 % of live capital |
@@ -173,13 +173,13 @@ CLAUDE_OPUS_TIMEOUT_MS                  # 45000 (default)
 AI_DAILY_BUDGET_USD                     # 0=unlimited (default)
 
 # Schedulers
-AUTONOMY_INTERVAL_MS                    # 60000 (default 60s)
+AUTONOMY_INTERVAL_MS                    # 600000 (default 10 min)
 ORDER_SYNC_INTERVAL_MS                  # 30000 (default 30s)
 PAPER_TRADE_MODE                        # global emergency kill-switch
 AUDIT_LOG_RETENTION_DAYS                # 90 (default)
 
 # Profit guardrails — all percentages, auto-scale with live capital
-MIN_NET_EV                              # 0.065
+MIN_NET_EV                              # 0.05
 MIN_CONFIDENCE_AFTER_ADJUST             # 0.76
 MAX_PORTFOLIO_EXPOSURE_PCT              # 0.20
 MAX_CORRELATED_GROUP_PCT                # 0.10
@@ -210,10 +210,6 @@ SCANNER_HIGH_OPP_WEEKLY_EDGE_PCT        # 0.08
 KALSHI_MAKER_FEE_MULTIPLIER             # 0.0175
 KALSHI_TAKER_FEE_MULTIPLIER             # 0.07
 PREFER_MAKER_ORDERS                     # true (default)
-
-# Owner-override domains — categories where your domain knowledge is high
-# enough to relax the AI gate (hard guardrails still apply).
-OWNER_OVERRIDE_DOMAINS                  # CSV, e.g. "weather,economics"
 ```
 
 ## Key modules

@@ -95,14 +95,17 @@ export function isHighStakes(context: StakesContext): boolean {
 export function selectAnthropicModel(tier: ModelTier, override?: string): string {
   if (override && override.trim()) return override.trim();
   // Claude-as-trader cost tiering:
-  //   - Routine tier (every signal):     Haiku 4.5  (~$1/M in, $5/M out)
-  //   - Deep tier (high-edge candidates): Opus 4.7  (~$5/M in, $25/M out)
-  // Sonnet is no longer the routine default — Haiku is 3× cheaper and
-  // sufficient for the heuristic-pre-filtered signals that reach this gate.
-  // The ensemble's Tier-2 escalation still runs Sonnet when a high-stakes
-  // signal trips the prob-of-capital threshold.
+  //   - Routine tier (every signal): Haiku 4.5  (~$1/M in, $5/M out)
+  //   - Deep tier  (high-stakes batches per stakesForSignals heuristic):
+  //                Sonnet 4.6  (~$3/M in, $15/M out)
+  // Opus 4.7 is RESERVED for the ensemble's gross-EV-gated Tier-3 escalation
+  // (ensembleConsensus.ts: OPUS_ESCALATION_MIN_GROSS_EV) AND the catastrophic-
+  // bet unanimous gate. It must NOT fire as a primary reviewer here — the
+  // stakesForSignals heuristic flags routine batches as "high-stakes" for
+  // common inputs (price ≥ 10¢, confidence ≥ X, tail probabilities), which
+  // would burn Opus on every routine cycle and bypass the new cost gate.
   if (ENV.anthropicApiKey.length > 0) {
-    return tier === "deep" ? ENV.claudeOpusModel : ENV.claudeHaikuModel;
+    return tier === "deep" ? ENV.claudeSonnetModel : ENV.claudeHaikuModel;
   }
   return ENV.grokModel;
 }
