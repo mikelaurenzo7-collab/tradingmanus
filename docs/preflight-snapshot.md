@@ -14,7 +14,7 @@
 
 ## Recent commit history (last 20)
 
-```
+```text
 db62b06 fix(audit): clob-client for balance + EV units in remaining gates (#62)
 edd8feb fix(audit): use clob-client for balance + correct EV units in all gates
 9cfe0b6 fix: EV units + Polymarket balance endpoint + signal noise (#61)
@@ -70,8 +70,8 @@ DATABASE_URL='postgresql://...' corepack pnpm exec node scripts/preflightSnapsho
 The script issues only `SELECT` statements — no schema or data writes — and
 prints:
 
-1. Row counts for `kalshiCapital`, `kalshi{Positions,Orders,Fills}`, `polymarket{Positions,Orders,Fills}` (owner `userId=1`).
-2. **Halt-check** for any `polymarketPositions` row with `sizeUsdc > 0` and `positionStatus IN ('open', 'closing')` — if non-empty, halt the hardening pass and report (contradicts "fully cash" precondition).
+1. Row counts for `kalshiCapital`, `kalshi{Positions,Orders,Fills}`, `polymarket{Positions,Orders,Fills}` (owner resolved via `users.openId='owner:primary'`).
+2. **Halt-check** for any `polymarketPositions` row with `sizeUsdc > 0` and `positionStatus IN ('open', 'closing')` — if non-empty, the script exits with code 2 (halt the hardening pass and report — contradicts "fully cash" precondition).
 3. Latest 3 `kalshiCapital` rows (the operator-stated $300.00 should appear here).
 4. Owner's `tradingPreferences` row (cadence, autonomy mode, paper-mode flag).
 
@@ -188,7 +188,7 @@ Per-user `paperTradeMode` field still exists in `tradingPreferences` (DB column 
 
 ## Rollback
 
-```
+```bash
 git checkout main
 git reset --hard pre-hardening-2026-05-09
 git push --force-with-lease origin main   # ← only if approved
