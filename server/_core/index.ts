@@ -295,9 +295,18 @@ async function runPolymarketAutonomousScheduler() {
 
     let executedUsers = 0;
     for (const user of scopedUsers as Array<{ id: number; openId: string }>) {
-      // Filter to Polymarket-subscribed users so we don't burn locks on no-ops.
-      const subscribed = await polymarketCredDb.isUserSubscribedToPolymarket(user.id);
-      if (!subscribed) continue;
+      // Single-owner fence: Polymarket creds + the POLYMARKET_OWNER_ADDRESS
+      // env var both belong to the operator's wallet.  In default lockdown
+      // mode `getUsersEligibleForAutomaticScheduledTrading()` already only
+      // returns `owner:primary`, but enforce it explicitly here so a future
+      // ALLOW_PUBLIC_REGISTRATION=true rollout can't accidentally apply the
+      // owner's wallet to another user's autonomy run.
+      if (user.openId !== "owner:primary") continue;
+      // Skip the per-user lock when Polymarket creds aren't connected — keeps
+      // the audit log clean of "skipped — no creds" rows when the operator
+      // hasn't yet wired Polymarket up.
+      const hasPolymarket = await polymarketCredDb.isUserSubscribedToPolymarket(user.id);
+      if (!hasPolymarket) continue;
 
       const lock = createPolymarketAutonomousTradingLock(user.id);
       const acquired = await lock.acquire({ ttlMs: 5 * 60 * 1000 });
@@ -354,8 +363,14 @@ async function runPolymarketOrderSync() {
 
     let exitTriggered = 0;
     for (const user of scopedUsers as Array<{ id: number; openId: string }>) {
-      const subscribed = await polymarketCredDb.isUserSubscribedToPolymarket(user.id);
-      if (!subscribed) continue;
+      // Same single-owner fence as the autonomy scheduler: the data-api
+      // sync uses the global POLYMARKET_OWNER_ADDRESS wallet, so it must
+      // only apply to the owner's row.  Without this, a multi-tenant
+      // rollout would copy the owner's positions into every subscribed
+      // user and false-flag their real positions as drifted-closed.
+      if (user.openId !== "owner:primary") continue;
+      const hasPolymarket = await polymarketCredDb.isUserSubscribedToPolymarket(user.id);
+      if (!hasPolymarket) continue;
 
       const lock = createPolymarketOrderSyncLock(user.id);
       const acquired = await lock.acquire({ ttlMs: 60 * 1000 });

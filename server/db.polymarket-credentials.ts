@@ -164,9 +164,11 @@ export async function getPlatformSubscriptions(userId: number) {
 }
 
 /**
- * Check whether a user is currently subscribed to the Polymarket platform.
- * Returns true when the user's subscribedPlatforms value is 'polymarket' or 'both'.
- * Defaults to false (deny) on any database error.
+ * Single-owner gate for whether the Polymarket pipeline should run.  Returns
+ * true iff this user has connected Polymarket credentials with status
+ * `connected`.  The previous multi-tenant `userPlatformSubscriptions` table
+ * is no longer consulted — at single-owner scale, "connecting Polymarket
+ * credentials" IS the subscription.  Name kept for call-site compatibility.
  */
 export async function isUserSubscribedToPolymarket(userId: number): Promise<boolean> {
   const database = await getDb();
@@ -176,17 +178,13 @@ export async function isUserSubscribedToPolymarket(userId: number): Promise<bool
 
   try {
     const result = await database
-      .select({ subscribedPlatforms: userPlatformSubscriptions.subscribedPlatforms })
-      .from(userPlatformSubscriptions)
-      .where(eq(userPlatformSubscriptions.userId, userId))
+      .select({ accountStatus: polymarketCredentials.accountStatus })
+      .from(polymarketCredentials)
+      .where(eq(polymarketCredentials.userId, userId))
       .limit(1);
 
-    if (!result || result.length === 0) {
-      return false;
-    }
-
-    const { subscribedPlatforms } = result[0];
-    return subscribedPlatforms === "polymarket" || subscribedPlatforms === "both";
+    if (!result || result.length === 0) return false;
+    return result[0].accountStatus === "connected";
   } catch (error) {
     logger.error({ err: error }, "[Database] isUserSubscribedToPolymarket check failed");
     return false;

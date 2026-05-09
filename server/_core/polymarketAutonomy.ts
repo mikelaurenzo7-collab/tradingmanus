@@ -716,7 +716,13 @@ export async function runPolymarketAutonomousTrading(
             tokenId: best.tokenId,
             side: "BUY",
             price: best.limitPrice,
-            size: scaledSize,
+            // CLOB `size` is TOKEN quantity, not USDC.  scaledSize is a USDC
+            // budget (from maxOrderNotional / Kelly / risk limits).  Convert
+            // budget → tokens by dividing by the limit price; the matching
+            // engine fills at-or-better, so notional ≤ scaledSize is the
+            // post-condition we want.  Floor a hair below the budget to
+            // avoid rounding above it.
+            size: Math.max(0, Math.floor((scaledSize / Math.max(best.limitPrice, 1e-6)) * 100) / 100),
           },
         );
 

@@ -278,10 +278,17 @@ export async function closePolymarketPosition(
   apiPassphrase: string,
   position: { tokenId: string; sizeUsdc: number; price: number },
 ): Promise<{ success: boolean; orderId?: string; error?: string }> {
+  // CLOB `size` is TOKEN quantity, not USDC notional.  Convert the USDC
+  // budget into tokens via `sizeUsdc / price`.  Floor a hair below to avoid
+  // rounding above the requested notional.
+  const tokens = Math.max(
+    0,
+    Math.floor((position.sizeUsdc / Math.max(position.price, 1e-6)) * 100) / 100,
+  );
   return placePolymarketOrder(apiKey, apiSecret, apiPassphrase, {
     tokenId: position.tokenId,
     side: "SELL",
     price: position.price,
-    size: position.sizeUsdc,
+    size: tokens,
   });
 }
