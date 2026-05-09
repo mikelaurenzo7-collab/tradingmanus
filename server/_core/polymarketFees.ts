@@ -26,7 +26,11 @@ const POLYMARKET_ROUND_TRIP_GAS_USD = 0.02;
 interface ComputePolymarketRoundTripCostArgs {
   /** Side-specific entry price in cents (1-99). */
   priceCents: number;
-  /** Number of contracts (USDC equivalent units). */
+  /**
+   * Token/share quantity (NOT USDC stake).  Notional in USD is derived
+   * via `contracts × entryPriceUsd`.  Callers that have a `sizeUsdc`
+   * stake should convert via `sizeUsdc / entryPriceUsd` before passing.
+   */
   contracts: number;
   /** Best bid in cents on the side being bought. */
   bestBidCents: number;
