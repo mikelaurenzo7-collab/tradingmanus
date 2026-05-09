@@ -505,7 +505,14 @@ async function processOneSignalForEnsemble(
   // INNER: this body is identical to the prior serial-loop body (scoped to
   // a single signal). Kept as a helper so we can Promise.all it.
   const notionalUsd = s.count * s.marketPrice;
-  const grossEvFraction = s.expectedValue;
+  // s.expectedValue is dollar EV per $1 payout face (bounded [-1,1]).
+  // Convert to ROI-per-dollar-invested for the OPUS_ESCALATION_MIN_GROSS_EV
+  // threshold and downstream calculateNetEv.  Without this, the gate
+  // understates edge by a factor of marketPrice — e.g. true 50% ROI on a
+  // $0.40 contract was reported as 20%.  See profitGuardrails.ts for the
+  // matching fix at the per-signal gate.
+  const entryForRoi = Math.max(0.01, s.marketPrice);
+  const grossEvFraction = s.expectedValue / entryForRoi;
 
   // Synthesise a Tier-1 approval marker from the upstream-approved signal.
   // The actual Tier-1 review (Claude Sonnet by default in Claude-as-trader
@@ -594,10 +601,12 @@ async function processOneSignalForEnsemble(
   // Re-check the post-fee + post-AI-cost net EV against the configured hard
   // floor (default MIN_NET_EV=0.05). Claude reviewers can trim EV; a
   // previously valid 7% trade reduced to 3% must be vetoed.
+  // Convert per-payout-face EV to ROI-per-dollar (see helper above).
+  const adjustedEntryForRoi = Math.max(0.01, adjustedSignal.marketPrice);
   const net = calculateNetEv({
     count: adjustedSignal.count,
     entryPrice: adjustedSignal.marketPrice,
-    grossEvFraction: adjustedSignal.expectedValue,
+    grossEvFraction: adjustedSignal.expectedValue / adjustedEntryForRoi,
     amortizedAiCostUsd: ensemble.totalAiCostUsd,
   });
   const minNetEv = ENV.profitGuardrails.minNetEv;

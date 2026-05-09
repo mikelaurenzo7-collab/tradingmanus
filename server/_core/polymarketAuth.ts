@@ -8,7 +8,6 @@
  * Reference: https://docs.polymarket.com/#authentication
  */
 
-import { createHmac } from "crypto";
 import { CircuitBreaker } from "./circuitBreaker";
 import { fetchWithRetry } from "./fetchWithRetry";
 import { logger } from "./logger";
@@ -26,65 +25,61 @@ export const polymarketBreaker = new CircuitBreaker({
   cooldownMs: 30_000,
 });
 
-const CLOB_HOST = "https://clob.polymarket.com";
 const USDC_DECIMALS_DIVISOR = 1_000_000;
 
 /**
  * Fetch the user's available USDC collateral from Polymarket's CLOB API.
  * Polymarket holds collateral inside their CTF Exchange contract — the
- * wallet's on-chain USDC balance is always near-zero.  The CLOB
- * /balance-allowance endpoint returns the tradeable collateral regardless
- * of deposit method (USDC, BTC-converted-to-USDC, etc.).
+ * wallet's on-chain USDC balance is always near-zero.  The /balance-allowance
+ * endpoint returns the tradeable collateral regardless of deposit method
+ * (USDC, BTC-converted-to-USDC, etc.).
  *
- * Auth: L2 HMAC.
- *   - Signature = base64url(HMAC-SHA256(base64decode(apiSecret), ts+method+path+body))
- *   - Note url-safe base64 (`+`→`-`, `/`→`_`) — required by Polymarket's
- *     spec; standard base64 chars cause ~25% of signatures to be rejected.
- *   - GET requests: body is empty string.
+ * Implementation: delegates to the official @polymarket/clob-client which
+ * handles L2 HMAC auth (POLY_ADDRESS = signer-derived address, POLY_API_KEY,
+ * POLY_PASSPHRASE, POLY_SIGNATURE = url-safe base64 HMAC-SHA256 of
+ * `ts+method+path[+body]` keyed by base64-decoded apiSecret, POLY_TIMESTAMP).
+ * Hand-rolling these headers had multiple subtle bugs (wrong endpoint, wrong
+ * Authorization vs POLY_API_KEY scheme, missing POLY_PASSPHRASE, signer-vs-
+ * funder address confusion for POLY_PROXY users).
  *
- * Response shape: `{ balance: string }` where balance is the collateral in
- * raw 6-decimal USDC units (e.g. "5000000" = 5 USDC).  Divide by 1e6 for USD.
+ * Response: `{ balance: string, allowance: string }` where balance is in raw
+ * 6-decimal USDC units (e.g. "5000000" = 5 USDC).  Returns USD float, or null.
  */
-export async function fetchPolymarketUsdcBalance(
-  apiKey: string,
-  apiSecret: string,
-  walletAddress: string,
-): Promise<number | null> {
-  if (!apiKey || !apiSecret || !walletAddress) return null;
+export async function fetchPolymarketUsdcBalance(input: {
+  apiKey: string;
+  apiSecret: string;
+  apiPassphrase: string;
+  walletPrivateKey: string;
+  walletAddress: string;
+  signatureType?: number;
+}): Promise<number | null> {
+  if (
+    !input.apiKey ||
+    !input.apiSecret ||
+    !input.apiPassphrase ||
+    !input.walletPrivateKey ||
+    !input.walletAddress
+  ) {
+    return null;
+  }
   try {
-    const ts = Math.floor(Date.now() / 1000).toString();
-    const path = "/balance-allowance?asset_type=COLLATERAL";
-    const body = "";
-    const sig = createHmac("sha256", Buffer.from(apiSecret, "base64"))
-      .update(ts + "GET" + path + body)
-      .digest("base64")
-      .replace(/\+/g, "-")
-      .replace(/\//g, "_");
-    const resp = await fetch(`${CLOB_HOST}${path}`, {
-      method: "GET",
-      headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "POLY_ADDRESS": walletAddress,
-        "POLY_SIGNATURE": sig,
-        "POLY_TIMESTAMP": ts,
-        "POLY_NONCE": "0",
-      },
-      signal: AbortSignal.timeout(5_000),
+    const { buildPolymarketClobClient } = await import("./polymarketSigner");
+    const { AssetType } = await import("@polymarket/clob-client");
+    const client = buildPolymarketClobClient({
+      apiKey: input.apiKey,
+      apiSecret: input.apiSecret,
+      apiPassphrase: input.apiPassphrase,
+      privateKey: input.walletPrivateKey,
+      walletAddress: input.walletAddress,
+      signatureType: input.signatureType as 0 | 1 | 2 | undefined,
     });
-    if (!resp.ok) {
-      logger.warn(
-        { status: resp.status },
-        "[Polymarket] CLOB /balance-allowance fetch failed",
-      );
-      return null;
-    }
-    const json = (await resp.json()) as { balance?: string | number };
-    if (json.balance == null) return null;
-    const rawUnits = parseFloat(String(json.balance));
+    const resp = await client.getBalanceAllowance({ asset_type: AssetType.COLLATERAL });
+    if (!resp || resp.balance == null) return null;
+    const rawUnits = parseFloat(String(resp.balance));
     if (!Number.isFinite(rawUnits)) return null;
     return rawUnits / USDC_DECIMALS_DIVISOR;
   } catch (err) {
-    logger.warn({ err }, "[Polymarket] CLOB /balance-allowance fetch error");
+    logger.warn({ err }, "[Polymarket] /balance-allowance fetch error");
     return null;
   }
 }

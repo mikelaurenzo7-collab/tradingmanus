@@ -321,10 +321,18 @@ export async function runDailyMoonshotPlay(
         v.signalType === String(sig.signalType ?? "default"),
     );
     const ensembleCost = verdict?.ensemble.totalAiCostUsd ?? 0;
+    // sig.expectedValue is the per-contract dollar EV (= EV per $1 payout face,
+    // bounded in [-1, 1]).  calculateNetEv expects ROI-per-dollar-invested, so
+    // divide by entry (the side-specific marketPrice).  Without this, every
+    // moonshot's EV is understated by a factor of marketPrice — a true 100% ROI
+    // on a $0.10 contract was being reported as 10% and consistently failing
+    // the moonshot floor.  This is the root reason no moonshot ever qualifies
+    // even when the underlying ratio is wildly profitable.
+    const entryForRoi = Math.max(0.01, sig.marketPrice);
     const net = calculateNetEv({
       count: sig.count,
       entryPrice: sig.marketPrice,
-      grossEvFraction: sig.expectedValue,
+      grossEvFraction: sig.expectedValue / entryForRoi,
       amortizedAiCostUsd: ensembleCost,
     });
     return net.netEvFraction >= ENV.dailyMoonshotMinNetEv;

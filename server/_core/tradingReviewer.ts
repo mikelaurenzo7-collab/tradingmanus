@@ -945,11 +945,17 @@ export async function reviewSignalsWithTrader(
   // Logs each rejection so the audit trail captures the reason.
   const filterByGuardrails = (signals: KalshiSignal[], context: string) =>
     signals.filter((s) => {
+      // entryPrice MUST be the price of the side being bought (YES → yesPrice,
+      // NO → 1 - yesPrice).  signal.impliedProbability is always the YES
+      // probability by convention; passing it directly for a NO signal makes
+      // the ROI gate and fee math wrong by a factor of yesPrice/(1-yesPrice).
+      const yesProb = Number((s as { impliedProbability?: number }).impliedProbability ?? 0.5);
+      const entry = s.side === "no" ? 1 - yesProb : yesProb;
       const check = checkProfitGuardrails({
         expectedValue: s.expectedValue,
         confidence: s.confidence,
         count: 1,
-        entryPrice: Number((s as { impliedProbability?: number }).impliedProbability ?? 0.5),
+        entryPrice: entry,
         category: "other",
       });
       if (!check.approved) {
