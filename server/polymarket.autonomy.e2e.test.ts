@@ -140,9 +140,9 @@ describe("Polymarket autonomy E2E — full cycle", () => {
     mocks.getPolymarketCredentials.mockResolvedValue({
       userId: 8,
       accountStatus: "connected",
-      apiKey: "pm-key",
-      apiSecret: "pm-secret",
-      apiPassphrase: "pm-pass",
+      apiKey: "k",
+      apiSecret: "s",
+      apiPassphrase: "p",
       walletPrivateKey: "0x" + "11".repeat(32),
       walletAddress: "0x0000000000000000000000000000000000000001",
       signatureType: 1,
