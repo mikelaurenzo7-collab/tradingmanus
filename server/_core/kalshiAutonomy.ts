@@ -1553,13 +1553,18 @@ export async function runScheduledAutonomousTrading(
     const kellyFraction = signal.metadata?.kellyFraction
       ?? computeKellyFraction(signal.confidence, signal.marketPrice);
     const availableNow = Number(capital?.currentBalance ?? 0);
+    // Outer cap: MAX_RISK_PER_TRADE_PERCENT of live capital.  This binds
+    // even when Kelly suggests a larger size and the percentage-of-capital
+    // formula above would allow it.  Acts as the hardest ceiling on a
+    // single trade.
+    const hardOuterCap = availableNow * ENV.profitGuardrails.maxRiskPerTradePct;
     // Kelly-sized budget: Kelly fraction × available capital, bounded by the raw cap.
     // A Kelly fraction of 0 means no edge; use at least 1¢ so budget checks
     // still fire the risk_budget_below_one_contract guard rather than silently
     // blocking with a misleading error.
     const kellyBudget = kellyFraction > 0
-      ? Math.min(rawBudget, Math.max(0.01, availableNow * kellyFraction))
-      : rawBudget;
+      ? Math.min(rawBudget, hardOuterCap, Math.max(0.01, availableNow * kellyFraction))
+      : Math.min(rawBudget, hardOuterCap);
     const maxBudget = kellyBudget;
     const evaluation = evaluateExecutionCandidate(signal, {
       openPositions,

@@ -957,6 +957,18 @@ export function filterSignalsByMarketConditions(
   feeds?: Map<string, MarketFeed>,
   minLiquidityScore: number = 0.35
 ): KalshiSignal[] {
+  // Hard USD-liquidity floor (env: MIN_LIQUIDITY_USD, default $40k).  Markets
+  // with thinner aggregate volume have unreliable fills, blown-out spreads,
+  // and AI-cost-to-edge ratios that flip the trade negative-EV in expectation.
+  // Lazy-import to avoid a circular dep with env at module load.
+  let minLiquidityUsd = 0;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    minLiquidityUsd = require("./env").ENV.profitGuardrails.minLiquidityUsd ?? 0;
+  } catch {
+    minLiquidityUsd = 0;
+  }
+
   return signals.filter((signal) => {
     const hasFiniteCoreFields =
       Number.isFinite(signal.marketPrice) &&
@@ -976,6 +988,14 @@ export function filterSignalsByMarketConditions(
 
     if (!hasActionablePricing) {
       return false;
+    }
+
+    // USD-volume gate (skipped only when MIN_LIQUIDITY_USD=0).
+    if (minLiquidityUsd > 0) {
+      const usdVolume = Number(signal.metadata?.totalVolume ?? 0);
+      if (!Number.isFinite(usdVolume) || usdVolume < minLiquidityUsd) {
+        return false;
+      }
     }
 
     const metadataLiquidity = signal.metadata?.liquidityScore;

@@ -76,7 +76,11 @@ export const DEFAULT_TRADING_PREFERENCES: TradingPreferencesSettings = {
   moonshotMode: false,
   executionCadence: "manual_only",
   riskPosture: "balanced",
-  minSignalConfidence: 0.72,
+  // Lowered from 0.72 → 0.70 for higher trade volume on a small high-risk
+  // account.  The dual-bot Claude+Grok consensus already enforces a hard
+  // floor independent of this preference, so 0.70 is the sweet spot for
+  // "trade more often without weakening review quality".
+  minSignalConfidence: 0.70,
   maxOrderNotional: 50,  // $50 default — capital-fraction math is the real cap
   maxDailyOrders: 3,
   requireApprovalAbove: 8,

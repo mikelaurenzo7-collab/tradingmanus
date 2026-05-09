@@ -174,25 +174,27 @@ export const ENV = {
     { min: 0.02, max: 0.5 },
   ),
 
-  // ── Profit guardrails (high-edge, capital-preservation first) ────────────
-  // Hard floor net EV after Kalshi fees + amortized AI cost: 6.5%.
-  // Confidence floor: 76%. These are the post-pivot tighter thresholds.
+  // ── Profit guardrails (aggressive small-account tuning) ──────────────────
+  // Defaults tuned for a <$1000 risk-tolerant account where the goal is
+  // maximum intelligent trade volume.  Override individually for stricter
+  // posture; the dashboard exposes per-user knobs that take precedence.
   profitGuardrails: {
-    // Net-EV floor (after fees + amortized AI cost). Default 5 % — was
-    // 6.5 %, which empirically rejected 5-7 % edge trades that are
-    // legitimately profitable on a calibrated reviewer. The
-    // MIN_CONFIDENCE_AFTER_ADJUST floor + drawdown breakers are the
-    // real miscalibration safety net; layering a tight EV floor on top
-    // costs ~30-40 % of legitimate volume. Set higher for conservative
-    // mode, lower for more volume.
-    minNetEv: normalizeFloat(process.env.MIN_NET_EV, 0.05, { min: 0, max: 1 }),
-    minPositiveEv: normalizeFloat(process.env.MIN_NET_EV, 0.05, {
+    // Net-EV floor (after Kalshi fees + amortized AI cost).  Default 2 % —
+    // aggressive volume mode.  The dual-bot Claude+Grok consensus + the
+    // confidence floor + drawdown breakers are the real safety net; a
+    // tight EV floor on top costs ~40 % of legitimate volume on a small
+    // account.  Raise to 0.05 for conservative posture.
+    minNetEv: normalizeFloat(process.env.MIN_NET_EV, 0.02, { min: 0, max: 1 }),
+    minPositiveEv: normalizeFloat(process.env.MIN_NET_EV, 0.02, {
       min: 0,
       max: 1,
     }),
+    // Confidence floor after AI adjustment.  0.70 — every signal still has
+    // to clear two independent reviewers (Claude + Grok), so 0.70 here
+    // means "both reviewers agreed and the joint posterior is ≥0.70".
     minConfidenceAfterAdjust: normalizeFloat(
       process.env.MIN_CONFIDENCE_AFTER_ADJUST,
-      0.76,
+      0.70,
       { min: 0, max: 1 },
     ),
     // 35% total exposure (was 25%): at $500 we want 3-7 concurrent
@@ -209,22 +211,22 @@ export const ENV = {
       0.15,
       { min: 0.01, max: 1 },
     ),
-    // Kelly sizing: ~⅔ Kelly (0.65) for a growth-oriented $500 account.
-    // At ⅔ Kelly the long-run growth rate is >90% of full-Kelly while
-    // drawdown variance drops 3-4× vs full Kelly.  With a calibrated
-    // reviewer (Brier score ≤ 0.22 on our signals) this is the
-    // profit-maximising point given our fee structure.
-    // Override with KELLY_FRACTION=0.5 for half-Kelly if preferred.
-    kellyFraction: normalizeFloat(process.env.KELLY_FRACTION, 0.65, {
+    // Half-Kelly (0.5).  Long-run growth rate ~85 % of full-Kelly with
+    // 4× less drawdown variance.  Best fit for a calibrated dual-bot
+    // reviewer and a small high-risk-tolerance account.  KELLY_FRACTION=
+    // 0.65 for two-thirds Kelly, 0.25 for quarter-Kelly.
+    kellyFraction: normalizeFloat(process.env.KELLY_FRACTION, 0.5, {
       min: 0.05,
       max: 1,
     }),
-    // 8% cap: at $500 = $40 max per trade.  Below the $50 taker-fee cliff
-    // where Kalshi's fee structure penalises large single-contract orders.
+    // 25 % cap (was 8 %).  At <$1000 with high risk tolerance the operator
+    // wants Kelly to bind on edge magnitude, not on an artificially-low
+    // ceiling.  MAX_RISK_PER_TRADE_PERCENT (below) is an additional outer
+    // cap layered on top so a misbehaving signal can't blow up the bankroll.
     kellyMaxPctOfCapital: normalizeFloat(
       process.env.KELLY_MAX_PCT_OF_CAPITAL,
-      0.08,
-      { min: 0.005, max: 0.15 },
+      0.25,
+      { min: 0.005, max: 0.5 },
     ),
     // 1% floor: at $500 = $5 minimum.  Below $5 the round-trip fee eats
     // more than the edge even on a 10% EV trade.
@@ -258,6 +260,26 @@ export const ENV = {
       process.env.COLD_STREAK_MIN_REALIZED_EDGE_PCT,
       0.03,
       { min: 0, max: 1 },
+    ),
+    // Outer cap on Kelly-sized order budget, expressed as % of live capital.
+    // This is the absolute hardest constraint — even if Kelly suggests
+    // 25 % and capital fraction allows it, no single order will ever
+    // exceed this fraction of the account.  Default 4 % (≈$40 on a
+    // $1000 account).  Set MAX_RISK_PER_TRADE_PERCENT=8 in env to allow
+    // Kelly to bind up to its cap; lower for stricter posture.
+    maxRiskPerTradePct: normalizeFloat(
+      process.env.MAX_RISK_PER_TRADE_PERCENT,
+      4,
+      { min: 0.1, max: 25 },
+    ) / 100,
+    // Minimum aggregate liquidity (USD volume + open interest) required
+    // to consider a market actionable.  Below this floor, fills are
+    // unreliable, spreads blow out, and the AI cost > expected edge.
+    // $40k is the empirical sweet spot on Kalshi for a small account.
+    minLiquidityUsd: normalizeFloat(
+      process.env.MIN_LIQUIDITY_USD,
+      40_000,
+      { min: 0, max: 10_000_000 },
     ),
   },
 
