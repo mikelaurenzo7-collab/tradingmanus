@@ -410,6 +410,19 @@ function PolymarketConnectPanel() {
       setConnectionMessage("API key, secret, and passphrase are all required.");
       return;
     }
+    // Format guard mirrors server-side validatePolymarketCredentials —
+    // any value < 4 chars is definitionally not a valid Polymarket L2
+    // credential, so reject before round-tripping the server.
+    if (
+      trimmedApiKey.length < 4 ||
+      trimmedApiSecret.length < 4 ||
+      trimmedApiPassphrase.length < 4
+    ) {
+      setConnectionMessage(
+        "API key, secret, and passphrase must each be at least 4 characters.",
+      );
+      return;
+    }
     if (wantsLiveTrading) {
       if (!walletKeyLooksValid) {
         setConnectionMessage("Wallet private key should be 64 hex characters (with or without 0x prefix).");
@@ -699,9 +712,9 @@ function PolymarketConnectPanel() {
               onClick={handleConnect}
               disabled={
                 connectMutation.isPending ||
-                !trimmedApiKey ||
-                !trimmedApiSecret ||
-                !trimmedApiPassphrase
+                trimmedApiKey.length < 4 ||
+                trimmedApiSecret.length < 4 ||
+                trimmedApiPassphrase.length < 4
               }
               className="w-full bg-gradient-to-br from-sky-500 to-cyan-500 hover:from-sky-600 hover:to-cyan-600 glow-primary"
               size="lg"

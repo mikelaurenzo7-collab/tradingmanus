@@ -771,6 +771,7 @@ export async function closeKalshiPosition(
     await closeDailyPlayPickByMarketFallback({
       userId: scopedUserId,
       platform: "kalshi",
+      playDate: new Date().toISOString().slice(0, 10),
       marketId: position.marketId,
       exitPrice,
       realizedPnl,

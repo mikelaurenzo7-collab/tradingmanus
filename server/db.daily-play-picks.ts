@@ -99,13 +99,17 @@ export async function insertDailyPlayPick(
 
 /**
  * Populate `linkedPositionId` once position-sync has surfaced the row.
- * Matches by (userId, platform, marketId, tokenId?, playDate) so we can
- * link even when the caller doesn't yet have the pick id (e.g. async
+ * Matches by (userId, platform, playType, marketId, tokenId?, playDate) so
+ * we can link even when the caller doesn't yet have the pick id (e.g. async
  * position-sync poll discovering the position after order placement).
+ *
+ * `playType` is required so a sports pick and moonshot pick on the same
+ * market+date never collide on linkage.
  */
 export async function linkPositionToPick(args: {
   userId: number;
   platform: DailyPlayPlatform;
+  playType: DailyPlayType;
   marketId: string;
   tokenId?: string | null;
   playDate: string;
@@ -116,6 +120,7 @@ export async function linkPositionToPick(args: {
   const conditions = [
     eq(dailyPlayPicks.userId, args.userId),
     eq(dailyPlayPicks.platform, args.platform),
+    eq(dailyPlayPicks.playType, args.playType),
     eq(dailyPlayPicks.marketId, args.marketId),
     eq(dailyPlayPicks.playDate, args.playDate),
     isNull(dailyPlayPicks.linkedPositionId),
@@ -127,6 +132,35 @@ export async function linkPositionToPick(args: {
     .update(dailyPlayPicks)
     .set({ linkedPositionId: args.linkedPositionId, updatedAt: new Date() })
     .where(and(...conditions));
+}
+
+/**
+ * Mark a previously-reserved pick as `voided` — used when the runner
+ * pre-reserves the daily slot before order placement and the order then
+ * fails / is rejected.  Voiding (instead of deleting) preserves the
+ * audit trail; a fresh insert for the same (userId, platform, playType,
+ * playDate) key would still conflict, so retries within the same UTC
+ * day are intentionally suppressed (matches the original "one shot per
+ * day" intent).
+ */
+export async function voidDailyPlayPick(args: {
+  pickId: number;
+  reason: string;
+}): Promise<void> {
+  const database = await getDb();
+  if (!database) return;
+  try {
+    await database
+      .update(dailyPlayPicks)
+      .set({
+        status: "voided",
+        reasoning: args.reason.slice(0, 500),
+        updatedAt: new Date(),
+      })
+      .where(eq(dailyPlayPicks.id, args.pickId));
+  } catch (err) {
+    logger.warn({ err, args }, "[DailyPlayPicks] void failed");
+  }
 }
 
 /**
@@ -172,11 +206,18 @@ export async function closeDailyPlayPickByPosition(args: {
 /**
  * Fallback close hook for when `linkedPositionId` is null on the pick row
  * (the 30s window between order placement and position-sync surfacing).
- * Matches by (userId, platform, marketId, tokenId?) where status='pending'.
+ *
+ * Predicate is narrowed by `playDate` (required) and optionally `playType`
+ * to avoid sweeping unrelated pending rows on the same market.  Callers
+ * that don't know the playType (most close paths — they only know the
+ * position is closing) should anchor `playDate` to today's UTC date so
+ * we only update the very recent reservation in the linkage race window.
  */
 export async function closeDailyPlayPickByMarketFallback(args: {
   userId: number;
   platform: DailyPlayPlatform;
+  playDate: string;
+  playType?: DailyPlayType;
   marketId: string;
   tokenId?: string | null;
   exitPrice: number | null;
@@ -190,10 +231,12 @@ export async function closeDailyPlayPickByMarketFallback(args: {
   const conditions = [
     eq(dailyPlayPicks.userId, args.userId),
     eq(dailyPlayPicks.platform, args.platform),
+    eq(dailyPlayPicks.playDate, args.playDate),
     eq(dailyPlayPicks.marketId, args.marketId),
     eq(dailyPlayPicks.status, "pending"),
     isNull(dailyPlayPicks.linkedPositionId),
   ];
+  if (args.playType) conditions.push(eq(dailyPlayPicks.playType, args.playType));
   if (args.tokenId) conditions.push(eq(dailyPlayPicks.tokenId, args.tokenId));
   try {
     await database

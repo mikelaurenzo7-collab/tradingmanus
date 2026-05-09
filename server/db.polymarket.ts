@@ -13,7 +13,7 @@ import {
   type PolymarketOrder,
   type PolymarketPosition,
 } from "../drizzle/schema";
-import { eq, and, desc, inArray } from "drizzle-orm";
+import { eq, and, desc, inArray, gte } from "drizzle-orm";
 import { getDb } from "./db";
 import { assertPositiveIntegerUserId } from "./_core/userScope";
 
@@ -52,6 +52,40 @@ export async function getPolymarketTradeHistory(
     )
     .orderBy(desc(polymarketOrders.createdAt))
     .limit(limit);
+}
+
+/**
+ * Count Polymarket orders placed by this user since UTC-midnight today.
+ * Used by the daily-sports-play runner to honor the per-user
+ * `tradingPreferences.maxDailyOrders` cap (mirrors getTodayKalshiOrderCount
+ * in db.ts so each platform respects the same cap independently).
+ */
+export async function getTodayPolymarketOrderCount(userId: number): Promise<number> {
+  const scopedUserId = assertPositiveIntegerUserId(userId, "getTodayPolymarketOrderCount");
+  const database = await getDb();
+  if (!database) return 0;
+  const now = new Date();
+  const startOfDay = new Date(
+    Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate(),
+      0,
+      0,
+      0,
+      0,
+    ),
+  );
+  const rows = await database
+    .select()
+    .from(polymarketOrders)
+    .where(
+      and(
+        eq(polymarketOrders.userId, scopedUserId),
+        gte(polymarketOrders.createdAt, startOfDay),
+      ),
+    );
+  return rows.length;
 }
 
 // ── Positions ─────────────────────────────────────────────────────────────────
@@ -148,6 +182,7 @@ export async function upsertPolymarketPosition(
         await closeDailyPlayPickByMarketFallback({
           userId: scopedUserId,
           platform: "polymarket",
+          playDate: new Date().toISOString().slice(0, 10),
           marketId: position.marketId,
           tokenId: position.tokenId,
           exitPrice: Number.isFinite(exitPrice) ? exitPrice : null,

@@ -332,6 +332,10 @@ async function closeDriftedPositions(
         await closeDailyPlayPickByMarketFallback({
           userId,
           platform: "polymarket",
+          // Anchor to today's UTC date — fallback only fires inside the
+          // 30s linkage race window so a recent reservation is what we
+          // want to close, not a stale unrelated pending row.
+          playDate: new Date().toISOString().slice(0, 10),
           marketId: row.marketId,
           tokenId: row.tokenId,
           exitPrice: Number.isFinite(exitPrice) ? exitPrice : null,

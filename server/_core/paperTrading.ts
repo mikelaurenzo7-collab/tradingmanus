@@ -7,7 +7,7 @@
  * so they are clearly distinguished from real trades in reports and learning feedback.
  */
 
-import { db, getKalshiMarket } from "../db";
+import { db, getKalshiMarket, logAuditEvent } from "../db";
 import {
   kalshiOrders,
   kalshiFills,
@@ -426,6 +426,30 @@ export async function simulatePolymarketOrderFill(
       );
     }
 
+    // Audit-log the simulated order placement.  CLAUDE.md mandates that
+    // EVERY order placement be audited; the `simulated: true` flag keeps
+    // it distinguishable from real fills in reports + learning feedback.
+    await logAuditEvent(
+      "polymarket_order_placed",
+      JSON.stringify({
+        userId: scopedUserId,
+        clientOrderId,
+        marketId: input.marketId,
+        tokenId: input.tokenId,
+        side: input.positionSide,
+        sizeUsdc,
+        fillPrice,
+        simulated: true,
+        triggeredBy: _triggeredByOpenId ?? null,
+      }),
+      _triggeredByOpenId ?? `user:${scopedUserId}`,
+    ).catch((auditErr) =>
+      logger.warn(
+        { err: auditErr, clientOrderId },
+        "[PaperTrading] simulated polymarket order audit log failed",
+      ),
+    );
+
     return {
       success: true,
       orderId: clientOrderId,
@@ -568,6 +592,7 @@ export async function simulatePolymarketPositionClose(
       await closeDailyPlayPickByMarketFallback({
         userId: scopedUserId,
         platform: "polymarket",
+        playDate: new Date().toISOString().slice(0, 10),
         marketId: String(position.marketId),
         tokenId: String(position.tokenId ?? ""),
         exitPrice: fillPrice,

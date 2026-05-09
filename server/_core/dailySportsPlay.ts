@@ -76,6 +76,10 @@ export interface DailySportsPlayResult {
 export async function runDailySportsPlay(
   userId: number,
 ): Promise<DailySportsPlayResult> {
+  // Anchor playDate to run-start so a long AI-review pass that crosses
+  // UTC midnight doesn't write the pick under tomorrow's date and drift
+  // off the (userId, platform, playType, playDate) idempotency key.
+  const runPlayDate = new Date().toISOString().slice(0, 10);
   if (!ENV.enableDailySportsPlay) {
     return {
       status: "disabled",
@@ -578,7 +582,7 @@ export async function runDailySportsPlay(
   // (ON CONFLICT DO NOTHING) and a DB hiccup must NEVER block a successful
   // order placement.  Linkage to the position row happens lazily via
   // linkPositionToPick once the order-sync surfaces the open position.
-  const playDate = new Date().toISOString().slice(0, 10);
+  const playDate = runPlayDate;
   try {
     const pick = await insertDailyPlayPick({
       userId,
@@ -613,6 +617,7 @@ export async function runDailySportsPlay(
             await linkPositionToPick({
               userId,
               platform: "kalshi",
+              playType: "sports",
               marketId: top.marketId,
               playDate,
               linkedPositionId: match.id,

@@ -92,6 +92,11 @@ export interface DailyMoonshotPlayResult {
 export async function runDailyMoonshotPlay(
   userId: number,
 ): Promise<DailyMoonshotPlayResult> {
+  // Anchor playDate to run-start so a long AI-review pass that crosses
+  // UTC midnight doesn't write the pick under tomorrow's date and drift
+  // off the (userId, platform, playType, playDate) idempotency key.
+  const runStartedAt = new Date();
+  const runPlayDate = runStartedAt.toISOString().slice(0, 10);
   if (!ENV.enableDailyMoonshot) {
     return {
       status: "disabled",
@@ -620,7 +625,7 @@ export async function runDailyMoonshotPlay(
   ).catch(() => {});
 
   // Persist the moonshot lifecycle row (best-effort).
-  const playDate = new Date().toISOString().slice(0, 10);
+  const playDate = runPlayDate;
   try {
     const pick = await insertDailyPlayPick({
       userId,
@@ -646,6 +651,7 @@ export async function runDailyMoonshotPlay(
             await linkPositionToPick({
               userId,
               platform: "kalshi",
+              playType: "moonshot",
               marketId: top.marketId,
               playDate,
               linkedPositionId: match.id,

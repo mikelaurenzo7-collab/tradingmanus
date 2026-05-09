@@ -31,7 +31,9 @@ CREATE TABLE IF NOT EXISTS "coinbaseCredentials" (
   "apiKeyEncrypted"          text NOT NULL,
   "apiSecretEncrypted"       text NOT NULL,
   "apiPassphraseEncrypted"   text,
-  "sandboxMode"              boolean NOT NULL DEFAULT true,
+  -- integer-encoded boolean (1 = sandbox, 0 = live) to match the
+  -- Drizzle schema (`integer("sandboxMode")`) and DB writes that pass 1/0.
+  "sandboxMode"              integer NOT NULL DEFAULT 1,
   "accountStatus"            "coinbase_account_status" NOT NULL DEFAULT 'disconnected',
   "lastSyncedAt"             timestamptz,
   "createdAt"                timestamptz NOT NULL DEFAULT now(),

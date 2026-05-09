@@ -36,11 +36,13 @@ import { getTradingPreferences } from "../db.trading-preferences";
 import {
   getOpenPolymarketPositions,
   getPolymarketPositions,
+  getTodayPolymarketOrderCount,
 } from "../db.polymarket";
 import { getKalshiCapital, logAuditEvent } from "../db";
 import {
   insertDailyPlayPick,
   linkPositionToPick,
+  voidDailyPlayPick,
 } from "../db.daily-play-picks";
 
 export interface PolymarketDailySportsPlayResult {
@@ -69,6 +71,11 @@ export interface PolymarketDailySportsPlayResult {
 export async function runPolymarketDailySportsPlay(
   userId: number,
 ): Promise<PolymarketDailySportsPlayResult> {
+  // Anchor playDate to run-start so a long AI-review pass that crosses
+  // UTC midnight doesn't write the pick under tomorrow's date and drift
+  // off the (userId, platform, playType, playDate) idempotency key.
+  const runPlayDate = new Date().toISOString().slice(0, 10);
+
   if (!ENV.enablePolymarketDailySportsPlay) {
     return {
       status: "disabled",
@@ -95,6 +102,18 @@ export async function runPolymarketDailySportsPlay(
     return {
       status: "disabled",
       reason: "executionCadence=manual_only — operator opt-out of cron-driven trades",
+    };
+  }
+
+  // Honor the per-user maxDailyOrders cap so the daily play doesn't slip
+  // an extra order through when the autonomy loop has already exhausted
+  // today's Polymarket budget.  Same per-platform interpretation Kalshi
+  // uses (the autonomy loop checks getTodayKalshiOrderCount independently).
+  const polymarketOrdersToday = await getTodayPolymarketOrderCount(userId).catch(() => 0);
+  if (polymarketOrdersToday >= prefs.maxDailyOrders) {
+    return {
+      status: "disabled",
+      reason: `Polymarket daily order cap reached (${polymarketOrdersToday}/${prefs.maxDailyOrders})`,
     };
   }
 
@@ -337,6 +356,42 @@ export async function runPolymarketDailySportsPlay(
     `user:${userId}`,
   ).catch(() => {});
 
+  // Reserve the daily slot via the unique-index-protected insert BEFORE
+  // any external side effect.  This makes the run idempotent at the DB
+  // level: a retry/crash between insert and order placement, or a
+  // concurrent run, will hit ON CONFLICT DO NOTHING and short-circuit
+  // here.  On order failure below we void the reservation so the audit
+  // trail records the attempt (and the unique key still blocks same-day
+  // duplicates — intentional "one shot per day" semantics).
+  const reservation = await insertDailyPlayPick({
+    userId,
+    platform: "polymarket",
+    playType: "sports",
+    playDate: runPlayDate,
+    marketId: top.marketId,
+    tokenId: top.tokenId,
+    side: top.side,
+    stakeUsd: stakeUsdc,
+    entryPrice: top.limitPrice,
+    quantity: tokens,
+    confidence: top.confidence,
+    expectedValue: top.expectedValue,
+    reasoning: top.reasoning ?? null,
+  }).catch((err) => {
+    logger.warn(
+      { err, userId, marketId: top.marketId },
+      "[PolymarketDailySportsPlay] reservation insert failed",
+    );
+    return null;
+  });
+  if (!reservation) {
+    return {
+      status: "disabled",
+      reason:
+        "Polymarket daily sports play already ran today (reservation row exists)",
+    };
+  }
+
   // Place the order under the per-user mutex (matches polymarketAutonomy).
   const orderResult = await withUserLock(userId, async () => {
     if (effectivePaperMode) {
@@ -379,6 +434,13 @@ export async function runPolymarketDailySportsPlay(
 
   if (!("success" in orderResult) || !orderResult.success) {
     const errStr = "error" in orderResult ? String(orderResult.error ?? "") : "";
+    // Void the reservation so the row reflects the failed attempt (still
+    // blocks same-day retries via the unique key — that's the intended
+    // "one shot per day" rule).
+    await voidDailyPlayPick({
+      pickId: reservation.id,
+      reason: `order failed: ${errStr || "unknown"}`,
+    });
     await logAuditEvent(
       "polymarket_daily_sports_play_blocked",
       JSON.stringify({
@@ -419,55 +481,32 @@ export async function runPolymarketDailySportsPlay(
     `user:${userId}`,
   ).catch(() => {});
 
-  // Persist the pick lifecycle row + schedule deferred linkage.
-  const playDate = new Date().toISOString().slice(0, 10);
-  try {
-    const pick = await insertDailyPlayPick({
-      userId,
-      platform: "polymarket",
-      playType: "sports",
-      playDate,
-      marketId: top.marketId,
-      tokenId: top.tokenId,
-      side: top.side,
-      stakeUsd: stakeUsdc,
-      entryPrice: top.limitPrice,
-      quantity: tokens,
-      confidence: top.confidence,
-      expectedValue: top.expectedValue,
-      reasoning: top.reasoning ?? null,
-    });
-    if (pick) {
-      setTimeout(async () => {
-        try {
-          const positions = await getOpenPolymarketPositions(userId);
-          const match = positions.find(
-            (p) => p.marketId === top.marketId && p.tokenId === top.tokenId,
-          );
-          if (match) {
-            await linkPositionToPick({
-              userId,
-              platform: "polymarket",
-              marketId: top.marketId,
-              tokenId: top.tokenId,
-              playDate,
-              linkedPositionId: match.id,
-            });
-          }
-        } catch (err) {
-          logger.debug(
-            { err, userId, marketId: top.marketId },
-            "[PolymarketDailySportsPlay] deferred linkage failed",
-          );
-        }
-      }, 60_000).unref?.();
+  // Reservation row already inserted above — schedule deferred linkage
+  // at +60s once position-sync has surfaced the open position row.
+  setTimeout(async () => {
+    try {
+      const positions = await getOpenPolymarketPositions(userId);
+      const match = positions.find(
+        (p) => p.marketId === top.marketId && p.tokenId === top.tokenId,
+      );
+      if (match) {
+        await linkPositionToPick({
+          userId,
+          platform: "polymarket",
+          playType: "sports",
+          marketId: top.marketId,
+          tokenId: top.tokenId,
+          playDate: runPlayDate,
+          linkedPositionId: match.id,
+        });
+      }
+    } catch (err) {
+      logger.debug(
+        { err, userId, marketId: top.marketId },
+        "[PolymarketDailySportsPlay] deferred linkage failed",
+      );
     }
-  } catch (err) {
-    logger.warn(
-      { err, userId, marketId: top.marketId },
-      "[PolymarketDailySportsPlay] dailyPlayPicks insert failed",
-    );
-  }
+  }, 60_000).unref?.();
 
   logger.info(
     {

@@ -218,7 +218,12 @@ function estimateFairValue(market: PolymarketMarket): number {
   // current-season precursor data.  Returns a calibrated probability per
   // nominee directly — no blending needed.
   const awardsPrior = lookupAwardsFundamental({ title: market.question });
-  if (awardsPrior != null && Number.isFinite(awardsPrior) && awardsPrior > 0 && awardsPrior < 1) {
+  if (
+    awardsPrior != null &&
+    Number.isFinite(awardsPrior) &&
+    awardsPrior >= 0 &&
+    awardsPrior <= 1
+  ) {
     return awardsPrior;
   }
 
