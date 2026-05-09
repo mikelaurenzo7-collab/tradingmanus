@@ -160,6 +160,7 @@ export default function Dashboard() {
   if (performanceOverviewQuery.isError)
     degradedSources.push("performance overview");
   if (autonomyActivityQuery.isError) degradedSources.push("autonomy activity");
+  if (equityCurveQuery.isError) degradedSources.push("equity curve");
 
   const accountStatus = accountStatusQuery.data;
   const performanceOverview = performanceOverviewQuery.data;

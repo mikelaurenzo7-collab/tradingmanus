@@ -160,27 +160,24 @@ export default function Positions({ embedded = false }: { embedded?: boolean } =
         sortable: true,
         width: 140,
         render: (value, row) => {
-          // Placeholder for sparkline - can be populated with historical data
-          const mockPriceHistory = Array.from({ length: 10 }, (_, i) => {
-            const basePrice = Number(row.entryPrice ?? 0);
-            const currentPriceVal = Number(value ?? 0);
-            const priceDiff = currentPriceVal - basePrice;
-            return basePrice + (priceDiff * i) / 9 + (Math.random() - 0.5) * 0.02;
-          });
+          const entryPrice = Number(row.entryPrice ?? 0);
+          const currentPriceVal = Number(value ?? 0);
+          const isUp = currentPriceVal >= entryPrice;
+          // Two-point sparkline: entry price → current price. No simulated noise.
+          const priceHistory =
+            Number.isFinite(entryPrice) && entryPrice > 0 && Number.isFinite(currentPriceVal) && currentPriceVal > 0
+              ? [entryPrice, currentPriceVal]
+              : [];
 
           return (
             <div className="flex items-center gap-2">
-              <span className="font-mono text-sm">{formatPrice(Number(value))}</span>
-              {mockPriceHistory.length > 1 && (
+              <span className="font-mono text-sm">{formatPrice(currentPriceVal)}</span>
+              {priceHistory.length === 2 && (
                 <Sparkline
-                  data={mockPriceHistory}
-                  width={60}
+                  data={priceHistory}
+                  width={40}
                   height={20}
-                  color={
-                    Number(value) >= Number(row.entryPrice)
-                      ? "rgb(52, 211, 153)"
-                      : "rgb(251, 113, 133)"
-                  }
+                  color={isUp ? "rgb(52, 211, 153)" : "rgb(251, 113, 133)"}
                   strokeWidth={1.5}
                 />
               )}
