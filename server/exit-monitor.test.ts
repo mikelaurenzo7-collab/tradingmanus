@@ -341,9 +341,15 @@ describe("evaluateExitsForOpenPositions — resolved market guard", () => {
     const { evaluateExitsForOpenPositions } = await import("./_core/exitMonitor");
     const results = await evaluateExitsForOpenPositions(7);
 
-    // Position is skipped entirely — exchange will settle it
+    // Position is skipped — exchange will settle it.
+    // An audit event IS emitted so the resolved skip is visible in the audit stream.
     expect(results).toHaveLength(0);
-    expect(mocks.logAuditEvent).not.toHaveBeenCalled();
+    expect(mocks.logAuditEvent).toHaveBeenCalledOnce();
+    expect(mocks.logAuditEvent).toHaveBeenCalledWith(
+      "kalshi_position_exit_signal",
+      expect.stringContaining("market_resolved_skipped"),
+      expect.any(String),
+    );
   });
 
   it("still evaluates when resolutionDate is in the future", async () => {

@@ -88,12 +88,24 @@ export function computePolymarketRoundTripCostFromLimit(args: {
 }): RoundTripCost {
   const priceCents = Math.round(Math.max(0, Math.min(1, args.limitPriceUsd)) * 100);
   const spreadCents = Math.max(1, Math.round(args.spreadCents ?? 2));
+  // Center the bid/ask and shift both sides together when a boundary is
+  // crossed so the full spreadCents width is always preserved.
   const half = spreadCents / 2;
+  let bestBidCents = priceCents - half;
+  let bestAskCents = priceCents + half;
+  if (bestBidCents < 0) {
+    bestAskCents = Math.min(100, bestAskCents - bestBidCents);
+    bestBidCents = 0;
+  }
+  if (bestAskCents > 100) {
+    bestBidCents = Math.max(0, bestBidCents - (bestAskCents - 100));
+    bestAskCents = 100;
+  }
   return computePolymarketRoundTripCost({
     priceCents,
     contracts: args.contracts,
-    bestBidCents: clampCents(priceCents - half),
-    bestAskCents: clampCents(priceCents + half),
+    bestBidCents,
+    bestAskCents,
   });
 }
 

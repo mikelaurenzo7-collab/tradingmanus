@@ -95,9 +95,10 @@ fees even kick in.
   ```sql
   ALTER TABLE "kalshiSignals"
     ADD COLUMN IF NOT EXISTS "feeBreakdownJson" jsonb;
-  ALTER TABLE "polymarketSignals"
-    ADD COLUMN IF NOT EXISTS "feeBreakdownJson" jsonb;
   ```
+
+  Note: `polymarketSignals` table does not exist yet — Polymarket fee
+  breakdowns flow through the audit-log JSON payload only.
 
   Existing rows: `NULL`. No backfill — historical signals didn't compute
   this.
@@ -137,9 +138,10 @@ before relying on it for trading. Output captured in PR body.
 Reverse migration drops `feeBreakdownJson` columns:
 
 ```sql
-ALTER TABLE "kalshiSignals"   DROP COLUMN IF EXISTS "feeBreakdownJson";
-ALTER TABLE "polymarketSignals" DROP COLUMN IF EXISTS "feeBreakdownJson";
+ALTER TABLE "kalshiSignals" DROP COLUMN IF EXISTS "feeBreakdownJson";
 ```
+
+(`polymarketSignals` does not exist — no rollback needed on that side.)
 
 Code revert restores the pre-spread net-EV math in `profitGuardrails.ts`
 (no behavioral diff except `costAsFraction` is no longer computed).
