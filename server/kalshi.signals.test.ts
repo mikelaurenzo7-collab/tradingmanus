@@ -163,7 +163,11 @@ describe("Kalshi Signal Generation", () => {
       expect(signals).toHaveLength(0);
     });
 
-    it("should fall back to a neutral baseline when fundamental probability is missing", async () => {
+    it("should NOT generate a value_play when fundamental falls back to the 0.5 neutral placeholder", async () => {
+      // A 0.5 placeholder against any market price creates systematic
+      // false-edge signals (every market priced far from 50% looks
+      // "mispriced").  We now suppress these at generation time rather
+      // than filtering them out post-hoc.
       const market = {
         id: "market-5",
         title: "Mispriced Market",
@@ -181,14 +185,7 @@ describe("Kalshi Signal Generation", () => {
       const signals = await generateSignalsForMarket(market);
       const valueSignal = signals.find((signal) => signal.signalType === "value_play");
 
-      expect(valueSignal).toBeDefined();
-      expect(valueSignal?.confidence).toBeCloseTo(0.3708, 5);
-      expect(valueSignal?.reasoning).toContain("heuristic baseline");
-      expect(valueSignal?.reasoning).toContain("50.0%");
-      expect(valueSignal?.metadata?.fundamentalProbability).toBe(0.5);
-      expect(valueSignal?.metadata?.fundamentalSource).toBe("neutral_fallback");
-      expect(valueSignal?.metadata?.platformBehaviorProfile?.platform).toBe("kalshi");
-      expect(Number.isFinite(valueSignal?.expectedValue)).toBe(true);
+      expect(valueSignal).toBeUndefined();
     });
 
     it("tags generated signals with market strategy profile metadata", async () => {

@@ -550,10 +550,23 @@ export async function generateSignalsForMarket(
   // Value play: detect mispriced markets.
   // Use category-aware prior instead of universal 0.5 fallback so value
   // signals reflect genuine mispricing rather than arbitrary baseline noise.
+  //
+  // CORRECTNESS GATE: skip the value_play entirely when the fundamental is
+  // a neutral_fallback (i.e., we have no real prior).  Comparing the market
+  // price against a 0.5 placeholder generates "edges" that are pure
+  // baseline noise — every binary market priced far from 50% would look
+  // mispriced.  Player-prop markets (HR, hits, RBI) are the worst case:
+  // base rate ~5–35%, so a 0.5 baseline always says "buy YES."  These
+  // signals were already filtered out at execution by isHeuristicBaselineSignal,
+  // but generating them at all wastes AI-reviewer cost and pollutes the
+  // sidebar with bogus "high-confidence" picks.
   const resolvedFundamental = resolveFundamentalPrior(market, fundamentalProbability);
   const usesFallbackFundamental = resolvedFundamental.source === "neutral_fallback";
   const baselineFundamentalProbability = clampProbability(resolvedFundamental.value);
-  const valueOpportunity = detectValueOpportunity(market, baselineFundamentalProbability, 0.05);
+  const valueOpportunity =
+    usesFallbackFundamental
+      ? null
+      : detectValueOpportunity(market, baselineFundamentalProbability, 0.05);
   if (valueOpportunity) {
     const confidence = Math.min(
       0.95,

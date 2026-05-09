@@ -11,6 +11,8 @@ interface StatCardProps {
   color?: string;
   loading?: boolean;
   className?: string;
+  /** Optional secondary line under the label (e.g., per-platform breakdown). */
+  subtitle?: string;
 }
 
 export function StatCard({
@@ -22,6 +24,7 @@ export function StatCard({
   color = '#8864ff',
   loading = false,
   className = '',
+  subtitle,
 }: StatCardProps) {
   if (loading) {
     return (
@@ -90,7 +93,12 @@ export function StatCard({
       {/* Bottom row: label and sparkline */}
       <div className="flex items-end justify-between">
         {/* Label */}
-        <div className="text-sm text-muted-foreground">{label}</div>
+        <div className="text-sm text-muted-foreground">
+          <div>{label}</div>
+          {subtitle && (
+            <div className="text-xs text-muted-foreground/70 mt-0.5">{subtitle}</div>
+          )}
+        </div>
 
         {/* Sparkline */}
         {trend && trend.length > 0 && (

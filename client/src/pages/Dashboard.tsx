@@ -67,6 +67,7 @@ export default function Dashboard() {
   const performanceOverviewQuery =
     trpc.kalshi.getPerformanceOverview.useQuery();
   const accountStatusQuery = trpc.kalshi.getKalshiAccountStatus.useQuery();
+  const polyAccountStatusQuery = trpc.polymarket.getPolymarketAccountStatus.useQuery();
   const { data: instructions } = trpc.training.getInstructions.useQuery();
   const autonomyActivityQuery = trpc.kalshi.getAutonomyActivity.useQuery();
   const equityCurveQuery = trpc.kalshi.getEquityCurve.useQuery({ days: 7 });
@@ -167,7 +168,9 @@ export default function Dashboard() {
   const kalshiConnected = accountStatus?.connected || false;
   const isConnected = kalshiConnected;
   const equity = isConnected ? accountStatus?.equity || 0 : 0;
-  const isFunded = equity > 0;
+  const polyBalance = polyAccountStatusQuery.data?.usdcBalance ?? null;
+  const totalCapital = equity + (polyBalance ?? 0);
+  const isFunded = totalCapital > 0;
   const hasInstructions = (instructions?.length || 0) > 0;
   const tradingPreferences =
     accountStatus?.tradingPreferences ?? DEFAULT_TRADING_PREFERENCES;
@@ -306,7 +309,12 @@ export default function Dashboard() {
         />
         <StatCard
           label="Account Capital"
-          value={`$${equity.toFixed(2)}`}
+          value={`$${totalCapital.toFixed(2)}`}
+          subtitle={
+            polyBalance != null
+              ? `Kalshi $${equity.toFixed(2)} · Poly $${polyBalance.toFixed(2)}`
+              : `Kalshi $${equity.toFixed(2)}`
+          }
           trend={equityTrend}
           icon={<Sparkles size={18} />}
           color="#6366f1"
