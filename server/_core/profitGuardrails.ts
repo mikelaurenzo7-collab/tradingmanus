@@ -19,6 +19,7 @@ import {
   computeKalshiRoundTripCostFromMarket,
   type RoundTripCost,
 } from "./kalshiFees";
+import { computePolymarketRoundTripCostFromLimit } from "./polymarketFees";
 
 // ── Snapshot exports kept for backwards compatibility ────────────────────────
 export const MIN_NET_EV = ENV.profitGuardrails.minNetEv;
@@ -81,6 +82,12 @@ export interface ProfitCheckInput {
    * spread entirely).
    */
   spreadProxy?: number;
+  /**
+   * Which platform's fee model to apply.  Defaults to "kalshi" so
+   * existing callers need no changes; Polymarket callers must pass
+   * "polymarket" explicitly so the correct fee helper is used.
+   */
+  platform?: "kalshi" | "polymarket";
 }
 
 export function checkProfitGuardrails(
@@ -112,14 +119,25 @@ export function checkProfitGuardrails(
     grossEvFraction: evRoiFraction,
     entryLiquidity: input.liquidity,
   });
-  const feeBreakdown = computeKalshiRoundTripCostFromMarket({
-    market: { yesPrice: input.entryPrice, noPrice: 1 - input.entryPrice },
-    side: "yes",
-    contracts: input.count,
-    spreadProxy: input.spreadProxy,
-    entryLiquidity: input.liquidity,
-    exitLiquidity: input.liquidity,
-  });
+  const feeBreakdown =
+    input.platform === "polymarket"
+      ? computePolymarketRoundTripCostFromLimit({
+          limitPriceUsd: input.entryPrice,
+          contracts: input.count,
+          // spreadProxy for Polymarket is in dollars; convert to cents
+          spreadCents:
+            input.spreadProxy != null && Number.isFinite(input.spreadProxy)
+              ? Math.max(1, Math.round(input.spreadProxy * 100))
+              : undefined,
+        })
+      : computeKalshiRoundTripCostFromMarket({
+          market: { yesPrice: input.entryPrice, noPrice: 1 - input.entryPrice },
+          side: "yes",
+          contracts: input.count,
+          spreadProxy: input.spreadProxy,
+          entryLiquidity: input.liquidity,
+          exitLiquidity: input.liquidity,
+        });
   const spreadCostFraction =
     feeBreakdown.notionalUsd > 0
       ? feeBreakdown.spreadCostUsd / feeBreakdown.notionalUsd
@@ -137,7 +155,7 @@ export function checkProfitGuardrails(
   if (feeAwareNetEvFraction < evFloor) {
     return {
       approved: false,
-      reason: `Net EV ${(feeAwareNetEvFraction * 100).toFixed(2)}% < ${(evFloor * 100).toFixed(2)}% floor (gross ${(ev * 100).toFixed(2)}% − fees $${net.feeUsd.toFixed(2)} − spread $${feeBreakdown.spreadCostUsd.toFixed(2)} − AI $${net.aiCostUsd.toFixed(4)})`,
+      reason: `Net EV ${(feeAwareNetEvFraction * 100).toFixed(2)}% < ${(evFloor * 100).toFixed(2)}% floor (gross ROI ${(evRoiFraction * 100).toFixed(2)}% − fees $${net.feeUsd.toFixed(2)} − spread $${feeBreakdown.spreadCostUsd.toFixed(2)} − AI $${net.aiCostUsd.toFixed(4)})`,
       adjustedEV: ev,
       adjustedConfidence: conf,
       netEvFraction: feeAwareNetEvFraction,
@@ -176,7 +194,7 @@ export function checkProfitGuardrails(
 
   return {
     approved: true,
-    reason: `Net EV ${(feeAwareNetEvFraction * 100).toFixed(2)}% ≥ ${(evFloor * 100).toFixed(2)}% + confidence ${(conf * 100).toFixed(1)}% ≥ ${(confFloor * 100).toFixed(1)}% (gross ${(ev * 100).toFixed(2)}% − fees $${net.feeUsd.toFixed(2)} − spread $${feeBreakdown.spreadCostUsd.toFixed(2)})`,
+    reason: `Net EV ${(feeAwareNetEvFraction * 100).toFixed(2)}% ≥ ${(evFloor * 100).toFixed(2)}% + confidence ${(conf * 100).toFixed(1)}% ≥ ${(confFloor * 100).toFixed(1)}% (gross ROI ${(evRoiFraction * 100).toFixed(2)}% − fees $${net.feeUsd.toFixed(2)} − spread $${feeBreakdown.spreadCostUsd.toFixed(2)})`,
     adjustedEV: ev,
     adjustedConfidence: conf,
     netEvFraction: feeAwareNetEvFraction,
