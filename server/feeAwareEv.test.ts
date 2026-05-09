@@ -14,10 +14,7 @@ import {
   computeKalshiRoundTripCost,
   computeKalshiRoundTripCostFromMarket,
 } from "./_core/kalshiFees";
-import {
-  computePolymarketRoundTripCost,
-  computePolymarketRoundTripCostFromLimit,
-} from "./_core/polymarketFees";
+
 
 const MIN_NET_EV = 0.05;
 
@@ -170,75 +167,3 @@ describe("Phase 2 — fee + spread aware EV gate (Kalshi)", () => {
   });
 });
 
-describe("Phase 2 — fee + spread aware EV gate (Polymarket)", () => {
-  it.each([
-    {
-      name: "Polymarket 50¢ market with 1¢ spread → passes at 8% gross EV (no taker fee)",
-      priceCents: 50,
-      contracts: 10,
-      bestBidCents: 49,
-      bestAskCents: 50,
-      grossEv: 0.08,
-      shouldPass: true,
-    },
-    {
-      name: "Polymarket 50¢ market with 5¢ spread → rejected at 8% gross EV",
-      priceCents: 50,
-      contracts: 10,
-      bestBidCents: 47,
-      bestAskCents: 52,
-      grossEv: 0.08,
-      shouldPass: false,
-    },
-    {
-      name: "Polymarket charges no taker fee — spread is the only meaningful cost",
-      priceCents: 50,
-      contracts: 10,
-      bestBidCents: 50,
-      bestAskCents: 50,
-      grossEv: 0.06,
-      shouldPass: true,
-    },
-  ])(
-    "$name",
-    ({
-      priceCents,
-      contracts,
-      bestBidCents,
-      bestAskCents,
-      grossEv,
-      shouldPass,
-    }) => {
-      const cost = computePolymarketRoundTripCost({
-        priceCents,
-        contracts,
-        bestBidCents,
-        bestAskCents,
-      });
-      expect(cost.feeScheduleVersion).toBe("2026-Q1");
-      // Polymarket fees are gas-only (~$0.02 round-trip flat) on non-zero
-      // contracts; never the dominant cost on a $5+ notional.
-      expect(cost.feeUsd).toBeLessThanOrEqual(0.02);
-      expect(passesGate(grossEv, cost.costAsFraction)).toBe(shouldPass);
-    },
-  );
-
-  it("from-limit wrapper accepts a spread override", () => {
-    const cost = computePolymarketRoundTripCostFromLimit({
-      limitPriceUsd: 0.5,
-      contracts: 10,
-      spreadCents: 4,
-    });
-    // 4¢ spread, half × 2 × 10 contracts = $0.40
-    expect(cost.spreadCostUsd).toBeCloseTo(0.4, 2);
-  });
-
-  it("from-limit wrapper defaults to 2¢ spread when none provided", () => {
-    const cost = computePolymarketRoundTripCostFromLimit({
-      limitPriceUsd: 0.5,
-      contracts: 10,
-    });
-    // 2¢ spread, half × 2 × 10 contracts = $0.20
-    expect(cost.spreadCostUsd).toBeCloseTo(0.2, 2);
-  });
-});

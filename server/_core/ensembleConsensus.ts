@@ -1,26 +1,23 @@
 /**
- * 3-tier ensemble consensus orchestrator (Claude-only, post-Phase-1).
+ * Hybrid ensemble consensus orchestrator (Grok + Claude).
  *
  * Tiers:
- *   1. Claude Haiku 4.5    — always runs (cheap, fast). Synthesised here from
- *                            the upstream tradingReviewer Tier-1 verdict.
- *   2. Claude Sonnet 4.6   — runs ONLY on high-stakes signals.
- *   3. Claude Opus 4.7     — runs ONLY when Sonnet vetoes a high-EV trade
- *                            (intra-Claude tiebreaker) OR the position is a
- *                            catastrophic-bet (unanimous approval required).
+ *   1. Claude Haiku 4.5    — always runs (cheap, fast triage).
+ *   2A. Grok 4 (xAI)       — breaking-news niches (Weather, Sports, Economics)
+ *                            with real-time X search + NOAA + order book tools.
+ *   2B. Claude Opus 4.7    — non-breaking-news high-stakes (Politics, Other)
+ *                            where depth of reasoning > speed.
+ *   3. Claude Opus 4.7     — catastrophic-bet unanimous gate (Haiku + Tier2 + Opus).
  *
- * Decision rules (in order):
- *   - If Tier 1 vetoes → SKIP. (No further reviewers — we already have a no.)
- *   - If !highStakes   → trust Tier 1. APPROVE iff Tier 1 approved.
- *   - If highStakes && !catastrophic:
- *       - Tier 1 ✓ + Sonnet ✓ → APPROVE.
- *       - Tier 1 ✓ + Sonnet ✗ → escalate to Opus tiebreaker. Opus decides.
- *   - If catastrophicBet:
- *       - Require UNANIMOUS Tier 1 ✓ + Sonnet ✓ + Opus ✓.
- *       - Any veto → SKIP, regardless of the other two.
+ * Decision rules:
+ *   - Tier 1 veto → SKIP.
+ *   - !highStakes → trust Tier 1.
+ *   - highStakes && breaking-news niche → Grok Tier-2.
+ *   - highStakes && non-breaking-news → Opus Tier-2.
+ *   - catastrophicBet → require unanimous Haiku + Tier-2 + Opus.
  *
- * All review costs and verdicts are logged into the trade's audit trail so
- * the calibration job can compute Brier score per reviewer.
+ * Sonnet 4.6 is deprecated — Grok handles the middle tier more cost-effectively
+ * for breaking-news signals, and Opus handles non-breaking-news depth.
  */
 
 import { ENV } from "./env";
@@ -31,6 +28,12 @@ import {
   type ClaudeReviewInput,
   type ClaudeReviewVerdict,
 } from "./claudeReviewer";
+import {
+  reviewWithGrok,
+  shouldUseGrokReviewer,
+  type GrokReviewInput,
+  type GrokReviewVerdict,
+} from "./grokReviewer";
 import { classifySignal, type HighStakesClassification } from "./highStakesDetector";
 import {
   MARKET_CATEGORIES,
@@ -72,6 +75,7 @@ export interface EnsembleVerdict {
   reviews: Array<
     | { reviewerId: "claude.haiku-4-5.tier1-synthetic"; verdict: Tier1Verdict }
     | { reviewerId: ClaudeReviewVerdict["reviewerId"]; verdict: ClaudeReviewVerdict }
+    | { reviewerId: GrokReviewVerdict["reviewerId"]; verdict: GrokReviewVerdict }
   >;
   totalAiCostUsd: number;
 }
@@ -153,7 +157,12 @@ export async function runEnsemble(input: EnsembleInput): Promise<EnsembleVerdict
     };
   }
 
-  // Tier 2: Sonnet (deeper review on high-stakes signals).
+  // Tier 2: Grok (breaking-news niches) or Sonnet (everything else).
+  // Grok fires when:
+  //   1. XAI_API_KEY is set AND GROK_REVIEWER_ENABLED=true
+  //   2. Category is weather / sports / economics (real-time info = edge)
+  //   3. Resolution is ≤72h away (fresh info matters)
+  // Everything else falls through to Sonnet for depth reasoning.
   if (!ENV.anthropicApiKey) {
     // No Anthropic key configured — should never happen post-Phase-1 since
     // env validation requires ANTHROPIC_API_KEY in production. Fail CLOSED:
@@ -175,58 +184,58 @@ export async function runEnsemble(input: EnsembleInput): Promise<EnsembleVerdict
     };
   }
 
-  const sonnetReviewInput: ClaudeReviewInput = toClaudeReviewInput(input);
+  const hoursToResolution = input.resolutionAtMs
+    ? (input.resolutionAtMs - Date.now()) / (1000 * 60 * 60)
+    : null;
+  const useGrok =
+    ENV.grokReviewerEnabled &&
+    Boolean(ENV.xaiApiKey) &&
+    shouldUseGrokReviewer(normalizeCategory(input.category), hoursToResolution);
 
-  // For CATASTROPHIC-BETS, run Sonnet TWICE in parallel as a self-consistency
-  // check. Both Sonnet passes must approve to advance to Opus. If they
-  // disagree, we treat it as an ambiguity-flag and veto outright. Costs ~2×
-  // Sonnet on catastrophic-bets only (~6 trades/mo × 2 = ~$0.10/mo extra).
-  let sonnet: ClaudeReviewVerdict;
-  if (classification.isCatastrophicBet) {
-    const [sonnetPass1, sonnetPass2] = await Promise.all([
-      reviewWithSonnet(sonnetReviewInput),
-      reviewWithSonnet(sonnetReviewInput),
-    ]);
-    reviews.push({ reviewerId: "claude.sonnet-4-6", verdict: sonnetPass1 });
-    reviews.push({ reviewerId: "claude.sonnet-4-6", verdict: sonnetPass2 });
-    totalAiCostUsd += sonnetPass1.costUsd + sonnetPass2.costUsd;
+  const tier2ReviewInput: ClaudeReviewInput = toClaudeReviewInput(input);
 
-    if (sonnetPass1.approved !== sonnetPass2.approved) {
-      // Self-consistency split → catastrophic-bet veto. The two passes
-      // disagreed on a trade large enough to materially dent the bankroll;
-      // refuse it and let the operator look at what happened.
-      return {
-        approved: false,
-        finalConfidenceAdjustment: avg(
-          sonnetPass1.confidenceAdjustment,
-          sonnetPass2.confidenceAdjustment,
-        ),
-        finalExpectedValueAdjustment: avg(
-          sonnetPass1.expectedValueAdjustment,
-          sonnetPass2.expectedValueAdjustment,
-        ),
-        finalImpliedProbability: avg(
-          sonnetPass1.impliedProbability,
-          sonnetPass2.impliedProbability,
-        ),
-        reasoning:
-          "Catastrophic-bet veto: Sonnet self-consistency split — two passes disagreed on direction.",
-        classification,
-        reviews,
-        totalAiCostUsd,
-      };
-    }
-    // Use whichever pass had the more conservative EV adjustment (lower of
-    // the two) so we don't average away a legitimate concern.
-    sonnet =
-      sonnetPass1.expectedValueAdjustment <= sonnetPass2.expectedValueAdjustment
-        ? sonnetPass1
-        : sonnetPass2;
+  // For CATASTROPHIC-BETS, normal Tier-2 routing still applies (Grok for
+  // breaking-news, Sonnet otherwise). The unanimous Opus gate happens below
+  // in Rule 3a regardless of which Tier-2 reviewer is chosen.
+  let tier2: ClaudeReviewVerdict | GrokReviewVerdict;
+  if (useGrok) {
+    // Tier-2 Grok path — breaking-news niche with real-time edge
+    const grokInput: GrokReviewInput = {
+      marketId: input.marketId,
+      ticker: input.ticker,
+      category: normalizeCategory(input.category),
+      side: input.side,
+      count: input.count,
+      entryPrice: input.entryPrice,
+      grossEvFraction: input.grossEvFraction,
+      confidence: input.confidence,
+      resolutionPrimary: input.resolutionPrimary ?? null,
+      resolutionSecondary: input.resolutionSecondary ?? null,
+      priorVerdict: {
+        approved: input.tier1Verdict.approved,
+        impliedProbability: input.tier1Verdict.impliedProbability,
+        confidenceAdjustment: input.tier1Verdict.confidenceAdjustment,
+        expectedValueAdjustment: input.tier1Verdict.expectedValueAdjustment,
+        reasoning: input.tier1Verdict.reasoning,
+      },
+      notionalUsd: input.notionalUsd,
+      hoursToResolution,
+    };
+    const grokVerdict = await reviewWithGrok(grokInput);
+    reviews.push({ reviewerId: "grok-4-latest", verdict: grokVerdict });
+    totalAiCostUsd += grokVerdict.costUsd;
+    tier2 = grokVerdict;
   } else {
-    sonnet = await reviewWithSonnet(sonnetReviewInput);
+    // Tier-2 default: Sonnet for non-breaking-news high-stakes signals
+    const sonnet = await reviewWithSonnet(tier2ReviewInput);
     reviews.push({ reviewerId: "claude.sonnet-4-6", verdict: sonnet });
     totalAiCostUsd += sonnet.costUsd;
+    tier2 = sonnet;
   }
+
+  // Alias for the existing downstream code that uses `sonnet` and `sonnetReviewInput`
+  const sonnetReviewInput = tier2ReviewInput;
+  const sonnet = tier2;
 
   // Rule 3a: catastrophic-bet → demand unanimous (Sonnet approves AND Opus approves).
   if (classification.isCatastrophicBet) {
@@ -245,7 +254,7 @@ export async function runEnsemble(input: EnsembleInput): Promise<EnsembleVerdict
           input.tier1Verdict.impliedProbability,
           sonnet.impliedProbability,
         ),
-        reasoning: `Catastrophic-bet veto: Sonnet rejected. ${sonnet.reasoning}`,
+        reasoning: `Catastrophic-bet veto: Tier-2 rejected. ${sonnet.reasoning}`,
         classification,
         reviews,
         totalAiCostUsd,
@@ -300,7 +309,7 @@ export async function runEnsemble(input: EnsembleInput): Promise<EnsembleVerdict
         sonnet.impliedProbability,
         opus.impliedProbability,
       ),
-      reasoning: `Catastrophic-bet UNANIMOUS approval: Tier-1 + Sonnet + Opus all green.`,
+      reasoning: `Catastrophic-bet UNANIMOUS approval: Tier-1 + Tier-2 + Opus all green.`,
       classification,
       reviews,
       totalAiCostUsd,
@@ -324,7 +333,7 @@ export async function runEnsemble(input: EnsembleInput): Promise<EnsembleVerdict
         input.tier1Verdict.impliedProbability,
         sonnet.impliedProbability,
       ),
-      reasoning: `Tier-1 ✓ + Sonnet ✓ on high-stakes (${classification.reasoning})`,
+      reasoning: `Tier-1 ✓ + Tier-2 ✓ on high-stakes (${classification.reasoning})`,
       classification,
       reviews,
       totalAiCostUsd,
@@ -350,7 +359,7 @@ export async function runEnsemble(input: EnsembleInput): Promise<EnsembleVerdict
         input.tier1Verdict.impliedProbability,
         sonnet.impliedProbability,
       ),
-      reasoning: `Sonnet vetoed and gross EV ${(input.grossEvFraction * 100).toFixed(2)}% below ${(ENV.opusEscalationMinGrossEv * 100).toFixed(2)}% Opus-escalation floor — trusting Sonnet veto without escalation.`,
+      reasoning: `Tier-2 vetoed and gross EV ${(input.grossEvFraction * 100).toFixed(2)}% below ${(ENV.opusEscalationMinGrossEv * 100).toFixed(2)}% Opus-escalation floor — trusting Tier-2 veto without escalation.`,
       classification,
       reviews,
       totalAiCostUsd,
@@ -378,7 +387,7 @@ export async function runEnsemble(input: EnsembleInput): Promise<EnsembleVerdict
       sonnet.impliedProbability,
       opus.impliedProbability,
     ),
-    reasoning: `Tiebreaker: Tier-1 ✓, Sonnet ✗, Opus ${opus.approved ? "✓" : "✗"} → ${opus.approved ? "APPROVE" : "VETO"}. ${opus.reasoning}`,
+    reasoning: `Tiebreaker: Tier-1 ✓, Tier-2 ✗, Opus ${opus.approved ? "✓" : "✗"} → ${opus.approved ? "APPROVE" : "VETO"}. ${opus.reasoning}`,
     classification,
     reviews,
     totalAiCostUsd,

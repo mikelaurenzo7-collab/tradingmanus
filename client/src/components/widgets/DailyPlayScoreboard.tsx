@@ -183,17 +183,6 @@ export function DailyPlayScoreboard({ compact = false, className }: DailyPlaySco
     }),
     { wins: 0, losses: 0, pending: 0, picks: 0, totalStaked: 0, totalPnl: 0 },
   );
-  const last30Poly = days.reduce<PlatformRollup>(
-    (acc, d) => ({
-      wins: acc.wins + d.polymarket.wins,
-      losses: acc.losses + d.polymarket.losses,
-      pending: acc.pending + d.polymarket.pending,
-      picks: acc.picks + d.polymarket.picks,
-      totalStaked: acc.totalStaked + d.polymarket.totalStaked,
-      totalPnl: acc.totalPnl + d.polymarket.totalPnl,
-    }),
-    { wins: 0, losses: 0, pending: 0, picks: 0, totalStaked: 0, totalPnl: 0 },
-  );
 
   return (
     <div className={cn("data-card flex flex-col gap-4", className)}>
@@ -208,15 +197,13 @@ export function DailyPlayScoreboard({ compact = false, className }: DailyPlaySco
       </div>
 
       {/* Row 1: today's picks */}
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-2">
         <PlatformChip label="Kalshi (today)" pick={today.kalshi} />
-        <PlatformChip label="Polymarket (today)" pick={today.polymarket} />
       </div>
 
-      {/* Row 2: last 30d split */}
-      <div className="grid grid-cols-3 gap-2 rounded-md border border-white/5 bg-white/[0.02] px-3 py-2">
+      {/* Row 2: last 30d */}
+      <div className="grid grid-cols-2 gap-2 rounded-md border border-white/5 bg-white/[0.02] px-3 py-2">
         <RollupCell label="Last 30d · Kalshi" rollup={last30Kalshi} />
-        <RollupCell label="Last 30d · Polymarket" rollup={last30Poly} />
         <RollupCell label="Last 30d · Combined" rollup={last30} />
       </div>
 
@@ -256,7 +243,6 @@ export function DailyPlayScoreboard({ compact = false, className }: DailyPlaySco
               <tr className="border-b border-white/5 text-left text-muted-foreground">
                 <th className="py-2 pr-2">Date</th>
                 <th className="py-2 pr-2">Kalshi (W/L/P)</th>
-                <th className="py-2 pr-2">Polymarket (W/L/P)</th>
                 <th className="py-2 pr-2 text-right">Daily PnL</th>
               </tr>
             </thead>
@@ -266,9 +252,6 @@ export function DailyPlayScoreboard({ compact = false, className }: DailyPlaySco
                   <td className="py-2 pr-2 font-mono">{d.date}</td>
                   <td className="py-2 pr-2">
                     {d.kalshi.wins}/{d.kalshi.losses}/{d.kalshi.pending}
-                  </td>
-                  <td className="py-2 pr-2">
-                    {d.polymarket.wins}/{d.polymarket.losses}/{d.polymarket.pending}
                   </td>
                   <td
                     className={cn(

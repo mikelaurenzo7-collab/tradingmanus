@@ -19,7 +19,6 @@ import {
   computeKalshiRoundTripCostFromMarket,
   type RoundTripCost,
 } from "./kalshiFees";
-import { computePolymarketRoundTripCostFromLimit } from "./polymarketFees";
 
 // ── Snapshot exports kept for backwards compatibility ────────────────────────
 export const MIN_NET_EV = ENV.profitGuardrails.minNetEv;
@@ -84,10 +83,9 @@ export interface ProfitCheckInput {
   spreadProxy?: number;
   /**
    * Which platform's fee model to apply.  Defaults to "kalshi" so
-   * existing callers need no changes; Polymarket callers must pass
-   * "polymarket" explicitly so the correct fee helper is used.
+   * Defaults to "kalshi".
    */
-  platform?: "kalshi" | "polymarket";
+  platform?: "kalshi";
 }
 
 export function checkProfitGuardrails(
@@ -119,25 +117,14 @@ export function checkProfitGuardrails(
     grossEvFraction: evRoiFraction,
     entryLiquidity: input.liquidity,
   });
-  const feeBreakdown =
-    input.platform === "polymarket"
-      ? computePolymarketRoundTripCostFromLimit({
-          limitPriceUsd: input.entryPrice,
-          contracts: input.count,
-          // spreadProxy for Polymarket is in dollars; convert to cents
-          spreadCents:
-            input.spreadProxy != null && Number.isFinite(input.spreadProxy)
-              ? Math.max(1, Math.round(input.spreadProxy * 100))
-              : undefined,
-        })
-      : computeKalshiRoundTripCostFromMarket({
-          market: { yesPrice: input.entryPrice, noPrice: 1 - input.entryPrice },
-          side: "yes",
-          contracts: input.count,
-          spreadProxy: input.spreadProxy,
-          entryLiquidity: input.liquidity,
-          exitLiquidity: input.liquidity,
-        });
+  const feeBreakdown = computeKalshiRoundTripCostFromMarket({
+    market: { yesPrice: input.entryPrice, noPrice: 1 - input.entryPrice },
+    side: "yes",
+    contracts: input.count,
+    spreadProxy: input.spreadProxy,
+    entryLiquidity: input.liquidity,
+    exitLiquidity: input.liquidity,
+  });
   const spreadCostFraction =
     feeBreakdown.notionalUsd > 0
       ? feeBreakdown.spreadCostUsd / feeBreakdown.notionalUsd

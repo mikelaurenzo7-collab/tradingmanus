@@ -313,7 +313,7 @@ export async function createApp(options: { runStartupMigrations?: boolean } = {}
   // include the procedure path in the URL, so this also catches batched calls
   // that contain one of these mutation names.
   app.use(
-    /\/api\/trpc\/.*(?:kalshi\.placeOrder|kalshi\.cancelOrder|kalshi\.killSwitch|kalshi\.setTradingActivation|polymarket\.placeOrder|polymarket\.runAutonomousTrading)/,
+    /\/api\/trpc\/.*(?:kalshi\.placeOrder|kalshi\.cancelOrder|kalshi\.killSwitch|kalshi\.setTradingActivation)/,
     tradingLimiter
   );
 

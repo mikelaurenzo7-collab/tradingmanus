@@ -43,20 +43,20 @@ export type NavSection = {
  *   - Performance, Backtesting       · "is it making money?" + tuning
  *   - Autonomy, Risk Controls,
  *     Training                       · the dials you'll touch most
- *   - Connect                        · Kalshi + Polymarket creds
+ *   - Connect                        · Kalshi creds
  */
 export const navSections: NavSection[] = [
   {
     label: "Start",
     items: [
-      { icon: Compass, label: "Setup", path: "/setup", hint: "Connect Kalshi + Polymarket, fund, arm autonomy" },
+      { icon: Compass, label: "Setup", path: "/setup", hint: "Connect Kalshi, fund, arm autonomy" },
       { icon: LayoutDashboard, label: "Dashboard", path: "/dashboard", hint: "Home + key metrics across both platforms" },
     ],
   },
   {
     label: "Trade",
     items: [
-      { icon: Zap, label: "Signals", path: "/signals", hint: "Latest reviewed signals (Kalshi + Polymarket)" },
+      { icon: Zap, label: "Signals", path: "/signals", hint: "Latest reviewed signals (Kalshi)" },
       { icon: Activity, label: "Activity", path: "/activity", hint: "Open positions + trade history" },
     ],
   },
@@ -78,7 +78,7 @@ export const navSections: NavSection[] = [
   {
     label: "Account",
     items: [
-      { icon: Plug, label: "Connect", path: "/connect", hint: "Kalshi + Polymarket API credentials" },
+      { icon: Plug, label: "Connect", path: "/connect", hint: "Kalshi API credentials" },
     ],
   },
 ];

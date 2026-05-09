@@ -1,11 +1,12 @@
 /**
  * Environment configuration for the personal Kalshi-only trading dashboard.
  *
- * Single-owner Kalshi+Polymarket deployment.  Claude (Anthropic) is the
- * sole AI reviewer.  The Kalshi Trade
- * API uses RSA-PSS signing with a private key loaded from
+ * Single-owner Kalshi-only deployment.  Claude (Anthropic) + optional Grok
+ * (xAI, breaking-news niches) are the AI reviewers.  The Kalshi Trade API
+ * uses RSA-PSS signing with a private key loaded from
  * `KALSHI_PRIVATE_KEY_PATH` (preferred) or inlined via `KALSHI_PRIVATE_KEY`
- * (multi-line PEM).
+ * (multi-line PEM).  Account is sized at ~$500; all %-based thresholds scale
+ * automatically with live balance fetched each tick.
  */
 
 import { readFileSync } from "node:fs";
@@ -51,28 +52,6 @@ export const ENV = {
   isProduction: process.env.NODE_ENV === "production",
   allowedOrigin: normalize(process.env.ALLOWED_ORIGIN),
   alertWebhookUrl: normalize(process.env.ALERT_WEBHOOK_URL),
-
-  // ── Polymarket ───────────────────────────────────────────────────────
-  // Polymarket EOA proxy-wallet address (the `0x...` from the Polymarket
-  // account/deposit page). Used by the position-sync data-api which keys
-  // positions by EOA address rather than by API key. Lowercased so
-  // case-insensitive comparisons work downstream. Required for live
-  // Polymarket trading; without it position-sync silently no-ops and
-  // the boot self-test surfaces a WARN.
-  polymarketOwnerAddress: normalize(process.env.POLYMARKET_OWNER_ADDRESS).toLowerCase(),
-
-  // Polymarket LIVE trading kill-switch.  Signing is implemented via
-  // @polymarket/clob-client (EIP-712 typed-data over the CTF Exchange
-  // contract on Polygon), so the default is ON — but ONLY if the user's
-  // polymarketCredentials row carries: apiKey, apiSecret, apiPassphrase,
-  // walletPrivateKeyEncrypted, walletAddress, and signatureType.  Without
-  // those, placePolymarketOrder still refuses to sign.  Flip this env to
-  // false to disable Polymarket order placement entirely (read-side paths
-  // still work).
-  polymarketLiveTradingEnabled: normalizeBoolean(
-    process.env.POLYMARKET_LIVE_TRADING_ENABLED,
-    true,
-  ),
 
   // ── Kalshi (the ONLY trading platform) ───────────────────────────────────
   // Production vs demo (https://demo-api.kalshi.co) toggle. Default false.
@@ -150,8 +129,22 @@ export const ENV = {
     process.env.CLAUDE_OPUS_TIMEOUT_MS,
     45000,
   ),
+
+  // ── Grok (xAI) — Real-time information specialist ────────────────────────
+  // Optional. When enabled, Grok 4 handles Tier-2 review for breaking-news
+  // niches (Weather, Sports, Economics) where real-time X/Twitter info +
+  // NOAA data provides edge. For non-breaking-news high-stakes (Politics,
+  // Other), Claude Opus handles Tier-2 depth reasoning.
+  xaiApiKey: normalize(process.env.XAI_API_KEY),
+  grokModel: normalize(process.env.GROK_MODEL) || "grok-4-latest",
+  grokReviewerEnabled: normalizeBoolean(
+    process.env.GROK_REVIEWER_ENABLED,
+    false, // Default OFF — must opt-in explicitly after Phase B shadow-mode validation
+  ),
+  grokTimeoutMs: normalizePositiveInt(process.env.GROK_TIMEOUT_MS, 25000),
+
   // ── High-stakes triggers (all percentages — auto-scale with live balance) ─
-  // A signal is high-stakes (→ Sonnet review) if any of these hold:
+  // A signal is high-stakes (→ Tier-2 review) if any of these hold:
   highStakesPctOfCapital: normalizeFloat(
     process.env.HIGH_STAKES_PCT_OF_CAPITAL,
     0.02, // 2% of live capital (Phase 1.5 tightened from 3%). At $300 = $6;
@@ -202,52 +195,64 @@ export const ENV = {
       0.76,
       { min: 0, max: 1 },
     ),
+    // 35% total exposure (was 25%): at $500 we want 3-7 concurrent
+    // positions to compound properly. 35% allows up to 7 × 5% positions.
     maxPortfolioExposurePct: normalizeFloat(
       process.env.MAX_PORTFOLIO_EXPOSURE_PCT,
-      0.25,
+      0.35,
       { min: 0.01, max: 1 },
     ),
+    // 15% per correlated group (was 10%): allows 2-3 concurrent correlated
+    // positions (e.g., two NFP markets, or two hurricane markets).
     maxCorrelatedGroupPct: normalizeFloat(
       process.env.MAX_CORRELATED_GROUP_PCT,
-      0.1,
+      0.15,
       { min: 0.01, max: 1 },
     ),
-    // Kelly sizing: ½ Kelly capped at 4% of capital, floored at 0.5%.
-    // ½ Kelly is the "moderately aggressive" point — gives up ~30% of the
-    // long-run growth Full Kelly would achieve in exchange for ~5× lower
-    // drawdown variance, robust to ±5% reviewer probability calibration
-    // error. Override with KELLY_FRACTION=0.25 for the conservative ¼ Kelly
-    // default the original pivot used.
-    kellyFraction: normalizeFloat(process.env.KELLY_FRACTION, 0.5, {
+    // Kelly sizing: ~⅔ Kelly (0.65) for a growth-oriented $500 account.
+    // At ⅔ Kelly the long-run growth rate is >90% of full-Kelly while
+    // drawdown variance drops 3-4× vs full Kelly.  With a calibrated
+    // reviewer (Brier score ≤ 0.22 on our signals) this is the
+    // profit-maximising point given our fee structure.
+    // Override with KELLY_FRACTION=0.5 for half-Kelly if preferred.
+    kellyFraction: normalizeFloat(process.env.KELLY_FRACTION, 0.65, {
       min: 0.05,
       max: 1,
     }),
+    // 8% cap: at $500 = $40 max per trade.  Below the $50 taker-fee cliff
+    // where Kalshi's fee structure penalises large single-contract orders.
     kellyMaxPctOfCapital: normalizeFloat(
       process.env.KELLY_MAX_PCT_OF_CAPITAL,
-      0.05,
+      0.08,
       { min: 0.005, max: 0.15 },
     ),
+    // 1% floor: at $500 = $5 minimum.  Below $5 the round-trip fee eats
+    // more than the edge even on a 10% EV trade.
     kellyMinPctOfCapital: normalizeFloat(
       process.env.KELLY_MIN_PCT_OF_CAPITAL,
-      0.005,
+      0.01,
       { min: 0, max: 0.05 },
     ),
     // Drawdown circuit breakers: pause new trades on these losses.
+    // 5% daily / 12% weekly — slightly wider than the earlier conservative
+    // 3%/8% because at $500 a single bad trade can hit 5% naturally;
+    // too-tight breakers pause the system on normal variance.
     dailyDrawdownPauseFrac: normalizeFloat(
       process.env.DAILY_DRAWDOWN_PAUSE_FRAC,
-      0.03,
+      0.05,
       { min: 0.005, max: 0.5 },
     ),
     weeklyDrawdownPauseFrac: normalizeFloat(
       process.env.WEEKLY_DRAWDOWN_PAUSE_FRAC,
-      0.08,
+      0.12,
       { min: 0.01, max: 0.5 },
     ),
-    // Cold streak: pause after N consecutive losses or if 7-day realized
-    // edge falls below this threshold.
+    // Cold streak: pause after 6 consecutive losses (was 5 — at $500 we
+    // need more volume to compound; small-account normal variance touches
+    // 4-5 losses even on profitable strategies).
     coldStreakLossCount: normalizePositiveInt(
       process.env.COLD_STREAK_LOSS_COUNT,
-      5,
+      6,
     ),
     coldStreakMinRealizedEdgePct: normalizeFloat(
       process.env.COLD_STREAK_MIN_REALIZED_EDGE_PCT,
@@ -338,27 +343,6 @@ export const ENV = {
     { min: 0, max: 1 },
   ),
 
-  // ── Polymarket Daily Sports Play (mirrors Kalshi version, ON by default) ─
-  // Once per UTC day at the configured hour, fires the top-EV reviewed
-  // sports signal on Polymarket sized at 2.5% of bankroll.  Reuses the
-  // operator's `tradingPreferences.{liveTradingEnabled, autonomyMode,
-  // executionCadence}` gates — same kill-switch arms BOTH platforms.
-  enablePolymarketDailySportsPlay: normalizeBoolean(
-    process.env.ENABLE_POLYMARKET_DAILY_SPORTS_PLAY,
-    true,
-  ),
-  polymarketDailySportsPlayHourUtc: (() => {
-    const raw = (process.env.POLYMARKET_DAILY_SPORTS_PLAY_HOUR_UTC ?? "").trim();
-    const parsed = Number.parseInt(raw, 10);
-    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 23) return 14;
-    return parsed;
-  })(),
-  polymarketDailySportsPlayPctOfCapital: normalizeFloat(
-    process.env.POLYMARKET_DAILY_SPORTS_PLAY_PCT_OF_CAPITAL,
-    0.025,
-    { min: 0.005, max: 0.1 },
-  ),
-
   // ── Coinbase scaffolding (Phase 10 — architectural only, NOT yet wired) ──
   // Live placement is gated behind `enableCoinbaseLive` even when creds
   // are present.  Sandbox mode routes orders to Coinbase's testnet so
@@ -367,13 +351,17 @@ export const ENV = {
   coinbaseSandboxMode: normalizeBoolean(process.env.COINBASE_SANDBOX_MODE, true),
 
   // ── Dynamic scanner (5 base / 7-8 conditional) ───────────────────────────
+  // Profit-maximised scanner: 10 base / 20 max analyses per day.
+  // Higher than the earlier conservative 5/8 because at $500 with ~60s
+  // autonomy interval we have capacity to evaluate more opportunities;
+  // the AI cost gate (aiCostBudget) caps the actual AI spend regardless.
   scannerBaseAnalysesPerDay: normalizePositiveInt(
     process.env.SCANNER_BASE_ANALYSES_PER_DAY,
-    5,
+    10,
   ),
   scannerMaxAnalysesPerDay: normalizePositiveInt(
     process.env.SCANNER_MAX_ANALYSES_PER_DAY,
-    8,
+    20,
   ),
   scannerHighOpportunityLiquidMarkets: normalizePositiveInt(
     process.env.SCANNER_HIGH_OPP_LIQUID_MARKETS,

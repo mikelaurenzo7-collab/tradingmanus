@@ -67,7 +67,7 @@ export default function Dashboard() {
   const performanceOverviewQuery =
     trpc.kalshi.getPerformanceOverview.useQuery();
   const accountStatusQuery = trpc.kalshi.getKalshiAccountStatus.useQuery();
-  const polyAccountStatusQuery = trpc.polymarket.getPolymarketAccountStatus.useQuery();
+  const polyAccountStatusQuery = undefined; // Polymarket removed — Kalshi-only
   const { data: instructions } = trpc.training.getInstructions.useQuery();
   const autonomyActivityQuery = trpc.kalshi.getAutonomyActivity.useQuery();
   const equityCurveQuery = trpc.kalshi.getEquityCurve.useQuery({ days: 7 });
@@ -169,9 +169,7 @@ export default function Dashboard() {
   const kalshiConnected = accountStatus?.connected || false;
   const isConnected = kalshiConnected;
   const equity = isConnected ? accountStatus?.equity || 0 : 0;
-  const polyBalance = polyAccountStatusQuery.data?.usdcBalance ?? null;
-  const totalCapital = equity + (polyBalance ?? 0);
-  const isFunded = totalCapital > 0;
+  const isFunded = equity > 0;
   const hasInstructions = (instructions?.length || 0) > 0;
   const tradingPreferences =
     accountStatus?.tradingPreferences ?? DEFAULT_TRADING_PREFERENCES;
@@ -278,7 +276,7 @@ export default function Dashboard() {
 
       <LiveHeartbeat />
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 gap-3">
         <PlatformStatusTile
           platform="Kalshi"
           connected={kalshiConnected}
@@ -287,9 +285,6 @@ export default function Dashboard() {
               ? `$${equity.toFixed(2)} synced capital`
               : "Connect RSA API credentials"
           }
-          onConnect={() => navigate("/connect")}
-        />
-        <PolymarketStatusTileFromQuery
           onConnect={() => navigate("/connect")}
         />
       </div>
@@ -310,12 +305,8 @@ export default function Dashboard() {
         />
         <StatCard
           label="Account Capital"
-          value={`$${totalCapital.toFixed(2)}`}
-          subtitle={
-            polyBalance != null
-              ? `Kalshi $${equity.toFixed(2)} · Poly $${polyBalance.toFixed(2)}`
-              : `Kalshi $${equity.toFixed(2)}`
-          }
+          value={`$${equity.toFixed(2)}`}
+          subtitle={`Kalshi $${equity.toFixed(2)}`}
           trend={equityTrend}
           icon={<Sparkles size={18} />}
           color="#6366f1"
@@ -833,30 +824,4 @@ function OnboardingStep({
   );
 }
 
-function PolymarketStatusTileFromQuery({ onConnect }: { onConnect: () => void }) {
-  const polyStatus = trpc.polymarket.getPolymarketAccountStatus.useQuery(undefined, {
-    retry: false,
-  });
-  // Only treat as connected when the query genuinely succeeded — otherwise
-  // a slow/failing status call shows a misleading "Not connected" tile.
-  const connected = polyStatus.isSuccess && polyStatus.data?.connected === true;
-  const liveReady =
-    polyStatus.isSuccess && polyStatus.data?.liveTradingReady === true;
-  const detail = polyStatus.isLoading
-    ? "Checking Polymarket account…"
-    : polyStatus.isError
-      ? "Status unavailable — retry shortly"
-      : connected
-        ? liveReady
-          ? "Live-trading ready (wallet on file)"
-          : "Read-only · add wallet key for live trades"
-        : "Optional · enables cross-arb + Polymarket trading";
-  return (
-    <PlatformStatusTile
-      platform="Polymarket"
-      connected={connected}
-      detail={detail}
-      onConnect={onConnect}
-    />
-  );
-}
+// PolymarketStatusTileFromQuery removed — Kalshi-only platform
