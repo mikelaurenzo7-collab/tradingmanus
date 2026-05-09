@@ -97,6 +97,13 @@ export async function runDailyMoonshotPlay(
   // off the (userId, platform, playType, playDate) idempotency key.
   const runStartedAt = new Date();
   const runPlayDate = runStartedAt.toISOString().slice(0, 10);
+  const auditActor = `user:${userId}`;
+  const auditSkip = (reason: string) =>
+    logAuditEvent(
+      "kalshi_daily_moonshot_play_skipped",
+      JSON.stringify({ userId, runPlayDate, reason }),
+      auditActor,
+    ).catch(() => {});
   if (!ENV.enableDailyMoonshot) {
     return {
       status: "disabled",
@@ -108,18 +115,21 @@ export async function runDailyMoonshotPlay(
   // autonomy path's shouldSkipScheduledRun gates).
   const prefs = await getTradingPreferences(userId).catch(() => null);
   if (!prefs || !prefs.liveTradingEnabled) {
+    await auditSkip("liveTradingEnabled=0 — operator has disarmed live trading");
     return {
       status: "disabled",
       reason: "liveTradingEnabled=0 — operator has disarmed live trading",
     };
   }
   if (prefs.autonomyMode === "manual") {
+    await auditSkip("autonomyMode=manual — operator opt-out of automated trading");
     return {
       status: "disabled",
       reason: "autonomyMode=manual — operator opt-out of automated trading",
     };
   }
   if (prefs.executionCadence === "manual_only") {
+    await auditSkip("executionCadence=manual_only — operator opt-out of cron-driven trades");
     return {
       status: "disabled",
       reason: "executionCadence=manual_only — operator opt-out of cron-driven trades",
@@ -134,6 +144,7 @@ export async function runDailyMoonshotPlay(
     !creds.apiKey ||
     !creds.privateKey
   ) {
+    await auditSkip("Kalshi credentials missing or stale; reconnect required");
     return {
       status: "credentials_missing",
       reason: "Kalshi credentials missing or stale; reconnect required",
@@ -149,6 +160,7 @@ export async function runDailyMoonshotPlay(
     !Number.isFinite(equityResult.equity) ||
     equityResult.equity <= 0
   ) {
+    await auditSkip(`Live equity refresh failed: ${equityResult.error ?? "non-positive balance"}`);
     return {
       status: "balance_unknown",
       reason: `Live equity refresh failed: ${equityResult.error ?? "non-positive balance"}`,

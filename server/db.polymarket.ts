@@ -179,10 +179,11 @@ export async function upsertPolymarketPosition(
           realizedPnl,
           closedAt: closedAt ?? new Date(),
         });
+        const fallbackPlayDate = new Date(existing.openedAt).toISOString().slice(0, 10);
         await closeDailyPlayPickByMarketFallback({
           userId: scopedUserId,
           platform: "polymarket",
-          playDate: new Date().toISOString().slice(0, 10),
+          playDate: fallbackPlayDate,
           marketId: position.marketId,
           tokenId: position.tokenId,
           exitPrice: Number.isFinite(exitPrice) ? exitPrice : null,
