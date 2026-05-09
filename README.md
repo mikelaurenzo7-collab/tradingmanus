@@ -105,9 +105,11 @@ Test connectivity (signs `/portfolio/balance`):
 DEMO_MODE=true corepack pnpm tsx -e "import('./server/_core/kalshiClient.ts').then(m=>m.getPortfolioBalance().then(console.log))"
 ```
 
-### 2. Get your AI key
+### 2. Get your AI keys
 
-**Claude (Anthropic)** — required. Sign up at <https://console.anthropic.com/> and set `ANTHROPIC_API_KEY`. Phase 1 of the hardening pass removed the legacy Grok fallback; the autonomy will fail closed on every cycle until this key is set.
+**Claude (Anthropic)** — required. Sign up at <https://console.anthropic.com/> and set `ANTHROPIC_API_KEY`. Autonomy fails closed until this key is set because final trade approval stays on paid Claude review.
+
+**OpenRouter** — optional cost saver. Set `OPENROUTER_API_KEY` to run a free-model pre-triage pass before Claude. This model cannot approve trades; it can only drop obvious junk candidates and fails open to the full paid reviewer stack on any error. For aggressive small-account mode, the default `OPENROUTER_TRIAGE_THRESHOLD=0` runs this free pass on every non-empty candidate batch.
 
 ### 3. Local dev
 
@@ -142,8 +144,10 @@ OWNER_EMAIL
 OWNER_PASSWORD                # 12+ chars in production
 NODE_ENV=production
 
-# AI reviewer — single Claude reviewer (Phase 1 removed legacy Grok fallback)
+# AI reviewer — Claude remains final approver
 ANTHROPIC_API_KEY             # https://console.anthropic.com/  (required)
+# Optional free pre-triage before paid Claude review
+OPENROUTER_API_KEY            # https://openrouter.ai/ (optional)
 
 # Kalshi — required for trading
 KALSHI_KEY_ID
@@ -164,7 +168,12 @@ CLAUDE_SONNET_MODEL                     # claude-sonnet-4-6 (default)
 CLAUDE_OPUS_MODEL                       # claude-opus-4-7 (default)
 CLAUDE_SONNET_TIMEOUT_MS                # 20000 (default)
 CLAUDE_OPUS_TIMEOUT_MS                  # 45000 (default)
-AI_DAILY_BUDGET_USD                     # 0=unlimited (default)
+OPENROUTER_TRIAGE_ENABLED               # true (default when key set)
+OPENROUTER_TRIAGE_MODEL                 # qwen/qwen3-235b-a22b:free
+OPENROUTER_TRIAGE_THRESHOLD             # 0 (run free triage on every non-empty batch)
+OPENROUTER_TIMEOUT_MS                   # 8000 (default)
+OPENROUTER_SITE_URL                     # optional OpenRouter dashboard metadata
+OPENROUTER_APP_NAME                     # tradingmanus-kalshi-triage
 
 # Schedulers
 AUTONOMY_INTERVAL_MS                    # 600000 (default 10 min)
@@ -173,16 +182,18 @@ PAPER_TRADE_MODE                        # global emergency kill-switch
 AUDIT_LOG_RETENTION_DAYS                # 90 (default)
 
 # Profit guardrails — all percentages, auto-scale with live capital
-MIN_NET_EV                              # 0.05
-MIN_CONFIDENCE_AFTER_ADJUST             # 0.76
-MAX_PORTFOLIO_EXPOSURE_PCT              # 0.20
-MAX_CORRELATED_GROUP_PCT                # 0.10
-KELLY_FRACTION                          # 0.5  (¼=0.25 conservative, ½=0.5 moderate, ¾=0.75 aggressive)
-KELLY_MAX_PCT_OF_CAPITAL                # 0.04
-KELLY_MIN_PCT_OF_CAPITAL                # 0.005
-DAILY_DRAWDOWN_PAUSE_FRAC               # 0.03
-WEEKLY_DRAWDOWN_PAUSE_FRAC              # 0.08
-COLD_STREAK_LOSS_COUNT                  # 5
+MIN_NET_EV                              # 0.02
+MIN_CONFIDENCE_AFTER_ADJUST             # 0.70
+MAX_PORTFOLIO_EXPOSURE_PCT              # 0.35
+MAX_CORRELATED_GROUP_PCT                # 0.15
+KELLY_FRACTION                          # 0.5
+KELLY_MAX_PCT_OF_CAPITAL                # 0.25
+KELLY_MIN_PCT_OF_CAPITAL                # 0.01
+MAX_RISK_PER_TRADE_PERCENT              # 4
+MIN_LIQUIDITY_USD                       # 40000
+DAILY_DRAWDOWN_PAUSE_FRAC               # 0.05
+WEEKLY_DRAWDOWN_PAUSE_FRAC              # 0.12
+COLD_STREAK_LOSS_COUNT                  # 6
 COLD_STREAK_MIN_REALIZED_EDGE_PCT       # 0.03
 
 # High-stakes ensemble triggers
@@ -214,8 +225,8 @@ PREFER_MAKER_ORDERS                     # true (default)
 | `server/_core/liveCapital.ts` | Live Kalshi balance reader (30s cache). All percentage thresholds derive from this. |
 | `server/_core/kalshiClient.ts` | RSA-PSS signed Kalshi Trade API client + demo toggle. |
 | `server/_core/feeCalculator.ts` | Exact Kalshi fee math (0.0175 maker / 0.07 taker, round-up to cent) + net EV. |
-| `server/_core/kellySizer.ts` | ½ Kelly with 0.5 %–4 % live-capital clamp (env-overridable). |
-| `server/_core/drawdownBreaker.ts` | 3 %/8 % drawdown + cold-streak pause. |
+| `server/_core/kellySizer.ts` | ½ Kelly with aggressive small-account clamp plus `MAX_RISK_PER_TRADE_PERCENT` outer cap. |
+| `server/_core/drawdownBreaker.ts` | 5 %/12 % drawdown + cold-streak pause. |
 | `server/_core/dynamicScanner.ts` | 5-base / 8-10-12-conditional analysis budget (capital-tier-scaled). |
 | `server/_core/profitGuardrails.ts` | Single canonical entry-gate (`checkFullEntry`). |
 | `server/_core/categoryPersonas.ts` | Single Profit Reviewer persona (Claude-native). |
@@ -225,6 +236,7 @@ PREFER_MAKER_ORDERS                     # true (default)
 | `server/_core/performanceTracker.ts` | Per-trade outcome ledger + per-category ROI rollups. |
 | `server/_core/calibrationJob.ts` | Weekly Brier-score calibration per reviewer per category. |
 | `server/_core/tradingReviewer.ts` | Tier-1 reviewer pipeline (Claude Haiku, batch-cached). |
+| `server/_core/openRouterTriage.ts` | Optional free OpenRouter pre-triage; drops obvious junk before paid Claude review and fails open. |
 
 ## Dashboard tabs (post-pivot)
 

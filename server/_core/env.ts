@@ -143,6 +143,33 @@ export const ENV = {
   ),
   grokTimeoutMs: normalizePositiveInt(process.env.GROK_TIMEOUT_MS, 25000),
 
+  // ── OpenRouter (optional free pre-triage only) ───────────────────────────
+  // OpenRouter MUST NOT be a final trade approver.  Free models are useful
+  // for one thing that improves expected value: drop obvious junk before we
+  // spend paid Claude/Grok tokens.  The layer fails open (full paid review)
+  // on timeout, malformed JSON, rate limit, or unavailable free model.
+  openRouterApiKey: normalize(process.env.OPENROUTER_API_KEY),
+  openRouterTriageEnabled: normalizeBoolean(
+    process.env.OPENROUTER_TRIAGE_ENABLED,
+    true,
+  ),
+  openRouterTriageModel:
+    normalize(process.env.OPENROUTER_TRIAGE_MODEL) || "qwen/qwen3-235b-a22b:free",
+  // OpenRouter is free/cheap enough to run before almost every paid review
+  // batch. 0 means "run on every non-empty batch"; raise to 3-6 if free-model
+  // latency ever becomes more costly than the saved Claude tokens.
+  openRouterTriageThreshold: normalizePositiveInt(
+    process.env.OPENROUTER_TRIAGE_THRESHOLD,
+    0,
+  ),
+  openRouterTimeoutMs: normalizePositiveInt(
+    process.env.OPENROUTER_TIMEOUT_MS,
+    8000,
+  ),
+  openRouterSiteUrl: normalize(process.env.OPENROUTER_SITE_URL),
+  openRouterAppName:
+    normalize(process.env.OPENROUTER_APP_NAME) || "tradingmanus-kalshi-triage",
+
   // ── High-stakes triggers (all percentages — auto-scale with live balance) ─
   // A signal is high-stakes (→ Tier-2 review) if any of these hold:
   highStakesPctOfCapital: normalizeFloat(

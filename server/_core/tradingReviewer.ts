@@ -24,6 +24,7 @@ import {
   type StakesContext,
   type TriageCandidate,
 } from "./aiToolbelt";
+import { isOpenRouterTriageConfigured, runOpenRouterTriage } from "./openRouterTriage";
 import { formatScoreboardForPrompt, getCachedScoreboard } from "./dailyScoreboard";
 import {
   classifyMarketCategory,
@@ -720,8 +721,10 @@ async function runCategoryReview(
 }
 
 /**
- * Optional Haiku pre-filter: when the candidate batch is large, drop obvious
- * junk before paying Sonnet/Opus prices.  Returns the input unchanged (capital preservation > cost).
+ * Optional pre-filter: OpenRouter runs aggressively because the free model can
+ * drop obvious junk before paid Claude/Grok review.  Anthropic Haiku triage is
+ * still available as a fallback path but only fires on larger batches. Returns
+ * the input unchanged on any failure (capital preservation > cost savings).
  */
 async function applyTriageFilter(
   signals: KalshiSignal[],
@@ -729,15 +732,14 @@ async function applyTriageFilter(
   options: TradingReviewerOptions,
   logger: Pick<Console, "warn" | "error">,
 ): Promise<KalshiSignal[]> {
-  if (!isTriageEnabled()) return signals;
+  const useOpenRouter = isOpenRouterTriageConfigured();
+  const useHaikuTriage = isTriageEnabled();
+  if (!useOpenRouter && !useHaikuTriage) return signals;
   if (!isTradingReviewerConfigured(options)) return signals;
 
-  const threshold = options.triageThresholdOverride ?? getTriageThreshold();
+  const threshold = options.triageThresholdOverride
+    ?? (useOpenRouter ? ENV.openRouterTriageThreshold : getTriageThreshold());
   if (signals.length <= threshold) return signals;
-
-  const triageClient = options.anthropicClient ?? createAnthropicClient(
-    (options.anthropicApiKey ?? ENV.anthropicApiKey).trim(),
-  );
 
   const triageInput: TriageCandidate[] = signals.map((signal) => {
     const market = marketsById.get(signal.marketId);
@@ -753,10 +755,21 @@ async function applyTriageFilter(
     };
   });
 
-  const keep = await runHaikuTriage(triageClient as { messages: { create: (input: unknown) => Promise<{ content: Array<{ type: string; text?: string }> }> } }, triageInput, {
-    timeoutMs: Math.min(options.anthropicTimeoutMs ?? ENV.claudeHaikuTimeoutMs, 8000),
-    logger,
-  });
+  const keep = useOpenRouter
+    ? await runOpenRouterTriage(triageInput, {
+        timeoutMs: ENV.openRouterTimeoutMs,
+        log: logger,
+      })
+    : await runHaikuTriage(
+        (options.anthropicClient ?? createAnthropicClient(
+          (options.anthropicApiKey ?? ENV.anthropicApiKey).trim(),
+        )) as { messages: { create: (input: unknown) => Promise<{ content: Array<{ type: string; text?: string }> }> } },
+        triageInput,
+        {
+          timeoutMs: Math.min(options.anthropicTimeoutMs ?? ENV.claudeHaikuTimeoutMs, 8000),
+          logger,
+        },
+      );
   if (options.telemetry) {
     options.telemetry.triageRan = true;
     options.telemetry.triageInputCount = signals.length;

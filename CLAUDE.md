@@ -24,7 +24,7 @@ function (secondary).
 | Backend | Node 20, Express 4, tRPC v11 |
 | Database | Neon Postgres (serverless HTTP driver), Drizzle ORM |
 | Auth | JWT (24 h access / 7 d refresh) in `httpOnly` cookies, optional 2FA/TOTP |
-| AI | Anthropic SDK direct (`@anthropic-ai/sdk`) — Claude review tier defaults to Haiku 4.5, deep tier escalates to Opus 4.7. Optional dual-bot consensus with Grok (xAI) when `XAI_API_KEY` is set. |
+| AI | Anthropic SDK direct (`@anthropic-ai/sdk`) — Claude review tier defaults to Haiku 4.5, deep tier escalates to Opus 4.7. Optional Grok/xAI for breaking-news review. Optional OpenRouter free-model pre-triage drops obvious junk before paid Claude review; it never approves trades. |
 | Testing | Vitest 3, no jsdom (pure unit tests) |
 | Build | `pnpm build` → Vite (frontend to `dist/public`), `pnpm build:server` → esbuild (backend to `dist/index.js`) |
 
@@ -82,6 +82,11 @@ used.  Never use `npm` or `yarn` in this repo — the lockfile is
 | `XAI_API_KEY` | optional | Grok (xAI) key for true dual-bot consensus. Without it, the reviewer gracefully degrades to Claude-only. |
 | `GROK_MODEL` | optional | Default `grok-3-latest` |
 | `ENABLE_GROK_TEAM` | optional | Default `true` — when `XAI_API_KEY` is set, both bots review every signal in parallel and both must approve. |
+| `OPENROUTER_API_KEY` | optional | Enables free-model pre-triage before paid Claude review. It cannot approve trades; on errors it fails open to full paid review. |
+| `OPENROUTER_TRIAGE_MODEL` | optional | Default `qwen/qwen3-235b-a22b:free`; override if OpenRouter changes available free models. |
+| `OPENROUTER_TRIAGE_ENABLED` | optional | Default `true`; set `false` to disable OpenRouter pre-triage while keeping the key configured. |
+| `OPENROUTER_TRIAGE_THRESHOLD` | optional | Default `0` = run free OpenRouter pre-triage on every non-empty candidate batch before paid Claude review. Raise to `3-6` if free-model latency ever costs more than token savings. |
+| `OPENROUTER_TIMEOUT_MS` | optional | Default `8000`; short timeout so a free-model queue never stalls autonomy. |
 | `DAILY_LOSS_LIMIT_USD` | optional | Hard daily loss stop. When the day's realized net P&L drops below `-DAILY_LOSS_LIMIT_USD` the scheduler skips every autonomy tick until UTC midnight. Profitable days always run. `0` = unlimited. Default `20` (≈4.5% of $450 account; scale to ≈4-5% of your balance). See `server/_core/dailyScoreboard.ts:isDailyLossLimitExceeded()`. |
 | `AUTONOMY_INTERVAL_MS` | optional | Kalshi autonomy tick rate in ms (default `300000` = 5 min). At 5 min the sports/tech/econ TTLs (2-5 min) expire every tick, capturing those categories at full cadence. Tighten to `60000` (1 min) only when sub-minute crypto responsiveness is needed — costs ~$4–6/day. |
 | `ORDER_SYNC_INTERVAL_MS` | optional | Kalshi order/position reconciliation + exit monitor cadence (default `30000` = 30 s) |
