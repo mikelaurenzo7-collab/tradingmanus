@@ -25,7 +25,7 @@
 
 import type { MarketCategory } from "./marketCategoryRouter";
 
-export type Platform = "kalshi";
+export type Platform = "kalshi" | "polymarket";
 
 export type CategoryPersona = {
   platform: Platform;
@@ -80,14 +80,14 @@ const PROFIT_PERSONA_BASE = {
   systemMandate: PROFIT_PERSONA_MANDATE,
 };
 
-export function getCategoryPersona(_platform: Platform, category: MarketCategory): CategoryPersona {
-  // Stamp the caller-supplied category onto the returned persona so
+export function getCategoryPersona(platform: Platform, category: MarketCategory): CategoryPersona {
+  // Stamp the caller-supplied platform + category onto the returned persona so
   // downstream consumers (deskMemory keyed by category, audit labels,
   // per-category caches) don't collapse every market into "other".
-  // The persona content is shared; only the category field varies.
-  return { ...PROFIT_PERSONA_BASE, category };
+  // The persona content is shared; only the platform/category fields vary.
+  return { ...PROFIT_PERSONA_BASE, platform, category };
 }
 
-export function listPersonasForPlatform(_platform: Platform): CategoryPersona[] {
-  return [{ ...PROFIT_PERSONA_BASE, category: "other" }];
+export function listPersonasForPlatform(platform: Platform): CategoryPersona[] {
+  return [{ ...PROFIT_PERSONA_BASE, platform, category: "other" }];
 }

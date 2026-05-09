@@ -16,7 +16,7 @@
 
 import type { MarketCategory } from "./marketCategoryRouter";
 
-export type Platform = "kalshi";
+export type Platform = "kalshi" | "polymarket";
 
 export type GrokPersona = {
   platform: Platform;
@@ -66,16 +66,16 @@ const PROFIT_GROK_PERSONA: GrokPersona = {
 };
 
 export function getGrokPersona(
-  _platform: Platform,
+  platform: Platform,
   _category: MarketCategory,
 ): GrokPersona {
-  return PROFIT_GROK_PERSONA;
+  return { ...PROFIT_GROK_PERSONA, platform };
 }
 
 export function listGrokPersonasForPlatform(
-  _platform: Platform,
+  platform: Platform,
 ): GrokPersona[] {
-  return [PROFIT_GROK_PERSONA];
+  return [{ ...PROFIT_GROK_PERSONA, platform }];
 }
 
 /** Substitute the verbatim resolution-rules text into the persona's

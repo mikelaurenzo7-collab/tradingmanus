@@ -7,7 +7,18 @@ import { getUsersEligibleForAutomaticScheduledTrading } from "../db";
 import { runScheduledAutonomousTradingBatch } from "./kalshiAutonomy";
 import { syncPendingOrders, syncLivePositions } from "./kalshiOrderSync";
 import { evaluateExitsForOpenPositions } from "./exitMonitor";
-import { createAutonomousTradingLock, createOrderSyncLock } from "./distributedLock";
+import {
+  createAutonomousTradingLock,
+  createOrderSyncLock,
+  createPolymarketAutonomousTradingLock,
+  createPolymarketOrderSyncLock,
+} from "./distributedLock";
+import { runPolymarketAutonomousTrading } from "./polymarketAutonomy";
+import { syncPolymarketPositions } from "./polymarketPositionSync";
+import { evaluatePolymarketExitsForOpenPositions } from "./polymarketExitMonitor";
+import { fetchPolymarketMarkets } from "./polymarketAuth";
+import { detectCrossPlatformArbitrage } from "./crossPlatformArbitrage";
+import * as polymarketCredDb from "../db.polymarket-credentials";
 import { runStartupSelfTest } from "./startupSelfTest";
 import { checkBudgetForRun } from "./aiCostBudget";
 import { refreshScoreboard } from "./dailyScoreboard";
@@ -96,6 +107,16 @@ const COMBINATORIAL_ARB_INTERVAL_MS = envIntervalMs(
   "COMBINATORIAL_ARB_INTERVAL_MS",
   60 * 1000,
 );
+// Cross-platform arbitrage scanner — Kalshi ↔ Polymarket. Detection-only by
+// default (auto-execute requires CROSS_ARB_AUTO_EXECUTE=true and connected
+// credentials on both platforms).  10 s default mirrors CLAUDE.md.
+const CROSS_ARB_INTERVAL_MS = envIntervalMs(
+  "CROSS_ARB_INTERVAL_MS",
+  10 * 1000,
+);
+// Polymarket autonomy + position-sync. Defaults match the Kalshi side so a
+// shared AUTONOMY_INTERVAL_MS / ORDER_SYNC_INTERVAL_MS tuning knob applies to
+// both platforms uniformly.
 // Weekly Brier-score calibration (default Sunday 00:00 UTC + every 7 days).
 const CALIBRATION_INTERVAL_MS = envIntervalMs(
   "CALIBRATION_INTERVAL_MS",
@@ -240,6 +261,206 @@ async function runOrderSync() {
     hb.setError("order_sync", error);
   } finally {
     hb.markTickComplete("order_sync", startedAt);
+  }
+}
+
+// ── Polymarket autonomy ──────────────────────────────────────────────────────
+// Mirrors runAutonomousScheduler but routed to runPolymarketAutonomousTrading.
+// Per-user Polymarket subscription is checked inside the run; users who haven't
+// connected Polymarket credentials are no-ops (audit-logged as `skipped`).
+async function runPolymarketAutonomousScheduler() {
+  const startedAt = Date.now();
+  hb.markTickStart("autonomy_polymarket", "scanning", "Checking Polymarket eligibility");
+  try {
+    const eligibleUsers = await getUsersEligibleForAutomaticScheduledTrading();
+    const scopedUsers = scopeScheduledUsersToTrigger(
+      eligibleUsers as Array<{ id: number; openId: string; email?: string | null }>,
+      "local_scheduler",
+    );
+    if (scopedUsers.length === 0) {
+      hb.setSkipped("autonomy_polymarket", "no eligible users (live trading disarmed)");
+      return;
+    }
+
+    // Same daily-budget gate as Kalshi — when AI cost has overrun the
+    // pay-for-yourself cap, both platforms skip until UTC rollover.
+    const budget = checkBudgetForRun();
+    if (!budget.proceed) {
+      hb.setBlocked(
+        "autonomy_polymarket",
+        `AI daily budget overrun (${Math.round(budget.fractionSpent * 100)}%) — ${budget.reason}`,
+      );
+      return;
+    }
+
+    let executedUsers = 0;
+    for (const user of scopedUsers as Array<{ id: number; openId: string }>) {
+      // Filter to Polymarket-subscribed users so we don't burn locks on no-ops.
+      const subscribed = await polymarketCredDb.isUserSubscribedToPolymarket(user.id);
+      if (!subscribed) continue;
+
+      const lock = createPolymarketAutonomousTradingLock(user.id);
+      const acquired = await lock.acquire({ ttlMs: 5 * 60 * 1000 });
+      if (!acquired) {
+        logger.info(
+          { userId: user.id },
+          "[Scheduler] Polymarket autonomy already running for user %d, skipping",
+          user.id,
+        );
+        continue;
+      }
+      try {
+        const result = await runPolymarketAutonomousTrading(user.id, {
+          triggeredByOpenId: "local_scheduler",
+        });
+        if (result.status === "executed") {
+          executedUsers += 1;
+        }
+      } catch (err) {
+        logger.error(
+          { err, userId: user.id },
+          "[Scheduler] Polymarket autonomy run failed for user %d",
+          user.id,
+        );
+      } finally {
+        await lock.release();
+      }
+    }
+    hb.recordTickTelemetry("autonomy_polymarket", { ordersPlaced: executedUsers });
+  } catch (error) {
+    logger.error({ err: error }, "[Scheduler] Polymarket autonomous trading run failed");
+    hb.setError("autonomy_polymarket", error);
+  } finally {
+    hb.markTickComplete("autonomy_polymarket", startedAt);
+  }
+}
+
+// Polymarket position-sync + exit-monitor.  Equivalent of runOrderSync for
+// Polymarket: refreshes the local positions table from data-api (catches
+// manual UI closes) and evaluates trailing stops / profit targets.
+async function runPolymarketOrderSync() {
+  const startedAt = Date.now();
+  hb.markTickStart("polymarket_order_sync", "syncing", "Reconciling Polymarket positions + checking exits");
+  try {
+    const eligibleUsers = await getUsersEligibleForAutomaticScheduledTrading();
+    const scopedUsers = scopeScheduledUsersToTrigger(
+      eligibleUsers as Array<{ id: number; openId: string; email?: string | null }>,
+      "local_scheduler",
+    );
+    if (scopedUsers.length === 0) {
+      hb.setSkipped("polymarket_order_sync", "no eligible users");
+      return;
+    }
+
+    let exitTriggered = 0;
+    for (const user of scopedUsers as Array<{ id: number; openId: string }>) {
+      const subscribed = await polymarketCredDb.isUserSubscribedToPolymarket(user.id);
+      if (!subscribed) continue;
+
+      const lock = createPolymarketOrderSyncLock(user.id);
+      const acquired = await lock.acquire({ ttlMs: 60 * 1000 });
+      if (!acquired) continue;
+      try {
+        await syncPolymarketPositions(user.id);
+        const exits = await evaluatePolymarketExitsForOpenPositions(user.id, "local_scheduler");
+        const triggered = exits.filter((e) => e.decision.shouldExit);
+        exitTriggered += triggered.length;
+        if (triggered.length > 0) {
+          logger.info(
+            { userId: user.id, count: triggered.length, closed: triggered.filter((e) => e.closed).length },
+            "[PolymarketExitMonitor] %d exit signal(s) triggered for user %d",
+            triggered.length,
+            user.id,
+          );
+        }
+      } catch (err) {
+        logger.error({ err, userId: user.id }, "[PolymarketOrderSync] Sync failed for user %d", user.id);
+      } finally {
+        await lock.release();
+      }
+    }
+    hb.recordTickTelemetry("polymarket_order_sync", { ordersPlaced: exitTriggered });
+  } catch (error) {
+    logger.error({ err: error }, "[PolymarketOrderSync] Run failed");
+    hb.setError("polymarket_order_sync", error);
+  } finally {
+    hb.markTickComplete("polymarket_order_sync", startedAt);
+  }
+}
+
+// ── Cross-platform arbitrage scanner ─────────────────────────────────────────
+// Pure rule-based math (no AI cost). Scans Kalshi ↔ Polymarket for matched
+// markets where the spread covers fees + execution risk. Auto-execute is
+// disabled by default; flip CROSS_ARB_AUTO_EXECUTE=true once both platforms
+// are funded and you've seen a few clean detection cycles in the audit log.
+let crossArbScanInFlight = false;
+async function runCrossPlatformArbScanner() {
+  if (crossArbScanInFlight) return;
+  crossArbScanInFlight = true;
+  const startedAt = Date.now();
+  try {
+    const [rawKalshi, rawPoly] = await Promise.all([
+      fetchKalshiMarkets({ status: "open" }),
+      fetchPolymarketMarkets({ limit: 200 }),
+    ]);
+    const kalshiMarkets = rawKalshi
+      .filter((m) => m.status === "open")
+      .map((m) => ({
+        marketId: m.id,
+        title: m.title,
+        category: m.category ?? "other",
+        yesPrice: Number(m.yesPrice ?? 0),
+        noPrice: Number(m.noPrice ?? 0),
+        liquidity: Number(m.yesVolume ?? 0) + Number(m.noVolume ?? 0),
+      }));
+    const polymarketMarkets = rawPoly.map((m) => {
+      const yesToken = m.tokens.find((t) => t.outcome.toLowerCase() === "yes");
+      const noToken = m.tokens.find((t) => t.outcome.toLowerCase() === "no");
+      return {
+        marketId: m.marketId,
+        question: m.question,
+        category: m.category ?? "other",
+        yesPrice: Number(yesToken?.price ?? m.impliedProbabilityYes ?? 0.5),
+        noPrice: Number(noToken?.price ?? 1 - (m.impliedProbabilityYes ?? 0.5)),
+        liquidity: Number(m.liquidity ?? 0),
+      };
+    });
+
+    const opportunities = detectCrossPlatformArbitrage(kalshiMarkets, polymarketMarkets);
+    if (opportunities.length === 0) return;
+
+    const { logAuditEvent } = await import("../db");
+    for (const opp of opportunities.slice(0, 10)) {
+      await logAuditEvent(
+        "cross_platform_arb_detected",
+        JSON.stringify({
+          type: opp.type,
+          kalshiMarketId: opp.kalshiMarketId,
+          polymarketMarketId: opp.polymarketMarketId,
+          netEdge: opp.netEdge,
+          confidence: opp.confidence,
+        }),
+        "system",
+      );
+    }
+    logger.info(
+      { count: opportunities.length, top: opportunities[0]?.netEdge },
+      "[CrossArb] %d cross-platform opportunity(ies) detected",
+      opportunities.length,
+    );
+
+    // Auto-execute is intentionally NOT wired here yet. Cross-platform
+    // execution requires (1) per-user creds for both platforms, (2) a hard
+    // size cap, (3) a tested two-leg execution path that handles partial
+    // fills and currency conversion.  Until all three are in place, this
+    // stays detection-only — opportunities surface in the audit log so the
+    // operator can manually arb them.
+  } catch (error) {
+    logger.error({ err: error }, "[CrossArb] Scanner failed");
+  } finally {
+    crossArbScanInFlight = false;
+    hb.recordTickTelemetry("cross_arb", { ordersPlaced: 0 });
+    void startedAt;
   }
 }
 
@@ -532,10 +753,16 @@ startServer()
       );
     } else {
       hb.configureSchedulerInterval("autonomy_kalshi", AUTONOMOUS_TRADING_INTERVAL_MS);
+      hb.configureSchedulerInterval("autonomy_polymarket", AUTONOMOUS_TRADING_INTERVAL_MS);
       hb.configureSchedulerInterval("order_sync", ORDER_SYNC_INTERVAL_MS);
+      hb.configureSchedulerInterval("polymarket_order_sync", ORDER_SYNC_INTERVAL_MS);
+      hb.configureSchedulerInterval("cross_arb", CROSS_ARB_INTERVAL_MS);
 
       setInterval(runAutonomousScheduler, AUTONOMOUS_TRADING_INTERVAL_MS);
       setInterval(runOrderSync, ORDER_SYNC_INTERVAL_MS);
+      setInterval(runPolymarketAutonomousScheduler, AUTONOMOUS_TRADING_INTERVAL_MS);
+      setInterval(runPolymarketOrderSync, ORDER_SYNC_INTERVAL_MS);
+      setInterval(runCrossPlatformArbScanner, CROSS_ARB_INTERVAL_MS);
       // Combinatorial-arb scanner — risk-free math, no AI cost. Detection-only
       // for now (auto-execution requires per-user creds + size cap).
       setInterval(runCombinatorialArbScanner, COMBINATORIAL_ARB_INTERVAL_MS);
@@ -567,10 +794,16 @@ startServer()
       setInterval(runAuditCleanup, 24 * 60 * 60 * 1000);
 
       setTimeout(runAutonomousScheduler, 30 * 1000);
+      setTimeout(runPolymarketAutonomousScheduler, 45 * 1000);
+      setTimeout(runCrossPlatformArbScanner, 60 * 1000);
       const autonomyMin = (AUTONOMOUS_TRADING_INTERVAL_MS / 60_000).toFixed(1);
       const orderSyncSec = (ORDER_SYNC_INTERVAL_MS / 1_000).toFixed(0);
+      const crossArbSec = (CROSS_ARB_INTERVAL_MS / 1_000).toFixed(0);
       logger.info("[Scheduler] Kalshi autonomy started (%s-min interval)", autonomyMin);
-      logger.info("[OrderSync] Order sync started (%s-sec interval)", orderSyncSec);
+      logger.info("[Scheduler] Polymarket autonomy started (%s-min interval)", autonomyMin);
+      logger.info("[OrderSync] Kalshi order sync started (%s-sec interval)", orderSyncSec);
+      logger.info("[OrderSync] Polymarket order sync started (%s-sec interval)", orderSyncSec);
+      logger.info("[CrossArb] Cross-platform arb scanner started (%s-sec interval, detection-only)", crossArbSec);
     }
   })
   .catch((error) => {

@@ -26,6 +26,7 @@ export type SchedulerKind =
   | "autonomy_kalshi"
   | "autonomy_polymarket"
   | "order_sync"
+  | "polymarket_order_sync"
   | "cross_arb";
 
 export type SchedulerSnapshot = {
@@ -70,6 +71,7 @@ const state: Record<SchedulerKind, SchedulerSnapshot> = {
   autonomy_kalshi: initial("autonomy_kalshi", 60_000),
   autonomy_polymarket: initial("autonomy_polymarket", 60_000),
   order_sync: initial("order_sync", 30_000),
+  polymarket_order_sync: initial("polymarket_order_sync", 30_000),
   cross_arb: initial("cross_arb", 10_000),
 };
 

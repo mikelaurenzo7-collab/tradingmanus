@@ -1855,7 +1855,7 @@ export async function saveExecutionQuality(data: {
 
 export async function saveOnlineLearningUpdate(data: {
   userId: number;
-  platform: "kalshi";
+  platform: "kalshi" | "polymarket";
   signalType: string;
   outcome: "win" | "loss" | "breakeven";
   pnl: number;
@@ -1890,7 +1890,7 @@ export async function saveOnlineLearningUpdate(data: {
 
 export async function getRecentOnlineLearningUpdates(
   userId: number,
-  platform: "kalshi",
+  platform: "kalshi" | "polymarket",
   limit: number = 200
 ) {
   const scopedUserId = assertPositiveIntegerUserId(
@@ -1915,7 +1915,7 @@ export async function getRecentOnlineLearningUpdates(
 
 export async function savePerformanceAttribution(data: {
   userId: number;
-  platform: "kalshi";
+  platform: "kalshi" | "polymarket";
   marketId: string;
   signalType: string;
   category: string;

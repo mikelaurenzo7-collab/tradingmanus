@@ -52,6 +52,15 @@ export const ENV = {
   allowedOrigin: normalize(process.env.ALLOWED_ORIGIN),
   alertWebhookUrl: normalize(process.env.ALERT_WEBHOOK_URL),
 
+  // ── Polymarket ───────────────────────────────────────────────────────
+  // Polymarket EOA proxy-wallet address (the `0x...` from the Polymarket
+  // account/deposit page). Used by the position-sync data-api which keys
+  // positions by EOA address rather than by API key. Lowercased so
+  // case-insensitive comparisons work downstream. Required for live
+  // Polymarket trading; without it position-sync silently no-ops and
+  // the boot self-test surfaces a WARN.
+  polymarketOwnerAddress: normalize(process.env.POLYMARKET_OWNER_ADDRESS).toLowerCase(),
+
   // ── Kalshi (the ONLY trading platform) ───────────────────────────────────
   // Production vs demo (https://demo-api.kalshi.co) toggle. Default false.
   kalshiDemoMode: normalizeBoolean(process.env.DEMO_MODE, false),
