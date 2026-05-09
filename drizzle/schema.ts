@@ -340,6 +340,10 @@ export const kalshiSignals = pgTable("kalshiSignals", {
   impliedProbability: doublePrecision("impliedProbability").notNull(),
   marketPrice: doublePrecision("marketPrice").notNull(),
   expectedValue: doublePrecision("expectedValue").notNull(),
+  // Phase 2 — round-trip fee+spread breakdown the EV gate used to evaluate
+  // this signal. Shape: RoundTripCost from server/_core/kalshiFees.ts.
+  // Nullable for backwards compat with rows written before Phase 2.
+  feeBreakdownJson: jsonb("feeBreakdownJson"),
   createdAt: createdAt(),
 });
 
