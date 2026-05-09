@@ -50,19 +50,26 @@ export type StakesContext = {
   highStakes?: boolean;
 };
 
-// Lowered notional threshold: with small live capital, $10+ trades are
-// already material and deserve Opus-tier review.
-const HIGH_STAKES_NOTIONAL_USD = 10;
-// Raised resolution-window threshold: near-resolution is where mispricing
-// collapses fastest, so we want Opus reasoning for the full last ~2 days.
-const HIGH_STAKES_HOURS_TO_RESOLUTION = 48;
-// Lowered confidence threshold: high-conviction signals deserve the deeper
-// pass *before* committing capital.
-const HIGH_STAKES_CONFIDENCE = 0.8;
-// Tail-probability triggers: implied probability outside [0.1, 0.9] is
-// either obvious mispricing or toxic — Opus reasoning is the right venue.
-const HIGH_STAKES_TAIL_LOW = 0.1;
-const HIGH_STAKES_TAIL_HIGH = 0.9;
+// Phase 1.5 — recalibrated high-stakes detector.
+//
+// Pre-Phase-1.5 the constants below fired on ~95 % of real signals (the
+// notional proxy `marketPrice × 100` was off by ~10×, the 48 h resolution
+// window covered every sports daily play, and the 0.10/0.90 tail
+// thresholds caught every moonshot and every favorite). That made the
+// "low-stakes Haiku batch" path effectively dead code — every signal
+// routed to Sonnet, doubling AI spend without buying additional review
+// quality on routine trades.
+//
+// New thresholds aim for ~20 % high-stakes hit rate so Sonnet review is
+// concentrated on signals that genuinely need deeper reasoning:
+//   - $25 notional floor (real Kelly cap on $300-500 bankroll is ~$12-20)
+//   - 24 h resolution window (the actual urgency zone)
+//   - 0.05/0.95 tail thresholds (only truly extreme contracts)
+//   - Confidence trigger removed (high Haiku confidence ≠ reason to pay 5×)
+const HIGH_STAKES_NOTIONAL_USD = 25;
+const HIGH_STAKES_HOURS_TO_RESOLUTION = 24;
+const HIGH_STAKES_TAIL_LOW = 0.05;
+const HIGH_STAKES_TAIL_HIGH = 0.95;
 
 export function isHighStakes(context: StakesContext): boolean {
   if (context.highStakes) return true;
@@ -74,7 +81,6 @@ export function isHighStakes(context: StakesContext): boolean {
   ) {
     return true;
   }
-  if ((context.confidence ?? 0) >= HIGH_STAKES_CONFIDENCE) return true;
   if (
     typeof context.impliedProbability === "number" &&
     Number.isFinite(context.impliedProbability) &&

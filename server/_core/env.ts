@@ -111,12 +111,36 @@ export const ENV = {
   // expensive Opus second-pass / catastrophic-bet treatment.
   opusEscalationMinGrossEv: normalizeFloat(
     process.env.OPUS_ESCALATION_MIN_GROSS_EV,
-    0.05,
+    0.07, // 7% (Phase 1.5 tightened from 5%). When Sonnet contests a
+    // Tier-1 approval, only escalate to Opus if the gross EV is meaty
+    // enough to be worth Opus's per-call cost (~12× Sonnet).
     { min: 0, max: 1 },
   ),
   claudeHaikuTimeoutMs: normalizePositiveInt(
     process.env.CLAUDE_HAIKU_TIMEOUT_MS,
     15000,
+  ),
+  // Phase 1.5 — Haiku self-consistency on Tier 1.  Two parallel calls at
+  // different temperatures; both must approve to clear Tier 1.  When passes
+  // disagree (`split`), the signal auto-escalates to Sonnet for a tiebreaker
+  // instead of being plain-vetoed — disagreement IS a useful signal.
+  claudeHaikuSelfConsistencyEnabled: normalizeBoolean(
+    process.env.CLAUDE_HAIKU_SELF_CONSISTENCY_ENABLED,
+    true,
+  ),
+  claudeHaikuSelfConsistencyTemp1: normalizeFloat(
+    process.env.CLAUDE_HAIKU_SELF_CONSISTENCY_TEMP1,
+    0.2,
+    { min: 0, max: 1.5 },
+  ),
+  claudeHaikuSelfConsistencyTemp2: normalizeFloat(
+    process.env.CLAUDE_HAIKU_SELF_CONSISTENCY_TEMP2,
+    0.7,
+    { min: 0, max: 1.5 },
+  ),
+  claudeHaikuSelfConsistencyEscalateOnSplit: normalizeBoolean(
+    process.env.CLAUDE_HAIKU_SELF_CONSISTENCY_ESCALATE_ON_SPLIT,
+    true,
   ),
   claudeSonnetTimeoutMs: normalizePositiveInt(
     process.env.CLAUDE_SONNET_TIMEOUT_MS,
@@ -130,7 +154,9 @@ export const ENV = {
   // A signal is high-stakes (→ Sonnet review) if any of these hold:
   highStakesPctOfCapital: normalizeFloat(
     process.env.HIGH_STAKES_PCT_OF_CAPITAL,
-    0.03, // 3% of live capital. At $200 = $6; at $1000 = $30; at $5000 = $150.
+    0.02, // 2% of live capital (Phase 1.5 tightened from 3%). At $300 = $6;
+    // at $1000 = $20; at $5000 = $100. Tighter threshold concentrates Sonnet
+    // review on more borderline trades — pairs with Haiku self-consistency.
     { min: 0.005, max: 0.5 },
   ),
   // Legacy hard-dollar threshold. Default `Infinity` so it's effectively off
@@ -142,12 +168,16 @@ export const ENV = {
   ),
   highStakesResolutionMinutes: normalizePositiveInt(
     process.env.HIGH_STAKES_RESOLUTION_MINUTES,
-    1440, // 24 h
+    2160, // 36 h (Phase 1.5 tightened from 24 h). Mispricing collapses
+    // fastest in the last 1-2 days; widen the window so Sonnet sees the
+    // entire pre-resolution acceleration.
   ),
   // Catastrophic-bet trigger (→ Opus unanimous gate, 3-tier consensus).
   catastrophicPctOfCapital: normalizeFloat(
     process.env.CATASTROPHIC_PCT_OF_CAPITAL,
-    0.1, // 10% of live capital.
+    0.08, // 8% of live capital (Phase 1.5 tightened from 10%). At $300 =
+    // $24; small bankroll → tighter trigger so Opus sees more of the
+    // largest bets before they fire.
     { min: 0.02, max: 0.5 },
   ),
 
