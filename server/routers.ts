@@ -68,6 +68,8 @@ import {
   type RiskParameters,
 } from "./_core/riskTuningHelper";
 import * as kalshiCredDb from "./db.kalshi-credentials";
+import * as polymarketCredDb from "./db.polymarket-credentials";
+import { validatePolymarketCredentials } from "./_core/polymarketAuth";
 import * as tradingPreferencesDb from "./db.trading-preferences";
 import {
   detectAllCombinatorialArbitrage,
@@ -2688,6 +2690,143 @@ export const appRouter = router({
           return { history: [], count: 0 };
         }
       }),
+  }),
+
+  // ── Polymarket account connection ─────────────────────────────────────────
+  // Mirrors the Kalshi connect/status/disconnect surface but takes the extra
+  // wallet fields (privateKey + address + signatureType) that EIP-712 order
+  // signing requires.  Read-side reconciliation works without the wallet
+  // fields too, so the connect form treats them as optional and only the
+  // live-trade path refuses to fire when they're missing.
+  polymarket: router({
+    connectPolymarketAccount: protectedProcedure
+      .input(
+        z.object({
+          apiKey: z.string().min(1),
+          apiSecret: z.string().min(1),
+          apiPassphrase: z.string().min(1),
+          // EIP-712 signing fields are optional at the API boundary, but
+          // live order placement refuses to fire without them.  Hex-encoded
+          // private key, with or without the 0x prefix.
+          walletPrivateKey: z.string().optional(),
+          walletAddress: z.string().optional(),
+          // 0=EOA, 1=POLY_PROXY (default — Polymarket UI), 2=POLY_GNOSIS_SAFE
+          signatureType: z.number().int().min(0).max(2).optional(),
+        }),
+      )
+      .mutation(async ({ input, ctx }) => {
+        try {
+          const validation = await validatePolymarketCredentials(
+            input.apiKey,
+            input.apiSecret,
+            input.apiPassphrase,
+          );
+          if (!validation.valid) {
+            return {
+              success: false,
+              error:
+                validation.error ||
+                "Polymarket rejected these credentials. Verify the API key, secret, and passphrase from your Polymarket account.",
+            };
+          }
+
+          const userId = getRequiredUserId(ctx);
+          try {
+            await polymarketCredDb.savePolymarketCredentials(
+              userId,
+              input.apiKey,
+              input.apiSecret,
+              input.apiPassphrase,
+              {
+                walletPrivateKey: input.walletPrivateKey,
+                walletAddress: input.walletAddress,
+                signatureType: input.signatureType,
+              },
+            );
+            await db.logAuditEvent(
+              "polymarket_account_connected",
+              JSON.stringify({
+                hasWalletKey: Boolean(input.walletPrivateKey),
+                signatureType: input.signatureType ?? 1,
+              }),
+              ctx.user!.openId,
+            );
+          } catch (storageError) {
+            logger.error(
+              { err: storageError },
+              "[Polymarket] Failed to persist validated credentials",
+            );
+            return {
+              success: false,
+              error:
+                "Your Polymarket credentials were validated, but the dashboard could not save the connection state. Please retry in a moment.",
+            };
+          }
+
+          return {
+            success: true,
+            // Surface to the UI which capabilities are now available.
+            liveTradingReady: Boolean(input.walletPrivateKey && input.walletAddress),
+          };
+        } catch (error) {
+          logger.error({ err: error }, "[Polymarket] Connect account error");
+          return {
+            success: false,
+            error: "Failed to connect Polymarket account. Check your credentials and try again.",
+          };
+        }
+      }),
+
+    getPolymarketAccountStatus: protectedProcedure.query(async ({ ctx }) => {
+      try {
+        const userId = getRequiredUserId(ctx);
+        const creds = await polymarketCredDb.getPolymarketCredentials(userId);
+        if (!creds) {
+          return {
+            connected: false,
+            status: "disconnected" as const,
+            liveTradingReady: false,
+            walletAddress: null,
+            signatureType: 1,
+          };
+        }
+        // Never return raw key material — UI only needs presence flags.
+        return {
+          connected: creds.accountStatus === "connected",
+          status: creds.accountStatus,
+          liveTradingReady: Boolean(creds.walletPrivateKey && creds.walletAddress),
+          walletAddress: creds.walletAddress,
+          signatureType: creds.signatureType ?? 1,
+          lastSyncedAt: creds.lastSyncedAt,
+        };
+      } catch (error) {
+        logger.error({ err: error }, "[Polymarket] Get account status error");
+        return {
+          connected: false,
+          status: "error" as const,
+          liveTradingReady: false,
+          walletAddress: null,
+          signatureType: 1,
+          error: String(error),
+        };
+      }
+    }),
+
+    disconnectPolymarketAccount: protectedProcedure.mutation(async ({ ctx }) => {
+      try {
+        const userId = getRequiredUserId(ctx);
+        await polymarketCredDb.deletePolymarketCredentials(userId);
+        await db.logAuditEvent(
+          "polymarket_account_disconnected",
+          "",
+          ctx.user!.openId,
+        );
+        return { success: true };
+      } catch (error) {
+        logger.error({ err: error }, "[Polymarket] Disconnect account error");
+        return { success: false, error: String(error) };
+      }
+    }),
   }),
 
   // Beta access management
