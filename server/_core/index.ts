@@ -29,6 +29,7 @@ import { detectAllCombinatorialArbitrage } from "./kalshiCombinatorial";
 import { runCalibrationJob } from "./calibrationJob";
 import { runDailySportsPlay } from "./dailySportsPlay";
 import { runDailyMoonshotPlay } from "./dailyMoonshotPlay";
+import { runPolymarketDailySportsPlay } from "./polymarketDailySportsPlay";
 import { ENV } from "./env";
 
 function isPortAvailable(port: number): Promise<boolean> {
@@ -740,6 +741,63 @@ async function maybeRunDailySportsPlay() {
   }
 }
 
+// ── Polymarket Daily Sports Play cron ─────────────────────────────────────
+// Mirrors maybeRunDailySportsPlay (Kalshi) but fires the Polymarket version.
+// Same per-user fence (in-process Set + audit-log dedup) so a container
+// restart within the configured hour doesn't double-fire.
+const polymarketDailySportsPlayCompletedKeys = new Set<string>();
+async function maybeRunPolymarketDailySportsPlay() {
+  if (!ENV.enablePolymarketDailySportsPlay) return;
+  const now = new Date();
+  const utcHour = now.getUTCHours();
+  if (utcHour !== ENV.polymarketDailySportsPlayHourUtc) return;
+  const utcDay = now.toISOString().slice(0, 10);
+
+  try {
+    const eligibleUsers = await getUsersEligibleForAutomaticScheduledTrading();
+    for (const user of eligibleUsers as Array<{ id: number }>) {
+      const key = `${user.id}:${utcDay}`;
+      if (polymarketDailySportsPlayCompletedKeys.has(key)) continue;
+      const alreadyRan = await dailyPlayAlreadyRanToday(user.id, utcDay, [
+        "polymarket_daily_sports_play_executed",
+        "polymarket_daily_sports_play_attempt",
+        "polymarket_daily_sports_play_blocked",
+      ]);
+      if (alreadyRan) {
+        polymarketDailySportsPlayCompletedKeys.add(key);
+        continue;
+      }
+      try {
+        const result = await runPolymarketDailySportsPlay(user.id);
+        polymarketDailySportsPlayCompletedKeys.add(key);
+        logger.info(
+          {
+            userId: user.id,
+            status: result.status,
+            reason: result.reason,
+            marketId: result.marketId,
+            tokenId: result.tokenId,
+            side: result.side,
+            sizeUsdc: result.sizeUsdc,
+            confidence: result.confidence,
+          },
+          "[PolymarketDailySportsPlay] result for user %d: %s",
+          user.id,
+          result.status,
+        );
+      } catch (err) {
+        logger.warn(
+          { err, userId: user.id },
+          "[PolymarketDailySportsPlay] run failed for user %d",
+          user.id,
+        );
+      }
+    }
+  } catch (err) {
+    logger.warn({ err }, "[PolymarketDailySportsPlay] sweep failed");
+  }
+}
+
 // ── Daily Moonshot Play cron (aggressive playground) ─────────────────────
 // Fires once per UTC day at ENV.dailyMoonshotHourUtc (default 16:00 UTC =
 // noon ET). Tick rate is 5 min; per-user gating prevents double-firing
@@ -867,6 +925,7 @@ startServer()
       // Daily Sports Play (playground mode) — checks every 5 minutes
       // whether to fire; the function itself is idempotent within a UTC day.
       setInterval(maybeRunDailySportsPlay, 5 * 60 * 1000);
+      setInterval(maybeRunPolymarketDailySportsPlay, 5 * 60 * 1000);
       setInterval(maybeRunDailyMoonshotPlay, 5 * 60 * 1000);
 
       const auditRetentionDays = Number(process.env.AUDIT_LOG_RETENTION_DAYS ?? 90);

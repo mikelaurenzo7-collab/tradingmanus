@@ -192,4 +192,56 @@ describe("matchSignalsToMarkets", () => {
     ];
     expect(matchSignalsToMarkets([sig], markets)).toEqual([]);
   });
+
+  it("filters out keyword-only matches when categories don't intersect", () => {
+    // Regression: "musk" appears in "music" category strings; without
+    // category gating an Elon Musk Wikipedia edit would falsely match
+    // a music-genre Kalshi market.
+    const sig = {
+      pageTitle: "Elon_Musk",
+      marketKeyword: "musk",
+      marketCategories: ["tech" as const],
+      revision: {
+        title: "Elon_Musk",
+        comment: "lawsuit filed",
+        sizeDelta: 1500,
+        timestamp: "2026-05-09T12:00:00Z",
+        user: "Editor",
+        isSignificant: true,
+        matchedKeywords: ["lawsuit"],
+      },
+      confidence: 0.7,
+      detectedAt: "2026-05-09T12:00:00Z",
+    };
+    const markets = [
+      { id: "m1", title: "Best musk-themed track of the year?", category: "culture" },
+      { id: "m2", title: "Will Musk step down from Tesla?", category: "tech" },
+    ];
+    const matches = matchSignalsToMarkets([sig], markets);
+    expect(matches).toHaveLength(1);
+    expect(matches[0].market.id).toBe("m2");
+  });
+
+  it("falls through to keyword-only when market category is missing", () => {
+    const sig = {
+      pageTitle: "Page",
+      marketKeyword: "kw",
+      marketCategories: ["politics" as const],
+      revision: {
+        title: "Page",
+        comment: "scandal",
+        sizeDelta: 1000,
+        timestamp: "2026-05-09T12:00:00Z",
+        user: "Editor",
+        isSignificant: true,
+        matchedKeywords: ["scandal"],
+      },
+      confidence: 0.5,
+      detectedAt: "2026-05-09T12:00:00Z",
+    };
+    const markets = [
+      { id: "m1", title: "kw market without category" },
+    ];
+    expect(matchSignalsToMarkets([sig], markets)).toHaveLength(1);
+  });
 });

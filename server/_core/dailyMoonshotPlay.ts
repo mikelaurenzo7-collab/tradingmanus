@@ -63,6 +63,10 @@ import {
   getTodayRealizedLoss,
   getKalshiTradeHistory,
 } from "../db";
+import {
+  insertDailyPlayPick,
+  linkPositionToPick,
+} from "../db.daily-play-picks";
 
 export interface DailyMoonshotPlayResult {
   status:
@@ -614,6 +618,47 @@ export async function runDailyMoonshotPlay(
     }),
     `user:${userId}`,
   ).catch(() => {});
+
+  // Persist the moonshot lifecycle row (best-effort).
+  const playDate = new Date().toISOString().slice(0, 10);
+  try {
+    const pick = await insertDailyPlayPick({
+      userId,
+      platform: "kalshi",
+      playType: "moonshot",
+      playDate,
+      marketId: top.marketId,
+      side: top.side,
+      stakeUsd: trueNotionalUsd,
+      entryPrice: top.marketPrice,
+      quantity: finalCount,
+      confidence: top.confidence,
+      expectedValue: top.expectedValue,
+    });
+    if (pick) {
+      setTimeout(async () => {
+        try {
+          const positions = await getOpenKalshiPositions(userId);
+          const match = (positions as Array<{ id: number; marketId: string }>).find(
+            (p) => p.marketId === top.marketId,
+          );
+          if (match) {
+            await linkPositionToPick({
+              userId,
+              platform: "kalshi",
+              marketId: top.marketId,
+              playDate,
+              linkedPositionId: match.id,
+            });
+          }
+        } catch (err) {
+          logger.debug({ err, userId, marketId: top.marketId }, "[DailyMoonshotPlay] deferred linkage failed");
+        }
+      }, 60_000).unref?.();
+    }
+  } catch (err) {
+    logger.warn({ err, userId, marketId: top.marketId }, "[DailyMoonshotPlay] dailyPlayPicks insert failed");
+  }
 
   logger.info(
     {

@@ -109,6 +109,9 @@ export async function upsertPolymarketPosition(
     .then((rows: PolymarketPosition[]) => rows[0]);
 
   if (existing) {
+    const closingNow =
+      position.positionStatus === "closed" && existing.positionStatus !== "closed";
+    const closedAt = closingNow ? new Date() : undefined;
     await database
       .update(polymarketPositions)
       .set({
@@ -122,9 +125,39 @@ export async function upsertPolymarketPosition(
         unrealizedPnl: position.unrealizedPnl,
         realizedPnl: position.realizedPnl,
         positionStatus: position.positionStatus,
-        closedAt: position.positionStatus === "closed" ? new Date() : undefined,
+        closedAt,
       })
       .where(eq(polymarketPositions.id, existing.id));
+
+    // Daily-pick scoreboard hook: only fires on a transition to 'closed'
+    // (defensive — drift-close in polymarketPositionSync.ts is the primary
+    // close detector for the data-API path).
+    if (closingNow) {
+      try {
+        const { closeDailyPlayPickByPosition, closeDailyPlayPickByMarketFallback } =
+          await import("./db.daily-play-picks");
+        const exitPrice = Number(position.currentPrice ?? 0);
+        const realizedPnl = Number(position.realizedPnl ?? 0);
+        await closeDailyPlayPickByPosition({
+          platform: "polymarket",
+          linkedPositionId: existing.id,
+          exitPrice: Number.isFinite(exitPrice) ? exitPrice : null,
+          realizedPnl,
+          closedAt: closedAt ?? new Date(),
+        });
+        await closeDailyPlayPickByMarketFallback({
+          userId: scopedUserId,
+          platform: "polymarket",
+          marketId: position.marketId,
+          tokenId: position.tokenId,
+          exitPrice: Number.isFinite(exitPrice) ? exitPrice : null,
+          realizedPnl,
+          closedAt: closedAt ?? new Date(),
+        });
+      } catch (err) {
+        console.warn("[upsertPolymarketPosition] dailyPlayPicks hook failed", err);
+      }
+    }
   } else {
     await database.insert(polymarketPositions).values({
       userId: scopedUserId,

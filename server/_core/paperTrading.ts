@@ -534,6 +534,7 @@ export async function simulatePolymarketPositionClose(
     const entryPrice = Number(position.entryPrice) || 0;
     const tokens = entryPrice > 0 ? sizeUsdc / entryPrice : 0;
     const realizedPnl = (fillPrice - entryPrice) * tokens;
+    const closedAt = new Date();
     try {
       await db
         .update(polymarketPositions)
@@ -542,7 +543,7 @@ export async function simulatePolymarketPositionClose(
           currentPrice: fillPrice,
           realizedPnl,
           unrealizedPnl: 0,
-          closedAt: new Date(),
+          closedAt,
         })
         .where(eq(polymarketPositions.id, positionId));
     } catch (updateError) {
@@ -550,6 +551,31 @@ export async function simulatePolymarketPositionClose(
         { err: updateError, positionId },
         "[PaperTrading] Failed to mark polymarket position closed",
       );
+    }
+
+    // Daily-pick scoreboard hook (paper-mode Polymarket close).
+    try {
+      const { closeDailyPlayPickByPosition, closeDailyPlayPickByMarketFallback } = await import(
+        "../db.daily-play-picks"
+      );
+      await closeDailyPlayPickByPosition({
+        platform: "polymarket",
+        linkedPositionId: positionId,
+        exitPrice: fillPrice,
+        realizedPnl,
+        closedAt,
+      });
+      await closeDailyPlayPickByMarketFallback({
+        userId: scopedUserId,
+        platform: "polymarket",
+        marketId: String(position.marketId),
+        tokenId: String(position.tokenId ?? ""),
+        exitPrice: fillPrice,
+        realizedPnl,
+        closedAt,
+      });
+    } catch (err) {
+      logger.warn({ err, positionId }, "[PaperTrading] dailyPlayPicks hook (poly close) failed");
     }
 
     logger.info(

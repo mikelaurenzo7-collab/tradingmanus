@@ -49,8 +49,8 @@ function buildGrokMandate(platform: Platform): string {
     "",
     "Hard discipline:",
     "- SKIP if resolution rules are unclear, ambiguous, or interpretive. Never trade",
-    "  what you can't grade. Use the verbatim rules in the user prompt — that block",
-    "  starts with `${RULES_BLOCK}`.",
+    "  what you can't grade. Use the verbatim rules supplied in the user prompt",
+    "  before approving any trade.",
     "- SKIP if there's no clear data-grounded reason to disagree with the market.",
     "  'Vibes' are not edge.",
     "- For YES contracts at price P, your win-probability estimate must materially",
@@ -88,11 +88,15 @@ const POLYMARKET_GROK_PERSONA: GrokPersona = {
 
 export function getGrokPersona(
   platform: Platform,
-  _category: MarketCategory,
+  category: MarketCategory,
 ): GrokPersona {
   // Both `id` and `systemMandate` align with the platform — Polymarket
-  // reviewers never inherit Kalshi-branded copy or fee math.
-  return platform === "kalshi" ? KALSHI_GROK_PERSONA : POLYMARKET_GROK_PERSONA;
+  // reviewers never inherit Kalshi-branded copy or fee math.  The caller's
+  // category is preserved so downstream logging / desk-memory / analytics
+  // can attribute reviews to the right desk instead of collapsing
+  // everything to "other".
+  const base = platform === "kalshi" ? KALSHI_GROK_PERSONA : POLYMARKET_GROK_PERSONA;
+  return { ...base, category };
 }
 
 export function listGrokPersonasForPlatform(

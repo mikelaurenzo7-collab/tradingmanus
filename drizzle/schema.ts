@@ -1,4 +1,5 @@
 import {
+  date,
   doublePrecision,
   index,
   integer,
@@ -8,6 +9,7 @@ import {
   serial,
   text,
   timestamp,
+  uniqueIndex,
   varchar,
 } from "drizzle-orm/pg-core";
 
@@ -680,6 +682,178 @@ export const polymarketCredentials = pgTable("polymarketCredentials", {
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
+
+// ─── Daily-play picks lifecycle (Kalshi + Polymarket) ────────────────────────
+// One row per daily-play pick, fired by either platform's daily sports / moonshot
+// scheduler.  Lifecycle: 'pending' on entry → 'won'/'lost'/'closed_breakeven'/
+// 'partial' on close.  Audit-log-independent so a single SQL query answers
+// "did the bot pay for itself today?" without scanning audit payloads.
+export const dailyPlayPlatformEnum = pgEnum("daily_play_platform", [
+  "kalshi",
+  "polymarket",
+]);
+export const dailyPlayTypeEnum = pgEnum("daily_play_type", ["sports", "moonshot"]);
+export const dailyPlayStatusEnum = pgEnum("daily_play_status", [
+  "pending",
+  "won",
+  "lost",
+  "partial",
+  "closed_breakeven",
+  "voided",
+]);
+
+export const dailyPlayPicks = pgTable(
+  "dailyPlayPicks",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("userId").notNull(),
+    platform: dailyPlayPlatformEnum("platform").notNull(),
+    playType: dailyPlayTypeEnum("playType").notNull(),
+    /** UTC date the pick was emitted (one row max per user/platform/type/day). */
+    playDate: date("playDate", { mode: "string" }).notNull(),
+    marketId: varchar("marketId", { length: 256 }).notNull(),
+    /** Polymarket-only: token id of the purchased outcome. */
+    tokenId: varchar("tokenId", { length: 256 }),
+    /** Soft FK into kalshiSignals.id or polymarketSignals — no cascade. */
+    signalId: integer("signalId"),
+    side: varchar("side", { length: 8 }).notNull(),
+    stakeUsd: doublePrecision("stakeUsd").notNull(),
+    entryPrice: doublePrecision("entryPrice").notNull(),
+    /** Contracts (Kalshi) / tokens (Polymarket) actually held. */
+    quantity: doublePrecision("quantity"),
+    confidence: doublePrecision("confidence"),
+    expectedValue: doublePrecision("expectedValue"),
+    reasoning: text("reasoning"),
+    status: dailyPlayStatusEnum("status").default("pending").notNull(),
+    exitPrice: doublePrecision("exitPrice"),
+    realizedPnl: doublePrecision("realizedPnl"),
+    closedAt: timestamp("closedAt", { withTimezone: true }),
+    /** kalshiPositions.id or polymarketPositions.id — populated post position-sync. */
+    linkedPositionId: integer("linkedPositionId"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => ({
+    userPlatformTypeDateUq: uniqueIndex(
+      "dailyPlayPicks_user_platform_type_date_uq",
+    ).on(t.userId, t.platform, t.playType, t.playDate),
+    userStatusIdx: index("dailyPlayPicks_userId_status_idx").on(
+      t.userId,
+      t.status,
+    ),
+    userPlayDateIdx: index("dailyPlayPicks_userId_playDate_idx").on(
+      t.userId,
+      t.playDate,
+    ),
+    linkedPositionIdx: index("dailyPlayPicks_linkedPositionId_idx").on(
+      t.platform,
+      t.linkedPositionId,
+    ),
+  }),
+);
+
+export type DailyPlayPick = typeof dailyPlayPicks.$inferSelect;
+export type NewDailyPlayPick = typeof dailyPlayPicks.$inferInsert;
+
+// ─── Coinbase scaffolding (Phase 10 — architectural ONLY) ──────────────────
+// No trading logic yet.  Live placement is gated behind
+// `ENV.enableCoinbaseLive=false` in coinbaseExecution.ts; the scaffold lets
+// the operator connect credentials so the integration is ready to flip on
+// once instruments are decided.
+export const coinbaseAccountStatusEnum = pgEnum("coinbase_account_status", [
+  "connected",
+  "disconnected",
+  "error",
+]);
+export const coinbaseOrderSideEnum = pgEnum("coinbase_order_side", ["buy", "sell"]);
+export const coinbaseOrderStatusEnum = pgEnum("coinbase_order_status", [
+  "pending",
+  "filled",
+  "partially_filled",
+  "cancelled",
+  "rejected",
+]);
+export const coinbasePositionStatusEnum = pgEnum("coinbase_position_status", [
+  "open",
+  "closing",
+  "closed",
+]);
+
+export const coinbaseCredentials = pgTable("coinbaseCredentials", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull().unique(),
+  apiKeyEncrypted: text("apiKeyEncrypted").notNull(),
+  apiSecretEncrypted: text("apiSecretEncrypted").notNull(),
+  apiPassphraseEncrypted: text("apiPassphraseEncrypted"),
+  sandboxMode: integer("sandboxMode").notNull().default(1),
+  accountStatus: coinbaseAccountStatusEnum("accountStatus")
+    .default("disconnected")
+    .notNull(),
+  lastSyncedAt: timestamp("lastSyncedAt", { withTimezone: true }),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+export const coinbaseOrders = pgTable(
+  "coinbaseOrders",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("userId").notNull(),
+    clientOrderId: varchar("clientOrderId", { length: 128 }).notNull(),
+    orderId: varchar("orderId", { length: 128 }),
+    productId: varchar("productId", { length: 64 }).notNull(),
+    side: coinbaseOrderSideEnum("side").notNull(),
+    size: doublePrecision("size").notNull(),
+    limitPrice: doublePrecision("limitPrice"),
+    averagePrice: doublePrecision("averagePrice"),
+    filledSize: doublePrecision("filledSize").notNull().default(0),
+    status: coinbaseOrderStatusEnum("status").default("pending").notNull(),
+    filledAt: timestamp("filledAt", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => ({
+    userStatusIdx: index("coinbaseOrders_userId_status_idx").on(t.userId, t.status),
+  }),
+);
+
+export const coinbasePositions = pgTable(
+  "coinbasePositions",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("userId").notNull(),
+    productId: varchar("productId", { length: 64 }).notNull(),
+    side: coinbaseOrderSideEnum("side").notNull(),
+    sizeUsdc: doublePrecision("sizeUsdc").notNull(),
+    entryPrice: doublePrecision("entryPrice").notNull(),
+    currentPrice: doublePrecision("currentPrice").notNull(),
+    unrealizedPnl: doublePrecision("unrealizedPnl").notNull().default(0),
+    realizedPnl: doublePrecision("realizedPnl").notNull().default(0),
+    positionStatus: coinbasePositionStatusEnum("positionStatus")
+      .default("open")
+      .notNull(),
+    openedAt: createdAt(),
+    closedAt: timestamp("closedAt", { withTimezone: true }),
+  },
+  (t) => ({
+    userStatusIdx: index("coinbasePositions_userId_status_idx").on(
+      t.userId,
+      t.positionStatus,
+    ),
+  }),
+);
+
+export const coinbaseCapital = pgTable("coinbaseCapital", {
+  userId: integer("userId").primaryKey(),
+  currentBalance: doublePrecision("currentBalance").notNull().default(0),
+  startingBalance: doublePrecision("startingBalance").notNull().default(0),
+  drawdownHwm: doublePrecision("drawdownHwm").notNull().default(0),
+  updatedAt: updatedAt(),
+});
+
+export type CoinbaseCredentials = typeof coinbaseCredentials.$inferSelect;
+export type CoinbaseOrder = typeof coinbaseOrders.$inferSelect;
+export type CoinbasePosition = typeof coinbasePositions.$inferSelect;
+export type CoinbaseCapital = typeof coinbaseCapital.$inferSelect;
 
 export const userPlatformSubscriptions = pgTable("userPlatformSubscriptions", {
   id: serial("id").primaryKey(),

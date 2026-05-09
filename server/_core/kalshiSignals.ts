@@ -1143,10 +1143,13 @@ export function calculateSignalPerformance(
 ): Map<SignalType, SignalPerformance> {
   const performance = new Map<SignalType, SignalPerformance>();
 
-  // Initialize performance for each signal type
-  const signalTypes: SignalType[] = ["value_play", "momentum", "contrarian", "arbitrage", "sentiment"];
-  for (const type of signalTypes) {
-    performance.set(type, {
+  // Lazy-initialise per signal type so newly added SignalType variants
+  // (linguistic_tell, wikipedia_edit, …) don't crash with a non-null
+  // assertion miss on `performance.get(...)!`.
+  const getOrCreatePerformance = (type: SignalType): SignalPerformance => {
+    const existing = performance.get(type);
+    if (existing) return existing;
+    const fresh: SignalPerformance = {
       signalType: type,
       totalSignals: 0,
       winningSignals: 0,
@@ -1155,12 +1158,14 @@ export function calculateSignalPerformance(
       avgConfidence: 0,
       avgExpectedValue: 0,
       realizedPnL: 0,
-    });
-  }
+    };
+    performance.set(type, fresh);
+    return fresh;
+  };
 
   // Aggregate performance
   for (const signal of signals) {
-    const perf = performance.get(signal.signalType)!;
+    const perf = getOrCreatePerformance(signal.signalType);
     perf.totalSignals++;
     perf.avgConfidence += signal.confidence;
     perf.avgExpectedValue += signal.expectedValue;

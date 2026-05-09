@@ -3401,6 +3401,132 @@ export const appRouter = router({
       };
     }),
   }),
+
+  // ── Coinbase scaffolding (Phase 10 — connect-only; trading is gated) ────
+  coinbase: router({
+    /**
+     * Connect Coinbase credentials.  Format-validated only — true exchange
+     * validation happens on the first API call (which currently throws,
+     * because Phase 10 is scaffolding-only).
+     */
+    connectCoinbaseAccount: protectedProcedure
+      .input(
+        z.object({
+          apiKey: z.string().min(4),
+          apiSecret: z.string().min(4),
+          apiPassphrase: z.string().min(0).optional(),
+          sandboxMode: z.boolean().default(true),
+        }),
+      )
+      .mutation(async ({ input, ctx }) => {
+        const userId = getRequiredUserId(ctx);
+        const { validateCoinbaseCredentials } = await import(
+          "./_core/coinbaseAuth"
+        );
+        const validation = await validateCoinbaseCredentials(
+          input.apiKey,
+          input.apiSecret,
+          input.apiPassphrase ?? null,
+        );
+        if (!validation.valid) {
+          return { success: false, error: validation.error ?? "Invalid credentials" };
+        }
+        const { saveCoinbaseCredentials } = await import("./db.coinbase-credentials");
+        try {
+          await saveCoinbaseCredentials(
+            userId,
+            input.apiKey,
+            input.apiSecret,
+            input.apiPassphrase ?? null,
+            input.sandboxMode,
+          );
+        } catch (err) {
+          return {
+            success: false,
+            error: err instanceof Error ? err.message : "Failed to save credentials",
+          };
+        }
+        await db.logAuditEvent(
+          "coinbase_account_connected",
+          JSON.stringify({ sandboxMode: input.sandboxMode }),
+          ctx.user!.openId,
+        );
+        return {
+          success: true,
+          message:
+            "Coinbase credentials saved (encrypted). Live trading is currently DISABLED " +
+            "(ENABLE_COINBASE_LIVE=false) — scaffolding only. See deferred Phase 10 plan.",
+        };
+      }),
+
+    getCoinbaseAccountStatus: protectedProcedure.query(async ({ ctx }) => {
+      const userId = getRequiredUserId(ctx);
+      const { isCoinbaseConnected } = await import("./db.coinbase-credentials");
+      const connected = await isCoinbaseConnected(userId);
+      return {
+        connected,
+        liveTradingReady: false, // always false in scaffolding phase
+        message: connected
+          ? "Connected (sandbox/scaffolding mode). Live trading not yet enabled."
+          : "Not connected.",
+      };
+    }),
+
+    disconnectCoinbaseAccount: protectedProcedure.mutation(async ({ ctx }) => {
+      const userId = getRequiredUserId(ctx);
+      const { deleteCoinbaseCredentials } = await import("./db.coinbase-credentials");
+      await deleteCoinbaseCredentials(userId);
+      await db.logAuditEvent(
+        "coinbase_account_disconnected",
+        JSON.stringify({}),
+        ctx.user!.openId,
+      );
+      return { success: true };
+    }),
+  }),
+
+  // ── Daily-pick scoreboard (Kalshi + Polymarket sports/moonshot picks) ─────
+  daily: router({
+    /**
+     * Aggregate scoreboard for the bot's daily picks.  Returns today's
+     * picks, per-day rollups for the lookback window, and lifetime totals
+     * — broken out by platform so the operator can see Kalshi vs Polymarket
+     * win rate side by side.
+     */
+    getDailyPlayScoreboard: protectedProcedure
+      .input(
+        z
+          .object({
+            platform: z.enum(["kalshi", "polymarket", "both"]).default("both"),
+            daysBack: z.number().int().min(1).max(180).default(30),
+          })
+          .default({ platform: "both", daysBack: 30 }),
+      )
+      .query(async ({ input, ctx }) => {
+        const userId = getRequiredUserId(ctx);
+        const { getDailyPlayPicks, rollupScoreboard } = await import(
+          "./db.daily-play-picks"
+        );
+        const platform =
+          input.platform === "both" ? undefined : input.platform;
+        const picks = await getDailyPlayPicks({
+          userId,
+          platform,
+          daysBack: input.daysBack,
+        });
+        return rollupScoreboard(picks, new Date().toISOString().slice(0, 10));
+      }),
+
+    /**
+     * Today's pick(s) only — used for the Dashboard's "today" chip.
+     */
+    getTodayDailyPlay: protectedProcedure.query(async ({ ctx }) => {
+      const userId = getRequiredUserId(ctx);
+      const { getTodayDailyPlayPicks } = await import("./db.daily-play-picks");
+      const utcDate = new Date().toISOString().slice(0, 10);
+      return getTodayDailyPlayPicks({ userId, utcDate });
+    }),
+  }),
 });
 
 export type AppRouter = typeof appRouter;

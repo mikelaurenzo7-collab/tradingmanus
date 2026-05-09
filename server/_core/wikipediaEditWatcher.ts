@@ -32,11 +32,13 @@ import { logger } from "./logger";
 
 const WIKIPEDIA_API = "https://en.wikipedia.org/w/api.php";
 
+// CLAUDE.md mandates a 30s window / 30s cooldown profile for all external
+// HTTP-call breakers. Trips after 5 failures in 30 s, fails fast for 30 s.
 const wikiBreaker = new CircuitBreaker({
   name: "wikipedia.edit-watcher",
   failureThreshold: 5,
-  windowMs: 60_000,
-  cooldownMs: 60_000,
+  windowMs: 30_000,
+  cooldownMs: 30_000,
 });
 
 /** Watched-page → applicable Kalshi market category. */
@@ -205,10 +207,16 @@ async function fetchRevisions(
     });
   }
 
-  // Bump the cursor to the newest timestamp we just saw.
+  // Advance the cursor to the newest timestamp we just saw — but only
+  // monotonically. If two poll cycles overlap (Wikipedia API is slow on
+  // this run), the older cycle finishing later must NOT roll the cursor
+  // backwards onto already-seen revisions.
   if (out.length > 0) {
     const newest = out.reduce((a, b) => (a.timestamp > b.timestamp ? a : b));
-    state.cursors.set(page.title, newest.timestamp);
+    const current = state.cursors.get(page.title);
+    if (!current || newest.timestamp > current) {
+      state.cursors.set(page.title, newest.timestamp);
+    }
   }
   return out;
 }
@@ -277,8 +285,13 @@ export async function pollWikipediaWatchlist(
 /**
  * Match a list of Wikipedia signals against active Kalshi market titles.
  * Returns the (signal, market) pairs where the watcher's `marketKeyword`
- * appears in the market title.  Caller threads these through the existing
- * signal-emission pipeline.
+ * appears in the market title AND (when category data is present) the
+ * market's category intersects the watched page's `marketCategories`.
+ *
+ * Without the category gate, broad keywords cause false positives — e.g.
+ * an Elon Musk Wikipedia edit triggering on a music-genre Kalshi market
+ * because "musk" is a substring of "music".  The category filter falls
+ * through to keyword-only when either side lacks category data.
  */
 export function matchSignalsToMarkets<M extends { id: string; title: string; category?: string }>(
   signals: WikipediaSignal[],
@@ -290,7 +303,13 @@ export function matchSignalsToMarkets<M extends { id: string; title: string; cat
     if (!kw) continue;
     for (const market of markets) {
       const title = market.title.toLowerCase();
-      if (title.includes(kw)) out.push({ signal: sig, market });
+      if (!title.includes(kw)) continue;
+      if (market.category && sig.marketCategories.length > 0) {
+        const marketCat = market.category.toLowerCase();
+        const allowed = sig.marketCategories.some((c) => c.toLowerCase() === marketCat);
+        if (!allowed) continue;
+      }
+      out.push({ signal: sig, market });
     }
   }
   return out;

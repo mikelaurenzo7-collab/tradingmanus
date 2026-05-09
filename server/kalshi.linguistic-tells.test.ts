@@ -122,7 +122,7 @@ describe("lookupLinguisticTellPrior", () => {
     expect(twoTells!.posterior).toBeGreaterThan(oneTell!.posterior);
   });
 
-  it("posterior is capped below 0.95 even with many tells", () => {
+  it("posterior is capped at 0.92 even with many tells", () => {
     const result = lookupLinguisticTellPrior({
       marketType: "ma_acquisition",
       newsSnippets: [
@@ -134,7 +134,7 @@ describe("lookupLinguisticTellPrior", () => {
       ],
       basePrior: 0.5,
     });
-    expect(result!.posterior).toBeLessThanOrEqual(0.95);
+    expect(result!.posterior).toBeLessThanOrEqual(0.92);
   });
 
   it("filters by marketType (CEO tells don't drive M&A posterior)", () => {
