@@ -83,10 +83,21 @@ export function checkProfitGuardrails(
   const ev = Number(input.expectedValue) || 0;
   const conf = Number(input.confidence) || 0;
 
+  // UNITS CRITICAL: signal.expectedValue is the per-contract dollar EV
+  // produced by calculateExpectedValue with quantity=1 (so its scale is
+  // [-1, 1] for binary markets — "EV per $1 of payout face").
+  // calculateNetEv expects grossEvFraction as ROI per dollar invested
+  // (= dollarEV / entryPrice).  Without the conversion, every gate
+  // understated edge by a factor of entryPrice (e.g. a true 50% ROI on a
+  // $0.40 contract was reported as 20% — borderline trades got blocked
+  // and audit-log "Net EV" dollars were wrong by the same factor).
+  const entryPriceForRoi = Math.max(0.01, Number(input.entryPrice) || 0.01);
+  const evRoiFraction = ev / entryPriceForRoi;
+
   const net = calculateNetEv({
     count: input.count,
     entryPrice: input.entryPrice,
-    grossEvFraction: ev,
+    grossEvFraction: evRoiFraction,
     entryLiquidity: input.liquidity,
   });
 

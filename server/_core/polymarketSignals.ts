@@ -213,7 +213,15 @@ function applyPolymarketPlatformBehaviorAdjustment(
  * blend.  Both Kalshi and Polymarket flow through this same lookup so the
  * model fires on whichever venue has the better edge.
  */
-function estimateFairValue(market: PolymarketMarket): number {
+/**
+ * Returns a fair-value estimate plus whether it comes from a real
+ * information source.  When `isInformative=false`, the value is just a
+ * blend of a 0.5 placeholder prior with the market price — using it to
+ * generate value_play signals creates systematic bias toward the market
+ * mean (every market priced far from 50% looks "mispriced") and produces
+ * false high-confidence picks on player-prop / asymmetric markets.
+ */
+function estimateFairValue(market: PolymarketMarket): { value: number; isInformative: boolean } {
   // Awards precursor model takes precedence when the operator has staged
   // current-season precursor data.  Returns a calibrated probability per
   // nominee directly — no blending needed.
@@ -224,7 +232,7 @@ function estimateFairValue(market: PolymarketMarket): number {
     awardsPrior >= 0 &&
     awardsPrior <= 1
   ) {
-    return awardsPrior;
+    return { value: awardsPrior, isInformative: true };
   }
 
   // Category-specific priors (same philosophy as Kalshi strategy profiles)
@@ -241,8 +249,12 @@ function estimateFairValue(market: PolymarketMarket): number {
   const categoryKey = market.category.toLowerCase().split(/[\s/]/)[0] ?? "general";
   const prior = categoryPriors[categoryKey] ?? 0.5;
 
-  // Blend the prior with the market's implied probability
-  return clamp(prior * 0.3 + market.impliedProbabilityYes * 0.7, 0.01, 0.99);
+  // Blend the prior with the market's implied probability.  When prior
+  // is 0.5 (informationless), this is just the market price pulled
+  // toward 0.5 — useful as a smoothed reference for momentum/sentiment
+  // signals but NOT a real edge.
+  const blended = clamp(prior * 0.3 + market.impliedProbabilityYes * 0.7, 0.01, 0.99);
+  return { value: blended, isInformative: prior !== 0.5 };
 }
 
 /**
@@ -323,7 +335,15 @@ export function generatePolymarketSignals(
     const p = market.impliedProbabilityYes;
     if (!Number.isFinite(p) || p <= 0.01 || p >= 0.99) continue;
 
-    const fairValue = fairValues?.get(market.marketId) ?? estimateFairValue(market);
+    // Externally-supplied fairValue overrides are treated as informative
+    // (caller has a real model).  Internal estimateFairValue may be a
+    // blended-with-0.5 placeholder; skip value_play in that case.
+    const externalFairValue = fairValues?.get(market.marketId);
+    const fairValueResult =
+      externalFairValue != null
+        ? { value: externalFairValue, isInformative: true }
+        : estimateFairValue(market);
+    const fairValue = fairValueResult.value;
     const sentimentScore = sentimentScores?.get(market.marketId) ?? 0;
 
     const yesToken = market.tokens.find((t) => t.outcome.toLowerCase() === "yes");
@@ -359,14 +379,17 @@ export function generatePolymarketSignals(
     }
 
     // --- 1. Value-play signal ---
+    // Skip when the fair value is just a 0.5-blended placeholder — the
+    // 30/70 blend with a 0.5 prior creates systematic false edges on any
+    // market priced far from 50% (player props, weather extremes, etc.).
     const valueDiff = fairValue - p;
-    if (Math.abs(valueDiff) >= 0.08) {
+    if (fairValueResult.isInformative && Math.abs(valueDiff) >= 0.08) {
       const side: "yes" | "no" = valueDiff > 0 ? "yes" : "no";
       const token = side === "yes" ? yesToken : noToken;
       if (token && token.token_id) {
         const limitPrice = clamp(side === "yes" ? p : 1 - p, 0.02, 0.98);
         const confidence = clamp(Math.abs(valueDiff) * 2.5 + 0.35, 0, 1);
-        const ev = side === "yes" ? (fairValue - p) / p : (p - fairValue) / (1 - p);
+        const ev = side === "yes" ? fairValue - p : p - fairValue;
 
         signals.push({
           marketId: market.marketId,
@@ -403,7 +426,7 @@ export function generatePolymarketSignals(
         if (yesTokenForTell?.token_id) {
           const limitPrice = clamp(p, 0.02, 0.98);
           const confidence = clamp(tellResult.posterior, 0, 1);
-          const ev = (tellResult.posterior - p) / p;
+          const ev = tellResult.posterior - p;
           signals.push({
             marketId: market.marketId,
             conditionId: market.conditionId,
@@ -436,7 +459,7 @@ export function generatePolymarketSignals(
         const extremity = p <= 0.07 ? 0.07 - p : p - 0.93;
         const confidence = clamp(0.52 + extremity * 3, 0, 0.8);
         const limitPrice = clamp(side === "yes" ? p : 1 - p, 0.02, 0.98);
-        const ev = side === "yes" ? (0.5 - p) / p : (p - 0.5) / (1 - p);
+        const ev = side === "yes" ? 0.5 - p : p - 0.5;
 
         signals.push({
           marketId: market.marketId,
@@ -466,7 +489,7 @@ export function generatePolymarketSignals(
         if (!alreadyPricedIn) {
           const confidence = clamp(0.52 + Math.abs(sentimentScore) * 0.3, 0, 0.85);
           const limitPrice = clamp(side === "yes" ? p : 1 - p, 0.02, 0.98);
-          const ev = side === "yes" ? (fairValue - p) / p : (p - fairValue) / (1 - p);
+          const ev = side === "yes" ? fairValue - p : p - fairValue;
 
           signals.push({
             marketId: market.marketId,
@@ -508,8 +531,8 @@ export function generatePolymarketSignals(
 
     const confidence = clamp(0.5 + Math.min(ratio / 20, 0.3), 0, 0.85);
     const limitPrice = clamp(side === "yes" ? p : 1 - p, 0.02, 0.98);
-    const fairValue = fairValues?.get(market.marketId) ?? estimateFairValue(market);
-    const ev = side === "yes" ? (fairValue - p) / p : ((1 - fairValue) - (1 - p)) / (1 - p);
+    const fairValue = fairValues?.get(market.marketId) ?? estimateFairValue(market).value;
+    const ev = side === "yes" ? fairValue - p : p - fairValue;
 
     // Avoid adding a duplicate for the same market
     if (signals.some((s) => s.marketId === market.marketId && s.signalType === "momentum")) {
@@ -563,9 +586,9 @@ export function generatePolymarketSignals(
         if (noToken && noToken.token_id && !signals.some(
           (s) => s.marketId === fadeMarket.marketId && s.signalType === "arbitrage",
         )) {
-          const fairValue = fairValues?.get(fadeMarket.marketId) ?? estimateFairValue(fadeMarket);
+          const fairValue = fairValues?.get(fadeMarket.marketId) ?? estimateFairValue(fadeMarket).value;
           const limitPrice = clamp(1 - fadeMarket.impliedProbabilityYes, 0.02, 0.98);
-          const ev = ((1 - fairValue) - (1 - fadeMarket.impliedProbabilityYes)) / (1 - fadeMarket.impliedProbabilityYes);
+          const ev = fadeMarket.impliedProbabilityYes - fairValue;
 
           signals.push({
             marketId: fadeMarket.marketId,
@@ -619,7 +642,7 @@ export function generatePolymarketSignals(
     if (!token || !token.token_id) continue;
 
     const p = market.impliedProbabilityYes;
-    const fairValue = fairValues?.get(market.marketId) ?? estimateFairValue(market);
+    const fairValue = fairValues?.get(market.marketId) ?? estimateFairValue(market).value;
 
     let signalType: PolymarketSignalType;
     let limitPrice: number;
@@ -734,8 +757,8 @@ export function generatePolymarketSignals(
       0.98
     );
     
-    const fairValue = fairValues?.get(marketId) ?? estimateFairValue(market);
-    const ev = side === "yes" ? (fairValue - p) / p : (p - fairValue) / (1 - p);
+    const fairValue = fairValues?.get(marketId) ?? estimateFairValue(market).value;
+    const ev = side === "yes" ? fairValue - p : p - fairValue;
     
     const timeframeLabels = analysis.timeframeAlignment
       .map((tf) => {
