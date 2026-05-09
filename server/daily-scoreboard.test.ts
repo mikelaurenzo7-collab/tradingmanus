@@ -47,6 +47,7 @@ describe("dailyScoreboard", () => {
       netUsd: 85,
       effectiveOverrunUsd: 0,
       refreshedAtMs: Date.now(),
+      dynamicDailyLossLimitUsd: 20,
     });
     // Simulate AI cost accumulation between refreshes.
     BUDGET.setSpentUsd(20);
@@ -66,6 +67,7 @@ describe("dailyScoreboard", () => {
       netUsd: -7,
       effectiveOverrunUsd: 7,
       refreshedAtMs: Date.now(),
+      dynamicDailyLossLimitUsd: 20,
     });
     BUDGET.setSpentUsd(10);
     const live = getCachedScoreboard()!;
@@ -88,6 +90,7 @@ describe("dailyScoreboard", () => {
         netUsd: 38,
         effectiveOverrunUsd: 0,
         refreshedAtMs: Date.now(),
+        dynamicDailyLossLimitUsd: 20,
       };
       const text = formatScoreboardForPrompt(sb);
       expect(text).toContain("NET POSITIVE");
@@ -104,6 +107,7 @@ describe("dailyScoreboard", () => {
         netUsd: -6,
         effectiveOverrunUsd: 6,
         refreshedAtMs: Date.now(),
+        dynamicDailyLossLimitUsd: 20,
       };
       const text = formatScoreboardForPrompt(sb);
       expect(text).toContain("NET NEGATIVE");
@@ -119,6 +123,7 @@ describe("dailyScoreboard", () => {
         netUsd: 0,
         effectiveOverrunUsd: 0,
         refreshedAtMs: Date.now(),
+        dynamicDailyLossLimitUsd: 20,
       };
       const text = formatScoreboardForPrompt(sb);
       expect(text).toContain("BREAKEVEN");
@@ -133,6 +138,7 @@ describe("dailyScoreboard", () => {
         netUsd: -10,
         effectiveOverrunUsd: 10,
         refreshedAtMs: Date.now(),
+        dynamicDailyLossLimitUsd: 20,
       };
       const text = formatScoreboardForPrompt(sb);
       expect(text).toContain("hubris");

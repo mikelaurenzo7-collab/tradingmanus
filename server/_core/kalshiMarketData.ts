@@ -267,24 +267,41 @@ export async function fetchKalshiMarkets(filters?: {
     params.append("mve_filter", "exclude");
     params.append("limit", "200");
 
-    const url = `${KALSHI_API_BASE}/markets?${params.toString()}`;
-    const response = await fetchWithRetry(
-      url,
-      {
-        headers: {
-          "Content-Type": "application/json",
+    // Paginate up to MAX_MARKETS to avoid silently truncating the market
+    // universe on busy-event days (election day, Fed meeting, Super Bowl)
+    // when Kalshi can surface 300+ active markets.
+    const MAX_MARKETS = 500;
+    const allRaw: any[] = [];
+    let cursor: string | undefined;
+
+    do {
+      const pageParams = new URLSearchParams(params);
+      if (cursor) pageParams.set("cursor", cursor);
+      const url = `${KALSHI_API_BASE}/markets?${pageParams.toString()}`;
+      const response = await fetchWithRetry(
+        url,
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
         },
-      },
-      { label: "Kalshi.fetchMarkets", breaker: kalshiBreaker }
-    );
+        { label: "Kalshi.fetchMarkets", breaker: kalshiBreaker }
+      );
 
-    if (!response.ok) {
-      logger.error({ status: response.status }, "[Kalshi] API error: %d", response.status);
-      return [];
-    }
+      if (!response.ok) {
+        logger.error({ status: response.status }, "[Kalshi] API error: %d", response.status);
+        break;
+      }
 
-    const data = await response.json();
-    return (data.markets || [])
+      const data = await response.json();
+      const page: any[] = data.markets ?? [];
+      allRaw.push(...page);
+      cursor = typeof data.cursor === "string" && data.cursor ? data.cursor : undefined;
+      // Kalshi signals end-of-results by returning fewer than the requested limit
+      if (page.length < 200) break;
+    } while (allRaw.length < MAX_MARKETS && cursor);
+
+    return allRaw
       .map((market: any) => normalizeKalshiMarket(market))
       .filter((market: KalshiMarket | null): market is KalshiMarket => Boolean(market?.id))
       .filter((market: KalshiMarket) => isDisplaySafeActionableMarket(market))

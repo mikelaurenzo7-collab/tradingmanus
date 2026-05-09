@@ -35,7 +35,7 @@
  */
 
 import { and, eq, gte } from "drizzle-orm";
-import { kalshiPositions, kalshiOrders } from "../../drizzle/schema";
+import { kalshiPositions, kalshiOrders, kalshiCapital } from "../../drizzle/schema";
 import { logger } from "./logger";
 import { getSpentUsdToday } from "./aiCostBudget";
 
@@ -54,6 +54,12 @@ export type DailyScoreboard = {
   effectiveOverrunUsd: number;
   /** Wall-clock when this snapshot was taken. */
   refreshedAtMs: number;
+  /**
+   * Effective daily loss limit for this snapshot: max(DAILY_LOSS_LIMIT_USD, capital * 0.045).
+   * Scales with account size so the limit stays ~4.5% of equity regardless of deposits.
+   * Falls back to the process-level DAILY_LOSS_LIMIT_USD when capital is unavailable.
+   */
+  dynamicDailyLossLimitUsd: number;
 };
 
 const KALSHI_FEE_RATE = 0.02; // round-trip estimate, see header note
@@ -88,6 +94,7 @@ function makeEmptyScoreboard(now: number = Date.now()): DailyScoreboard {
     netUsd: -getSpentUsdToday(),
     effectiveOverrunUsd: getSpentUsdToday(),
     refreshedAtMs: now,
+    dynamicDailyLossLimitUsd: DAILY_LOSS_LIMIT_USD,
   };
 }
 
@@ -114,7 +121,7 @@ export async function refreshScoreboard(
     }
 
     // Sum realized P&L on Kalshi positions closed since UTC midnight.
-    const [kalshiClosed, kalshiFilledToday] = await Promise.all([
+    const [kalshiClosed, kalshiFilledToday, capitalRow] = await Promise.all([
       database
         .select({
           realizedPnl: kalshiPositions.realizedPnl,
@@ -141,6 +148,12 @@ export async function refreshScoreboard(
             gte(kalshiOrders.filledAt, dayStart),
           ),
         ),
+      // Latest known account balance — used to compute the dynamic loss limit.
+      database
+        .select({ currentBalance: kalshiCapital.currentBalance })
+        .from(kalshiCapital)
+        .where(eq(kalshiCapital.userId, userId))
+        .then((rows: { currentBalance: number }[]) => rows[0] ?? null),
     ]);
 
     const sumRealized = (rows: Array<{ realizedPnl: number | null }>): number =>
@@ -163,6 +176,15 @@ export async function refreshScoreboard(
     const netUsd = realizedPnlUsd - aiSpendUsd - estimatedFeesUsd;
     const effectiveOverrunUsd = Math.max(0, aiSpendUsd + estimatedFeesUsd - realizedPnlUsd);
 
+    // Dynamic daily loss limit: scale with capital so the 4.5%-of-equity
+    // rule holds regardless of account size.  Falls back to the env-floor
+    // (DAILY_LOSS_LIMIT_USD) when no capital row exists yet.
+    const capitalUsd = capitalRow?.currentBalance ?? 0;
+    const dynamicDailyLossLimitUsd =
+      capitalUsd > 0
+        ? Math.max(DAILY_LOSS_LIMIT_USD, capitalUsd * 0.045)
+        : DAILY_LOSS_LIMIT_USD;
+
     const snapshot: DailyScoreboard = {
       dayBucketMs: dayStartMs,
       realizedPnlUsd,
@@ -171,6 +193,7 @@ export async function refreshScoreboard(
       netUsd,
       effectiveOverrunUsd,
       refreshedAtMs: now,
+      dynamicDailyLossLimitUsd,
     };
     CACHE = snapshot;
     return snapshot;
@@ -268,11 +291,12 @@ export type DailyLossTier = "green" | "yellow" | "red";
 const YELLOW_CONFIDENCE_FLOOR = 0.82;
 
 export function getDailyLossTier(): DailyLossTier {
-  if (DAILY_LOSS_LIMIT_USD <= 0) return "green";
   const board = getCachedScoreboard();
   if (!board) return "green"; // cold start — let first tick proceed normally
-  if (board.netUsd < -DAILY_LOSS_LIMIT_USD) return "red";
-  if (board.netUsd < -(DAILY_LOSS_LIMIT_USD / 2)) return "yellow";
+  const limit = board.dynamicDailyLossLimitUsd;
+  if (limit <= 0) return "green";
+  if (board.netUsd < -limit) return "red";
+  if (board.netUsd < -(limit / 2)) return "yellow";
   return "green";
 }
 

@@ -69,6 +69,20 @@ export async function syncPendingOrders(userId: number): Promise<void> {
         const updated = await getKalshiOrderStatus(scopedUserId, order.orderId);
         if (!updated) continue;
 
+        // Terminal non-filled statuses: clear from pending so they don't accumulate
+        // in the DB indefinitely, inflate pending counts, or trigger false alerts.
+        if (
+          updated.status === "cancelled" ||
+          updated.status === "rejected"
+        ) {
+          await db
+            .update(kalshiOrders)
+            .set({ status: updated.status as "cancelled" | "rejected", cancelledAt: new Date() })
+            .where(eq(kalshiOrders.orderId, order.orderId));
+          _orderSyncFailureCount.delete(order.orderId);
+          continue;
+        }
+
         if (updated.status === "filled" && updated.filledQuantity > 0) {
           if ((order.action ?? "buy") === "sell") {
             const closed = await closePositionFromFill(
@@ -241,7 +255,15 @@ export async function syncLivePositions(userId: number): Promise<void> {
 
       // Average price from Kalshi comes as cent-scale (0..100); convert via
       // the canonical boundary helper so this file never does a bare /100.
-      const rawPrice = pos.average_price ?? pos.yes_price ?? pos.no_price ?? 0;
+      const rawPrice = pos.average_price ?? pos.yes_price ?? pos.no_price;
+      if (rawPrice === undefined || rawPrice === null) {
+        logger.warn(
+          { marketId },
+          "[OrderSync] No price field on position %s; skipping upsert to avoid zeroing P&L",
+          marketId,
+        );
+        continue;
+      }
       const entryPrice = centsToDollars(rawPrice) ?? 0;
       const currentPrice = entryPrice;
 

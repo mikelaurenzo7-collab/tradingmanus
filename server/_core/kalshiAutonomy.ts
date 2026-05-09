@@ -53,29 +53,22 @@ import {
   alertDrawdownApproaching,
 } from "./alerting";
 import { logger } from "./logger";
+import { getCachedScoreboard } from "./dailyScoreboard";
 import { ENV } from "./env";
 
-// Hard dollar ceilings for dynamic risk limits.  These are intentionally
-// set well above the capital-fraction math (capital × 5%/10%/20%) so the
-// percentage-of-equity calculation is the real binding constraint at any
-// normal account size.  The caps only bite when the account grows to
-// hundreds of thousands of dollars — acting as an absolute safety net for
-// extreme runaway compounding, not as a day-to-day sizing governor.
+// Risk limit profiles — only maxOpenPositions is used as a hard cap; the
+// dollar-amount fields (maxLossPerTrade, maxLossPerDay, maxPositionSize) are
+// no longer used as ceilings.  The %-of-capital formula in getDynamicRiskLimits
+// (5%/10%/20% of equity, scaled by posture multiplier) is the sole binding
+// constraint at all account sizes.  Fixed dollar caps were removed because they
+// suppressed valid Kelly-sized positions as the account grew past their thresholds
+// (e.g. a $2 000 account should allow $100/trade at 5%, but a $40 hard cap
+// blocked 60% of that).
 const BASE_RISK_LIMITS = {
-  maxLossPerTrade: 40,   // at $500: min($25, $40) = $25 (5% of capital)
-  maxLossPerDay: 75,     // at $500: min($50, $75) = $50 (10% of capital)
-  maxPositionSize: 100,  // at $500: min($100, $100) = $100 (20% of capital)
   maxOpenPositions: 5,
 } as const;
 
-// Aggressive Mode loosens the dollar caps on the dynamic risk limits.
-// The capital-fraction multipliers stay the same (still 5%/10%/20% of
-// equity × aggressive positionScale 1.4×) — what changes is the absolute
-// ceiling those fractions clamp to, plus the open-position count.
 const AGGRESSIVE_RISK_LIMITS = {
-  maxLossPerTrade: 75,    // at $500: min($35, $75) = $35 (5%×1.4 of capital)
-  maxLossPerDay: 150,     // at $500: min($50, $150) = $50 (10% of capital)
-  maxPositionSize: 200,   // at $500: min($140, $200) = $140 (20%×1.4 of capital)
   maxOpenPositions: 10,
 } as const;
 
@@ -239,9 +232,10 @@ async function getDynamicRiskLimits(
 
   return {
     maxCapital,
-    maxLossPerTrade: clampRiskLimit(maxCapital * 0.05 * positionScale, 1, limits.maxLossPerTrade),
-    maxLossPerDay: clampRiskLimit(maxCapital * 0.1, 2, limits.maxLossPerDay),
-    maxPositionSize: clampRiskLimit(maxCapital * 0.2 * positionScale, 2, limits.maxPositionSize),
+    // No dollar ceiling — percentage-of-equity is the sole binding constraint.
+    maxLossPerTrade: clampRiskLimit(maxCapital * 0.05 * positionScale, 1, Infinity),
+    maxLossPerDay: clampRiskLimit(maxCapital * 0.1, 2, Infinity),
+    maxPositionSize: clampRiskLimit(maxCapital * 0.2 * positionScale, 2, Infinity),
     maxOpenPositions: limits.maxOpenPositions,
     effectiveMinConfidence: confidenceBoost,
   };
@@ -1347,9 +1341,7 @@ export async function runScheduledAutonomousTrading(
       userId,
       startingBalance,
       equityResult.equity,
-      preferences.aggressiveMode
-        ? AGGRESSIVE_RISK_LIMITS.maxLossPerDay
-        : BASE_RISK_LIMITS.maxLossPerDay,
+      getCachedScoreboard()?.dynamicDailyLossLimitUsd ?? 20,
     );
   }
 
