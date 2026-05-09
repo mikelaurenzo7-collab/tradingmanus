@@ -86,11 +86,11 @@ export function calculateRoundTripFeeUsd(input: {
  *   notional        = count × entryPrice                                (USD)
  *   grossEdgeUsd    = grossEvFraction × notional
  *   roundTripFee    = exact Kalshi fee at entry + (assumed) exit
- *   amortizedAiCost = ENV.grokCostPerReviewUsd  (per review — already amortized)
+ *   amortizedAiCost = caller-supplied per-review cost (passed via input)
  *   netEvUsd        = grossEdgeUsd − roundTripFee − amortizedAiCost
  *   netEvFraction   = netEvUsd / notional
  *
- * `grossEvFraction` is the Grok-reviewed expected return as a fraction of
+ * `grossEvFraction` is the AI-reviewed expected return as a fraction of
  * notional (e.g. 0.10 = 10 % edge).
  */
 export function calculateNetEv(input: {
@@ -118,8 +118,7 @@ export function calculateNetEv(input: {
     entryLiquidity: input.entryLiquidity ?? "maker",
     exitLiquidity: input.exitLiquidity ?? "maker",
   });
-  const aiCostUsd =
-    input.amortizedAiCostUsd ?? ENV.grokCostPerReviewUsd ?? 0;
+  const aiCostUsd = input.amortizedAiCostUsd ?? 0;
   const netEvUsd = grossEdgeUsd - feeUsd - aiCostUsd;
   const netEvFraction = notionalUsd > 0 ? netEvUsd / notionalUsd : 0;
   return {

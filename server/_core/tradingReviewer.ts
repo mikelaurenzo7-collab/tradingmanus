@@ -1,6 +1,4 @@
 import { createAnthropicClient } from "./anthropicClient";
-import { createGrokChatCompletion, extractGrokText } from "./grokClient";
-import { intersectReviews } from "./reviewerConsensus";
 import type { KalshiMarket } from "./kalshiMarketData";
 import type { KalshiSignal } from "./kalshiSignals";
 import { ENV } from "./env";
@@ -33,15 +31,12 @@ import {
   type MarketCategory,
 } from "./marketCategoryRouter";
 import { getCategoryPersona, type CategoryPersona } from "./categoryPersonas";
-import { getGrokPersona, type GrokPersona } from "./grokPersonas";
 import { checkProfitGuardrails } from "./profitGuardrails";
 import {
   formatDeskMemoryForPrompt,
   getDeskMemoryBatch,
   type DeskMemoryRecord,
 } from "../db.desk-memory";
-
-type ProviderName = "anthropic" | "grok";
 
 type TradingSignalReview = {
   marketId: string;
@@ -125,8 +120,6 @@ export type TradingReviewerOptions = {
    * and reads it after the review returns.
    */
   telemetry?: ReviewerTelemetry;
-  /** NEW: Force Grok solo mode (overrides ENV) */
-  forceGrokSolo?: boolean;
 };
 
 export type TradingReviewer = {
@@ -146,16 +139,12 @@ export function createTradingReviewer(options: TradingReviewerOptions = {}): Tra
 }
 
 /**
- * The reviewer is "configured" as long as Grok is available.  The Anthropic
- * path was removed in the Kalshi-only pivot; the legacy `anthropicApiKey`
- * option on TradingReviewerOptions is now a no-op shim.
+ * The reviewer is "configured" iff ANTHROPIC_API_KEY is set.  Phase 1
+ * removed the legacy fallback path; env validation already rejects boot when the
+ * key is missing in production, so this returns false only in dev/test.
  */
 export function isTradingReviewerConfigured(_options: TradingReviewerOptions = {}) {
-  // Either provider keeps the autonomy alive. Anthropic (Claude) is the
-  // default trader; Grok is the legacy fallback / escape hatch.
-  const hasAnthropic = ENV.anthropicApiKey.trim().length > 0;
-  const hasGrok = ENV.xaiApiKey.trim().length > 0;
-  return hasAnthropic || hasGrok;
+  return ENV.anthropicApiKey.trim().length > 0;
 }
 
 function clamp(value: number, minimum: number, maximum: number) {
@@ -241,7 +230,7 @@ function getReviewPayload(input: {
   markets: KalshiMarket[];
   signals: KalshiSignal[];
   maxSignals: number;
-  persona?: CategoryPersona | GrokPersona;
+  persona?: CategoryPersona;
 }) {
   const signalsForReview = input.signals.slice(0, input.maxSignals);
   const marketById = new Map(input.markets.map((market) => [market.id, market]));
@@ -298,7 +287,7 @@ function categoryOfSignal(
   return classifyMarketCategory({ category: market.category, title: market.title });
 }
 
-function buildReviewerBaseMandate(persona?: CategoryPersona | GrokPersona): string {
+function buildReviewerBaseMandate(persona?: CategoryPersona): string {
   const desk = (persona as any)?.label ?? "Generalist Desk";
   const personaMandate = (persona as any)?.systemMandate
     ? `\n\nDesk-specific mandate (${desk}):\n${(persona as any).systemMandate}`
@@ -318,23 +307,13 @@ async function requestAnthropicReviews(
   forceDeep = false,
 ) {
   const client = options.anthropicClient ?? createAnthropicClient(
-    (options.anthropicApiKey ?? ENV.anthropicApiKey ?? ENV.xaiApiKey).trim(),
+    (options.anthropicApiKey ?? ENV.anthropicApiKey).trim(),
   );
 
   const useDeepModel = forceDeep || isHighStakes(stakes);
-  // Pick the right timeout for the active provider. When ANTHROPIC_API_KEY
-  // is set, the underlying call goes to Claude — Sonnet routine timeout
-  // (default 20 s) or Opus deep-tier timeout (default 45 s). Grok's
-  // 15 s default is too tight for Claude (especially Opus with extended
-  // thinking + web_search), causing slow-but-successful reviews to be
-  // counted as failures and the autonomy to fail closed. Operator
-  // overrides via options.anthropicTimeoutMs still win.
-  const claudeProviderActive = ENV.anthropicApiKey.length > 0;
-  const defaultTimeoutMs = claudeProviderActive
-    ? useDeepModel
-      ? ENV.claudeOpusTimeoutMs
-      : ENV.claudeSonnetTimeoutMs
-    : ENV.grokTimeoutMs;
+  const defaultTimeoutMs = useDeepModel
+    ? ENV.claudeOpusTimeoutMs
+    : ENV.claudeSonnetTimeoutMs;
   const timeoutMs = options.anthropicTimeoutMs ?? defaultTimeoutMs;
   const tier = useDeepModel ? "deep" : "review";
   const model = selectAnthropicModel(tier, options.anthropicModel);
@@ -426,7 +405,6 @@ async function requestAnthropicReviews(
     }
   }
 
-  // Citations only meaningful with Anthropic web_search; Grok-only mode skips.
   const citations: ReturnType<typeof extractCitations> = [];
   void extractCitations; // keep import live
 
@@ -435,119 +413,6 @@ async function requestAnthropicReviews(
     reviews: parseTradingReviews(extractAnthropicText(response)),
     citations,
   };
-}
-
-// NEW: Grok review request (simpler, no prompt cache / extended thinking / web_search for v1)
-async function requestGrokReviews(
-  reviewPayload: ReturnType<typeof getReviewPayload>,
-  options: TradingReviewerOptions,
-  persona?: GrokPersona,
-  stakes: StakesContext = {},
-  memorySnippet: string | null = null,
-) {
-  if (!ENV.xaiApiKey) {
-    throw new Error("XAI_API_KEY required for Grok review");
-  }
-
-  const scoreboardText = formatScoreboardForPrompt(getCachedScoreboard());
-  const systemPrompt = [
-    buildReviewerBaseMandate(persona),
-    memorySnippet ?? null,
-    scoreboardText ?? null,
-  ]
-    .filter((s): s is string => Boolean(s))
-    .join("\n\n");
-  const userContent = JSON.stringify(reviewPayload);
-
-  const completion = await createGrokChatCompletion(
-    [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userContent },
-    ],
-    {
-      model: ENV.grokModel,
-      temperature: 0,
-      max_tokens: 3200,
-      timeoutMs: ENV.grokTimeoutMs,
-    }
-  );
-
-  const text = extractGrokText(completion);
-  const reviews = parseTradingReviews(text);
-
-  if (options.telemetry) {
-    options.telemetry.grokCalls = (options.telemetry.grokCalls ?? 0) + 1;
-    if (persona && !options.telemetry.desks.includes(persona.id)) {
-      options.telemetry.desks.push(persona.id);
-    }
-  }
-
-  return {
-    provider: "grok" as const,
-    reviews,
-    citations: [], // Grok v1 doesn't return citations in the same format
-  };
-}
-
-/**
- * Non-throwing Grok variant used in parallel team-consensus mode.  When
- * Grok fails (network error, parse failure, no key), returns
- * `{reviews: [], failed: true}` so the caller can gracefully degrade to
- * Claude-only on this batch instead of unwinding the whole Promise.all.
- *
- * The CategoryPersona persona is reused for the system prompt — Grok's
- * reasoning benefits from the same desk-specific mandate Claude gets.
- */
-async function requestGrokTeamSidecar(
-  reviewPayload: ReturnType<typeof getReviewPayload>,
-  options: TradingReviewerOptions,
-  persona: CategoryPersona | undefined,
-  memorySnippet: string | null,
-): Promise<{ reviews: TradingSignalReview[]; failed: boolean }> {
-  if (!ENV.xaiApiKey) {
-    return { reviews: [], failed: false };
-  }
-
-  const scoreboardText = formatScoreboardForPrompt(getCachedScoreboard());
-  const systemPrompt = [
-    buildReviewerBaseMandate(persona),
-    memorySnippet ?? null,
-    scoreboardText ?? null,
-  ]
-    .filter((s): s is string => Boolean(s))
-    .join("\n\n");
-
-  try {
-    const completion = await createGrokChatCompletion(
-      [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: JSON.stringify(reviewPayload) },
-      ],
-      {
-        model: ENV.grokModel,
-        temperature: 0,
-        max_tokens: 3200,
-        timeoutMs: ENV.grokTimeoutMs,
-      },
-    );
-
-    const text = extractGrokText(completion);
-    const reviews = parseTradingReviews(text);
-
-    if (options.telemetry) {
-      options.telemetry.grokCalls = (options.telemetry.grokCalls ?? 0) + 1;
-    }
-
-    return { reviews, failed: false };
-  } catch (error) {
-    if (options.telemetry) {
-      options.telemetry.grokFailures = (options.telemetry.grokFailures ?? 0) + 1;
-    }
-    options.logger?.warn?.(
-      `[TradingReviewer] Grok team sidecar failed: ${error instanceof Error ? error.message : String(error)}; falling back to Claude-only on this batch.`,
-    );
-    return { reviews: [], failed: true };
-  }
 }
 
 function combineApprovedSignal(
@@ -591,97 +456,19 @@ type ReviewBatchResult = {
 async function callReviewer(
   reviewPayload: ReturnType<typeof getReviewPayload>,
   options: TradingReviewerOptions,
-  persona: CategoryPersona | GrokPersona | undefined,
+  persona: CategoryPersona | undefined,
   stakes: StakesContext,
   logger: Pick<Console, "warn" | "error">,
   memorySnippet: string | null = null,
   forceDeep = false,
 ): Promise<ReviewBatchResult> {
-  // Routing precedence (Claude-first pivot):
-  //   1. ANTHROPIC_API_KEY set + !REVIEWER_PREFER_GROK → Claude as primary
-  //      (default — Claude is "your trader")
-  //   2. ANTHROPIC_API_KEY unset + XAI_API_KEY set     → Grok fallback
-  //   3. forceGrokSolo / per-desk Grok persona         → Grok (legacy escape hatch)
-  //   4. neither key set                                → fail closed
-  const isGrokPersona = Boolean(persona && (persona as any).id?.startsWith?.("grok."));
-  const hasAnthropic = ENV.anthropicApiKey.length > 0;
-  const hasGrok = ENV.xaiApiKey.length > 0;
-  // Use Grok only when:
-  //   - operator opted in via REVIEWER_PREFER_GROK (legacy mode), OR
-  //   - they explicitly requested it (forceGrokSolo / Grok-typed persona), OR
-  //   - Anthropic is unset and Grok is available (graceful fallback).
-  const useGrokSolo =
-    (Boolean(options.forceGrokSolo) || isGrokPersona || ENV.reviewerPreferGrok || !hasAnthropic) &&
-    hasGrok;
-  const useTeamConsensus = false;
-
+  // Phase 1: Claude-only. Anthropic is the sole provider; env validation
+  // already guarantees the key is set in production.
   try {
-    if (useGrokSolo && ENV.xaiApiKey) {
-      const response = await requestGrokReviews(
-        reviewPayload,
-        options,
-        persona as GrokPersona | undefined,
-        stakes,
-        memorySnippet,
-      );
-      return {
-        reviewsByMarket: new Map(response.reviews.map((review) => [review.marketId, review])),
-        failed: false,
-        citations: response.citations,
-      };
-    }
-
-    if (useTeamConsensus) {
-      // Parallel Claude + Grok with strict intersection.  Mirrors
-      // polymarketSignalReviewer.callReviewer; intersectReviews lives in
-      // reviewerConsensus.ts.  Strict mode = missing-from-Grok is a veto
-      // when Grok actually ran successfully; if Grok fails entirely we
-      // gracefully degrade to Claude-only for this batch.
-      const [claudeResp, grokResp] = await Promise.all([
-        requestAnthropicReviews(
-          reviewPayload,
-          options,
-          persona as CategoryPersona | undefined,
-          stakes,
-          memorySnippet,
-          forceDeep,
-        ),
-        requestGrokTeamSidecar(
-          reviewPayload,
-          options,
-          persona as CategoryPersona | undefined,
-          memorySnippet,
-        ),
-      ]);
-      const claudeMap = new Map(
-        claudeResp.reviews.map((review) => [review.marketId, review]),
-      );
-      // Strict mode = Grok actually ran (HTTP completion succeeded).  An
-      // empty or parse-truncated `reviews` array still counts as "ran" and
-      // triggers veto on missing markets — only transport-level failures
-      // (caught in requestGrokTeamSidecar's try/catch and surfaced as
-      // failed=true) gracefully degrade to Claude solo.  This prevents
-      // Grok output like `{"reviews":[]}` from masquerading as Grok-
-      // unavailable and letting solo Claude approval slip through under
-      // the team-mode banner.
-      const grokRanSuccessfully = !grokResp.failed;
-      const merged = intersectReviews(
-        claudeMap,
-        grokResp.reviews,
-        grokRanSuccessfully,
-      );
-      return {
-        reviewsByMarket: merged,
-        failed: false,
-        citations: claudeResp.citations,
-      };
-    }
-
-    // Default: Claude-only path
     const response = await requestAnthropicReviews(
       reviewPayload,
       options,
-      persona as CategoryPersona | undefined,
+      persona,
       stakes,
       memorySnippet,
       forceDeep,
@@ -693,14 +480,10 @@ async function callReviewer(
     };
   } catch (error) {
     if (options.telemetry) {
-      if (useGrokSolo && ENV.xaiApiKey) {
-        options.telemetry.grokFailures = (options.telemetry.grokFailures ?? 0) + 1;
-      } else {
-        options.telemetry.anthropicFailures += 1;
-      }
+      options.telemetry.anthropicFailures += 1;
     }
     logger.warn(
-      `[TradingReviewer] AI review failed for desk=${(persona as any)?.id ?? "default"}: ${error instanceof Error ? error.message : String(error)}`,
+      `[TradingReviewer] AI review failed for desk=${persona?.id ?? "default"}: ${error instanceof Error ? error.message : String(error)}`,
     );
     return { reviewsByMarket: new Map(), failed: true, citations: [] };
   }
@@ -716,7 +499,7 @@ async function runCategoryReview(
   signals: KalshiSignal[],
   marketsById: Map<string, KalshiMarket>,
   options: TradingReviewerOptions,
-  persona: CategoryPersona | GrokPersona | undefined,
+  persona: CategoryPersona | undefined,
   stakes: StakesContext,
   logger: Pick<Console, "warn" | "error">,
   memorySnippet: string | null = null,
@@ -741,74 +524,13 @@ async function runCategoryReview(
 
   const batchResult = await callReviewer(reviewPayload, options, persona, stakes, logger, memorySnippet);
 
-  // Intra-Claude second opinion: when the bulk Sonnet pass approves a
-  // non-high-stakes trade but materially tugged confidence down or moved EV,
-  // run a single-market Opus second pass.  Both must agree to keep the trade;
-  // disagreement (or a failed second pass) drops the trade per fail-closed
-  // semantics.  This recreates the OpenAI second-opinion behavior we removed,
-  // entirely within Claude and only on contested mid-stakes candidates.
+  // Intra-Claude tier-2/tier-3 escalation lives downstream in
+  // ensembleConsensus.applyEnsembleFilter — that's the single source of
+  // truth for the Sonnet/Opus deep-review path, including catastrophic-bet
+  // unanimous gates. This Tier-1 reviewer just returns the bulk Haiku
+  // verdicts; the ensemble decides whether to escalate.
   const escalationCitationsByMarket = new Map<string, CitationSummary[]>();
-  // Intra-Claude escalation was removed in the Grok-only pivot.
-  if (
-    false &&
-    !isHighStakes(stakes) &&
-    !batchResult.failed
-  ) {
-    const contestedSignals = signals.filter((signal) => {
-      const review = batchResult.reviewsByMarket.get(signal.marketId);
-      return review ? reviewIsContested(review) : false;
-    });
-    if (contestedSignals.length > 0) {
-      await Promise.all(
-        contestedSignals.map(async (signal) => {
-          const market = marketsById.get(signal.marketId);
-          if (!market) return;
-          const singlePayload = getReviewPayload({
-            markets: [market],
-            signals: [signal],
-            maxSignals: 1,
-            persona,
-          });
-          const singleStakes: StakesContext = {
-            ...stakesForSignals([signal]),
-            highStakes: true,
-          };
-          const deepResult = await callReviewer(
-            singlePayload,
-            options,
-            persona,
-            singleStakes,
-            logger,
-            memorySnippet,
-            true,
-          );
-          const deepReview = deepResult.reviewsByMarket.get(signal.marketId);
-          if (deepResult.failed || !deepReview) {
-            // Fail-closed: drop the contested signal if Opus didn't return
-            // a clean second opinion.
-            batchResult.reviewsByMarket.set(signal.marketId, {
-              marketId: signal.marketId,
-              approved: false,
-              reasoning: "Intra-model second opinion unavailable; capital preservation veto.",
-            });
-            return;
-          }
-          if (!deepReview.approved) {
-            // Disagreement → drop.
-            batchResult.reviewsByMarket.set(signal.marketId, deepReview);
-            return;
-          }
-          // Both Sonnet and Opus approved: keep the deep-tier review (it has
-          // the more considered confidence/EV adjustments) and surface its
-          // citations on the trade.
-          batchResult.reviewsByMarket.set(signal.marketId, deepReview);
-          if (deepResult.citations.length > 0) {
-            escalationCitationsByMarket.set(signal.marketId, deepResult.citations);
-          }
-        }),
-      );
-    }
-  }
+  void reviewIsContested;
 
   return signals
     .map((signal) => {
@@ -843,7 +565,7 @@ async function applyTriageFilter(
   if (signals.length <= threshold) return signals;
 
   const triageClient = options.anthropicClient ?? createAnthropicClient(
-    (options.anthropicApiKey ?? ENV.xaiApiKey).trim(),
+    (options.anthropicApiKey ?? ENV.anthropicApiKey).trim(),
   );
 
   const triageInput: TriageCandidate[] = signals.map((signal) => {
@@ -861,7 +583,7 @@ async function applyTriageFilter(
   });
 
   const keep = await runHaikuTriage(triageClient as { messages: { create: (input: unknown) => Promise<{ content: Array<{ type: string; text?: string }> }> } }, triageInput, {
-    timeoutMs: Math.min(options.anthropicTimeoutMs ?? ENV.grokTimeoutMs, 8000),
+    timeoutMs: Math.min(options.anthropicTimeoutMs ?? ENV.claudeHaikuTimeoutMs, 8000),
     logger,
   });
   if (options.telemetry) {
@@ -925,7 +647,7 @@ export async function reviewSignalsWithTrader(
   const logger = options.logger ?? console;
   if (!isTradingReviewerConfigured(options)) {
     logger.error(
-      "[TradingReviewer] AI reviewer not configured (need ANTHROPIC_API_KEY or XAI_API_KEY); dropping all candidates.",
+      "[TradingReviewer] AI reviewer not configured (ANTHROPIC_API_KEY missing); dropping all candidates.",
     );
     return [];
   }
@@ -965,36 +687,6 @@ export async function reviewSignalsWithTrader(
       }
       return check.approved;
     });
-
-  // Solo-Grok mode (legacy escape hatch). Triggered when:
-  //   - operator opted in via REVIEWER_PREFER_GROK=true, OR
-  //   - operator passed `forceGrokSolo: true` programmatically, OR
-  //   - ANTHROPIC_API_KEY is unset and only XAI_API_KEY is available.
-  // When ANTHROPIC_API_KEY is set (the default Claude-as-trader mode), we
-  // skip this branch and fall through to category-routed Anthropic review.
-  const shouldUseGrokSolo =
-    Boolean(options.forceGrokSolo) ||
-    ENV.reviewerPreferGrok ||
-    (!ENV.anthropicApiKey && ENV.xaiApiKey.length > 0);
-  if (shouldUseGrokSolo) {
-    if (!ENV.xaiApiKey) {
-      logger.error("[TradingReviewer] No XAI_API_KEY configured; AI review disabled.");
-    } else {
-      const grokPersona = getGrokPersona("kalshi", "other"); // generalist for solo
-      const stakes = stakesForSignals(triagedSignals);
-      const memorySnippet = options.userId ? formatDeskMemoryForPrompt((await loadDeskMemoryForBuckets(new Map([["other", triagedSignals]]), options)).get(grokPersona.id) ?? null) : null;
-      const reviewed = await runCategoryReview(
-        triagedSignals,
-        marketsById,
-        options,
-        grokPersona,
-        stakes,
-        logger,
-        memorySnippet,
-      );
-      return filterByGuardrails(reviewed, "grok-solo");
-    }
-  }
 
   // When category routing is disabled, fall back to a single combined batch so
   // the public behavior still matches the original single-mandate reviewer.

@@ -500,11 +500,9 @@ export async function runPolymarketAutonomousTrading(
   // both platforms enforce the same high-leverage-wins-only EV/confidence
   // floor.
   //
-  // Team mode: polymarketSignalReviewer.ts now runs Claude + Grok in
-  // parallel and intersects approvals (true dual-bot consensus).  When
-  // ENABLE_GROK_TEAM=true and XAI_API_KEY is set, the resulting consensus
-  // signals reach this filter — passing isTeamMode forwards the high-
-  // leverage threshold so the EV/confidence floor matches the Kalshi side.
+  // Phase 1: polymarketSignalReviewer.ts is Claude-only — the dual-bot
+  // consensus path was removed. The high-leverage EV/confidence floor
+  // matches the Kalshi side at the profitGuardrails layer.
   const guardrailRejections: Array<{ marketId: string; reason: string; ev: number; confidence: number }> = [];
   const guardedSignals = reviewedSignals.filter((s) => {
     // Use a representative count of 10 for the pre-sizing guardrail so the

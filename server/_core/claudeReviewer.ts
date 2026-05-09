@@ -1,13 +1,14 @@
 /**
- * Claude reviewer — high-stakes second opinion on Grok's verdict.
+ * Claude reviewer — Tier 2 / Tier 3 deep-review entry point.
  *
- * Tier 2: Claude Sonnet 4.6 — fast cross-family second opinion on every
- *         high-stakes signal. Adaptive thinking + prompt caching on the
- *         persona mandate.
+ * Tier 2: Claude Sonnet 4.6 — adaptive thinking + prompt caching on the
+ *         persona mandate. Used for high-stakes signals (large notional,
+ *         near-resolution, contested mid-stakes).
  *
- * Tier 3: Claude Opus 4.7 — final tiebreaker when Grok and Sonnet disagree,
- *         or when the position is ≥10% of bankroll. Adaptive thinking with
- *         `display: "summarized"` so the reasoning is captured in audit logs.
+ * Tier 3: Claude Opus 4.7 — adaptive thinking with `display: "summarized"`
+ *         so the reasoning is captured in audit logs. Used for catastrophic
+ *         bets (≥ CATASTROPHIC_PCT_OF_CAPITAL of bankroll) and for
+ *         intra-Claude tiebreaks.
  *
  * Both tiers use:
  *   - `cache_control: {type: "ephemeral"}` on the persona system block
@@ -15,14 +16,15 @@
  *   - `output_config.format: json_schema` to constrain the verdict
  *   - `thinking: {type: "adaptive"}` — Claude decides how deep to go
  *
- * IMPORTANT: this module is called ONLY on signals classified as high-stakes
- * by `highStakesDetector.ts`. The base path remains Grok-only.
+ * Phase 1: dual-bot consensus removed. Tier 1 is also Claude (Haiku) now —
+ * see tradingReviewer.ts. The `priorVerdict` field below carries the
+ * Tier 1 result for the deep tier to challenge.
  */
 
 import Anthropic from "@anthropic-ai/sdk";
 import { ENV } from "./env";
 import { logger } from "./logger";
-import { getGrokPersona } from "./grokPersonas";
+import { getCategoryPersona } from "./categoryPersonas";
 import { logAuditEvent } from "../db";
 import type { MarketCategory } from "./marketCategoryRouter";
 
@@ -41,8 +43,8 @@ function getClient(): Anthropic {
   return _client;
 }
 
-// JSON schema the reviewer must return. Mirrors Grok's shape so downstream
-// guardrail code can treat verdicts uniformly.
+// JSON schema the reviewer must return. Shape is shared with the Tier-1
+// reviewer so downstream guardrail code can treat verdicts uniformly.
 const REVIEW_RESPONSE_SCHEMA = {
   type: "object",
   properties: {
@@ -95,8 +97,8 @@ export interface ClaudeReviewInput {
   confidence: number;
   resolutionPrimary: string | null;
   resolutionSecondary: string | null;
-  /** Original Grok verdict, surfaced so Claude can challenge it explicitly. */
-  grokVerdict: {
+  /** Tier-1 verdict, surfaced so the deep reviewer can challenge it explicitly. */
+  priorVerdict: {
     approved: boolean;
     impliedProbability: number;
     confidenceAdjustment: number;
@@ -126,7 +128,7 @@ export interface ClaudeReviewVerdict {
 
 // Per-million-token prices (USD). Pulled from claude-api skill cache 2026-04-29.
 // Update when Anthropic publishes a new schedule; small enough that the
-// amortized error is negligible vs Grok's $0.001/review baseline.
+// amortized error is negligible vs Tier-1 Haiku's per-review baseline.
 const PRICING = {
   "claude-sonnet-4-6": { in: 3.0, out: 15.0, cacheRead: 0.3, cacheWrite: 3.75 },
   "claude-opus-4-7": { in: 5.0, out: 25.0, cacheRead: 0.5, cacheWrite: 6.25 },
@@ -137,9 +139,10 @@ function buildPersonaSystemBlock(category: MarketCategory): {
   text: string;
   cache_control: { type: "ephemeral" };
 } {
-  // Reuse the Grok persona mandate so both reviewers see the same niche
-  // priority + verbatim-rules + skip-on-ambiguity discipline.
-  const persona = getGrokPersona("kalshi", category);
+  // Single Claude-native persona (Profit Reviewer) — niche priority +
+  // verbatim-rules + skip-on-ambiguity discipline shared with the Tier-1
+  // reviewer in tradingReviewer.ts.
+  const persona = getCategoryPersona("kalshi", category);
   return {
     type: "text",
     text: persona.systemMandate,
@@ -166,17 +169,17 @@ function buildUserPrompt(input: ClaudeReviewInput): string {
     "",
     "── Resolution rules (verbatim) ─────────────────────────────────",
     rulesBlock,
-    "── Grok's verdict to challenge ─────────────────────────────────",
-    `Approved: ${input.grokVerdict.approved}`,
-    `Implied P(YES): ${(input.grokVerdict.impliedProbability * 100).toFixed(1)}%`,
-    `EV adjust: ${(input.grokVerdict.expectedValueAdjustment * 100).toFixed(2)}%`,
-    `Conf adjust: ${(input.grokVerdict.confidenceAdjustment * 100).toFixed(1)}%`,
-    `Grok reasoning: ${input.grokVerdict.reasoning}`,
+    "── Tier-1 verdict to challenge ─────────────────────────────────",
+    `Approved: ${input.priorVerdict.approved}`,
+    `Implied P(YES): ${(input.priorVerdict.impliedProbability * 100).toFixed(1)}%`,
+    `EV adjust: ${(input.priorVerdict.expectedValueAdjustment * 100).toFixed(2)}%`,
+    `Conf adjust: ${(input.priorVerdict.confidenceAdjustment * 100).toFixed(1)}%`,
+    `Tier-1 reasoning: ${input.priorVerdict.reasoning}`,
     "",
     "Your job: independently review this trade. Apply the same niche-priority + skip-on-ambiguity rules.",
-    "If you disagree with Grok, say so explicitly in `reasoning`.",
+    "If you disagree with the Tier-1 verdict, say so explicitly in `reasoning`.",
     "If the resolution rules are ambiguous, set `ambiguityFlag: true` and `approved: false`.",
-    "If your implied P(YES) differs from Grok's by > 0.08, that is meaningful — flag it.",
+    "If your implied P(YES) differs from Tier-1's by > 0.08, that is meaningful — flag it.",
   ].join("\n");
 }
 
@@ -199,7 +202,7 @@ export async function reviewWithSonnet(
 }
 
 /**
- * Call Claude Opus — final tiebreaker when Grok and Sonnet disagree, OR
+ * Call Claude Opus — intra-Claude tiebreaker when Sonnet contests Tier-1, OR
  * when the position is a catastrophic-bet (≥ CATASTROPHIC_PCT_OF_CAPITAL).
  * Adaptive thinking with summarized display so the reasoning is captured
  * in audit logs. Model id comes from ENV.claudeOpusModel (default

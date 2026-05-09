@@ -1,5 +1,5 @@
 /**
- * Startup Self-Test (Kalshi-only, Grok-only).
+ * Startup Self-Test (Kalshi-only, Claude-only).
  *
  * Run once at server boot to surface mis-configurations LOUDLY before any
  * autonomy cycle fires.  The goal is to fail-fast on the misconfigurations
@@ -8,7 +8,7 @@
  *
  *   - DB unreachable
  *   - exitState column missing (drizzle-kit push not run)
- *   - XAI_API_KEY missing in production
+ *   - ANTHROPIC_API_KEY missing in production
  *
  * Each check returns { ok, detail } so the operator sees the full picture
  * even when one check fails — not just the first error.
@@ -79,70 +79,12 @@ async function checkExitStateColumn(table: string): Promise<SelfTestCheck> {
   }
 }
 
-function checkGrokKey(): SelfTestCheck {
-  // Grok is now the OPTIONAL legacy fallback. When ANTHROPIC_API_KEY is
-  // also set, Claude is the primary reviewer and Grok is silent. When
-  // ANTHROPIC_API_KEY is unset, Grok becomes the primary; in that case
-  // its absence is a fail in production.
-  const hasAnthropic = ENV.anthropicApiKey.length > 0;
-  if (ENV.xaiApiKey.length > 0) {
-    return {
-      name: "grok_api_key",
-      status: "ok",
-      detail: hasAnthropic
-        ? "XAI_API_KEY is set (legacy fallback; Claude is primary)."
-        : "XAI_API_KEY is set; Grok is acting as primary reviewer (no ANTHROPIC_API_KEY).",
-    };
-  }
-  if (!hasAnthropic && ENV.isProduction) {
-    return {
-      name: "grok_api_key",
-      status: "fail",
-      detail:
-        "Neither ANTHROPIC_API_KEY nor XAI_API_KEY is set in production. AI review is disabled — every autonomy cycle will fail closed.",
-    };
-  }
-  return {
-    name: "grok_api_key",
-    status: "warn",
-    detail: hasAnthropic
-      ? "XAI_API_KEY unset — Grok fallback unavailable. Claude is the sole reviewer (this is the default Claude-as-trader mode)."
-      : "XAI_API_KEY unset (dev mode — autonomy will skip AI review).",
-  };
-}
-
-function checkGrokModel(): SelfTestCheck {
-  return {
-    name: "grok_model",
-    status: "ok",
-    detail: `GROK_MODEL = ${ENV.grokModel}`,
-  };
-}
-
 function checkAnthropicKey(): SelfTestCheck {
-  // Claude is now the PRIMARY reviewer when ANTHROPIC_API_KEY is set.
-  // Grok is the legacy fallback (used only when this key is unset, or
-  // when REVIEWER_PREFER_GROK=true).
   if (ENV.anthropicApiKey.length > 0) {
-    const mode = ENV.reviewerPreferGrok
-      ? `legacy mode active (REVIEWER_PREFER_GROK=true) — Grok is primary, Claude on high-stakes only`
-      : `Claude is the primary reviewer (Sonnet=${ENV.claudeSonnetModel}, Opus on high-stakes=${ENV.claudeOpusModel})`;
     return {
       name: "anthropic_api_key",
       status: "ok",
-      detail: `ANTHROPIC_API_KEY is set; ${mode}.`,
-    };
-  }
-  // Without ANTHROPIC_API_KEY, the system falls back to Grok as primary
-  // (if XAI_API_KEY is set). In production this is a downgrade — Claude
-  // is the recommended primary trader.
-  if (ENV.xaiApiKey.length > 0) {
-    return {
-      name: "anthropic_api_key",
-      status: "warn",
-      detail:
-        "ANTHROPIC_API_KEY unset — system is falling back to Grok as primary reviewer. " +
-        "Set ANTHROPIC_API_KEY to use Claude as the trader (recommended; ~$5/mo at default cadence).",
+      detail: `ANTHROPIC_API_KEY is set; Claude is the sole reviewer (Haiku=${ENV.claudeHaikuModel}, Sonnet=${ENV.claudeSonnetModel}, Opus on high-stakes=${ENV.claudeOpusModel}).`,
     };
   }
   if (ENV.isProduction) {
@@ -150,7 +92,7 @@ function checkAnthropicKey(): SelfTestCheck {
       name: "anthropic_api_key",
       status: "fail",
       detail:
-        "Neither ANTHROPIC_API_KEY nor XAI_API_KEY is set in production. AI review is disabled — every autonomy cycle will fail closed.",
+        "ANTHROPIC_API_KEY is not set in production. AI review is disabled — every autonomy cycle will fail closed.",
     };
   }
   return {
@@ -225,8 +167,6 @@ export async function runStartupSelfTest(): Promise<SelfTestResult> {
   if (database.status === "ok") {
     checks.push(kalshiExitColumn);
   }
-  checks.push(checkGrokKey());
-  checks.push(checkGrokModel());
   checks.push(checkAnthropicKey());
   checks.push(checkAiDailyBudget());
   checks.push(checkCredentialEncryptionSecret());

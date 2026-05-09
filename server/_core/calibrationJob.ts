@@ -2,7 +2,7 @@
  * Weekly calibration / backtest job.
  *
  * Pulls the past N months of Kalshi historical markets + trades, replays the
- * Grok reviewer against each (using the *cached* response when available so
+ * AI reviewer against each (using the *cached* response when available so
  * we don't re-spend), and computes the Brier score per category and per
  * persona id. The job:
  *
@@ -10,12 +10,12 @@
  *      timestamped, immutable) over the lookback window.
  *   2. Resolves each market's actual outcome from `kalshiClient.getMarket` or
  *      `kalshiOrderSync` reconciliation rows.
- *   3. Reads all `kalshi_grok_review_telemetry` audit-log rows for the same
+ *   3. Reads all reviewer-telemetry audit-log rows for the same
  *      tickers and pairs predicted probability ↔ realized outcome.
  *   4. Computes Brier score = mean( (predicted_prob - actual_outcome)^2 ),
  *      where actual_outcome ∈ {0, 1}.
  *   5. Adjusts the per-persona/category weight in the desk-memory tape so
- *      future Grok reviews of weaker categories are weighted more skeptically
+ *      future reviews of weaker categories are weighted more skeptically
  *      (or excluded entirely below a min Brier).
  *
  * Runs once per week via a cron (`scripts/runCalibrationJob.ts`).
@@ -219,12 +219,12 @@ async function collectCalibrationSamples(opts: {
     if (!ticker || predictedProb === null || outcomeRaw === null) continue;
     // Persona id isn't yet stamped onto the outcome log; until the reviewer
     // tags trades with the desk that approved them, fall back to the
-    // category-keyed persona id Grok personas already use.
+    // category-keyed reviewer id.
     const category = typeof p.category === "string" ? p.category : "unknown";
     const personaId =
       typeof p.personaId === "string"
         ? p.personaId
-        : `grok.kalshi.${category}`;
+        : `claude.kalshi.${category}`;
     const settledAtMs =
       typeof p.settledAtMs === "number"
         ? p.settledAtMs

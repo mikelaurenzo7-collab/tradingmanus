@@ -7,8 +7,8 @@
  *   1. aiCostBudget.checkBudgetForRun — uses `effectiveOverrun` to throttle
  *      cadence only when the bot is net-down on the day.  Profitable days
  *      never throttle regardless of AI cost.
- *   2. The reviewers (Claude + Grok) — see the running scoreboard injected
- *      into their system prompt every cycle so they actively tighten their
+ *   2. The Claude reviewers — see the running scoreboard injected into
+ *      their system prompt every cycle so they actively tighten their
  *      bar when net-negative.  Layer 2 of the pay-for-yourself system.
  *   3. profitGuardrails — the post-review hard floors auto-tighten by up
  *      to 1.5× when the day's net is deeply negative.  Layer 3.
@@ -46,7 +46,7 @@ export type DailyScoreboard = {
   realizedPnlUsd: number;
   /** Estimated round-trip trade fees on positions touched today. */
   estimatedFeesUsd: number;
-  /** AI spend today (Anthropic + Grok), as tracked by aiCostBudget. */
+  /** AI spend today (Anthropic), as tracked by aiCostBudget. */
   aiSpendUsd: number;
   /** Net = realized P&L − AI cost − fees. */
   netUsd: number;

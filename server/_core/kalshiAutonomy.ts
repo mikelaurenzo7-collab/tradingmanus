@@ -791,11 +791,11 @@ async function generateScheduledSignals(
   );
 
   // ── Tier 2/3 ensemble post-filter ──────────────────────────────────────
-  // Grok already approved each `savedSignal`. We now run them through
-  // the cross-family ensemble: high-stakes signals get Sonnet review;
-  // catastrophic-bets demand unanimous Grok+Sonnet+Opus. Vetoed signals
-  // are dropped here; approved signals carry the ensemble's adjusted
-  // EV/confidence into execution.
+  // Tier 1 (Claude Haiku) already approved each `savedSignal`. We now run
+  // them through the deeper ensemble: high-stakes signals get Sonnet review;
+  // catastrophic-bets demand unanimous Tier-1 + Sonnet + Opus. Vetoed
+  // signals are dropped here; approved signals carry the ensemble's
+  // adjusted EV/confidence into execution.
   let ensembleApproved = savedSignals;
   if (ENV.anthropicApiKey && savedSignals.length > 0) {
     try {
@@ -947,7 +947,7 @@ async function generateScheduledSignals(
     } catch (err) {
       logger.warn(
         { err },
-        "[Ensemble] post-filter failed; falling back to Grok-only signals",
+        "[Ensemble] post-filter failed; falling back to Tier-1-only signals",
       );
       // Persist the failure to the audit trail per repo convention.
       await db
@@ -981,8 +981,8 @@ async function generateScheduledSignals(
       afterInstructionFilter: instructionFilteredSignals.length,
       afterReviewerFilter: savedSignals.length,
       // Final-stage count after Tier 2/3 (Sonnet/Opus) ensemble vetoes.
-      // Equals afterReviewerFilter when ANTHROPIC_API_KEY is unset (the
-      // ensemble degrades to a Grok-only pass-through).
+      // Equals afterReviewerFilter when ANTHROPIC_API_KEY is unset (no
+      // ensemble — Tier-1 verdicts pass through unchanged).
       afterEnsembleFilter: ensembleApproved.length,
       activeInstructionCount: activeInstructions.length,
       minConfidence,
@@ -2154,12 +2154,12 @@ export async function runScheduledAutonomousTradingBatch(
   // placed; running the batch without it would silently downgrade safety to
   // raw heuristics.  We log a critical audit event so the operator sees this
   // in the audit feed even after the throw is caught upstream.
-  if (ENV.isProduction && !ENV.xaiApiKey) {
+  if (ENV.isProduction && !ENV.anthropicApiKey) {
     try {
       await db.logAuditEvent(
         "scheduled_autonomy_run_aborted",
         JSON.stringify({
-          reason: "XAI_API_KEY_MISSING",
+          reason: "ANTHROPIC_API_KEY_MISSING",
           triggeredByOpenId,
           eligibleUsers: users.length,
         }),
@@ -2169,8 +2169,8 @@ export async function runScheduledAutonomousTradingBatch(
       // Audit-log failure must not mask the underlying configuration error.
     }
     throw new Error(
-      "XAI_API_KEY is not configured. Refusing to run scheduled autonomous trading without the AI reviewer gate. " +
-        "Set XAI_API_KEY in the deployment environment and redeploy."
+      "ANTHROPIC_API_KEY is not configured. Refusing to run scheduled autonomous trading without the AI reviewer gate. " +
+        "Set ANTHROPIC_API_KEY in the deployment environment and redeploy."
     );
   }
 

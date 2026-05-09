@@ -90,7 +90,7 @@ export function isHighStakes(context: StakesContext): boolean {
  * Pick the right model for the given tier.  Returns the override if
  * provided, otherwise the configured Claude model when Claude is the
  * active provider (Sonnet for routine review, Opus for deep / high-stakes
- * tier). Falls back to the Grok model in legacy mode (no ANTHROPIC_API_KEY).
+ * tier). Anthropic is the sole provider after Phase 1.
  */
 export function selectAnthropicModel(tier: ModelTier, override?: string): string {
   if (override && override.trim()) return override.trim();
@@ -104,10 +104,7 @@ export function selectAnthropicModel(tier: ModelTier, override?: string): string
   // stakesForSignals heuristic flags routine batches as "high-stakes" for
   // common inputs (price ≥ 10¢, confidence ≥ X, tail probabilities), which
   // would burn Opus on every routine cycle and bypass the new cost gate.
-  if (ENV.anthropicApiKey.length > 0) {
-    return tier === "deep" ? ENV.claudeSonnetModel : ENV.claudeHaikuModel;
-  }
-  return ENV.grokModel;
+  return tier === "deep" ? ENV.claudeSonnetModel : ENV.claudeHaikuModel;
 }
 
 /**
@@ -180,12 +177,10 @@ export function isWebSearchEnabled(): boolean {
 }
 
 export function isExtendedThinkingEnabled(): boolean {
-  // Extended thinking is a real Anthropic-SDK feature. Enabled when
-  // ANTHROPIC_API_KEY is configured (Claude-as-trader mode); Grok
-  // doesn't support it. Operator can force-disable via
-  // ENABLE_EXTENDED_THINKING=false to fall back to the simpler JSON-only
-  // path (saves ~10-30 % on Opus deep-tier cost at the price of less
-  // careful reasoning on high-stakes trades).
+  // Extended thinking is a real Anthropic-SDK feature. Operator can
+  // force-disable via ENABLE_EXTENDED_THINKING=false to fall back to the
+  // simpler JSON-only path (saves ~10-30 % on Opus deep-tier cost at the
+  // price of less careful reasoning on high-stakes trades).
   if (!ENV.anthropicApiKey || ENV.anthropicApiKey.length === 0) return false;
   const flag = (process.env.ENABLE_EXTENDED_THINKING ?? "").trim().toLowerCase();
   if (flag === "0" || flag === "false" || flag === "no" || flag === "off") {
@@ -307,12 +302,9 @@ export type ReviewerTelemetry = {
   triageRan: boolean;
   triageInputCount: number;
   triageKeptCount: number;
-  // Provider call counts.
+  // Provider call counts (Phase 1: Anthropic-only).
   anthropicCalls: number;
   anthropicFailures: number;
-  // Grok provider call counts (used when ENABLE_GROK_SOLO or ENABLE_GROK_TEAM).
-  grokCalls: number;
-  grokFailures: number;
 };
 
 export function newReviewerTelemetry(): ReviewerTelemetry {
@@ -329,8 +321,6 @@ export function newReviewerTelemetry(): ReviewerTelemetry {
     triageKeptCount: 0,
     anthropicCalls: 0,
     anthropicFailures: 0,
-    grokCalls: 0,
-    grokFailures: 0,
   };
 }
 
@@ -356,17 +346,10 @@ export function recordAnthropicResponseTelemetry(
   telemetry.inputTokens += inputTokens;
   telemetry.outputTokens += outputTokens;
   // Bill against daily budget — no-op when AI_DAILY_BUDGET_USD is unset.
-  // Provider detection: Anthropic models start with "claude-"; everything
-  // else is Grok (the legacy fallback). When we can't read the model
-  // string, fall back to whichever key is configured (Anthropic preferred).
+  // Phase 1: Claude is the sole provider.
   const responseModel =
     typeof response.model === "string" ? response.model : "";
-  const model =
-    responseModel ||
-    (ENV.anthropicApiKey.length > 0 ? ENV.claudeSonnetModel : ENV.grokModel);
-  const provider: "anthropic" | "grok" = model.startsWith("claude-")
-    ? "anthropic"
-    : "grok";
+  const model = responseModel || ENV.claudeSonnetModel;
   recordAiCallCost(
     model,
     {
@@ -376,7 +359,7 @@ export function recordAnthropicResponseTelemetry(
       cacheCreationInputTokens,
     },
     {
-      provider,
+      provider: "anthropic",
       reviewer: flags.reviewer,
       userId: flags.userId,
     },
@@ -511,8 +494,8 @@ export function formatCitationsForReasoning(citations: CitationSummary[]): strin
 export const TRIAGE_THRESHOLD_DEFAULT = 6;
 
 export function isTriageEnabled(): boolean {
-  // Triage was an Anthropic-Haiku-specific cost-saving trick; Grok is
-  // a single flat-priced model so triage is a no-op.
+  // Triage is currently disabled. Phase 5 may re-enable an Anthropic-Haiku
+  // pre-filter when batch sizes warrant the extra round-trip.
   return false;
 }
 

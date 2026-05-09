@@ -166,8 +166,8 @@ export async function runDailySportsPlay(
     };
   }
 
-  // CRITICAL: run the primary AI reviewer (Tier 1 = Claude Sonnet by default,
-  // or Grok in legacy mode) BEFORE the ensemble post-filter. The ensemble
+  // CRITICAL: run the primary AI reviewer (Tier 1 = Claude Haiku) BEFORE
+  // the ensemble post-filter. The ensemble
   // post-filter fabricates a Tier-1-approved verdict — it assumes the
   // autonomy candidate path already ran the real reviewer. Without this,
   // low-stakes sports picks (most of them at 2.5 % of bankroll) take the

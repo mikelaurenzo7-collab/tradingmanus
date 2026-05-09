@@ -1,17 +1,17 @@
 /**
  * High-stakes signal detector.
  *
- * The asymmetric ensemble runs Grok on every signal, but only invokes Claude
- * Sonnet 4.6 on the *high-stakes subset* — trades where a single error would
- * meaningfully dent the bankroll, or where Grok's self-consistency split
- * suggests the model is uncertain.
+ * The asymmetric ensemble runs Tier-1 (Claude Haiku) on every signal, but only
+ * invokes Claude Sonnet 4.6 on the *high-stakes subset* — trades where a
+ * single error would meaningfully dent the bankroll, or where the Tier-1
+ * self-consistency check split suggests the model is uncertain.
  *
  * A signal qualifies as high-stakes if ANY of:
- *   1. notionalUsd                   ≥ HIGH_STAKES_NOTIONAL_USD     (default $8)
- *   2. notional / capital            ≥ HIGH_STAKES_PCT_OF_CAPITAL   (default 3%)
- *   3. minutes-to-resolution        ≤ HIGH_STAKES_RESOLUTION_MINUTES (default 1440 = 24h)
- *   4. Grok self-consistency split  (the two passes disagreed on direction OR
- *                                    EV adjustment differed by > 0.03)
+ *   1. notionalUsd                    ≥ HIGH_STAKES_NOTIONAL_USD     (default $8)
+ *   2. notional / capital             ≥ HIGH_STAKES_PCT_OF_CAPITAL   (default 3%)
+ *   3. minutes-to-resolution         ≤ HIGH_STAKES_RESOLUTION_MINUTES (default 1440 = 24h)
+ *   4. Tier-1 self-consistency split (the two passes disagreed on direction OR
+ *                                     EV adjustment differed by > 0.03)
  *
  * A signal qualifies as catastrophic-bet (Tier 3 unanimous gate) if:
  *   - notional / capital ≥ CATASTROPHIC_PCT_OF_CAPITAL (default 10%)
@@ -23,10 +23,10 @@ export interface SignalForClassification {
   notionalUsd: number;
   capitalUsd: number;
   resolutionAtMs: number | null;
-  grokFirstPassApproved: boolean;
-  grokSecondPassApproved: boolean;
-  grokFirstEvAdjustment: number;
-  grokSecondEvAdjustment: number;
+  tier1FirstPassApproved: boolean;
+  tier1SecondPassApproved: boolean;
+  tier1FirstEvAdjustment: number;
+  tier1SecondEvAdjustment: number;
 }
 
 export interface HighStakesClassification {
@@ -57,9 +57,9 @@ export function classifySignal(
       ? Math.max(0, (s.resolutionAtMs - Date.now()) / 60000)
       : Infinity;
 
-  const dirSplit = s.grokFirstPassApproved !== s.grokSecondPassApproved;
+  const dirSplit = s.tier1FirstPassApproved !== s.tier1SecondPassApproved;
   const evDelta = Math.abs(
-    (s.grokFirstEvAdjustment ?? 0) - (s.grokSecondEvAdjustment ?? 0),
+    (s.tier1FirstEvAdjustment ?? 0) - (s.tier1SecondEvAdjustment ?? 0),
   );
   const evSplit = evDelta > 0.03;
 
@@ -84,7 +84,7 @@ export function classifySignal(
     why.push(`${minutesToResolution.toFixed(0)}m to resolution`);
   if (triggers.selfConsistencySplit)
     why.push(
-      `Grok self-consistency split (${dirSplit ? "direction" : "EV Δ=" + evDelta.toFixed(3)})`,
+      `Tier-1 self-consistency split (${dirSplit ? "direction" : "EV Δ=" + evDelta.toFixed(3)})`,
     );
   if (isCatastrophicBet)
     why.push(

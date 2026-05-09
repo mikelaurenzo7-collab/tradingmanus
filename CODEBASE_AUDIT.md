@@ -1,7 +1,10 @@
 # LAURENZO Codebase Audit
 
-> **Last updated**: 2026-05-03
+> **Last updated**: 2026-05-09
 > This document reflects the codebase after the full Kalshi + Polymarket refactor including Phase 1-3 improvements (logger migration, code splitting, Polymarket tables).
+>
+> **2026-05-09 — Hardening Pass Phase 1: dual-AI consensus removed; Claude-only.**
+> `server/_core/grokClient.ts`, `grokPersonas.ts`, and `reviewerConsensus.ts` deleted. The legacy XAI / Grok env vars (`XAI_API_KEY`, `GROK_*`, `REVIEWER_PREFER_GROK`, `MIN_DUAL_BOT_AGREEMENT`) are gone from `env.ts` and `.env.example`. `tradingReviewer.ts` and `polymarketSignalReviewer.ts` collapse to a single Claude-only path; `claudeReviewer.ts` uses `getCategoryPersona` (Claude-native) instead of `getGrokPersona`. The previously-renamed-on-disk type `GrokVerdict` is now `Tier1Verdict` everywhere. AI cost per day is unchanged (~$0.25–$1.78) because Grok was never actually called at runtime — `grokInTeam` was hardcoded `false` — so this is a code-cleanliness win, not a cost win.
 
 ## Current Architecture
 
