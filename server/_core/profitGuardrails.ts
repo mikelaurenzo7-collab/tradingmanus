@@ -138,11 +138,16 @@ export function checkProfitGuardrails(
           entryLiquidity: input.liquidity,
           exitLiquidity: input.liquidity,
         });
-  const spreadCostFraction =
+  // Use the platform-specific feeBreakdown.costAsFraction (fees + spread
+  // combined) so the gate applies the correct fee model for each platform.
+  // AI cost is additive on top, derived from the already-amortised value in
+  // net (currently 0 unless the caller passes amortizedAiCostUsd).
+  const aiCostFraction =
     feeBreakdown.notionalUsd > 0
-      ? feeBreakdown.spreadCostUsd / feeBreakdown.notionalUsd
+      ? net.aiCostUsd / feeBreakdown.notionalUsd
       : 0;
-  const feeAwareNetEvFraction = net.netEvFraction - spreadCostFraction;
+  const feeAwareNetEvFraction =
+    evRoiFraction - feeBreakdown.costAsFraction - aiCostFraction;
 
   // Single floor for everyone — no owner-override tier. The previous
   // owner-bypass that loosened EV/conf for OWNER_OVERRIDE_DOMAINS was
@@ -155,11 +160,11 @@ export function checkProfitGuardrails(
   if (feeAwareNetEvFraction < evFloor) {
     return {
       approved: false,
-      reason: `Net EV ${(feeAwareNetEvFraction * 100).toFixed(2)}% < ${(evFloor * 100).toFixed(2)}% floor (gross ROI ${(evRoiFraction * 100).toFixed(2)}% − fees $${net.feeUsd.toFixed(2)} − spread $${feeBreakdown.spreadCostUsd.toFixed(2)} − AI $${net.aiCostUsd.toFixed(4)})`,
+      reason: `Net EV ${(feeAwareNetEvFraction * 100).toFixed(2)}% < ${(evFloor * 100).toFixed(2)}% floor (gross ROI ${(evRoiFraction * 100).toFixed(2)}% − fees $${feeBreakdown.feeUsd.toFixed(2)} − spread $${feeBreakdown.spreadCostUsd.toFixed(2)} − AI $${net.aiCostUsd.toFixed(4)})`,
       adjustedEV: ev,
       adjustedConfidence: conf,
       netEvFraction: feeAwareNetEvFraction,
-      feeUsd: net.feeUsd,
+      feeUsd: feeBreakdown.feeUsd,
       aiCostUsd: net.aiCostUsd,
       feeBreakdown,
     };
@@ -172,7 +177,7 @@ export function checkProfitGuardrails(
       adjustedEV: ev,
       adjustedConfidence: conf,
       netEvFraction: feeAwareNetEvFraction,
-      feeUsd: net.feeUsd,
+      feeUsd: feeBreakdown.feeUsd,
       aiCostUsd: net.aiCostUsd,
       feeBreakdown,
     };
@@ -186,7 +191,7 @@ export function checkProfitGuardrails(
       adjustedEV: ev,
       adjustedConfidence: conf,
       netEvFraction: feeAwareNetEvFraction,
-      feeUsd: net.feeUsd,
+      feeUsd: feeBreakdown.feeUsd,
       aiCostUsd: net.aiCostUsd,
       feeBreakdown,
     };
@@ -194,11 +199,11 @@ export function checkProfitGuardrails(
 
   return {
     approved: true,
-    reason: `Net EV ${(feeAwareNetEvFraction * 100).toFixed(2)}% ≥ ${(evFloor * 100).toFixed(2)}% + confidence ${(conf * 100).toFixed(1)}% ≥ ${(confFloor * 100).toFixed(1)}% (gross ROI ${(evRoiFraction * 100).toFixed(2)}% − fees $${net.feeUsd.toFixed(2)} − spread $${feeBreakdown.spreadCostUsd.toFixed(2)})`,
+    reason: `Net EV ${(feeAwareNetEvFraction * 100).toFixed(2)}% ≥ ${(evFloor * 100).toFixed(2)}% + confidence ${(conf * 100).toFixed(1)}% ≥ ${(confFloor * 100).toFixed(1)}% (gross ROI ${(evRoiFraction * 100).toFixed(2)}% − fees $${feeBreakdown.feeUsd.toFixed(2)} − spread $${feeBreakdown.spreadCostUsd.toFixed(2)})`,
     adjustedEV: ev,
     adjustedConfidence: conf,
     netEvFraction: feeAwareNetEvFraction,
-    feeUsd: net.feeUsd,
+    feeUsd: feeBreakdown.feeUsd,
     aiCostUsd: net.aiCostUsd,
     feeBreakdown,
   };
