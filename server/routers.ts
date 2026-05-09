@@ -2808,11 +2808,24 @@ export const appRouter = router({
           };
         }
         // Never return raw key material — UI only needs presence flags.
-        // Balance comes from CLOB /balance (holds collateral inside CTF contract,
-        // not the wallet's on-chain USDC.e balance which is always near-zero).
+        // Balance comes from CLOB /balance-allowance (holds collateral inside
+        // the CTF contract, not the wallet's on-chain USDC.e balance which is
+        // always near-zero).  Requires the wallet private key for L2 signing
+        // — fetchPolymarketUsdcBalance never persists or returns it.
         const usdcBalance =
-          creds.apiKey && creds.apiSecret && creds.walletAddress
-            ? await fetchPolymarketUsdcBalance(creds.apiKey, creds.apiSecret, creds.walletAddress)
+          creds.apiKey &&
+          creds.apiSecret &&
+          creds.apiPassphrase &&
+          creds.walletPrivateKey &&
+          creds.walletAddress
+            ? await fetchPolymarketUsdcBalance({
+                apiKey: creds.apiKey,
+                apiSecret: creds.apiSecret,
+                apiPassphrase: creds.apiPassphrase,
+                walletPrivateKey: creds.walletPrivateKey,
+                walletAddress: creds.walletAddress,
+                signatureType: creds.signatureType,
+              })
             : null;
         return {
           connected: creds.accountStatus === "connected",
