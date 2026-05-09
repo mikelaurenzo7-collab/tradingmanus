@@ -351,15 +351,18 @@ async function runPolymarketOrderSync() {
   const startedAt = Date.now();
   hb.markTickStart("polymarket_order_sync", "syncing", "Reconciling Polymarket positions + checking exits");
   try {
-    const eligibleUsers = await getUsersEligibleForAutomaticScheduledTrading();
-    const scopedUsers = scopeScheduledUsersToTrigger(
-      eligibleUsers as Array<{ id: number; openId: string; email?: string | null }>,
-      "local_scheduler",
-    );
-    if (scopedUsers.length === 0) {
-      hb.setSkipped("polymarket_order_sync", "no eligible users");
+    // Polymarket reconciliation must NOT inherit Kalshi's armed-state
+    // requirement — if the operator has a Polymarket position open but
+    // their Kalshi side is paused, manual UI closes still need to be
+    // detected and trailing stops still need to ratchet.  Scope to the
+    // owner directly + check Polymarket creds.
+    const { getUserByOpenId } = await import("../db");
+    const ownerUser = await getUserByOpenId("owner:primary");
+    if (!ownerUser) {
+      hb.setSkipped("polymarket_order_sync", "owner user not registered");
       return;
     }
+    const scopedUsers = [{ id: ownerUser.id, openId: ownerUser.openId }];
 
     let exitTriggered = 0;
     for (const user of scopedUsers as Array<{ id: number; openId: string }>) {

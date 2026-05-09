@@ -277,6 +277,11 @@ export async function evaluatePolymarketExitsForOpenPositions(
               tokenId,
               sizeUsdc,
               price: currentPrice,
+              // Pass entryPrice so the close computes tokens-held from
+              // sizeUsdc / entryPrice (the actual deployed quantity), not
+              // sizeUsdc / currentPrice (which would over-/under-shoot
+              // the SELL on price moves and either fail or leave dust).
+              entryPrice,
               walletPrivateKey: creds.walletPrivateKey,
               walletAddress: creds.walletAddress,
               signatureType: creds.signatureType,

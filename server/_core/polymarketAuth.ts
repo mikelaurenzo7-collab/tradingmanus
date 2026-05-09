@@ -327,18 +327,28 @@ export async function closePolymarketPosition(
   position: {
     tokenId: string;
     sizeUsdc: number;
+    /** Limit price for the SELL order — typically the current mark. */
     price: number;
+    /**
+     * Entry price of the position being closed.  Required so we can compute
+     * the TOKEN quantity actually held (`sizeUsdc / entryPrice`).  Closing
+     * with `sizeUsdc / exitPrice` was wrong: at a stop-loss it tried to
+     * SELL more tokens than we hold, and at a profit-target it left
+     * exposure behind.
+     */
+    entryPrice: number;
     walletPrivateKey: string;
     walletAddress: string;
     signatureType?: number;
   },
 ): Promise<{ success: boolean; orderId?: string; error?: string }> {
-  // CLOB `size` is TOKEN quantity, not USDC notional.  Convert the USDC
-  // budget into tokens via `sizeUsdc / price`.  Floor a hair below to avoid
-  // rounding above the requested notional.
+  // tokens-held = sizeUsdc / entryPrice (deployed USDC ÷ price paid).  We
+  // SELL exactly that quantity, regardless of where the exit price lands.
+  // Floor down a hair (×100/100 truncate) so we never round above the held
+  // balance and trip "insufficient balance".
   const tokens = Math.max(
     0,
-    Math.floor((position.sizeUsdc / Math.max(position.price, 1e-6)) * 100) / 100,
+    Math.floor((position.sizeUsdc / Math.max(position.entryPrice, 1e-6)) * 100) / 100,
   );
   return placePolymarketOrder(apiKey, apiSecret, apiPassphrase, {
     tokenId: position.tokenId,

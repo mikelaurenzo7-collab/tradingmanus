@@ -14,15 +14,8 @@ const AuditLog = lazy(() => import("./pages/AuditLog"));
 const Connect = lazy(() => import("./pages/Connect"));
 const Training = lazy(() => import("./pages/Training"));
 const Performance = lazy(() => import("./pages/Performance"));
-const SentimentAnalysis = lazy(() => import("./pages/SentimentAnalysis"));
-const PortfolioOptimization = lazy(() => import("./pages/PortfolioOptimization"));
 const Backtesting = lazy(() => import("./pages/Backtesting"));
-const Analytics = lazy(() => import("./pages/Analytics"));
 const TradingAutonomy = lazy(() => import("./pages/TradingAutonomy"));
-const TradingReadiness = lazy(() => import("./pages/TradingReadiness"));
-const Funding = lazy(() => import("./pages/Funding"));
-const Strategies = lazy(() => import("./pages/Strategies"));
-const Chat = lazy(() => import("./pages/Chat"));
 const Setup = lazy(() => import("./pages/Setup"));
 
 function PageFallback() {
@@ -51,26 +44,18 @@ function Router() {
       <Route path={"/setup"} component={withLayout(Setup)} />
       <Route path={"/connect"} component={withLayout(Connect)} />
       <Route path={"/autonomy"} component={withLayout(TradingAutonomy)} />
-      <Route path={"/trading-readiness"} component={withLayout(TradingReadiness)} />
-      {/* Unified Activity page (replaces /positions + /trades).  The old
-          routes still resolve and the Activity page picks the correct tab
-          from the URL so existing deep links keep working. */}
+      {/* Unified Activity page = positions + trade history.  Legacy
+          /positions + /trades deep links still resolve here. */}
       <Route path={"/activity"} component={withLayout(Activity)} />
       <Route path={"/activity/:tab"} component={withLayout(Activity)} />
       <Route path={"/positions"} component={withLayout(Activity)} />
       <Route path={"/trades"} component={withLayout(Activity)} />
       <Route path={"/signals"} component={withLayout(Signals)} />
-      <Route path={"/strategies"} component={withLayout(Strategies)} />
       <Route path={"/risk-controls"} component={withLayout(RiskControls)} />
       <Route path={"/audit"} component={withLayout(AuditLog)} />
       <Route path={"/training"} component={withLayout(Training)} />
       <Route path={"/performance"} component={withLayout(Performance)} />
-      <Route path={"/sentiment"} component={withLayout(SentimentAnalysis)} />
-      <Route path={"/portfolio"} component={withLayout(PortfolioOptimization)} />
       <Route path={"/backtest"} component={withLayout(Backtesting)} />
-      <Route path={"/analytics"} component={withLayout(Analytics)} />
-      <Route path={"/funding"} component={withLayout(Funding)} />
-      <Route path={"/chat"} component={withLayout(Chat)} />
       <Route path={"/404"} component={NotFound} />
       <Route component={NotFound} />
     </Switch>

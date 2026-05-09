@@ -77,7 +77,9 @@ import {
 } from "./_core/kalshiCombinatorial";
 import { trainingRouter } from "./training.router";
 import { advancedRouter } from "./advanced.router";
-import { chatRouter } from "./chat.router";
+// Chat router removed in single-owner trim — slash commands were read-only
+// and the conversational endpoint just burned AI tokens without changing
+// trade behavior.
 import {
   applyMarketImpactGuardrails,
   calculateKalshiBuyOrderRisk,
@@ -2890,11 +2892,6 @@ export const appRouter = router({
       }),
   }),
 
-
-  // --------------------------------------------------------------------------
-  // AI Chatbot workspaces (Kalshi + Polymarket, persistent memory)
-  // --------------------------------------------------------------------------
-  chat: chatRouter,
 
   combinatorial: router({
     /**

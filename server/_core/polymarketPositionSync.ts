@@ -229,6 +229,11 @@ async function closeDriftedPositions(
   const database = await db.getDb();
   if (!database) return [];
   try {
+    // Include both 'open' AND 'closing' rows in the drift scan.  When
+    // an auto-close SELL fills, the exit monitor flips the row to
+    // 'closing' to debounce.  If we then never include it here, a
+    // filled-and-vanished position would be stuck in 'closing' forever
+    // and learning / dashboard / closed-PnL would never advance.
     const localOpen = await database
       .select({
         id: polymarketPositions.id,
@@ -238,7 +243,7 @@ async function closeDriftedPositions(
       .where(
         and(
           eq(polymarketPositions.userId, userId),
-          eq(polymarketPositions.positionStatus, "open"),
+          inArray(polymarketPositions.positionStatus, ["open", "closing"]),
         ),
       );
 
