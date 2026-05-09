@@ -94,12 +94,15 @@ export function isHighStakes(context: StakesContext): boolean {
  */
 export function selectAnthropicModel(tier: ModelTier, override?: string): string {
   if (override && override.trim()) return override.trim();
-  // Claude-as-trader: when ANTHROPIC_API_KEY is set, route to the
-  // configured Claude models (Sonnet for routine review, Opus for
-  // high-stakes / deep tier). Falls back to Grok's flat model only
-  // when Anthropic is unavailable (legacy mode).
+  // Claude-as-trader cost tiering:
+  //   - Routine tier (every signal):     Haiku 4.5  (~$1/M in, $5/M out)
+  //   - Deep tier (high-edge candidates): Opus 4.7  (~$5/M in, $25/M out)
+  // Sonnet is no longer the routine default — Haiku is 3× cheaper and
+  // sufficient for the heuristic-pre-filtered signals that reach this gate.
+  // The ensemble's Tier-2 escalation still runs Sonnet when a high-stakes
+  // signal trips the prob-of-capital threshold.
   if (ENV.anthropicApiKey.length > 0) {
-    return tier === "deep" ? ENV.claudeOpusModel : ENV.claudeSonnetModel;
+    return tier === "deep" ? ENV.claudeOpusModel : ENV.claudeHaikuModel;
   }
   return ENV.grokModel;
 }

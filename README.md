@@ -17,9 +17,9 @@ auto-scale as your account grows.
 
   | Tier | Model | Fires on | Avg / month |
   | --- | --- | --- | --- |
-  | 1 | **Claude Sonnet 4.6** (Anthropic) | every reviewed signal | ~165 reviews |
-  | 2 | **Claude Opus 4.7** (Anthropic) | high-stakes signals (≥3% of capital, ≤24h to resolution, or self-consistency split) | ~22 reviews |
-  | 3 | **Claude Opus 4.7 unanimous gate** (Anthropic) | catastrophic-bet (≥10% of capital) — both passes must agree | ~6 reviews |
+  | 1 | **Claude Haiku 4.5** (Anthropic) | every reviewed signal | ~30-50 reviews (10-min cron) |
+  | 2 | **Claude Sonnet 4.6** (Anthropic) | high-stakes signals (≥3% of capital, ≤24h to resolution, or self-consistency split) | ~5-10 reviews |
+  | 3 | **Claude Opus 4.7** (Anthropic) | candidates with gross EV ≥ 5% AND Sonnet-disagreement, OR catastrophic-bet (≥10% of capital) unanimous gate | ~2-4 reviews |
 
   Grok 4.1 Fast (xAI) remains as a legacy fallback: when `ANTHROPIC_API_KEY`
   is unset or `REVIEWER_PREFER_GROK=true`, the system uses Grok instead.

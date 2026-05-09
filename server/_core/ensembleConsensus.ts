@@ -335,7 +335,32 @@ export async function runEnsemble(input: EnsembleInput): Promise<EnsembleVerdict
     };
   }
 
-  // Grok ✓ + Sonnet ✗ → escalate to Opus tiebreaker.
+  // Tier-1 ✓ + Sonnet ✗ → escalate to Opus tiebreaker, BUT only when the
+  // signal's gross EV clears the OPUS_ESCALATION_MIN_GROSS_EV floor
+  // (default 5 %). Below that the candidate isn't worth Opus's cost
+  // (~$0.083/call vs Sonnet's ~$0.017) — we just trust Sonnet's veto.
+  if (input.grossEvFraction < ENV.opusEscalationMinGrossEv) {
+    return {
+      approved: false,
+      finalConfidenceAdjustment: avg(
+        input.grokVerdict.confidenceAdjustment,
+        sonnet.confidenceAdjustment,
+      ),
+      finalExpectedValueAdjustment: avg(
+        input.grokVerdict.expectedValueAdjustment,
+        sonnet.expectedValueAdjustment,
+      ),
+      finalImpliedProbability: avg(
+        input.grokVerdict.impliedProbability,
+        sonnet.impliedProbability,
+      ),
+      reasoning: `Sonnet vetoed and gross EV ${(input.grossEvFraction * 100).toFixed(2)}% below ${(ENV.opusEscalationMinGrossEv * 100).toFixed(2)}% Opus-escalation floor — trusting Sonnet veto without escalation.`,
+      classification,
+      reviews,
+      totalAiCostUsd,
+    };
+  }
+
   const opus = await reviewWithOpus(sonnetReviewInput);
   reviews.push({ reviewerId: "claude.opus-4-7", verdict: opus });
   totalAiCostUsd += opus.costUsd;
@@ -566,8 +591,8 @@ async function processOneSignalForEnsemble(
   }
 
   // Re-check the post-fee + post-AI-cost net EV against the configured hard
-  // floor (default MIN_NET_EV=0.065). Claude reviewers can trim EV; a
-  // previously valid 7% trade reduced to 4% must be vetoed.
+  // floor (default MIN_NET_EV=0.05). Claude reviewers can trim EV; a
+  // previously valid 7% trade reduced to 3% must be vetoed.
   const net = calculateNetEv({
     count: adjustedSignal.count,
     entryPrice: adjustedSignal.marketPrice,

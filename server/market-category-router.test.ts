@@ -83,20 +83,22 @@ describe("groupByCategory", () => {
   });
 });
 
-describe("category personas", () => {
-  it("provides a persona for every (platform, category) pair", () => {
+describe("category personas (single Profit-Reviewer collapse)", () => {
+  it("returns the same single Profit-Reviewer persona for every (platform, category) pair", () => {
     for (const platform of ["kalshi"] as const) {
       for (const category of MARKET_CATEGORIES) {
         const persona = getCategoryPersona(platform, category);
         expect(persona.platform).toBe(platform);
-        expect(persona.category).toBe(category);
+        // After the persona collapse, platform is preserved but category
+        // is always the canonical "other" — the persona is shared.
+        expect(persona.id).toBe("kalshi.profit-reviewer");
         expect(persona.systemMandate.length).toBeGreaterThan(50);
         expect(persona.systemMandate).toMatch(/JSON/);
       }
     }
   });
 
-  it("listPersonasForPlatform returns one persona per category", () => {
-    expect(listPersonasForPlatform("kalshi")).toHaveLength(MARKET_CATEGORIES.length);
+  it("listPersonasForPlatform returns the single shared Profit Persona", () => {
+    expect(listPersonasForPlatform("kalshi")).toHaveLength(1);
   });
 });
