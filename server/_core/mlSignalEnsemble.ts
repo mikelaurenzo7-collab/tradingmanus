@@ -76,11 +76,13 @@ const SIGNAL_TYPE_INDEX: Record<SignalType, number> = {
   multi_timeframe: 5,
   order_flow: 6,
   confluence: 7,
+  linguistic_tell: 8,
+  wikipedia_edit: 9,
 };
 
 function encodeSignalType(type: SignalType): number {
   const idx = SIGNAL_TYPE_INDEX[type] ?? 0;
-  return idx / 7;
+  return idx / 9;
 }
 
 function hashCategory(str: string): number {

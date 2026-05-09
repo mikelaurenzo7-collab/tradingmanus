@@ -347,7 +347,7 @@ export function detectClusterActivity(
           `${retracement.detected ? `Pump peak ≈ ${(pumpPeak * 100).toFixed(1)}¢; estimated fair price ≈ ${(fairPrice * 100).toFixed(1)}¢.` : "Monitoring for retracement."}`,
         detectedPumpPeak: retracement.detected ? pumpPeak : undefined,
         estimatedFairPrice: retracement.detected ? fairPrice : undefined,
-        fadeTriggerReady: retracement.detected && retracement.detected,
+        fadeTriggerReady: retracement.detected,
         detectedAt: now,
       });
     }

@@ -2751,12 +2751,12 @@ export const appRouter = router({
           try {
             await polymarketCredDb.savePolymarketCredentials(
               userId,
-              input.apiKey,
-              input.apiSecret,
-              input.apiPassphrase,
+              input.apiKey.trim(),
+              input.apiSecret.trim(),
+              input.apiPassphrase.trim(),
               {
-                walletPrivateKey: input.walletPrivateKey,
-                walletAddress: input.walletAddress,
+                walletPrivateKey: input.walletPrivateKey?.trim(),
+                walletAddress: input.walletAddress?.trim(),
                 signatureType: input.signatureType,
               },
             );
