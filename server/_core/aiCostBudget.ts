@@ -62,6 +62,18 @@ type ModelPricing = {
  */
 const PRICE_TABLE: Record<string, ModelPricing> = {
   // Anthropic Claude 4.5 / 4.6 / 4.7
+  // Both the bare alias and the dated snapshot map to the same Haiku 4.5
+  // pricing — `selectAnthropicModel` returns CLAUDE_HAIKU_MODEL which
+  // defaults to the alias `claude-haiku-4-5`, but Anthropic responses
+  // also echo the dated snapshot in some cases. Without both keys the
+  // alias falls through to DEFAULT_PRICING and over-bills, throttling
+  // AI_DAILY_BUDGET_USD and post-cost EV gates earlier than intended.
+  "claude-haiku-4-5": {
+    inputUsdPerMillion: 0.8,
+    outputUsdPerMillion: 4.0,
+    cacheReadUsdPerMillion: 0.08,
+    cacheWriteUsdPerMillion: 1.0,
+  },
   "claude-haiku-4-5-20251001": {
     inputUsdPerMillion: 0.8,
     outputUsdPerMillion: 4.0,
