@@ -15,6 +15,10 @@ import { ENV } from "./env";
 import { calculateNetEv } from "./feeCalculator";
 import { calculateKellyPosition } from "./kellySizer";
 import { checkDrawdownBreaker } from "./drawdownBreaker";
+import {
+  computeKalshiRoundTripCostFromMarket,
+  type RoundTripCost,
+} from "./kalshiFees";
 
 // ── Snapshot exports kept for backwards compatibility ────────────────────────
 export const MIN_NET_EV = ENV.profitGuardrails.minNetEv;
@@ -56,6 +60,8 @@ export type ProfitCheckResult = {
   netEvFraction: number;
   feeUsd: number;
   aiCostUsd: number;
+  /** Phase 2 — full fee + spread-cost breakdown surfaced for the audit log. */
+  feeBreakdown?: RoundTripCost;
 };
 
 export interface ProfitCheckInput {
@@ -67,6 +73,14 @@ export interface ProfitCheckInput {
   liquidity?: "maker" | "taker";
   /** Self-consistency: did the second AI pass agree on direction + EV ≥ floor? */
   selfConsistencyAgreement?: boolean;
+  /**
+   * Phase 2 — `|yesPrice + noPrice − 1|` spread proxy from the market
+   * snapshot.  When provided, the gate subtracts round-trip spread cost
+   * from netEv on top of the existing fee subtraction.  When omitted,
+   * the gate falls back to a 1¢-spread floor (still better than ignoring
+   * spread entirely).
+   */
+  spreadProxy?: number;
 }
 
 export function checkProfitGuardrails(
@@ -86,16 +100,31 @@ export function checkProfitGuardrails(
   const entryPriceForRoi = Math.max(0.01, Number(input.entryPrice) || 0.01);
   const evRoiFraction = ev / entryPriceForRoi;
 
-  // PHASE-2-FEEAWARE: Phase 2 wires the fee+spread-aware EV gate here.
-  // calculateNetEv currently subtracts a flat per-unit Kalshi fee model.
-  // After Phase 2 lands, this call swaps to the new fee/spread schedule
-  // computed against the live order book (computeKalshiRoundTripCost).
+  // PHASE-2-FEEAWARE: subtract BOTH exchange fees (calculateNetEv) AND
+  // round-trip spread cost (computeKalshiRoundTripCostFromMarket) from
+  // gross EV before applying the floor. Spread cost is dominant on
+  // illiquid Kalshi markets (2-5¢ wide → 7-17 % round-trip on a 30¢
+  // contract), and ignoring it lets paper-profitable trades die in
+  // execution. The fee-side math is unchanged from Phase 1.
   const net = calculateNetEv({
     count: input.count,
     entryPrice: input.entryPrice,
     grossEvFraction: evRoiFraction,
     entryLiquidity: input.liquidity,
   });
+  const feeBreakdown = computeKalshiRoundTripCostFromMarket({
+    market: { yesPrice: input.entryPrice, noPrice: 1 - input.entryPrice },
+    side: "yes",
+    contracts: input.count,
+    spreadProxy: input.spreadProxy,
+    entryLiquidity: input.liquidity,
+    exitLiquidity: input.liquidity,
+  });
+  const spreadCostFraction =
+    feeBreakdown.notionalUsd > 0
+      ? feeBreakdown.spreadCostUsd / feeBreakdown.notionalUsd
+      : 0;
+  const feeAwareNetEvFraction = net.netEvFraction - spreadCostFraction;
 
   // Single floor for everyone — no owner-override tier. The previous
   // owner-bypass that loosened EV/conf for OWNER_OVERRIDE_DOMAINS was
@@ -105,15 +134,16 @@ export function checkProfitGuardrails(
   const evFloor = getMinNetEv();
   const confFloor = getMinConfidenceAfterAdjust();
 
-  if (net.netEvFraction < evFloor) {
+  if (feeAwareNetEvFraction < evFloor) {
     return {
       approved: false,
-      reason: `Net EV ${(net.netEvFraction * 100).toFixed(2)}% < ${(evFloor * 100).toFixed(2)}% floor (gross ${(ev * 100).toFixed(2)}% − fees $${net.feeUsd.toFixed(2)} − AI $${net.aiCostUsd.toFixed(4)})`,
+      reason: `Net EV ${(feeAwareNetEvFraction * 100).toFixed(2)}% < ${(evFloor * 100).toFixed(2)}% floor (gross ${(ev * 100).toFixed(2)}% − fees $${net.feeUsd.toFixed(2)} − spread $${feeBreakdown.spreadCostUsd.toFixed(2)} − AI $${net.aiCostUsd.toFixed(4)})`,
       adjustedEV: ev,
       adjustedConfidence: conf,
-      netEvFraction: net.netEvFraction,
+      netEvFraction: feeAwareNetEvFraction,
       feeUsd: net.feeUsd,
       aiCostUsd: net.aiCostUsd,
+      feeBreakdown,
     };
   }
 
@@ -123,9 +153,10 @@ export function checkProfitGuardrails(
       reason: `Confidence ${(conf * 100).toFixed(1)}% below ${(confFloor * 100).toFixed(1)}% floor`,
       adjustedEV: ev,
       adjustedConfidence: conf,
-      netEvFraction: net.netEvFraction,
+      netEvFraction: feeAwareNetEvFraction,
       feeUsd: net.feeUsd,
       aiCostUsd: net.aiCostUsd,
+      feeBreakdown,
     };
   }
 
@@ -136,20 +167,22 @@ export function checkProfitGuardrails(
         "Self-consistency check failed — second AI pass disagreed with first; SKIP per ambiguity rule",
       adjustedEV: ev,
       adjustedConfidence: conf,
-      netEvFraction: net.netEvFraction,
+      netEvFraction: feeAwareNetEvFraction,
       feeUsd: net.feeUsd,
       aiCostUsd: net.aiCostUsd,
+      feeBreakdown,
     };
   }
 
   return {
     approved: true,
-    reason: `Net EV ${(net.netEvFraction * 100).toFixed(2)}% ≥ ${(evFloor * 100).toFixed(2)}% + confidence ${(conf * 100).toFixed(1)}% ≥ ${(confFloor * 100).toFixed(1)}%`,
+    reason: `Net EV ${(feeAwareNetEvFraction * 100).toFixed(2)}% ≥ ${(evFloor * 100).toFixed(2)}% + confidence ${(conf * 100).toFixed(1)}% ≥ ${(confFloor * 100).toFixed(1)}% (gross ${(ev * 100).toFixed(2)}% − fees $${net.feeUsd.toFixed(2)} − spread $${feeBreakdown.spreadCostUsd.toFixed(2)})`,
     adjustedEV: ev,
     adjustedConfidence: conf,
-    netEvFraction: net.netEvFraction,
+    netEvFraction: feeAwareNetEvFraction,
     feeUsd: net.feeUsd,
     aiCostUsd: net.aiCostUsd,
+    feeBreakdown,
   };
 }
 

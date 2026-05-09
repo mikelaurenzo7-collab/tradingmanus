@@ -85,10 +85,14 @@ const baseSignal = {
   confidence: 0.78,
   marketPrice: 0.5,
   impliedProbability: 0.5,
-  // EV per $1 payout face: AI thinks 0.55 vs 0.50 market → 0.05 dollar EV.
-  // Divided by 0.5 entry → 10% ROI, well above the 5% net floor.
-  expectedValue: 0.05,
-  reasoning: "fundamental prior 55% vs 50% market",
+  // EV per $1 payout face. Bumped to 0.10 (vs 0.05 in Phase 1.5) so the
+  // Phase 2 fee+spread-aware gate has headroom to clear the 5% floor:
+  //   ROI = 0.10 / 0.5 = 20% gross
+  //   fees (round-trip maker) ≈ $0.02 → 4% of $0.50 notional
+  //   spread cost (1¢ floor) ≈ $0.01 → 2% of $0.50 notional
+  //   netEv = 20% − 4% − 2% = 14% ≫ 5% floor
+  expectedValue: 0.1,
+  reasoning: "fundamental prior 60% vs 50% market",
   metadata: {
     fundamentalSource: "explicit" as const,
     fundamentalProbability: 0.55,
