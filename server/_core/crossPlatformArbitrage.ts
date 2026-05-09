@@ -260,8 +260,28 @@ export function detectCrossPlatformArbitrage(
     if (!Number.isFinite(pm.yesPrice) || pm.yesPrice <= 0) continue;
     if (pm.liquidity < minLiquidity) continue;
 
+    // The actual cross-platform arb is: buy YES on the cheaper venue +
+    // buy NO on the more expensive venue.  Since one side resolves YES
+    // and the other NO, total payout = $1.  Gross profit = 1 - cheapYes
+    // - expensiveNo.  We gate on grossEdge directly, NOT on the YES-only
+    // diff |yesA - yesB| — those are only equal when noPrice = 1 - yesPrice
+    // (no quote spread), and the YES-diff prefilter would skip legitimate
+    // hedges where YES quotes are close but the NO quote on the expensive
+    // venue is cheap (e.g. Kalshi YES 0.50, Polymarket YES 0.52, Polymarket
+    // NO 0.40 → 10pp grossEdge but only 2pp YES diff).
     const spread = Math.abs(kalshi.yesPrice - pm.yesPrice);
-    if (spread < minSpread) continue;
+    const buyVenueCheaperYes = kalshi.yesPrice < pm.yesPrice;
+    const cheapYesPrice = buyVenueCheaperYes ? kalshi.yesPrice : pm.yesPrice;
+    const expensiveNoPrice = buyVenueCheaperYes ? pm.noPrice : kalshi.noPrice;
+    if (
+      !Number.isFinite(expensiveNoPrice) ||
+      expensiveNoPrice <= 0 ||
+      expensiveNoPrice >= 1
+    ) {
+      continue;
+    }
+    const grossEdge = 1 - cheapYesPrice - expensiveNoPrice;
+    if (grossEdge < minSpread) continue;
 
     const feeBurden = KALSHI_FEE + POLYMARKET_FEE;
     const kalshiLatencyRisk = estimateLatencyRisk(DEFAULT_DAILY_VOLATILITY, KALSHI_LATENCY_MS);
@@ -269,7 +289,7 @@ export function detectCrossPlatformArbitrage(
     const latencyRisk = kalshiLatencyRisk + polymarketLatencyRisk;
     const slippageRisk = clamp(0.5 / Math.max(Math.min(kalshi.liquidity, pm.liquidity), 1), 0, 0.02);
     const executionRisk = latencyRisk + slippageRisk;
-    const netEdge = spread - feeBurden - executionRisk;
+    const netEdge = grossEdge - feeBurden - executionRisk;
     if (netEdge <= minNetEdge) continue;
 
     const buyPlatform: "kalshi" | "polymarket" = kalshi.yesPrice < pm.yesPrice ? "kalshi" : "polymarket";
@@ -310,7 +330,11 @@ export function detectCrossPlatformArbitrage(
       reasoning:
         `Cross-platform arb: ${buyPlatform.toUpperCase()} YES at ${(buyPrice * 100).toFixed(1)}¢ vs ` +
         `${sellPlatform.toUpperCase()} YES at ${(sellPrice * 100).toFixed(1)}¢. ` +
-        `Gross spread ${(spread * 100).toFixed(1)}pp → net edge ${(netEdge * 100).toFixed(1)}pp after fees. ` +
+        // Distinguish YES-price spread (informational) from gross hedge edge
+        // (the actual buy-cheap-YES + buy-expensive-NO economics) so the
+        // operator can sanity-check both numbers from the audit log.
+        `YES spread ${(spread * 100).toFixed(1)}pp · gross edge ${(grossEdge * 100).toFixed(1)}pp ` +
+        `→ net edge ${(netEdge * 100).toFixed(1)}pp after fees. ` +
         `Question similarity ${(match.similarity * 100).toFixed(0)}%.`,
       minLiquidity: Math.min(kalshi.liquidity, pm.liquidity),
       feeBurden,

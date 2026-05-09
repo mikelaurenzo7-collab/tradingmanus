@@ -194,6 +194,13 @@ async function upsertOne(userId: number, remote: RemotePosition): Promise<boolea
         .update(polymarketPositions)
         .set({
           sizeUsdc: remote.sizeUsdc,
+          // Refresh entryPrice on every reconcile.  When the operator adds
+          // to or trims a position in the Polymarket UI, the data-api
+          // returns the new blended avgPrice; without this update the
+          // stale entry would feed exit thresholds + close sizing
+          // (sizeUsdc / entryPrice) and produce wrong stop-loss levels
+          // and SELL quantities.
+          entryPrice: remote.entryPrice,
           currentPrice: remote.currentPrice,
           unrealizedPnl: remote.unrealizedPnl,
         })
