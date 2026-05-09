@@ -53,6 +53,7 @@ export async function fetchPolymarketUsdcBalance(
     const resp = await fetch(`${CLOB_HOST}${path}`, {
       method: "GET",
       headers: {
+        "Authorization": `Bearer ${apiKey}`,
         "POLY_ADDRESS": walletAddress,
         "POLY_SIGNATURE": sig,
         "POLY_TIMESTAMP": ts,
@@ -60,12 +61,16 @@ export async function fetchPolymarketUsdcBalance(
       },
       signal: AbortSignal.timeout(5_000),
     });
-    if (!resp.ok) return null;
+    if (!resp.ok) {
+      logger.warn({ status: resp.status }, "[Polymarket] CLOB /balance fetch failed");
+      return null;
+    }
     const json = (await resp.json()) as { balance?: string | number };
     if (json.balance == null) return null;
     const parsed = parseFloat(String(json.balance));
     return Number.isFinite(parsed) ? parsed : null;
-  } catch {
+  } catch (err) {
+    logger.warn({ err }, "[Polymarket] CLOB /balance fetch error");
     return null;
   }
 }
