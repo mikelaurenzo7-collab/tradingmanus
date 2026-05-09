@@ -404,6 +404,7 @@ function PolymarketConnectPanel() {
   const liveTradingReady = statusQuery.data?.liveTradingReady === true;
   const storedWalletAddress = statusQuery.data?.walletAddress ?? null;
   const storedSignatureType = statusQuery.data?.signatureType ?? 1;
+  const usdcBalance = statusQuery.data?.usdcBalance ?? null;
 
   const handleConnect = () => {
     if (!trimmedApiKey || !trimmedApiSecret || !trimmedApiPassphrase) {
@@ -506,6 +507,12 @@ function PolymarketConnectPanel() {
                           {storedWalletAddress.slice(0, 6)}…{storedWalletAddress.slice(-4)}
                         </code>{" "}
                         · sig type {storedSignatureType}
+                      </>
+                    ) : null}
+                    {usdcBalance !== null ? (
+                      <>
+                        {" · "}
+                        <strong>${usdcBalance.toFixed(2)} USDC</strong>
                       </>
                     ) : null}
                   </>

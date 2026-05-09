@@ -69,7 +69,7 @@ import {
 } from "./_core/riskTuningHelper";
 import * as kalshiCredDb from "./db.kalshi-credentials";
 import * as polymarketCredDb from "./db.polymarket-credentials";
-import { validatePolymarketCredentials } from "./_core/polymarketAuth";
+import { validatePolymarketCredentials, fetchPolymarketUsdcBalance } from "./_core/polymarketAuth";
 import * as tradingPreferencesDb from "./db.trading-preferences";
 import {
   detectAllCombinatorialArbitrage,
@@ -2808,6 +2808,9 @@ export const appRouter = router({
           };
         }
         // Never return raw key material — UI only needs presence flags.
+        const usdcBalance = creds.walletAddress
+          ? await fetchPolymarketUsdcBalance(creds.walletAddress)
+          : null;
         return {
           connected: creds.accountStatus === "connected",
           status: creds.accountStatus,
@@ -2815,6 +2818,7 @@ export const appRouter = router({
           walletAddress: creds.walletAddress,
           signatureType: creds.signatureType ?? 1,
           lastSyncedAt: creds.lastSyncedAt,
+          usdcBalance,
         };
       } catch (error) {
         logger.error({ err: error }, "[Polymarket] Get account status error");
