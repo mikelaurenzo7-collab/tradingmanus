@@ -850,6 +850,10 @@ export async function reviewSignalsWithTrader(
         count: 1,
         entryPrice: entry,
         category: "other",
+        // Forward the spread proxy computed by signal generation so the gate
+        // subtracts real round-trip spread cost, not the 1¢ fallback floor.
+        // Without this, markets with 4–12¢ spreads pass the EV floor on paper.
+        spreadProxy: s.metadata?.spreadProxy,
       });
       if (!check.approved) {
         logger.warn?.(

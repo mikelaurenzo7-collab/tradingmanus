@@ -519,6 +519,9 @@ export async function runPolymarketAutonomousTrading(
       count: 10,
       entryPrice: entry,
       category: "other",
+      // Forward the spread proxy computed by signal generation so the gate
+      // subtracts real round-trip spread cost, not the 1¢ fallback floor.
+      spreadProxy: (s as { metadata?: { spreadProxy?: number } }).metadata?.spreadProxy,
     });
     if (!check.approved) {
       guardrailRejections.push({
