@@ -2902,6 +2902,23 @@ export const appRouter = router({
           );
 
           const creds = await client.createOrDeriveApiKey();
+          // ClobClient's default mode is to RESOLVE rather than throw on
+          // CLOB API errors — that leaves us with an object that may be
+          // missing one or more of key/secret/passphrase (geoblock, wrong
+          // signatureType/funder, transient 4xx/5xx, etc.).  Validate
+          // explicitly before audit-logging "success" or returning what
+          // the UI will then write to its form fields.
+          if (!creds || !creds.key || !creds.secret || !creds.passphrase) {
+            return {
+              success: false,
+              error:
+                "Polymarket CLOB returned an incomplete L2 credential set. " +
+                "Common causes: wrong signatureType (check POLY_PROXY vs EOA), " +
+                "wrong funder address, geoblock, or transient CLOB error. " +
+                "Try again, and if it persists verify your wallet + funder match " +
+                "what's shown on https://polymarket.com/settings.",
+            };
+          }
           await db.logAuditEvent(
             "polymarket_api_keys_derived",
             JSON.stringify({
