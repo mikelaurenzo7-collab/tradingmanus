@@ -181,6 +181,9 @@ describe("Phase 1 trading reviewer (Claude-only)", () => {
       { markets: [baseMarket], signals: [baseSignal] },
       { anthropicClient, skipInTest: false },
     );
-    expect(anthropicClient.messages.create).toHaveBeenCalledTimes(1);
+    // Phase 1.5: bulk-Haiku self-consistency runs the prompt twice (temp=0.2
+    // and temp=0.7) and intersects the verdicts. Both calls go through the
+    // mocked client; no real network use.
+    expect(anthropicClient.messages.create).toHaveBeenCalledTimes(2);
   });
 });

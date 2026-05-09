@@ -227,7 +227,9 @@ function stakesForSignals(signals: PolymarketSignal[]): StakesContext {
   let extremeImplied: number | undefined;
   for (const signal of signals) {
     if (signal.confidence > topConfidence) topConfidence = signal.confidence;
-    const notional = Number(signal.limitPrice ?? 0) * 100;
+    // Phase 1.5: notional proxy `limitPrice × 10`. See tradingReviewer.ts
+    // for rationale — was × 100 which made every signal high-stakes.
+    const notional = Number(signal.limitPrice ?? 0) * 10;
     if (notional > topNotional) topNotional = notional;
     const implied = Number(signal.impliedProbabilityYes);
     if (Number.isFinite(implied)) {
@@ -301,6 +303,8 @@ async function requestLLMReviews(
   stakes: StakesContext = {},
   memorySnippet: string | null = null,
   forceDeep = false,
+  /** Phase 1.5 — explicit temperature override for self-consistency. */
+  temperatureOverride?: number,
 ) {
   const client =
     options.anthropicClient ??
@@ -343,7 +347,12 @@ async function requestLLMReviews(
   // (constrains the reasoning chain).  Bulk Haiku review without thinking
   // keeps temperature=0 for determinism.
   if (!thinking) {
-    messageInput.temperature = 0;
+    // Phase 1.5: temperatureOverride honored on the non-thinking Haiku
+    // path so self-consistency can run two passes at distinct temps.
+    messageInput.temperature =
+      typeof temperatureOverride === "number" && Number.isFinite(temperatureOverride)
+        ? temperatureOverride
+        : 0;
   }
   if (personaBlocks) {
     const blocks = [...personaBlocks];
@@ -426,7 +435,63 @@ type ReviewBatchResult = {
   reviewsByMarket: Map<string, TradingSignalReview>;
   failed: boolean;
   citations: CitationSummary[];
+  /** Phase 1.5 — markets where Tier-1 self-consistency passes disagreed. */
+  selfConsistencySplits?: Set<string>;
 };
+
+/**
+ * Phase 1.5 — same self-consistency intersection as Kalshi reviewer.
+ *
+ *   A approve + B approve → APPROVE with averaged adjustments
+ *   A reject + B reject  → REJECT
+ *   A ≠ B                 → SPLIT (escalate upstream)
+ */
+function intersectSelfConsistencyReviews(
+  reviewsA: TradingSignalReview[],
+  reviewsB: TradingSignalReview[],
+): { reviewsByMarket: Map<string, TradingSignalReview>; splits: Set<string> } {
+  const reviewsByMarket = new Map<string, TradingSignalReview>();
+  const splits = new Set<string>();
+  const mapA = new Map(reviewsA.map((r) => [r.marketId, r]));
+  const mapB = new Map(reviewsB.map((r) => [r.marketId, r]));
+  const allIds = new Set<string>([...mapA.keys(), ...mapB.keys()]);
+  for (const marketId of allIds) {
+    const a = mapA.get(marketId);
+    const b = mapB.get(marketId);
+    if (!a || !b) {
+      splits.add(marketId);
+      reviewsByMarket.set(marketId, {
+        marketId,
+        approved: false,
+        reasoning: "Self-consistency: one pass omitted this market; escalating to Sonnet.",
+      });
+      continue;
+    }
+    if (a.approved && b.approved) {
+      reviewsByMarket.set(marketId, {
+        marketId,
+        approved: true,
+        confidenceAdjustment:
+          ((a.confidenceAdjustment ?? 0) + (b.confidenceAdjustment ?? 0)) / 2,
+        expectedValueAdjustment:
+          ((a.expectedValueAdjustment ?? 0) + (b.expectedValueAdjustment ?? 0)) / 2,
+        reasoning: a.reasoning ?? b.reasoning,
+      });
+    } else if (!a.approved && !b.approved) {
+      reviewsByMarket.set(marketId, a);
+    } else {
+      splits.add(marketId);
+      reviewsByMarket.set(marketId, {
+        marketId,
+        approved: false,
+        confidenceAdjustment: a.confidenceAdjustment,
+        expectedValueAdjustment: a.expectedValueAdjustment,
+        reasoning: `Self-consistency split: pass-A=${a.approved ? "✓" : "✗"} pass-B=${b.approved ? "✓" : "✗"}; escalating to Sonnet.`,
+      });
+    }
+  }
+  return { reviewsByMarket, splits };
+}
 
 async function callReviewer(
   reviewPayload: ReturnType<typeof getReviewPayload>,
@@ -438,7 +503,40 @@ async function callReviewer(
   forceDeep = false,
 ): Promise<ReviewBatchResult> {
   // Phase 1: Claude-only. Anthropic is the sole provider.
+  // Phase 1.5: bulk Haiku batches use self-consistency unless deep tier.
+  const useDeepModel = forceDeep || isHighStakes(stakes);
+  const selfConsistencyActive =
+    !useDeepModel && ENV.claudeHaikuSelfConsistencyEnabled;
   try {
+    if (selfConsistencyActive) {
+      const [respA, respB] = await Promise.all([
+        requestLLMReviews(
+          reviewPayload,
+          options,
+          persona,
+          stakes,
+          memorySnippet,
+          forceDeep,
+          ENV.claudeHaikuSelfConsistencyTemp1,
+        ),
+        requestLLMReviews(
+          reviewPayload,
+          options,
+          persona,
+          stakes,
+          memorySnippet,
+          forceDeep,
+          ENV.claudeHaikuSelfConsistencyTemp2,
+        ),
+      ]);
+      const merged = intersectSelfConsistencyReviews(respA.reviews, respB.reviews);
+      return {
+        reviewsByMarket: merged.reviewsByMarket,
+        failed: false,
+        citations: respA.citations,
+        selfConsistencySplits: merged.splits,
+      };
+    }
     const claudeResp = await requestLLMReviews(
       reviewPayload,
       options,
@@ -495,24 +593,21 @@ async function runCategoryReview(
 
   const batchResult = await callReviewer(reviewPayload, options, persona, stakes, logger, memorySnippet);
 
-  // Intra-Claude second opinion on contested mid-stakes approvals.  See
-  // tradingReviewer.ts for the full rationale; the polymarket pipeline uses
-  // identical thresholds and fail-closed semantics.
   const escalationCitationsByMarket = new Map<string, CitationSummary[]>();
-  // Intra-Claude escalation lives in the polymarket autonomy/ensemble layer; mirror
-  // tradingReviewer.ts so the polymarket pipeline stays in lockstep.
+  void reviewIsContested;
+
+  // Phase 1.5 — self-consistency split escalation.  Mirrors Kalshi reviewer.
   if (
-    false &&
-    !isHighStakes(stakes) &&
+    batchResult.selfConsistencySplits &&
+    batchResult.selfConsistencySplits.size > 0 &&
+    ENV.claudeHaikuSelfConsistencyEscalateOnSplit &&
     !batchResult.failed
   ) {
-    const contestedSignals = signals.filter((signal) => {
-      const review = batchResult.reviewsByMarket.get(signal.marketId);
-      return review ? reviewIsContested(review) : false;
-    });
-    if (contestedSignals.length > 0) {
+    const splitMarketIds = Array.from(batchResult.selfConsistencySplits);
+    const splitSignals = signals.filter((s) => batchResult.selfConsistencySplits!.has(s.marketId));
+    if (splitSignals.length > 0) {
       await Promise.all(
-        contestedSignals.map(async (signal) => {
+        splitSignals.map(async (signal) => {
           const market = marketsById.get(signal.marketId);
           if (!market) return;
           const singlePayload = getReviewPayload({
@@ -521,37 +616,31 @@ async function runCategoryReview(
             maxSignals: 1,
             persona,
           });
-          const singleStakes: StakesContext = {
-            ...stakesForSignals([signal]),
+          const escalatedStakes: StakesContext = {
+            ...stakes,
             highStakes: true,
           };
-          const deepResult = await callReviewer(
+          const tiebreaker = await callReviewer(
             singlePayload,
             options,
             persona,
-            singleStakes,
+            escalatedStakes,
             logger,
             memorySnippet,
             true,
           );
-          const deepReview = deepResult.reviewsByMarket.get(signal.marketId);
-          if (deepResult.failed || !deepReview) {
-            batchResult.reviewsByMarket.set(signal.marketId, {
-              marketId: signal.marketId,
-              approved: false,
-              reasoning: "Intra-model second opinion unavailable; capital preservation veto.",
-            });
+          const tiebreakerReview = tiebreaker.reviewsByMarket.get(signal.marketId);
+          if (tiebreaker.failed || !tiebreakerReview) {
             return;
           }
-          if (!deepReview.approved) {
-            batchResult.reviewsByMarket.set(signal.marketId, deepReview);
-            return;
-          }
-          batchResult.reviewsByMarket.set(signal.marketId, deepReview);
-          if (deepResult.citations.length > 0) {
-            escalationCitationsByMarket.set(signal.marketId, deepResult.citations);
+          batchResult.reviewsByMarket.set(signal.marketId, tiebreakerReview);
+          if (tiebreaker.citations.length > 0) {
+            escalationCitationsByMarket.set(signal.marketId, tiebreaker.citations);
           }
         }),
+      );
+      logger.warn?.(
+        `[PolymarketReviewer] Self-consistency escalation: resolved ${splitMarketIds.length} split market(s) via Sonnet tiebreaker.`,
       );
     }
   }

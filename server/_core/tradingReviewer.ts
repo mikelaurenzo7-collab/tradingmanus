@@ -257,7 +257,12 @@ function stakesForSignals(signals: KalshiSignal[]): StakesContext {
   let extremeImplied: number | undefined;
   for (const signal of signals) {
     if (signal.confidence > topConfidence) topConfidence = signal.confidence;
-    const notional = Number(signal.marketPrice ?? 0) * 100;
+    // Phase 1.5: notional proxy is `marketPrice × 10`. Pre-1.5 used × 100
+    // which was off by ~10× — at $300 bankroll the bot buys 1-30 contracts
+    // (Kelly-sized, capped at 4 % capital ≈ $12), not 100. The × 10
+    // multiplier is a conservative ceiling that pairs with the recalibrated
+    // HIGH_STAKES_NOTIONAL_USD ($25) to keep ~20 % of signals high-stakes.
+    const notional = Number(signal.marketPrice ?? 0) * 10;
     if (notional > topNotional) topNotional = notional;
     const implied = Number(signal.impliedProbability);
     if (Number.isFinite(implied)) {
@@ -305,6 +310,10 @@ async function requestAnthropicReviews(
   stakes: StakesContext = {},
   memorySnippet: string | null = null,
   forceDeep = false,
+  /** Phase 1.5 — explicit temperature override for self-consistency.
+   *  Only honored on the non-thinking (bulk Haiku) path; the deep tier's
+   *  extended-thinking modes ignore temperature. */
+  temperatureOverride?: number,
 ) {
   const client = options.anthropicClient ?? createAnthropicClient(
     (options.anthropicApiKey ?? ENV.anthropicApiKey).trim(),
@@ -364,7 +373,13 @@ async function requestAnthropicReviews(
   // (constrains the reasoning chain).  Bulk Haiku review without thinking
   // keeps temperature=0 for determinism.
   if (!thinking) {
-    messageInput.temperature = 0;
+    // Phase 1.5: temperatureOverride is honored on the non-thinking
+    // (Haiku) path so self-consistency can run two passes at distinct
+    // temps. Falls back to 0 (deterministic) when no override given.
+    messageInput.temperature =
+      typeof temperatureOverride === "number" && Number.isFinite(temperatureOverride)
+        ? temperatureOverride
+        : 0;
   }
   if (personaBlocks) {
     const blocks = [...personaBlocks];
@@ -451,7 +466,72 @@ type ReviewBatchResult = {
   reviewsByMarket: Map<string, TradingSignalReview>;
   failed: boolean;
   citations: CitationSummary[];
+  /** Phase 1.5 — set per-market when Tier-1 self-consistency passes
+   *  disagreed.  Caller can choose to escalate split markets to Sonnet. */
+  selfConsistencySplits?: Set<string>;
 };
+
+/**
+ * Phase 1.5 — intersect two Haiku passes at different temperatures.
+ *
+ *   A approve + B approve → APPROVE with averaged adjustments
+ *   A reject + B reject  → REJECT
+ *   A ≠ B                 → SPLIT (mark for Sonnet escalation upstream)
+ *
+ * Self-consistency catches Haiku model-flake — random-sampling variance
+ * on borderline trades — without paying for Sonnet on every signal.
+ */
+function intersectSelfConsistencyReviews(
+  reviewsA: TradingSignalReview[],
+  reviewsB: TradingSignalReview[],
+): { reviewsByMarket: Map<string, TradingSignalReview>; splits: Set<string> } {
+  const reviewsByMarket = new Map<string, TradingSignalReview>();
+  const splits = new Set<string>();
+  const mapA = new Map(reviewsA.map((r) => [r.marketId, r]));
+  const mapB = new Map(reviewsB.map((r) => [r.marketId, r]));
+  const allIds = new Set<string>([...mapA.keys(), ...mapB.keys()]);
+  for (const marketId of allIds) {
+    const a = mapA.get(marketId);
+    const b = mapB.get(marketId);
+    if (!a || !b) {
+      // Missing review on either pass = treat as split (escalate); a real
+      // Sonnet call will resolve.  Failing closed without escalation would
+      // discard signals on transient SDK hiccups.
+      splits.add(marketId);
+      reviewsByMarket.set(marketId, {
+        marketId,
+        approved: false,
+        reasoning: "Self-consistency: one pass omitted this market; escalating to Sonnet.",
+      });
+      continue;
+    }
+    if (a.approved && b.approved) {
+      reviewsByMarket.set(marketId, {
+        marketId,
+        approved: true,
+        confidenceAdjustment:
+          ((a.confidenceAdjustment ?? 0) + (b.confidenceAdjustment ?? 0)) / 2,
+        expectedValueAdjustment:
+          ((a.expectedValueAdjustment ?? 0) + (b.expectedValueAdjustment ?? 0)) / 2,
+        // Use pass A's reasoning (deterministic temp) as canonical.
+        reasoning: a.reasoning ?? b.reasoning,
+      });
+    } else if (!a.approved && !b.approved) {
+      reviewsByMarket.set(marketId, a);
+    } else {
+      // Disagreement — mark split, default to vetoed pending escalation.
+      splits.add(marketId);
+      reviewsByMarket.set(marketId, {
+        marketId,
+        approved: false,
+        confidenceAdjustment: a.confidenceAdjustment,
+        expectedValueAdjustment: a.expectedValueAdjustment,
+        reasoning: `Self-consistency split: pass-A=${a.approved ? "✓" : "✗"} pass-B=${b.approved ? "✓" : "✗"}; escalating to Sonnet.`,
+      });
+    }
+  }
+  return { reviewsByMarket, splits };
+}
 
 async function callReviewer(
   reviewPayload: ReturnType<typeof getReviewPayload>,
@@ -464,7 +544,43 @@ async function callReviewer(
 ): Promise<ReviewBatchResult> {
   // Phase 1: Claude-only. Anthropic is the sole provider; env validation
   // already guarantees the key is set in production.
+  // Phase 1.5: bulk Haiku batches use self-consistency (two passes at
+  // distinct temps) when enabled.  Deep-tier (Sonnet/Opus with extended
+  // thinking) bypasses self-consistency — extended thinking provides its
+  // own variance-reduction internally and explicit temperature is ignored.
+  const useDeepModel = forceDeep || isHighStakes(stakes);
+  const selfConsistencyActive =
+    !useDeepModel && ENV.claudeHaikuSelfConsistencyEnabled;
   try {
+    if (selfConsistencyActive) {
+      const [respA, respB] = await Promise.all([
+        requestAnthropicReviews(
+          reviewPayload,
+          options,
+          persona,
+          stakes,
+          memorySnippet,
+          forceDeep,
+          ENV.claudeHaikuSelfConsistencyTemp1,
+        ),
+        requestAnthropicReviews(
+          reviewPayload,
+          options,
+          persona,
+          stakes,
+          memorySnippet,
+          forceDeep,
+          ENV.claudeHaikuSelfConsistencyTemp2,
+        ),
+      ]);
+      const merged = intersectSelfConsistencyReviews(respA.reviews, respB.reviews);
+      return {
+        reviewsByMarket: merged.reviewsByMarket,
+        failed: false,
+        citations: respA.citations,
+        selfConsistencySplits: merged.splits,
+      };
+    }
     const response = await requestAnthropicReviews(
       reviewPayload,
       options,
@@ -531,6 +647,61 @@ async function runCategoryReview(
   // verdicts; the ensemble decides whether to escalate.
   const escalationCitationsByMarket = new Map<string, CitationSummary[]>();
   void reviewIsContested;
+
+  // Phase 1.5 — self-consistency split escalation. When the two Haiku
+  // passes disagreed on a market, escalate that single market to Sonnet
+  // (force-deep) for a tiebreaker. Sonnet's verdict replaces the placeholder
+  // veto from intersectSelfConsistencyReviews. Both passes-rejected and
+  // both-approved markets are NOT escalated (no disagreement to resolve).
+  if (
+    batchResult.selfConsistencySplits &&
+    batchResult.selfConsistencySplits.size > 0 &&
+    ENV.claudeHaikuSelfConsistencyEscalateOnSplit &&
+    !batchResult.failed
+  ) {
+    const splitMarketIds = Array.from(batchResult.selfConsistencySplits);
+    const splitSignals = signals.filter((s) => batchResult.selfConsistencySplits!.has(s.marketId));
+    if (splitSignals.length > 0) {
+      await Promise.all(
+        splitSignals.map(async (signal) => {
+          const market = marketsById.get(signal.marketId);
+          if (!market) return;
+          const singlePayload = getReviewPayload({
+            markets: [market],
+            signals: [signal],
+            maxSignals: 1,
+            persona,
+          });
+          const escalatedStakes: StakesContext = {
+            ...stakes,
+            highStakes: true,
+          };
+          const tiebreaker = await callReviewer(
+            singlePayload,
+            options,
+            persona,
+            escalatedStakes,
+            logger,
+            memorySnippet,
+            true, // forceDeep — Sonnet with extended thinking
+          );
+          const tiebreakerReview = tiebreaker.reviewsByMarket.get(signal.marketId);
+          if (tiebreaker.failed || !tiebreakerReview) {
+            // Sonnet unreachable — leave the placeholder veto in place
+            // (capital preservation: split was already a defensive veto).
+            return;
+          }
+          batchResult.reviewsByMarket.set(signal.marketId, tiebreakerReview);
+          if (tiebreaker.citations.length > 0) {
+            escalationCitationsByMarket.set(signal.marketId, tiebreaker.citations);
+          }
+        }),
+      );
+      logger.warn?.(
+        `[TradingReviewer] Self-consistency escalation: resolved ${splitMarketIds.length} split market(s) via Sonnet tiebreaker.`,
+      );
+    }
+  }
 
   return signals
     .map((signal) => {
