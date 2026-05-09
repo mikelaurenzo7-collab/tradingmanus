@@ -117,6 +117,22 @@ async function main() {
   console.error("\nSigning derive-key request with your wallet…");
   const creds = await client.createOrDeriveApiKey();
 
+  // ClobClient resolves rather than throws on CLOB API errors (geoblock,
+  // wrong signatureType/funder, transient 4xx/5xx) — that leaves us with
+  // an object missing one or more of key/secret/passphrase.  Validate
+  // before printing the success banner so the operator doesn't copy
+  // `undefined` into the dashboard form.
+  if (!creds || !creds.key || !creds.secret || !creds.passphrase) {
+    console.error(
+      "\n✗ Polymarket CLOB returned an incomplete L2 credential set." +
+        "\n  Common causes: wrong signatureType (try POLY_PROXY first if you" +
+        "\n  generated your wallet through the Polymarket UI), wrong funder" +
+        "\n  address, geoblock, or a transient CLOB error.  Verify your wallet" +
+        "\n  + funder match what's shown on https://polymarket.com/settings.",
+    );
+    process.exit(2);
+  }
+
   console.error("\n✓ Polymarket L2 credentials derived.  Paste these into the");
   console.error("  dashboard /connect form (Polymarket panel):\n");
   console.log(`API Key:        ${creds.key}`);
