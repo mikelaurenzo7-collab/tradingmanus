@@ -77,7 +77,7 @@ export const DEFAULT_TRADING_PREFERENCES: TradingPreferencesSettings = {
   executionCadence: "manual_only",
   riskPosture: "balanced",
   minSignalConfidence: 0.72,
-  maxOrderNotional: 10,
+  maxOrderNotional: 50,  // $50 default — capital-fraction math is the real cap
   maxDailyOrders: 3,
   requireApprovalAbove: 8,
 };

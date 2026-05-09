@@ -55,24 +55,28 @@ import {
 import { logger } from "./logger";
 import { ENV } from "./env";
 
+// Hard dollar ceilings for dynamic risk limits.  These are intentionally
+// set well above the capital-fraction math (capital × 5%/10%/20%) so the
+// percentage-of-equity calculation is the real binding constraint at any
+// normal account size.  The caps only bite when the account grows to
+// hundreds of thousands of dollars — acting as an absolute safety net for
+// extreme runaway compounding, not as a day-to-day sizing governor.
 const BASE_RISK_LIMITS = {
-  maxLossPerTrade: 5,
-  maxLossPerDay: 10,
-  maxPositionSize: 20,
+  maxLossPerTrade: 40,   // at $500: min($25, $40) = $25 (5% of capital)
+  maxLossPerDay: 75,     // at $500: min($50, $75) = $50 (10% of capital)
+  maxPositionSize: 100,  // at $500: min($100, $100) = $100 (20% of capital)
   maxOpenPositions: 5,
 } as const;
 
 // Aggressive Mode loosens the dollar caps on the dynamic risk limits.
 // The capital-fraction multipliers stay the same (still 5%/10%/20% of
-// equity) — what changes is the absolute ceiling those fractions clamp
-// to, plus the open-position count.  An owner accepting the risk earns
-// the right to scale up as their bankroll grows past the conservative
-// hard ceilings without having to redeploy.
+// equity × aggressive positionScale 1.4×) — what changes is the absolute
+// ceiling those fractions clamp to, plus the open-position count.
 const AGGRESSIVE_RISK_LIMITS = {
-  maxLossPerTrade: 10,    // up from 5
-  maxLossPerDay: 20,      // up from 10
-  maxPositionSize: 50,    // up from 20
-  maxOpenPositions: 10,   // up from 5
+  maxLossPerTrade: 75,    // at $500: min($35, $75) = $35 (5%×1.4 of capital)
+  maxLossPerDay: 150,     // at $500: min($50, $150) = $50 (10% of capital)
+  maxPositionSize: 200,   // at $500: min($140, $200) = $140 (20%×1.4 of capital)
+  maxOpenPositions: 10,
 } as const;
 
 const SCHEDULED_SCAN_EVENT = "scheduled_autonomy_scan_completed";
@@ -202,14 +206,20 @@ const POSTURE_MULTIPLIERS: Record<RiskPosture, { positionScale: number; confiden
 async function getDynamicRiskLimits(
   riskPosture: RiskPosture,
   userId: number,
-  options: { aggressiveMode?: boolean } = {},
+  options: { aggressiveMode?: boolean; liveCapitalUsd?: number } = {},
 ) {
-  const scopedUserId = assertPositiveIntegerUserId(userId, "autonomy risk limits userId");
-  const capital = await db.getKalshiCapital(scopedUserId);
-  const maxCapital = Math.max(
-    0,
-    Number(capital?.currentBalance ?? capital?.startingBalance ?? 0)
-  );
+  // Prefer the live equity passed from the caller (already fetched and
+  // synced to DB this tick) to avoid a redundant DB round-trip.  Falls
+  // back to the DB-persisted value when called from non-scheduled paths
+  // (e.g. tests, manual-trigger routes) that don't supply it.
+  let maxCapital: number;
+  if (Number.isFinite(options.liveCapitalUsd) && (options.liveCapitalUsd ?? 0) > 0) {
+    maxCapital = options.liveCapitalUsd as number;
+  } else {
+    const scopedUserId = assertPositiveIntegerUserId(userId, "autonomy risk limits userId");
+    const capital = await db.getKalshiCapital(scopedUserId);
+    maxCapital = Math.max(0, Number(capital?.currentBalance ?? capital?.startingBalance ?? 0));
+  }
   const limits = options.aggressiveMode ? AGGRESSIVE_RISK_LIMITS : BASE_RISK_LIMITS;
 
   if (maxCapital <= 0) {
@@ -1455,7 +1465,12 @@ export async function runScheduledAutonomousTrading(
       db.getKalshiCapital(userId),
       db.getOpenKalshiPositions(userId),
       db.getTodayRealizedLoss(userId),
-      getDynamicRiskLimits(preferences.riskPosture, userId, { aggressiveMode: preferences.aggressiveMode }),
+      getDynamicRiskLimits(preferences.riskPosture, userId, {
+        aggressiveMode: preferences.aggressiveMode,
+        // Pass the live equity already fetched and synced this tick so
+        // getDynamicRiskLimits doesn't need its own DB read.
+        liveCapitalUsd: equityResult.equity,
+      }),
       db.getTodayKalshiOrderCount(userId),
       db.getPendingKalshiOrders(userId),
     ]);

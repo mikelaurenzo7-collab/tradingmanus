@@ -30,7 +30,7 @@
  * the prompt or model.
  */
 
-import { checkBudgetForRun } from "./aiCostBudget";
+
 import type { MarketCategory } from "./marketCategoryRouter";
 
 interface ReviewCacheEntry {
@@ -233,7 +233,7 @@ export function shouldReviewMarketAt(
   const entry = REVIEW_CACHE.get(marketId);
   if (!entry) return true;
 
-  const throttle = checkBudgetForRun(now).throttleFactor;
+  const throttle = 1; // budget-based throttle removed; gating now via isDailyLossLimitExceeded()
   if (now - entry.lastReviewedAtMs >= effectiveStaleTtlMs(context, throttle)) {
     return true;
   }

@@ -43,6 +43,11 @@ const mocks = vi.hoisted(() => ({
   getUserTrainingInstructions: vi.fn(),
   isInstructionActiveNow: vi.fn(),
   applyInstructionsToSignals: vi.fn(),
+  checkDrawdownBreaker: vi.fn(),
+}));
+
+vi.mock("./_core/drawdownBreaker", () => ({
+  checkDrawdownBreaker: mocks.checkDrawdownBreaker,
 }));
 
 vi.mock("./db.trading-preferences", () => ({
@@ -289,6 +294,11 @@ describe("Kalshi autonomy E2E — full cycle", () => {
     mocks.getUserTrainingInstructions.mockResolvedValue([]);
     mocks.isInstructionActiveNow.mockReturnValue(false);
     mocks.applyInstructionsToSignals.mockImplementation((signals: any[]) => signals);
+    mocks.checkDrawdownBreaker.mockReturnValue({
+      allowed: true,
+      reason: "All capital-preservation breakers green",
+      details: { capitalUsd: 1000, dailyDrawdownFrac: 0, weeklyDrawdownFrac: 0, consecutiveLosses: 0, weeklyRealizedEdgePct: 1, thresholds: { dailyPauseFrac: 0.05, weeklyPauseFrac: 0.08, coldStreakLossCount: 5, coldStreakMinRealizedEdgePct: 0.03 } },
+    });
   });
 
   it("Full autonomy cycle: signal generation → risk eval → AI review → execution", async () => {
@@ -388,7 +398,11 @@ describe("Kalshi autonomy E2E — full cycle", () => {
   });
 
   it("Risk block prevents execution when daily loss limit reached", async () => {
-    mocks.getTodayRealizedLoss.mockResolvedValue(10); // Max loss for $1000 balance is ~$10
+    // DEFAULT_PREFERENCES lacks aggressiveMode → normalizeTradingPreferences defaults it to true.
+    // With aggressiveMode=true and $1000 capital:
+    //   AGGRESSIVE_RISK_LIMITS.maxLossPerDay = 150, cap = clamp(1000×10%, 2, 150) = $100.
+    // Drawdown breaker is mocked to pass so the maxLossPerDay check is reached.
+    mocks.getTodayRealizedLoss.mockResolvedValue(101);
 
     const result = await runScheduledAutonomousTrading(testUser);
 

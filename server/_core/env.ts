@@ -412,18 +412,6 @@ export const ENV = {
   // we earned the overhead. Net-negative days self-throttle as the
   // deficit widens (×1.5 at 60 % overrun, ×2 at 80 %, ×4 at 95 %, hard
   // skip at 100 %). Cold-start exemption: under $5 AI spend, no throttle.
-  // Resets at UTC midnight.
-  //
-  // Default $5: small enough that the throttle engages quickly when AI
-  // burn meaningfully outpaces realized P&L, but high enough that the
-  // cold-start exemption ($5 floor) covers normal warm-up days.
-  // Set to `0` to disable the cap entirely (hot days run unbounded);
-  // raise to e.g. `20` if you want more room for variance before throttling.
-  aiDailyBudgetUsd: normalizeFloat(process.env.AI_DAILY_BUDGET_USD, 5, {
-    min: 0,
-    max: 100000,
-  }),
-
   // ── Misc ──────────────────────────────────────────────────────────────────
   gnewsApiKey: normalize(process.env.GNEWS_API_KEY),
   // Global emergency kill-switch: when true, ALL trading is paused (still

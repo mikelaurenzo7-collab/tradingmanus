@@ -4,9 +4,9 @@
  * consult before every trade decision.
  *
  * Three consumers:
- *   1. aiCostBudget.checkBudgetForRun — uses `effectiveOverrun` to throttle
- *      cadence only when the bot is net-down on the day.  Profitable days
- *      never throttle regardless of AI cost.
+ *   1. isDailyLossLimitExceeded() — hard-skips the autonomy tick when the
+ *      day's realized net has fallen below -DAILY_LOSS_LIMIT_USD.  Uses real
+ *      P&L from the DB, not AI-cost estimates.  Profitable days always run.
  *   2. The Claude reviewers — see the running scoreboard injected into
  *      their system prompt every cycle so they actively tighten their
  *      bar when net-negative.  Layer 2 of the pay-for-yourself system.
@@ -58,6 +58,16 @@ export type DailyScoreboard = {
 
 const KALSHI_FEE_RATE = 0.02; // round-trip estimate, see header note
 const COLD_START_AI_USD = 5; // below this, no throttle regardless of net
+
+// Hard-stop gate: when the UTC day's net P&L falls below this, the scheduler
+// skips the tick entirely until UTC rollover.  Defaults to $50 — change via
+// DAILY_LOSS_LIMIT_USD env var.  0 = unlimited (no stop-loss on the day).
+const DAILY_LOSS_LIMIT_USD = (() => {
+  const raw = (process.env.DAILY_LOSS_LIMIT_USD ?? "").trim();
+  if (!raw) return 50;
+  const n = Number.parseFloat(raw);
+  return Number.isFinite(n) && n >= 0 ? n : 50;
+})();
 
 let CACHE: DailyScoreboard | null = null;
 
@@ -232,6 +242,26 @@ export function formatScoreboardForPrompt(snapshot: DailyScoreboard | null): str
     `When net is POSITIVE: normal posture.  You've earned the day's overhead; you can take well-justified standard setups.`,
     `Never take a trade just to "pay back" today's cost — that's hubris.  A bad trade is worse than no trade.`,
   ].join("\n");
+}
+
+/**
+ * Returns true when the running daily net has fallen below the configured
+ * loss limit.  The scheduler calls this before arming each autonomy tick.
+ *
+ *   net > -limit  → false (run normally, or day is profitable)
+ *   net ≤ -limit  → true  (hard skip until UTC rollover)
+ *   no cache yet  → false (cold start — let the first tick proceed)
+ */
+export function isDailyLossLimitExceeded(): boolean {
+  if (DAILY_LOSS_LIMIT_USD <= 0) return false; // 0 = unlimited
+  const board = getCachedScoreboard();
+  if (!board) return false; // no data yet — don't block cold start
+  return board.netUsd < -DAILY_LOSS_LIMIT_USD;
+}
+
+/** Read-only access to the configured limit (for logging / self-test). */
+export function getDailyLossLimitUsd(): number {
+  return DAILY_LOSS_LIMIT_USD;
 }
 
 // ── Test-only helpers ─────────────────────────────────────────────────────

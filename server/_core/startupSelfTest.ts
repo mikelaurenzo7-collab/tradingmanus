@@ -102,20 +102,21 @@ function checkAnthropicKey(): SelfTestCheck {
   };
 }
 
-function checkAiDailyBudget(): SelfTestCheck {
-  const cap = ENV.aiDailyBudgetUsd;
-  if (cap <= 0) {
+function checkDailyLossLimit(): SelfTestCheck {
+  const raw = (process.env.DAILY_LOSS_LIMIT_USD ?? "").trim();
+  const limit = raw ? Number.parseFloat(raw) : 50;
+  if (!Number.isFinite(limit) || limit <= 0) {
     return {
-      name: "ai_daily_budget",
+      name: "daily_loss_limit",
       status: "warn",
       detail:
-        "AI_DAILY_BUDGET_USD is unset or 0 — there is no soft cap on daily AI spend.  Setting this (e.g. AI_DAILY_BUDGET_USD=10) auto-throttles adaptive cadence as the budget burns and skips runs entirely once exhausted, with rollover at UTC midnight.  Recommended for live trading.",
+        "DAILY_LOSS_LIMIT_USD is 0 or unset — the scheduler will never hard-stop on a losing day.  Recommended to set (e.g. DAILY_LOSS_LIMIT_USD=50) for live trading.",
     };
   }
   return {
-    name: "ai_daily_budget",
+    name: "daily_loss_limit",
     status: "ok",
-    detail: `AI_DAILY_BUDGET_USD = $${cap.toFixed(2)} per UTC day; auto-throttle armed.`,
+    detail: `DAILY_LOSS_LIMIT_USD = $${limit.toFixed(2)}; scheduler hard-stops when daily net falls below -$${limit.toFixed(2)}.`,
   };
 }
 
@@ -168,7 +169,7 @@ export async function runStartupSelfTest(): Promise<SelfTestResult> {
     checks.push(kalshiExitColumn);
   }
   checks.push(checkAnthropicKey());
-  checks.push(checkAiDailyBudget());
+  checks.push(checkDailyLossLimit());
   checks.push(checkCredentialEncryptionSecret());
   checks.push(checkPaperMode());
 

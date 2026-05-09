@@ -12,8 +12,7 @@ import {
   createOrderSyncLock,
 } from "./distributedLock";
 import { runStartupSelfTest } from "./startupSelfTest";
-import { checkBudgetForRun } from "./aiCostBudget";
-import { refreshScoreboard } from "./dailyScoreboard";
+import { refreshScoreboard, isDailyLossLimitExceeded, getDailyLossLimitUsd, getCachedScoreboard } from "./dailyScoreboard";
 import { logger } from "./logger";
 import * as hb from "./schedulerHeartbeat";
 import { fetchKalshiMarkets } from "./kalshiMarketData";
@@ -87,11 +86,11 @@ function envIntervalMs(name: string, fallbackMs: number): number {
   return parsed;
 }
 
-// Autonomy cron at 10-min default. Earlier 60s default burned AI cost
-// without commensurate edge — Kalshi signal supply doesn't refresh
-// fast enough to warrant minute-level review. 10 min keeps us reactive
-// to event-day repricing while cutting AI cost ~10×.
-const AUTONOMOUS_TRADING_INTERVAL_MS = envIntervalMs("AUTONOMY_INTERVAL_MS", 10 * 60 * 1000);
+// Autonomy cron at 5-min default. Sports/tech/econ TTLs (2-5 min) align
+// better with a 5-min tick than a 10-min one — each market reaches its
+// staleness threshold every tick at 5 min rather than every other tick.
+// Estimated ~$2.50–3.50/day vs ~$1.90/day at 10 min.
+const AUTONOMOUS_TRADING_INTERVAL_MS = envIntervalMs("AUTONOMY_INTERVAL_MS", 5 * 60 * 1000);
 const ORDER_SYNC_INTERVAL_MS = envIntervalMs("ORDER_SYNC_INTERVAL_MS", 30 * 1000);
 // Cross-platform arb scanner removed — Kalshi-only.
 const COMBINATORIAL_ARB_INTERVAL_MS = envIntervalMs(
@@ -129,21 +128,15 @@ async function runAutonomousScheduler() {
     const firstUser = scopedUsers[0];
     if (firstUser) await refreshScoreboard(firstUser.id);
 
-    const budget = checkBudgetForRun();
-    if (!budget.proceed) {
+    if (isDailyLossLimitExceeded()) {
+      const board = getCachedScoreboard();
       logger.warn(
-        {
-          spentUsd: Number(budget.spentUsd.toFixed(4)),
-          effectiveOverrunUsd: Number(budget.effectiveOverrunUsd.toFixed(4)),
-          capUsd: budget.capUsd,
-          fractionSpent: Number(budget.fractionSpent.toFixed(3)),
-          reason: budget.reason,
-        },
-        "[Scheduler] AI daily budget overrun; Kalshi autonomy skipping until UTC rollover",
+        { netUsd: board ? Number(board.netUsd.toFixed(2)) : null, limitUsd: getDailyLossLimitUsd() },
+        "[Scheduler] Daily loss limit exceeded; Kalshi autonomy skipping until UTC rollover",
       );
       hb.setBlocked(
         "autonomy_kalshi",
-        `AI daily budget overrun (${Math.round(budget.fractionSpent * 100)}%) — ${budget.reason}`,
+        `Daily loss limit exceeded (net $${board ? board.netUsd.toFixed(2) : "?"}  < -$${getDailyLossLimitUsd()})`,
       );
       return;
     }

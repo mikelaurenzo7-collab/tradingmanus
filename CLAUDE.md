@@ -82,8 +82,8 @@ used.  Never use `npm` or `yarn` in this repo — the lockfile is
 | `XAI_API_KEY` | optional | Grok (xAI) key for true dual-bot consensus. Without it, the reviewer gracefully degrades to Claude-only. |
 | `GROK_MODEL` | optional | Default `grok-3-latest` |
 | `ENABLE_GROK_TEAM` | optional | Default `true` — when `XAI_API_KEY` is set, both bots review every signal in parallel and both must approve. |
-| `AI_DAILY_BUDGET_USD` | optional | Daily soft cap on the *pay-for-yourself* overrun = `(ai_cost + fees − realized_pnl)`.  Profitable days never throttle regardless of AI spend.  Net-negative days self-throttle as the deficit widens (×1.5 at 60% overrun, ×2 at 80%, ×4 at 95%, hard skip at 100%).  Cold-start exemption: under $5 AI spend, no throttle.  Resets at UTC midnight.  `0` or unset = unlimited.  See `server/_core/aiCostBudget.ts` + `server/_core/dailyScoreboard.ts`. |
-| `AUTONOMY_INTERVAL_MS` | optional | Kalshi autonomy tick rate in ms (default `600000` = 10 min). At 10 min the heartbeat TTL aligns with cadence so near 0 % of reviews are wasted. Tighten to `60000` (1 min) only when you want sub-minute price-move responsiveness — adaptive cadence keeps the extra cost to ~15-20 % above the 10-min baseline. |
+| `DAILY_LOSS_LIMIT_USD` | optional | Hard daily loss stop. When the day's realized net P&L drops below `-DAILY_LOSS_LIMIT_USD` the scheduler skips every autonomy tick until UTC midnight. Profitable days always run. `0` = unlimited. Default `50`. See `server/_core/dailyScoreboard.ts:isDailyLossLimitExceeded()`. |
+| `AUTONOMY_INTERVAL_MS` | optional | Kalshi autonomy tick rate in ms (default `300000` = 5 min). At 5 min the sports/tech/econ TTLs (2-5 min) expire every tick, capturing those categories at full cadence. Tighten to `60000` (1 min) only when sub-minute crypto responsiveness is needed — costs ~$4–6/day. |
 | `ORDER_SYNC_INTERVAL_MS` | optional | Kalshi order/position reconciliation + exit monitor cadence (default `30000` = 30 s) |
 | `CROSS_ARB_INTERVAL_MS` | optional | Cross-platform arb scanner cadence (default `10000` = 10 s) |
 | `SIGNAL_REVIEW_PRICE_DELTA_BPS` | optional | Adaptive cadence: skip AI review when a market hasn't moved this many basis points since last review (default `50` = 0.5 %) |
@@ -374,7 +374,7 @@ it are treated as fresh state.
 - **`pnpm db:push` is still available** for fast iteration during development, but production should use the migration files committed to the repo.
 - Liveness probe: `GET /api/health/live` (Railway restart policy is wired here — never touches the DB so a Neon outage cannot cause a restart loop)
 - Schedulers run **in-process** (`server/_core/index.ts`):
-  - Kalshi autonomy: every `AUTONOMY_INTERVAL_MS` (default 10 min)
+  - Kalshi autonomy: every `AUTONOMY_INTERVAL_MS` (default 5 min)
   - Kalshi order sync: every `ORDER_SYNC_INTERVAL_MS` (default 30 s)
   - Cross-platform arb scanner: every `CROSS_ARB_INTERVAL_MS` (default 10 s, in-flight guarded)
 - The Vercel serverless entry (`api/index.ts`) and `vercel.json` were removed in the Railway-only consolidation pass; if a Vercel deploy is ever needed again, see git history for the prior shape.
@@ -476,6 +476,7 @@ actual AI cost uplift from 10-min → 1-min is roughly **1.5–3× depending on
 how many crypto/sports signals surface on a given day** (not 15–20% as
 previously stated).  Estimated daily AI spend:
 
+- **5-min interval**: ~$2.50–3.50/day (default)
 - **10-min interval**: ~$1.90/day
 - **1-min interval**: ~$4–6/day
 
