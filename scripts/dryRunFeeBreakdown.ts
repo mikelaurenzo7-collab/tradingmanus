@@ -21,9 +21,10 @@ import { fetchKalshiMarkets } from "../server/_core/kalshiMarketData";
 import { fetchPolymarketMarkets } from "../server/_core/polymarketAuth";
 import { computeKalshiRoundTripCostFromMarket } from "../server/_core/kalshiFees";
 import { computePolymarketRoundTripCostFromLimit } from "../server/_core/polymarketFees";
+import { ENV } from "../server/_core/env";
 
 const ILLUSTRATIVE_GROSS_EV = 0.10; // 10% — what does the gate look like at this edge?
-const MIN_NET_EV = 0.05;
+const MIN_NET_EV = ENV.profitGuardrails.minNetEv; // match the deployed guardrail exactly
 const SAMPLE_CONTRACTS = 10;
 
 function passes(grossEv: number, costAsFraction: number): boolean {
@@ -44,6 +45,8 @@ async function main(): Promise<void> {
   console.log(`Sample contracts:      ${SAMPLE_CONTRACTS}`);
   console.log("=".repeat(80));
 
+  let hadFailure = false;
+
   console.log("\n=== Kalshi ===");
   console.log(`title${" ".repeat(35)}\tprice\tspd\tgross\tnet\tverdict`);
   try {
@@ -60,6 +63,7 @@ async function main(): Promise<void> {
       console.log(row(m.title.slice(0, 40), priceCents, spreadCents, cost.costAsFraction));
     }
   } catch (err) {
+    hadFailure = true;
     console.error("Kalshi fetch failed:", err instanceof Error ? err.message : err);
   }
 
@@ -80,7 +84,12 @@ async function main(): Promise<void> {
       console.log(row(m.question.slice(0, 40), priceCents, spreadCents, cost.costAsFraction));
     }
   } catch (err) {
+    hadFailure = true;
     console.error("Polymarket fetch failed:", err instanceof Error ? err.message : err);
+  }
+
+  if (hadFailure) {
+    throw new Error("Dry-run incomplete: one or more platform samples failed");
   }
 
   console.log("\nDone.");

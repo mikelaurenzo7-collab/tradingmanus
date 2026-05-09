@@ -142,10 +142,21 @@ export function computeKalshiRoundTripCostFromMarket(args: {
       ? Math.max(0, Number(args.spreadProxy))
       : Math.max(0, Math.abs(args.market.yesPrice + args.market.noPrice - 1));
   const proxyCents = Math.max(1, Math.round(proxyDollars * 100));
-  // Center the bid/ask around priceCents with the proxy as full-spread.
+  // Center the bid/ask around priceCents. When the centered pair crosses
+  // a boundary (0 or 100), shift both sides together so the full
+  // proxyCents spread is always preserved — independent clamping would
+  // shrink the spread at boundary prices and understate execution cost.
   const half = proxyCents / 2;
-  const bestBidCents = clampCents(priceCents - half);
-  const bestAskCents = clampCents(priceCents + half);
+  let bestBidCents = priceCents - half;
+  let bestAskCents = priceCents + half;
+  if (bestBidCents < 0) {
+    bestAskCents = Math.min(100, bestAskCents - bestBidCents);
+    bestBidCents = 0;
+  }
+  if (bestAskCents > 100) {
+    bestBidCents = Math.max(0, bestBidCents - (bestAskCents - 100));
+    bestAskCents = 100;
+  }
   return computeKalshiRoundTripCost({
     priceCents,
     contracts: args.contracts,

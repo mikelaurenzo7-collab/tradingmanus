@@ -172,6 +172,20 @@ export async function evaluateExitsForOpenPositions(
     // exchange will close it automatically. Attempting a close on a resolved
     // market returns an exchange error that would loop indefinitely.
     if (marketRow.resolutionDate && marketRow.resolutionDate <= new Date()) {
+      await db.logAuditEvent(
+        "kalshi_position_exit_signal",
+        JSON.stringify({
+          positionId,
+          marketId,
+          side,
+          entryPrice,
+          reason: "market_resolved_skipped",
+          resolutionDate: marketRow.resolutionDate,
+          autoCloseEnabled: AUTO_CLOSE_ENABLED,
+          paperMode: userPaperMode,
+        }),
+        triggeredByOpenId,
+      );
       logger.info(
         { positionId, marketId, resolutionDate: marketRow.resolutionDate },
         "[ExitMonitor] market already resolved — skipping exit evaluation",
