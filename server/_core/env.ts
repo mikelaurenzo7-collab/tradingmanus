@@ -306,10 +306,6 @@ export const ENV = {
   ),
 
   // ── Dynamic scanner (5 base / 7-8 conditional) ───────────────────────────
-  // Owner override: opt-in domains where the operator's domain knowledge
-  // is high enough to relax the AI gate (still honors hard guardrails).
-  ownerOverrideDomains: normalize(process.env.OWNER_OVERRIDE_DOMAINS),
-
   scannerBaseAnalysesPerDay: normalizePositiveInt(
     process.env.SCANNER_BASE_ANALYSES_PER_DAY,
     5,

@@ -271,7 +271,7 @@ export async function createApp(options: { runStartupMigrations?: boolean } = {}
   }
 
   const app = express();
-  // Trust exactly one proxy hop (Railway/Vercel ingress).  Setting this to
+  // Trust exactly one proxy hop (Railway ingress). Setting this to
   // `true` (all hops) allows clients to spoof X-Forwarded-For, which would
   // bypass IP-based rate limiting.
   app.set("trust proxy", 1);
@@ -285,10 +285,9 @@ export async function createApp(options: { runStartupMigrations?: boolean } = {}
     // route only rather than disabling globally.
   }));
 
-  // CORS configuration
-  const productionOrigins: (string | RegExp)[] = [
-    /^https:\/\/[a-zA-Z0-9-]+\.vercel\.app$/,
-  ];
+  // CORS configuration — Railway-only deployment. ALLOWED_ORIGIN env var
+  // is the single source of truth for the production frontend host.
+  const productionOrigins: (string | RegExp)[] = [];
   if (ENV.allowedOrigin) {
     productionOrigins.push(ENV.allowedOrigin);
   }
@@ -370,8 +369,8 @@ export async function createApp(options: { runStartupMigrations?: boolean } = {}
     const db = await checkDbHealth();
     (res as AppResponse).status(200).json({
       status: db.status === "ok" ? "ok" : "degraded",
-      runtime: process.env.VERCEL ? "vercel" : "node",
-      scheduler: process.env.VERCEL ? "vercel-cron" : "node-interval",
+      runtime: "node",
+      scheduler: "node-interval",
       interval_minutes: 15,
       checks: {
         database: {
@@ -384,8 +383,9 @@ export async function createApp(options: { runStartupMigrations?: boolean } = {}
     });
   });
 
-  // Scheduled endpoints: Vercel cron fires GET; manual dashboard triggers use POST.
-  // Restrict to these two methods to limit attack surface.
+  // Scheduled endpoints: in-process node-interval cron fires these directly,
+  // and manual dashboard triggers also POST. Restrict to GET/POST to limit
+  // attack surface.
   app.get("/api/scheduled/autonomous-trading", scheduledLimiter, toExpressHandler(autonomousTradingHandler));
   app.post("/api/scheduled/autonomous-trading", scheduledLimiter, toExpressHandler(autonomousTradingHandler));
   app.get("/api/scheduled/order-sync", scheduledLimiter, toExpressHandler(orderSyncHandler));
@@ -393,8 +393,8 @@ export async function createApp(options: { runStartupMigrations?: boolean } = {}
 
   // Global error handler
   // Note: express.Request types can resolve inconsistently in some build
-  // environments (e.g. Vercel's @vercel/node may surface the global Web
-  // `Request` type instead of the express one, causing TS2339 on `req.url`).
+  // environments where the global Web `Request` type shadows the express
+  // one, causing TS2339 on `req.url`.
   // Reading the URL/method via the underlying Node IncomingMessage avoids
   // any dependency on @types/express resolution at this call site.
   app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {

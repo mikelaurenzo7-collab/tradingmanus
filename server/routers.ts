@@ -492,9 +492,6 @@ export const appRouter = router({
           name: z.string().trim().min(1).max(120),
           email: z.string().trim().email().max(320),
           password: z.string().min(12).max(256),
-          subscriptionTier: z
-            .enum(["starter", "pro", "fund"])
-            .default("starter"),
         })
       )
       .mutation(async ({ input, ctx }) => {
@@ -524,15 +521,11 @@ export const appRouter = router({
           });
         }
 
-        const trialEndsAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
         const user = await db.createUserAccount({
           openId: `user:${crypto.randomUUID()}`,
           name: input.name.trim(),
           email: normalizedEmail,
           passwordHash: hashAccountPassword(input.password),
-          subscriptionTier: input.subscriptionTier,
-          subscriptionStatus: "trialing",
-          subscriptionCurrentPeriodEnd: trialEndsAt,
         });
 
         if (!user) {
@@ -565,16 +558,11 @@ export const appRouter = router({
           userId: user.id,
           openId: user.openId,
           resource: "auth",
-          details: {
-            subscriptionTier: input.subscriptionTier,
-            subscriptionStatus: "trialing",
-          },
           success: true,
         });
 
         return {
           user,
-          trialEndsAt,
         };
       }),
 

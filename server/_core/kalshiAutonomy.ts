@@ -294,7 +294,6 @@ function safeJsonStringify(value: unknown) {
 }
 
 function buildTriggerSource(triggeredByOpenId: string) {
-  if (triggeredByOpenId === "vercel_cron") return "vercel_cron";
   if (triggeredByOpenId === "local_scheduler") return "local_scheduler";
   return "authenticated_user";
 }
