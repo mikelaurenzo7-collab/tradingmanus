@@ -102,9 +102,28 @@ export const ENV = {
   //                                   (≥10% of live Kalshi capital).
   // When unset, the system silently degrades to Grok-only with a boot warning.
   anthropicApiKey: normalize(process.env.ANTHROPIC_API_KEY),
+  // Haiku 4.5 is the default primary reviewer (Tier 1) on every signal —
+  // 3× cheaper than Sonnet, fast enough that the 10-min cron still has
+  // headroom. Opus 4.7 reserves for high-edge candidates only.
+  claudeHaikuModel:
+    normalize(process.env.CLAUDE_HAIKU_MODEL) || "claude-haiku-4-5",
+  // Sonnet kept available for callers that explicitly want it (the
+  // ensemble's high-stakes Tier 2 still uses Sonnet).
   claudeSonnetModel:
     normalize(process.env.CLAUDE_SONNET_MODEL) || "claude-sonnet-4-6",
   claudeOpusModel: normalize(process.env.CLAUDE_OPUS_MODEL) || "claude-opus-4-7",
+  // Opus is gated on gross-EV-after-Haiku to control cost. Default 5 %:
+  // only candidates with ≥5 % gross EV after the Haiku review get the
+  // expensive Opus second-pass / catastrophic-bet treatment.
+  opusEscalationMinGrossEv: normalizeFloat(
+    process.env.OPUS_ESCALATION_MIN_GROSS_EV,
+    0.05,
+    { min: 0, max: 1 },
+  ),
+  claudeHaikuTimeoutMs: normalizePositiveInt(
+    process.env.CLAUDE_HAIKU_TIMEOUT_MS,
+    15000,
+  ),
   claudeSonnetTimeoutMs: normalizePositiveInt(
     process.env.CLAUDE_SONNET_TIMEOUT_MS,
     20000,
@@ -306,10 +325,6 @@ export const ENV = {
   ),
 
   // ── Dynamic scanner (5 base / 7-8 conditional) ───────────────────────────
-  // Owner override: opt-in domains where the operator's domain knowledge
-  // is high enough to relax the AI gate (still honors hard guardrails).
-  ownerOverrideDomains: normalize(process.env.OWNER_OVERRIDE_DOMAINS),
-
   scannerBaseAnalysesPerDay: normalizePositiveInt(
     process.env.SCANNER_BASE_ANALYSES_PER_DAY,
     5,

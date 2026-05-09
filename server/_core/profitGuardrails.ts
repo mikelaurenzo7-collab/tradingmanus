@@ -53,20 +53,6 @@ export const CORRELATED_CATEGORY_GROUPS: Record<string, string[]> = {
   entertainment: ["entertainment"],
 };
 
-function getOwnerOverrideDomains(): Set<string> {
-  if (!ENV.ownerOverrideDomains) return new Set();
-  return new Set(
-    ENV.ownerOverrideDomains
-      .split(",")
-      .map((s) => s.trim().toLowerCase())
-      .filter(Boolean),
-  );
-}
-
-export function isOwnerOverrideCategory(category: string): boolean {
-  return getOwnerOverrideDomains().has(category.toLowerCase());
-}
-
 // ── Core check (single trade) ────────────────────────────────────────────────
 
 export type ProfitCheckResult = {
@@ -87,11 +73,8 @@ export interface ProfitCheckInput {
   entryPrice: number; // contract price 0..1
   category: string;
   liquidity?: "maker" | "taker";
-  /** Self-consistency: did the second Grok pass agree on direction + EV ≥ floor? */
+  /** Self-consistency: did the second AI pass agree on direction + EV ≥ floor? */
   selfConsistencyAgreement?: boolean;
-  /** Operator override flag — set true to bypass the soft EV/conf gates for
-   *  high-confidence personal-domain trades. Hard fee/Kelly checks still run. */
-  isOwnerOverride?: boolean;
 }
 
 export function checkProfitGuardrails(
@@ -107,14 +90,13 @@ export function checkProfitGuardrails(
     entryLiquidity: input.liquidity,
   });
 
-  const minNetEv = getMinNetEv();
-  const minConf = getMinConfidenceAfterAdjust();
-
-  // Owner-override domains: looser EV/conf floors but still positive.
-  const ownerOverride =
-    input.isOwnerOverride || isOwnerOverrideCategory(input.category);
-  const evFloor = ownerOverride ? Math.max(0.025, minNetEv * 0.5) : minNetEv;
-  const confFloor = ownerOverride ? Math.max(0.6, minConf - 0.08) : minConf;
+  // Single floor for everyone — no owner-override tier. The previous
+  // owner-bypass that loosened EV/conf for OWNER_OVERRIDE_DOMAINS was
+  // multi-tenant scaffolding; removed now that this is a single-owner
+  // system. If you want looser floors, just set MIN_NET_EV /
+  // MIN_CONFIDENCE_AFTER_ADJUST in env.
+  const evFloor = getMinNetEv();
+  const confFloor = getMinConfidenceAfterAdjust();
 
   if (net.netEvFraction < evFloor) {
     return {
@@ -155,7 +137,7 @@ export function checkProfitGuardrails(
 
   return {
     approved: true,
-    reason: `Net EV ${(net.netEvFraction * 100).toFixed(2)}% ≥ ${(evFloor * 100).toFixed(2)}% + confidence ${(conf * 100).toFixed(1)}% ≥ ${(confFloor * 100).toFixed(1)}%${ownerOverride ? " (owner override)" : ""}`,
+    reason: `Net EV ${(net.netEvFraction * 100).toFixed(2)}% ≥ ${(evFloor * 100).toFixed(2)}% + confidence ${(conf * 100).toFixed(1)}% ≥ ${(confFloor * 100).toFixed(1)}%`,
     adjustedEV: ev,
     adjustedConfidence: conf,
     netEvFraction: net.netEvFraction,

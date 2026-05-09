@@ -71,9 +71,9 @@ const trpcClient = trpc.createClient({
           credentials: "include",
         });
 
-        // Vercel (and other platforms) return plain-text crash pages like
-        // "A server error has occurred" when the serverless function itself
-        // fails before our app can respond. tRPC then tries to JSON.parse the
+        // Some hosting platforms return plain-text crash pages like
+        // "A server error has occurred" when the underlying server fails
+        // before our app can respond. tRPC then tries to JSON.parse the
         // body and surfaces a cryptic "Unexpected token 'A'..." error to the
         // user. Convert any non-JSON response into a proper tRPC error
         // envelope so the UI shows something meaningful.

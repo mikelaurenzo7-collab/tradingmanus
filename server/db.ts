@@ -104,7 +104,7 @@ export async function getDb() {
 }
 
 export async function runMigrations(): Promise<void> {
-  // Vercel serverless functions must not mutate schema during cold starts.
+  // Schema migrations run via scripts/applyMigrations.ts on Railway deploy.
   // Run `corepack pnpm db:push` or `corepack pnpm db:generate && corepack pnpm db:migrate`
   // against Neon before deploying production traffic.
 }
@@ -252,14 +252,10 @@ export async function createUserAccount(payload: {
   name?: string | null;
   email: string;
   passwordHash: string;
-  subscriptionTier: "starter" | "pro" | "fund";
-  subscriptionStatus:
-    | "trialing"
-    | "active"
-    | "past_due"
-    | "cancelled"
-    | "unpaid";
-  subscriptionCurrentPeriodEnd?: Date | null;
+  // Subscription fields are vestigial multi-tenant columns; the schema
+  // still has them (dropping requires a destructive migration). Single-
+  // owner mode doesn't populate them; defaults match the schema's
+  // .default("starter") / .default("active") behavior.
 }) {
   const database = await getDb();
   if (!database) {
@@ -271,9 +267,6 @@ export async function createUserAccount(payload: {
     name: payload.name ?? null,
     email: payload.email.trim().toLowerCase(),
     passwordHash: payload.passwordHash,
-    subscriptionTier: payload.subscriptionTier,
-    subscriptionStatus: payload.subscriptionStatus,
-    subscriptionCurrentPeriodEnd: payload.subscriptionCurrentPeriodEnd ?? null,
     lastSignedIn: new Date(),
   };
 

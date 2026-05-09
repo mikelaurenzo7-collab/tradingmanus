@@ -84,7 +84,11 @@ function envIntervalMs(name: string, fallbackMs: number): number {
   return parsed;
 }
 
-const AUTONOMOUS_TRADING_INTERVAL_MS = envIntervalMs("AUTONOMY_INTERVAL_MS", 60 * 1000);
+// Autonomy cron at 10-min default. Earlier 60s default burned AI cost
+// without commensurate edge — Kalshi signal supply doesn't refresh
+// fast enough to warrant minute-level review. 10 min keeps us reactive
+// to event-day repricing while cutting AI cost ~10×.
+const AUTONOMOUS_TRADING_INTERVAL_MS = envIntervalMs("AUTONOMY_INTERVAL_MS", 10 * 60 * 1000);
 const ORDER_SYNC_INTERVAL_MS = envIntervalMs("ORDER_SYNC_INTERVAL_MS", 30 * 1000);
 // Combinatorial arbitrage is rule-based math (no AI cost). Runs every 60s
 // across all open Kalshi markets to detect YES + NO > 1.00 mispricings.
