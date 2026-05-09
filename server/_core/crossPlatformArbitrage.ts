@@ -263,13 +263,33 @@ export function detectCrossPlatformArbitrage(
     const spread = Math.abs(kalshi.yesPrice - pm.yesPrice);
     if (spread < minSpread) continue;
 
+    // The actual cross-platform arb is: buy YES on the cheaper venue +
+    // buy NO on the more expensive venue.  Since one side resolves YES
+    // and the other NO, total payout = $1.  Gross profit = 1 - cheapYes
+    // - expensiveNo, NOT just (yesB - yesA) — those are only equal when
+    // noPrice = 1 - yesPrice (no quote spread).  In wide-spread markets
+    // the YES-diff overstates the edge and produces false-positive
+    // detection alerts.
+    const buyVenueCheaperYes = kalshi.yesPrice < pm.yesPrice;
+    const cheapYesPrice = buyVenueCheaperYes ? kalshi.yesPrice : pm.yesPrice;
+    const expensiveNoPrice = buyVenueCheaperYes ? pm.noPrice : kalshi.noPrice;
+    if (
+      !Number.isFinite(expensiveNoPrice) ||
+      expensiveNoPrice <= 0 ||
+      expensiveNoPrice >= 1
+    ) {
+      continue;
+    }
+    const grossEdge = 1 - cheapYesPrice - expensiveNoPrice;
+    if (grossEdge < minSpread) continue;
+
     const feeBurden = KALSHI_FEE + POLYMARKET_FEE;
     const kalshiLatencyRisk = estimateLatencyRisk(DEFAULT_DAILY_VOLATILITY, KALSHI_LATENCY_MS);
     const polymarketLatencyRisk = estimateLatencyRisk(DEFAULT_DAILY_VOLATILITY, POLYMARKET_LATENCY_MS);
     const latencyRisk = kalshiLatencyRisk + polymarketLatencyRisk;
     const slippageRisk = clamp(0.5 / Math.max(Math.min(kalshi.liquidity, pm.liquidity), 1), 0, 0.02);
     const executionRisk = latencyRisk + slippageRisk;
-    const netEdge = spread - feeBurden - executionRisk;
+    const netEdge = grossEdge - feeBurden - executionRisk;
     if (netEdge <= minNetEdge) continue;
 
     const buyPlatform: "kalshi" | "polymarket" = kalshi.yesPrice < pm.yesPrice ? "kalshi" : "polymarket";
