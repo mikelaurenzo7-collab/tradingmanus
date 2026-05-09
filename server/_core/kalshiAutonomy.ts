@@ -191,6 +191,8 @@ export type AwayTradingRunResult = {
 type ScheduledRunOptions = {
   triggeredByOpenId?: string;
   now?: Date;
+  /** When set, overrides the user's minSignalConfidence floor (yellow-zone loss tightening). */
+  confidenceFloorOverride?: number;
 };
 
 function clampRiskLimit(value: number, minimum: number, maximum: number) {
@@ -1356,7 +1358,12 @@ export async function runScheduledAutonomousTrading(
 
   const { savedSignals, executionCandidates, reviewerTelemetry } = await generateScheduledSignals(
     userId,
-    preferences.minSignalConfidence,
+    // Yellow-zone loss tightening: take the higher of the user's floor and
+    // the scheduler-injected override (e.g. 0.82 after a losing trade).
+    // Never lets the override silently lower a user who already set 0.90.
+    options.confidenceFloorOverride !== undefined
+      ? Math.max(preferences.minSignalConfidence, options.confidenceFloorOverride)
+      : preferences.minSignalConfidence,
     activeInstructions,
     {
       aggressiveMode: preferences.aggressiveMode,
@@ -2161,8 +2168,9 @@ export async function runScheduledAutonomousTrading(
 export async function runScheduledAutonomousTradingBatch(
   users: User[],
   triggeredByOpenId: string,
+  sharedOptions?: Pick<ScheduledRunOptions, "confidenceFloorOverride">,
   runOne: (user: User) => Promise<AwayTradingRunResult> = (user) =>
-    runScheduledAutonomousTrading(user, { triggeredByOpenId })
+    runScheduledAutonomousTrading(user, { triggeredByOpenId, ...sharedOptions })
 ): Promise<ScheduledAutonomyBatchSummary> {
   // Hard-fail in production when the AI reviewer key is missing.  The reviewer
   // is the gate that screens every heuristic signal before any live order is

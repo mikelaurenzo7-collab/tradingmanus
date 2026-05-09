@@ -60,13 +60,15 @@ const KALSHI_FEE_RATE = 0.02; // round-trip estimate, see header note
 const COLD_START_AI_USD = 5; // below this, no throttle regardless of net
 
 // Hard-stop gate: when the UTC day's net P&L falls below this, the scheduler
-// skips the tick entirely until UTC rollover.  Defaults to $50 — change via
+// skips the tick entirely until UTC rollover.  Defaults to $20 (≈4.5% of a
+// $450 account — stops after roughly one losing trade + AI overhead).  Raise
+// proportionally if you deposit more (e.g. $45 at $1,000).  Set via
 // DAILY_LOSS_LIMIT_USD env var.  0 = unlimited (no stop-loss on the day).
 const DAILY_LOSS_LIMIT_USD = (() => {
   const raw = (process.env.DAILY_LOSS_LIMIT_USD ?? "").trim();
-  if (!raw) return 50;
+  if (!raw) return 20;
   const n = Number.parseFloat(raw);
-  return Number.isFinite(n) && n >= 0 ? n : 50;
+  return Number.isFinite(n) && n >= 0 ? n : 20;
 })();
 
 let CACHE: DailyScoreboard | null = null;
@@ -245,18 +247,58 @@ export function formatScoreboardForPrompt(snapshot: DailyScoreboard | null): str
 }
 
 /**
+ * Three-zone daily loss response.
+ *
+ *   green  (net > -warnThreshold)  : run normally at user's confidence floor
+ *   yellow (net > -stopThreshold)  : run but raise confidence floor to YELLOW_CONFIDENCE_FLOOR
+ *                                    — only A+ setups pass the pre-reviewer filter
+ *   red    (net ≤ -stopThreshold)  : hard stop until UTC rollover
+ *
+ * Thresholds:
+ *   stop  = DAILY_LOSS_LIMIT_USD          (env var, default $20)
+ *   warn  = DAILY_LOSS_LIMIT_USD * 0.5    (half the hard-stop; no separate env needed)
+ *
+ * At $450 balance with default $20 limit:
+ *   -$10 triggers yellow (raised bar) → 0.85+ conf plays still run
+ *   -$20 triggers red    (hard stop)
+ */
+export type DailyLossTier = "green" | "yellow" | "red";
+
+/** Minimum signal confidence injected when in the yellow zone. */
+const YELLOW_CONFIDENCE_FLOOR = 0.82;
+
+export function getDailyLossTier(): DailyLossTier {
+  if (DAILY_LOSS_LIMIT_USD <= 0) return "green";
+  const board = getCachedScoreboard();
+  if (!board) return "green"; // cold start — let first tick proceed normally
+  if (board.netUsd < -DAILY_LOSS_LIMIT_USD) return "red";
+  if (board.netUsd < -(DAILY_LOSS_LIMIT_USD / 2)) return "yellow";
+  return "green";
+}
+
+/**
+ * Returns the minimum confidence override to apply in the yellow zone,
+ * or null when the system is in green (no override needed).
+ * Callers should use Math.max(userPreference, override) so the user's
+ * own higher floor is never inadvertently lowered.
+ */
+export function getDailyConfidenceFloorOverride(): number | null {
+  const tier = getDailyLossTier();
+  if (tier === "yellow") return YELLOW_CONFIDENCE_FLOOR;
+  return null;
+}
+
+/**
  * Returns true when the running daily net has fallen below the configured
- * loss limit.  The scheduler calls this before arming each autonomy tick.
+ * loss limit (red zone).  The scheduler calls this before arming each
+ * autonomy tick.
  *
  *   net > -limit  → false (run normally, or day is profitable)
  *   net ≤ -limit  → true  (hard skip until UTC rollover)
  *   no cache yet  → false (cold start — let the first tick proceed)
  */
 export function isDailyLossLimitExceeded(): boolean {
-  if (DAILY_LOSS_LIMIT_USD <= 0) return false; // 0 = unlimited
-  const board = getCachedScoreboard();
-  if (!board) return false; // no data yet — don't block cold start
-  return board.netUsd < -DAILY_LOSS_LIMIT_USD;
+  return getDailyLossTier() === "red";
 }
 
 /** Read-only access to the configured limit (for logging / self-test). */

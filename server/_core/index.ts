@@ -12,7 +12,7 @@ import {
   createOrderSyncLock,
 } from "./distributedLock";
 import { runStartupSelfTest } from "./startupSelfTest";
-import { refreshScoreboard, isDailyLossLimitExceeded, getDailyLossLimitUsd, getCachedScoreboard } from "./dailyScoreboard";
+import { refreshScoreboard, isDailyLossLimitExceeded, getDailyLossLimitUsd, getCachedScoreboard, getDailyLossTier, getDailyConfidenceFloorOverride } from "./dailyScoreboard";
 import { logger } from "./logger";
 import * as hb from "./schedulerHeartbeat";
 import { fetchKalshiMarkets } from "./kalshiMarketData";
@@ -132,13 +132,24 @@ async function runAutonomousScheduler() {
       const board = getCachedScoreboard();
       logger.warn(
         { netUsd: board ? Number(board.netUsd.toFixed(2)) : null, limitUsd: getDailyLossLimitUsd() },
-        "[Scheduler] Daily loss limit exceeded; Kalshi autonomy skipping until UTC rollover",
+        "[Scheduler] Daily loss limit exceeded (red zone); Kalshi autonomy skipping until UTC rollover",
       );
       hb.setBlocked(
         "autonomy_kalshi",
         `Daily loss limit exceeded (net $${board ? board.netUsd.toFixed(2) : "?"}  < -$${getDailyLossLimitUsd()})`,
       );
       return;
+    }
+
+    const lossTier = getDailyLossTier();
+    const confidenceFloorOverride = getDailyConfidenceFloorOverride();
+    if (lossTier === "yellow") {
+      const board = getCachedScoreboard();
+      logger.info(
+        { netUsd: board ? Number(board.netUsd.toFixed(2)) : null, confidenceFloor: confidenceFloorOverride },
+        "[Scheduler] Yellow zone: net negative but above hard stop — continuing with raised confidence floor %.2f",
+        confidenceFloorOverride,
+      );
     }
 
     const userIds = scopedUsers.map((u) => u.id);
@@ -172,7 +183,11 @@ async function runAutonomousScheduler() {
         "[Scheduler] Running Kalshi autonomous trading for %d user(s)",
         lockedUsers.length,
       );
-      const batchResult = await runScheduledAutonomousTradingBatch(lockedUsers as any, "local_scheduler");
+      const batchResult = await runScheduledAutonomousTradingBatch(
+        lockedUsers as any,
+        "local_scheduler",
+        confidenceFloorOverride !== null ? { confidenceFloorOverride } : undefined,
+      );
       hb.recordTickTelemetry("autonomy_kalshi", {
         ordersPlaced: batchResult.executedUsers,
       });

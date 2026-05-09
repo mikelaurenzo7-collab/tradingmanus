@@ -82,7 +82,7 @@ used.  Never use `npm` or `yarn` in this repo — the lockfile is
 | `XAI_API_KEY` | optional | Grok (xAI) key for true dual-bot consensus. Without it, the reviewer gracefully degrades to Claude-only. |
 | `GROK_MODEL` | optional | Default `grok-3-latest` |
 | `ENABLE_GROK_TEAM` | optional | Default `true` — when `XAI_API_KEY` is set, both bots review every signal in parallel and both must approve. |
-| `DAILY_LOSS_LIMIT_USD` | optional | Hard daily loss stop. When the day's realized net P&L drops below `-DAILY_LOSS_LIMIT_USD` the scheduler skips every autonomy tick until UTC midnight. Profitable days always run. `0` = unlimited. Default `50`. See `server/_core/dailyScoreboard.ts:isDailyLossLimitExceeded()`. |
+| `DAILY_LOSS_LIMIT_USD` | optional | Hard daily loss stop. When the day's realized net P&L drops below `-DAILY_LOSS_LIMIT_USD` the scheduler skips every autonomy tick until UTC midnight. Profitable days always run. `0` = unlimited. Default `20` (≈4.5% of $450 account; scale to ≈4-5% of your balance). See `server/_core/dailyScoreboard.ts:isDailyLossLimitExceeded()`. |
 | `AUTONOMY_INTERVAL_MS` | optional | Kalshi autonomy tick rate in ms (default `300000` = 5 min). At 5 min the sports/tech/econ TTLs (2-5 min) expire every tick, capturing those categories at full cadence. Tighten to `60000` (1 min) only when sub-minute crypto responsiveness is needed — costs ~$4–6/day. |
 | `ORDER_SYNC_INTERVAL_MS` | optional | Kalshi order/position reconciliation + exit monitor cadence (default `30000` = 30 s) |
 | `CROSS_ARB_INTERVAL_MS` | optional | Cross-platform arb scanner cadence (default `10000` = 10 s) |

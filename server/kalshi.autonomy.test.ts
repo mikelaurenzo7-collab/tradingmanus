@@ -412,6 +412,7 @@ describe("scheduled away-from-chat trading", () => {
     const batch = await runScheduledAutonomousTradingBatch(
       [testUser, secondUser],
       "scheduler-open-id",
+      undefined,
       async (user) => {
         if (user.id === 7) {
           return {
