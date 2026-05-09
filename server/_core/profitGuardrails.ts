@@ -1,18 +1,14 @@
 /**
- * Profit Guardrails — capital-preservation first, $200-starting-capital tuned.
+ * Profit Guardrails — capital-preservation first.
  *
- * Tighter post-pivot thresholds:
- *   - Net EV (after exact Kalshi fees + amortized Grok cost): ≥ 6.5 %
- *   - Confidence after Grok adjustment:                       ≥ 76 %
- *   - Self-consistency: two Grok passes (different temps) must agree
+ * Thresholds (Claude-only, post-Phase-1):
+ *   - Net EV (after exact Kalshi fees + amortized AI cost): ≥ MIN_NET_EV
+ *   - Confidence after AI adjustment: ≥ MIN_CONFIDENCE_AFTER_ADJUST
+ *   - Self-consistency: two Sonnet passes (catastrophic-bet only) must agree
  *   - Drawdown circuit breakers: pause on 3 % daily / 8 % weekly loss
  *   - Cold streak: pause after 5 consecutive losses or weekly edge < 3 %
- *   - Position sizing: ¼ Kelly capped at 2 % of capital, floored at 0.5 %
- *   - Total exposure: ≤ 20 % of capital, ≤ 10 % per correlated category
- *
- * Owner-override domains: env-listed categories where the operator's domain
- * knowledge is trusted enough to relax the AI gate (still honors the hard
- * fee/Kelly/drawdown rules — only the soft EV/confidence floors are loosened).
+ *   - Position sizing: ½ Kelly capped at 4 % of capital, floored at 0.5 %
+ *   - Total exposure: ≤ 25 % of capital, ≤ 10 % per correlated category
  */
 
 import { ENV } from "./env";
@@ -25,7 +21,6 @@ export const MIN_NET_EV = ENV.profitGuardrails.minNetEv;
 export const MIN_POSITIVE_EV = ENV.profitGuardrails.minNetEv;
 export const MIN_CONFIDENCE_AFTER_ADJUST =
   ENV.profitGuardrails.minConfidenceAfterAdjust;
-export const MIN_DUAL_BOT_AGREEMENT = ENV.profitGuardrails.minDualBotAgreement;
 export const MAX_PORTFOLIO_EXPOSURE_PCT =
   ENV.profitGuardrails.maxPortfolioExposurePct;
 export const MAX_CORRELATED_GROUP_PCT =
@@ -36,8 +31,6 @@ export const getMinNetEv = () => ENV.profitGuardrails.minNetEv;
 export const getMinPositiveEv = () => ENV.profitGuardrails.minNetEv;
 export const getMinConfidenceAfterAdjust = () =>
   ENV.profitGuardrails.minConfidenceAfterAdjust;
-export const getMinDualBotAgreement = () =>
-  ENV.profitGuardrails.minDualBotAgreement;
 export const getMaxPortfolioExposurePct = () =>
   ENV.profitGuardrails.maxPortfolioExposurePct;
 export const getMaxCorrelatedGroupPct = () =>
@@ -63,7 +56,6 @@ export type ProfitCheckResult = {
   netEvFraction: number;
   feeUsd: number;
   aiCostUsd: number;
-  grokVeto?: boolean;
 };
 
 export interface ProfitCheckInput {
@@ -94,6 +86,10 @@ export function checkProfitGuardrails(
   const entryPriceForRoi = Math.max(0.01, Number(input.entryPrice) || 0.01);
   const evRoiFraction = ev / entryPriceForRoi;
 
+  // PHASE-2-FEEAWARE: Phase 2 wires the fee+spread-aware EV gate here.
+  // calculateNetEv currently subtracts a flat per-unit Kalshi fee model.
+  // After Phase 2 lands, this call swaps to the new fee/spread schedule
+  // computed against the live order book (computeKalshiRoundTripCost).
   const net = calculateNetEv({
     count: input.count,
     entryPrice: input.entryPrice,
@@ -137,7 +133,7 @@ export function checkProfitGuardrails(
     return {
       approved: false,
       reason:
-        "Self-consistency check failed — second Grok pass disagreed with first; SKIP per ambiguity rule",
+        "Self-consistency check failed — second AI pass disagreed with first; SKIP per ambiguity rule",
       adjustedEV: ev,
       adjustedConfidence: conf,
       netEvFraction: net.netEvFraction,

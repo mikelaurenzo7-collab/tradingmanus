@@ -8,7 +8,7 @@
  *   - tradeId, ticker, category
  *   - predictedEvFraction, predictedConfidence, predictedWinProbability
  *   - realizedPnlUsd, realizedReturnFraction
- *   - feeUsd, grokCostUsd
+ *   - feeUsd, aiCostUsd
  *   - placedAtMs, settledAtMs
  *
  * Reads are cached for 60 s so the dashboard polls cheaply.
@@ -31,7 +31,7 @@ export type TradeOutcomeRecord = {
   realizedPnlUsd: number;
   realizedReturnFraction: number;
   feeUsd: number;
-  grokCostUsd: number;
+  aiCostUsd: number;
   placedAtMs: number;
   settledAtMs: number;
   outcome: "win" | "loss" | "scratch";
@@ -45,7 +45,7 @@ export interface CategoryRollup {
   realizedReturnFraction: number;
   predictedEvFraction: number;
   edgeCapturedFraction: number;
-  totalGrokCostUsd: number;
+  totalAiCostUsd: number;
   totalFeeUsd: number;
   costToProfitRatio: number;
 }
@@ -56,7 +56,7 @@ export interface PerformanceSummary {
   losses: number;
   winRate: number;
   totalRealizedPnlUsd: number;
-  totalGrokCostUsd: number;
+  totalAiCostUsd: number;
   totalFeeUsd: number;
   totalNetPnlUsd: number;
   costToProfitRatio: number;
@@ -108,7 +108,7 @@ export async function getPerformanceSummary(
     const wins = rows.filter((r) => r.outcome === "win").length;
     const losses = rows.filter((r) => r.outcome === "loss").length;
     const realized = rows.reduce((acc, r) => acc + r.realizedPnlUsd, 0);
-    const grokCost = rows.reduce((acc, r) => acc + r.grokCostUsd, 0);
+    const aiCost = rows.reduce((acc, r) => acc + r.aiCostUsd, 0);
     const feeUsd = rows.reduce((acc, r) => acc + r.feeUsd, 0);
 
     const byCategoryMap = new Map<string, TradeOutcomeRecord[]>();
@@ -123,7 +123,7 @@ export async function getPerformanceSummary(
       const cWins = list.filter((r) => r.outcome === "win").length;
       const cReal = list.reduce((a, r) => a + r.realizedPnlUsd, 0);
       const cFee = list.reduce((a, r) => a + r.feeUsd, 0);
-      const cGrok = list.reduce((a, r) => a + r.grokCostUsd, 0);
+      const cAi = list.reduce((a, r) => a + r.aiCostUsd, 0);
       const cPredictedEv =
         list.reduce((a, r) => a + r.predictedEvFraction, 0) / list.length;
       const cReturnFrac =
@@ -138,10 +138,10 @@ export async function getPerformanceSummary(
         realizedReturnFraction: cReturnFrac,
         predictedEvFraction: cPredictedEv,
         edgeCapturedFraction: edgeCaptured,
-        totalGrokCostUsd: cGrok,
+        totalAiCostUsd: cAi,
         totalFeeUsd: cFee,
         costToProfitRatio:
-          cReal <= 0 ? Number.POSITIVE_INFINITY : (cGrok + cFee) / cReal,
+          cReal <= 0 ? Number.POSITIVE_INFINITY : (cAi + cFee) / cReal,
       });
     }
     byCategory.sort((a, b) => b.realizedPnlUsd - a.realizedPnlUsd);
@@ -169,13 +169,13 @@ export async function getPerformanceSummary(
       losses,
       winRate: rows.length > 0 ? wins / rows.length : 0,
       totalRealizedPnlUsd: realized,
-      totalGrokCostUsd: grokCost,
+      totalAiCostUsd: aiCost,
       totalFeeUsd: feeUsd,
-      totalNetPnlUsd: realized - grokCost - feeUsd,
+      totalNetPnlUsd: realized - aiCost - feeUsd,
       costToProfitRatio:
         realized <= 0
           ? Number.POSITIVE_INFINITY
-          : (grokCost + feeUsd) / realized,
+          : (aiCost + feeUsd) / realized,
       byCategory,
       weekly: {
         realizedEdgeFraction: weeklyEdgeFraction,

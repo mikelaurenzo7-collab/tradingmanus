@@ -1,22 +1,14 @@
 /**
- * Polymarket Signal Reviewer — dual-bot consensus (Claude + Grok).
+ * Polymarket Signal Reviewer — Claude-only (Phase 1).
  *
  * Topology:
  *   - Claude (per-category persona, prompt-cached, web_search-enabled, extended
- *     thinking on high-stakes) is the primary reviewer.
- *   - Grok (xAI) runs in parallel when ENABLE_GROK_TEAM=true and XAI_API_KEY
- *     is set.  Both must approve the trade for it to pass; either-side veto
- *     drops the signal (fail-closed dual-bot consensus).
- *   - When XAI_API_KEY is unset, Grok is skipped silently and Claude reviews
- *     alone — the audit log records `grokSkipped:true` so the operator can
- *     see consensus periods vs. solo periods.
+ *     thinking on high-stakes) is the sole reviewer.
  *   - If Claude fails to return a review for a market, the signal is dropped
  *     per fail-closed logic.
  */
 
 import { createAnthropicClient } from "./anthropicClient";
-import { createGrokChatCompletion, extractGrokText } from "./grokClient";
-import { intersectReviews } from "./reviewerConsensus";
 import type { PolymarketMarket } from "./polymarketAuth";
 import type { PolymarketSignal } from "./polymarketSignals";
 import { ENV } from "./env";
@@ -54,8 +46,6 @@ import {
   getDeskMemoryBatch,
   type DeskMemoryRecord,
 } from "../db.desk-memory";
-
-type ProviderName = "anthropic" | "grok";
 
 type TradingSignalReview = {
   marketId: string;
@@ -400,66 +390,6 @@ async function requestLLMReviews(
   };
 }
 
-/**
- * Grok parallel review on a Polymarket batch.  Identical input/output shape to
- * the Anthropic path so callers can intersect approvals trivially.  Returns
- * an empty review list if XAI_API_KEY is unset; the caller decides what to
- * do (skip-grok-but-keep-claude or drop).
- */
-async function requestGrokPolymarketReviews(
-  reviewPayload: ReturnType<typeof getReviewPayload>,
-  options: PolymarketReviewerOptions,
-  persona?: CategoryPersona,
-  memorySnippet: string | null = null,
-): Promise<{ reviews: TradingSignalReview[]; failed: boolean }> {
-  if (!ENV.xaiApiKey) {
-    return { reviews: [], failed: false };
-  }
-
-  const scoreboardText = formatScoreboardForPrompt(getCachedScoreboard());
-  const systemPrompt = [
-    buildReviewerBaseMandate(persona),
-    memorySnippet ?? null,
-    scoreboardText ?? null,
-  ]
-    .filter((s): s is string => Boolean(s))
-    .join("\n\n");
-
-  try {
-    const completion = await createGrokChatCompletion(
-      [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: JSON.stringify(reviewPayload) },
-      ],
-      {
-        model: ENV.grokModel,
-        temperature: 0,
-        max_tokens: 3200,
-        timeoutMs: ENV.grokTimeoutMs,
-      },
-    );
-
-    const text = extractGrokText(completion);
-    const reviews = parseTradingReviews(text);
-
-    if (options.telemetry) {
-      options.telemetry.grokCalls = (options.telemetry.grokCalls ?? 0) + 1;
-    }
-
-    return { reviews, failed: false };
-  } catch (error) {
-    if (options.telemetry) {
-      options.telemetry.grokFailures = (options.telemetry.grokFailures ?? 0) + 1;
-    }
-    options.logger?.warn?.(
-      `[PolymarketReviewer] Grok review failed: ${error instanceof Error ? error.message : String(error)}; falling back to Claude-only consensus on this batch.`,
-    );
-    return { reviews: [], failed: true };
-  }
-}
-
-// intersectReviews moved to ./reviewerConsensus.ts (shared with Kalshi reviewer).
-
 function combineApprovedSignal(
   signal: PolymarketSignal,
   review: TradingSignalReview,
@@ -507,31 +437,21 @@ async function callReviewer(
   memorySnippet: string | null = null,
   forceDeep = false,
 ): Promise<ReviewBatchResult> {
-  // Claude-as-trader pivot: team consensus is OFF by default (mirrors
-  // tradingReviewer.ts).  Polymarket runs Claude-only the same way Kalshi does,
-  // since the dual-bot intersection didn't add measurable edge versus the AI-
-  // cost overhead at single-owner scale.  Path is left in place for an easy
-  // re-enable.
-  const grokInTeam = false;
+  // Phase 1: Claude-only. Anthropic is the sole provider.
   try {
-    const [claudeResp, grokResp] = await Promise.all([
-      requestLLMReviews(reviewPayload, options, persona, stakes, memorySnippet, forceDeep),
-      grokInTeam
-        ? requestGrokPolymarketReviews(reviewPayload, options, persona, memorySnippet)
-        : Promise.resolve({ reviews: [], failed: false }),
-    ]);
-    const claudeMap = new Map(claudeResp.reviews.map((r) => [r.marketId, r]));
-    // Strict mode = Grok actually ran (HTTP completion succeeded).  An
-    // empty or parse-truncated `reviews` array still counts as "ran" and
-    // triggers veto on missing markets — only transport-level failures
-    // (failed=true) gracefully degrade to Claude solo.  Prevents output
-    // like `{"reviews":[]}` from masquerading as Grok-unavailable.
-    const grokRanSuccessfully = grokInTeam && !grokResp.failed;
-    const merged = grokInTeam
-      ? intersectReviews(claudeMap, grokResp.reviews, grokRanSuccessfully)
-      : claudeMap;
+    const claudeResp = await requestLLMReviews(
+      reviewPayload,
+      options,
+      persona,
+      stakes,
+      memorySnippet,
+      forceDeep,
+    );
+    const reviewsByMarket = new Map(
+      claudeResp.reviews.map((r) => [r.marketId, r]),
+    );
     return {
-      reviewsByMarket: merged,
+      reviewsByMarket,
       failed: false,
       citations: claudeResp.citations,
     };
@@ -579,7 +499,7 @@ async function runCategoryReview(
   // tradingReviewer.ts for the full rationale; the polymarket pipeline uses
   // identical thresholds and fail-closed semantics.
   const escalationCitationsByMarket = new Map<string, CitationSummary[]>();
-  // Intra-Claude escalation was removed in the Grok-only pivot; mirror
+  // Intra-Claude escalation lives in the polymarket autonomy/ensemble layer; mirror
   // tradingReviewer.ts so the polymarket pipeline stays in lockstep.
   if (
     false &&

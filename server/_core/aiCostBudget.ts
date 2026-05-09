@@ -1,7 +1,7 @@
 /**
  * AI cost budget + auto-throttle.
  *
- * Tracks USD spend on Anthropic + xAI calls for the current UTC day and
+ * Tracks USD spend on Anthropic calls for the current UTC day and
  * exposes a throttle factor the schedulers consult before kicking off
  * an autonomy run.  When AI_DAILY_BUDGET_USD is unset (or 0), this
  * module is a no-op and every run proceeds normally.
@@ -12,7 +12,7 @@
  *    restarts reset the counter mid-day, which is conservative
  *    (re-arms the budget) — not the scary direction.
  *
- *  - Pricing is hardcoded per model.  Anthropic + xAI publish list
+ *  - Pricing is hardcoded per model.  Anthropic publishes list
  *    pricing in USD per million tokens; we encode it here so the
  *    budget reflects actual spend without runtime lookups.  Update
  *    when prices change.
@@ -54,7 +54,7 @@ type ModelPricing = {
 };
 
 /**
- * List prices as of 2026-05.  Update when Anthropic / xAI publish new
+ * List prices as of 2026-05.  Update when Anthropic publishes new
  * tiers.  Values that are not exactly matched fall through to the
  * conservative DEFAULT_PRICING below so an unknown model still bills
  * approximately right (slight over-billing biases toward earlier
@@ -90,11 +90,6 @@ const PRICE_TABLE: Record<string, ModelPricing> = {
     cacheReadUsdPerMillion: 1.5,
     cacheWriteUsdPerMillion: 18.75,
   },
-  // xAI Grok 3 (list price as of launch).
-  "grok-3-latest": {
-    inputUsdPerMillion: 3.0,
-    outputUsdPerMillion: 15.0,
-  },
 };
 
 /** Conservative fallback for unknown / future models. */
@@ -116,7 +111,7 @@ export type CostUsage = {
 
 /**
  * Compute the USD cost of one model call given the usage block returned
- * by Anthropic (or our normalised Grok counterpart).
+ * by Anthropic.
  *
  * Anthropic billing contract for prompt caching:
  *   - `input_tokens`              = non-cached, non-cache-created input
@@ -343,7 +338,7 @@ export function checkBudgetForRun(now: number = Date.now()): BudgetDecision {
 export function recordAiCallCost(
   model: string,
   usage: CostUsage,
-  context?: { provider?: "anthropic" | "grok"; reviewer?: string; userId?: number },
+  context?: { provider?: "anthropic"; reviewer?: string; userId?: number },
 ): number {
   const usd = computeCallCostUsd(model, usage);
   if (!Number.isFinite(usd) || usd < 0) return 0;
@@ -363,7 +358,7 @@ async function writeAuditEvent(input: {
   model: string;
   usage: CostUsage;
   usd: number;
-  context?: { provider?: "anthropic" | "grok"; reviewer?: string; userId?: number };
+  context?: { provider?: "anthropic"; reviewer?: string; userId?: number };
 }): Promise<void> {
   try {
     const db = await import("../db");

@@ -1274,7 +1274,9 @@ async function logCalibrationOutcomeFromClose(input: {
       realizedPnlUsd: input.realizedPnl,
       realizedReturnFraction,
       feeUsd: 0, // best-effort: actual fees are aggregated via fills sync
-      grokCostUsd: ENV.grokCostPerReviewUsd,
+      // AI cost is tallied per-call via aiCostBudget; the per-trade
+      // attribution lands in dailyScoreboard separately.
+      aiCostUsd: 0,
       placedAtMs: input.placedAtMs,
       settledAtMs: input.settledAtMs,
       outcome,

@@ -1,11 +1,11 @@
 /**
  * Environment configuration for the personal Kalshi-only trading dashboard.
  *
- * Pivot: this is a single-owner, Grok-only, Kalshi-only deployment optimized
- * for a $200 starting capital. Anthropic / Claude / Polymarket env vars have
- * been removed entirely; the Kalshi Trade API uses RSA-PSS signing with a
- * private key loaded from `KALSHI_PRIVATE_KEY_PATH` (preferred) or inlined
- * via `KALSHI_PRIVATE_KEY` (multi-line PEM).
+ * Single-owner Kalshi+Polymarket deployment.  Claude (Anthropic) is the
+ * sole AI reviewer.  The Kalshi Trade
+ * API uses RSA-PSS signing with a private key loaded from
+ * `KALSHI_PRIVATE_KEY_PATH` (preferred) or inlined via `KALSHI_PRIVATE_KEY`
+ * (multi-line PEM).
  */
 
 import { readFileSync } from "node:fs";
@@ -88,41 +88,13 @@ export const ENV = {
   // paths don't break. New deployments should use KALSHI_KEY_ID + key.
   kalshiApiKey: normalize(process.env.KALSHI_API_KEY),
 
-  // ── Grok (Tier 1, always-on primary reviewer) ───────────────────────────
-  xaiApiKey: normalize(process.env.XAI_API_KEY),
-  // Default to Grok 4.1 Fast — cheap + fast + strong reasoning floor.
-  grokModel: normalize(process.env.GROK_MODEL) || "grok-4-1-fast",
-  grokTimeoutMs: normalizePositiveInt(process.env.GROK_TIMEOUT_MS, 15000),
-  // Self-consistency: re-run the same review at a different temperature and
-  // require both passes to agree before the trade clears the gate.
-  grokSelfConsistencyTemp1: normalizeFloat(
-    process.env.GROK_SELF_CONSISTENCY_TEMP1,
-    0.2,
-    { min: 0, max: 1.5 },
-  ),
-  grokSelfConsistencyTemp2: normalizeFloat(
-    process.env.GROK_SELF_CONSISTENCY_TEMP2,
-    0.7,
-    { min: 0, max: 1.5 },
-  ),
-  // Amortized per-review Grok cost (USD). Used to subtract from net EV in
-  // the post-fee guardrail and to budget the daily run-rate. Default $0.0035
-  // for grok-4-1-fast at typical prompt length; tune to actual usage.
-  grokCostPerReviewUsd: normalizeFloat(
-    process.env.GROK_COST_PER_REVIEW_USD,
-    0.0035,
-    { min: 0, max: 1 },
-  ),
-
-  // ── Claude (Tier 2 + Tier 3 ensemble reviewers) ─────────────────────────
-  // ANTHROPIC_API_KEY is OPTIONAL but strongly recommended. When set, the
-  // ensemble runs:
-  //   Tier 1 — Grok 4.1 Fast        — every signal (cheap, has live X).
-  //   Tier 2 — Claude Sonnet 4.6    — only on high-stakes signals.
-  //   Tier 3 — Claude Opus 4.7      — only when Grok+Sonnet disagree, OR the
-  //                                   position is a catastrophic-bet
-  //                                   (≥10% of live Kalshi capital).
-  // When unset, the system silently degrades to Grok-only with a boot warning.
+  // ── Claude (sole AI reviewer, Phase 1+) ──────────────────────────────────
+  // ANTHROPIC_API_KEY is REQUIRED. The pipeline runs:
+  //   Tier 1 — Claude Haiku 4.5     — every signal (cheap, fast).
+  //   Tier 2 — Claude Sonnet 4.6    — high-stakes signals (cross-tier).
+  //   Tier 3 — Claude Opus 4.7      — catastrophic-bet unanimous gate, or
+  //                                   intra-Claude tiebreaker on contested
+  //                                   high-EV approvals.
   anthropicApiKey: normalize(process.env.ANTHROPIC_API_KEY),
   // Haiku 4.5 is the default primary reviewer (Tier 1) on every signal —
   // 3× cheaper than Sonnet, fast enough that the 10-min cron still has
@@ -154,11 +126,6 @@ export const ENV = {
     process.env.CLAUDE_OPUS_TIMEOUT_MS,
     45000,
   ),
-  // Legacy escape hatch: when true, the autonomy loop's primary reviewer
-  // stays on Grok even if ANTHROPIC_API_KEY is also set. Default false —
-  // Claude is the primary trader when its key is present.
-  reviewerPreferGrok: normalizeBoolean(process.env.REVIEWER_PREFER_GROK, false),
-
   // ── High-stakes triggers (all percentages — auto-scale with live balance) ─
   // A signal is high-stakes (→ Sonnet review) if any of these hold:
   highStakesPctOfCapital: normalizeFloat(
@@ -185,7 +152,7 @@ export const ENV = {
   ),
 
   // ── Profit guardrails (high-edge, capital-preservation first) ────────────
-  // Hard floor net EV after Kalshi fees + amortized Grok cost: 6.5%.
+  // Hard floor net EV after Kalshi fees + amortized AI cost: 6.5%.
   // Confidence floor: 76%. These are the post-pivot tighter thresholds.
   profitGuardrails: {
     // Net-EV floor (after fees + amortized AI cost). Default 5 % — was
@@ -203,11 +170,6 @@ export const ENV = {
     minConfidenceAfterAdjust: normalizeFloat(
       process.env.MIN_CONFIDENCE_AFTER_ADJUST,
       0.76,
-      { min: 0, max: 1 },
-    ),
-    minDualBotAgreement: normalizeFloat(
-      process.env.MIN_DUAL_BOT_AGREEMENT,
-      0.62,
       { min: 0, max: 1 },
     ),
     maxPortfolioExposurePct: normalizeFloat(
@@ -462,32 +424,18 @@ const REQUIRED_SERVER_ENV = [
   ["OWNER_PASSWORD", ENV.ownerPassword],
 ] as const;
 
-// At least ONE of these must be present — the AI reviewer pipeline needs
-// at least one provider to function. Default mode is Claude-as-trader
-// (ANTHROPIC_API_KEY); Grok (XAI_API_KEY) remains as a legacy fallback.
-const REQUIRED_AI_PROVIDERS = [
-  ["ANTHROPIC_API_KEY", ENV.anthropicApiKey],
-  ["XAI_API_KEY", ENV.xaiApiKey],
-] as const;
-
 export function validateServerEnv() {
   const missing: string[] = REQUIRED_SERVER_ENV
     .filter(([, value]) => value.length === 0)
     .map(([name]) => String(name));
 
-  // AI provider check — at least one of Anthropic or Grok must be set.
-  const hasAnyAiProvider = REQUIRED_AI_PROVIDERS.some(
-    ([, value]) => value.length > 0,
-  );
-  if (!hasAnyAiProvider) {
-    missing.push("ANTHROPIC_API_KEY (or XAI_API_KEY for legacy mode)");
+  // Anthropic is the sole AI provider after Phase 1.
+  if (ENV.anthropicApiKey.length === 0) {
+    missing.push("ANTHROPIC_API_KEY");
   }
 
   if (missing.length > 0) {
     const present = REQUIRED_SERVER_ENV.filter(
-      ([, value]) => value.length > 0,
-    ).map(([name]) => name);
-    const aiProvidersPresent = REQUIRED_AI_PROVIDERS.filter(
       ([, value]) => value.length > 0,
     ).map(([name]) => name);
     const otherEnvKeyCount = Object.keys(process.env).length;
@@ -496,7 +444,6 @@ export function validateServerEnv() {
       "[ENV] Missing required environment variables.\n" +
         `       Missing: ${missing.join(", ")}\n` +
         `       Present (from this required list): ${present.join(", ") || "(none)"}\n` +
-        `       AI providers present: ${aiProvidersPresent.join(", ") || "(none — at least one required)"}\n` +
         `       Total env vars visible to the process: ${otherEnvKeyCount}\n` +
         "       If the variables are configured in Railway but not visible here:\n" +
         "         1. Confirm they are attached to THIS service & environment.\n" +

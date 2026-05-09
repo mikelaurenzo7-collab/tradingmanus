@@ -222,9 +222,9 @@ export async function runDailyMoonshotPlay(
     };
   }
 
-  // Run real Tier-1 AI reviewer FIRST (Claude Sonnet by default, or Grok
-  // in legacy mode). Without this the ensemble post-filter fabricates a
-  // Tier-1 approval and low-stakes moonshots bypass real review.
+  // Run real Tier-1 AI reviewer (Claude Haiku) FIRST. Without this the
+  // ensemble post-filter fabricates a Tier-1 approval and low-stakes
+  // moonshots bypass real review.
   const reviewedSignals = await reviewSignalsWithTrader(
     {
       markets: moonshotCandidateMarkets,

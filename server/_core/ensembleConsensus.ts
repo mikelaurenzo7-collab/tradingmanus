@@ -1,21 +1,22 @@
 /**
- * 3-tier ensemble consensus orchestrator.
+ * 3-tier ensemble consensus orchestrator (Claude-only, post-Phase-1).
  *
  * Tiers:
- *   1. Grok 4.1 Fast       — always runs (cheap, has live X access).
- *   2. Claude Sonnet 4.6   — runs ONLY on high-stakes signals (cross-family veto).
- *   3. Claude Opus 4.7     — runs ONLY when Grok and Sonnet disagree, OR the
- *                            position is a catastrophic-bet (≥10% of capital
- *                            requires unanimous approval across all three).
+ *   1. Claude Haiku 4.5    — always runs (cheap, fast). Synthesised here from
+ *                            the upstream tradingReviewer Tier-1 verdict.
+ *   2. Claude Sonnet 4.6   — runs ONLY on high-stakes signals.
+ *   3. Claude Opus 4.7     — runs ONLY when Sonnet vetoes a high-EV trade
+ *                            (intra-Claude tiebreaker) OR the position is a
+ *                            catastrophic-bet (unanimous approval required).
  *
  * Decision rules (in order):
- *   - If Grok vetoes  → SKIP. (No further reviewers — we already have a no.)
- *   - If !highStakes  → trust Grok. APPROVE iff Grok approved.
+ *   - If Tier 1 vetoes → SKIP. (No further reviewers — we already have a no.)
+ *   - If !highStakes   → trust Tier 1. APPROVE iff Tier 1 approved.
  *   - If highStakes && !catastrophic:
- *       - Grok ✓ + Sonnet ✓ → APPROVE.
- *       - Grok ✓ + Sonnet ✗ → escalate to Opus tiebreaker. Opus decides.
+ *       - Tier 1 ✓ + Sonnet ✓ → APPROVE.
+ *       - Tier 1 ✓ + Sonnet ✗ → escalate to Opus tiebreaker. Opus decides.
  *   - If catastrophicBet:
- *       - Require UNANIMOUS Grok ✓ + Sonnet ✓ + Opus ✓.
+ *       - Require UNANIMOUS Tier 1 ✓ + Sonnet ✓ + Opus ✓.
  *       - Any veto → SKIP, regardless of the other two.
  *
  * All review costs and verdicts are logged into the trade's audit trail so
@@ -44,7 +45,7 @@ function normalizeCategory(value: string | undefined): MarketCategory {
     : "other";
 }
 
-export interface GrokVerdict {
+export interface Tier1Verdict {
   approved: boolean;
   confidenceAdjustment: number;
   expectedValueAdjustment: number;
@@ -66,51 +67,43 @@ export interface EnsembleVerdict {
   reasoning: string;
   classification: HighStakesClassification;
   /** Stack of every reviewer that ran, in order. The first entry is the
-   *  Tier-1 marker (synthesized — the real Tier-1 review ran upstream in
-   *  reviewSignalsWithTrader). reviewerId reflects which provider was
-   *  active for Tier-1: `claude.haiku-4-5` in the default Claude-as-trader
-   *  pivot (Haiku is the routine reviewer; Sonnet/Opus reserve for
-   *  Tier-2/Tier-3 escalations only), `grok.4-1-fast` in legacy mode. */
+   *  Tier-1 marker (synthesised — the real Tier-1 review ran upstream in
+   *  reviewSignalsWithTrader using Claude Haiku). */
   reviews: Array<
-    | { reviewerId: "grok.4-1-fast" | "claude.haiku-4-5.tier1-synthetic"; verdict: GrokVerdict }
+    | { reviewerId: "claude.haiku-4-5.tier1-synthetic"; verdict: Tier1Verdict }
     | { reviewerId: ClaudeReviewVerdict["reviewerId"]; verdict: ClaudeReviewVerdict }
   >;
   totalAiCostUsd: number;
 }
 
-export interface EnsembleInput extends Omit<ClaudeReviewInput, "grokVerdict"> {
+export interface EnsembleInput extends Omit<ClaudeReviewInput, "priorVerdict"> {
   capitalUsd: number;
   resolutionAtMs: number | null;
-  grokVerdict: GrokVerdict;
+  tier1Verdict: Tier1Verdict;
 }
 
 export async function runEnsemble(input: EnsembleInput): Promise<EnsembleVerdict> {
-  // Tier-1 reviewerId reflects the active provider, not always "Grok".
-  const tier1ReviewerId: "grok.4-1-fast" | "claude.haiku-4-5.tier1-synthetic" =
-    ENV.anthropicApiKey.length > 0
-      ? "claude.haiku-4-5.tier1-synthetic"
-      : "grok.4-1-fast";
   const reviews: EnsembleVerdict["reviews"] = [
-    { reviewerId: tier1ReviewerId, verdict: input.grokVerdict },
+    { reviewerId: "claude.haiku-4-5.tier1-synthetic", verdict: input.tier1Verdict },
   ];
-  let totalAiCostUsd = input.grokVerdict.costUsd;
+  let totalAiCostUsd = input.tier1Verdict.costUsd;
 
-  // Rule 1: Grok veto → done.
-  if (!input.grokVerdict.approved) {
+  // Rule 1: Tier-1 veto → done.
+  if (!input.tier1Verdict.approved) {
     return {
       approved: false,
-      finalConfidenceAdjustment: input.grokVerdict.confidenceAdjustment,
-      finalExpectedValueAdjustment: input.grokVerdict.expectedValueAdjustment,
-      finalImpliedProbability: input.grokVerdict.impliedProbability,
-      reasoning: `Grok veto: ${input.grokVerdict.reasoning}`,
+      finalConfidenceAdjustment: input.tier1Verdict.confidenceAdjustment,
+      finalExpectedValueAdjustment: input.tier1Verdict.expectedValueAdjustment,
+      finalImpliedProbability: input.tier1Verdict.impliedProbability,
+      reasoning: `Tier-1 veto: ${input.tier1Verdict.reasoning}`,
       classification: classifySignal({
         notionalUsd: input.notionalUsd,
         capitalUsd: input.capitalUsd,
         resolutionAtMs: input.resolutionAtMs,
-        grokFirstPassApproved: input.grokVerdict.firstPassApproved,
-        grokSecondPassApproved: input.grokVerdict.secondPassApproved,
-        grokFirstEvAdjustment: input.grokVerdict.firstPassEvAdjustment,
-        grokSecondEvAdjustment: input.grokVerdict.secondPassEvAdjustment,
+        tier1FirstPassApproved: input.tier1Verdict.firstPassApproved,
+        tier1SecondPassApproved: input.tier1Verdict.secondPassApproved,
+        tier1FirstEvAdjustment: input.tier1Verdict.firstPassEvAdjustment,
+        tier1SecondEvAdjustment: input.tier1Verdict.secondPassEvAdjustment,
       }),
       reviews,
       totalAiCostUsd,
@@ -122,10 +115,10 @@ export async function runEnsemble(input: EnsembleInput): Promise<EnsembleVerdict
     notionalUsd: input.notionalUsd,
     capitalUsd: input.capitalUsd,
     resolutionAtMs: input.resolutionAtMs,
-    grokFirstPassApproved: input.grokVerdict.firstPassApproved,
-    grokSecondPassApproved: input.grokVerdict.secondPassApproved,
-    grokFirstEvAdjustment: input.grokVerdict.firstPassEvAdjustment,
-    grokSecondEvAdjustment: input.grokVerdict.secondPassEvAdjustment,
+    tier1FirstPassApproved: input.tier1Verdict.firstPassApproved,
+    tier1SecondPassApproved: input.tier1Verdict.secondPassApproved,
+    tier1FirstEvAdjustment: input.tier1Verdict.firstPassEvAdjustment,
+    tier1SecondEvAdjustment: input.tier1Verdict.secondPassEvAdjustment,
   });
 
   // Fail closed when live capital is unavailable. Every percentage threshold
@@ -135,9 +128,9 @@ export async function runEnsemble(input: EnsembleInput): Promise<EnsembleVerdict
   if (!Number.isFinite(input.capitalUsd) || input.capitalUsd <= 0) {
     return {
       approved: false,
-      finalConfidenceAdjustment: input.grokVerdict.confidenceAdjustment,
-      finalExpectedValueAdjustment: input.grokVerdict.expectedValueAdjustment,
-      finalImpliedProbability: input.grokVerdict.impliedProbability,
+      finalConfidenceAdjustment: input.tier1Verdict.confidenceAdjustment,
+      finalExpectedValueAdjustment: input.tier1Verdict.expectedValueAdjustment,
+      finalImpliedProbability: input.tier1Verdict.impliedProbability,
       reasoning:
         "Live Kalshi capital unavailable; refusing to trade until balance is known.",
       classification,
@@ -146,34 +139,35 @@ export async function runEnsemble(input: EnsembleInput): Promise<EnsembleVerdict
     };
   }
 
-  // Rule 2: low-stakes → trust Grok.
+  // Rule 2: low-stakes → trust Tier 1.
   if (!classification.isHighStakes) {
     return {
       approved: true,
-      finalConfidenceAdjustment: input.grokVerdict.confidenceAdjustment,
-      finalExpectedValueAdjustment: input.grokVerdict.expectedValueAdjustment,
-      finalImpliedProbability: input.grokVerdict.impliedProbability,
-      reasoning: `Low-stakes (${classification.reasoning}); Grok approval stands.`,
+      finalConfidenceAdjustment: input.tier1Verdict.confidenceAdjustment,
+      finalExpectedValueAdjustment: input.tier1Verdict.expectedValueAdjustment,
+      finalImpliedProbability: input.tier1Verdict.impliedProbability,
+      reasoning: `Low-stakes (${classification.reasoning}); Tier-1 approval stands.`,
       classification,
       reviews,
       totalAiCostUsd,
     };
   }
 
-  // Tier 2: Sonnet (cross-family second opinion).
+  // Tier 2: Sonnet (deeper review on high-stakes signals).
   if (!ENV.anthropicApiKey) {
-    // No Anthropic key configured. Fall back to Grok-only behavior with a
-    // warning — the operator should set ANTHROPIC_API_KEY for the ensemble.
+    // No Anthropic key configured — should never happen post-Phase-1 since
+    // env validation requires ANTHROPIC_API_KEY. Defensive trust-Tier-1 fall
+    // through with a loud warning so the operator notices.
     logger.warn(
       { ticker: input.ticker, classification: classification.reasoning },
-      "[Ensemble] high-stakes signal but ANTHROPIC_API_KEY unset — degrading to Grok-only",
+      "[Ensemble] high-stakes signal but ANTHROPIC_API_KEY unset — trusting Tier-1 verdict",
     );
     return {
       approved: true,
-      finalConfidenceAdjustment: input.grokVerdict.confidenceAdjustment,
-      finalExpectedValueAdjustment: input.grokVerdict.expectedValueAdjustment,
-      finalImpliedProbability: input.grokVerdict.impliedProbability,
-      reasoning: `Grok-only (Anthropic key unset). High-stakes triggers: ${classification.reasoning}`,
+      finalConfidenceAdjustment: input.tier1Verdict.confidenceAdjustment,
+      finalExpectedValueAdjustment: input.tier1Verdict.expectedValueAdjustment,
+      finalImpliedProbability: input.tier1Verdict.impliedProbability,
+      reasoning: `Tier-1-only (Anthropic key unset). High-stakes triggers: ${classification.reasoning}`,
       classification,
       reviews,
       totalAiCostUsd,
@@ -239,15 +233,15 @@ export async function runEnsemble(input: EnsembleInput): Promise<EnsembleVerdict
       return {
         approved: false,
         finalConfidenceAdjustment: avg(
-          input.grokVerdict.confidenceAdjustment,
+          input.tier1Verdict.confidenceAdjustment,
           sonnet.confidenceAdjustment,
         ),
         finalExpectedValueAdjustment: avg(
-          input.grokVerdict.expectedValueAdjustment,
+          input.tier1Verdict.expectedValueAdjustment,
           sonnet.expectedValueAdjustment,
         ),
         finalImpliedProbability: avg(
-          input.grokVerdict.impliedProbability,
+          input.tier1Verdict.impliedProbability,
           sonnet.impliedProbability,
         ),
         reasoning: `Catastrophic-bet veto: Sonnet rejected. ${sonnet.reasoning}`,
@@ -266,17 +260,17 @@ export async function runEnsemble(input: EnsembleInput): Promise<EnsembleVerdict
       return {
         approved: false,
         finalConfidenceAdjustment: avg(
-          input.grokVerdict.confidenceAdjustment,
+          input.tier1Verdict.confidenceAdjustment,
           sonnet.confidenceAdjustment,
           opus.confidenceAdjustment,
         ),
         finalExpectedValueAdjustment: avg(
-          input.grokVerdict.expectedValueAdjustment,
+          input.tier1Verdict.expectedValueAdjustment,
           sonnet.expectedValueAdjustment,
           opus.expectedValueAdjustment,
         ),
         finalImpliedProbability: avg(
-          input.grokVerdict.impliedProbability,
+          input.tier1Verdict.impliedProbability,
           sonnet.impliedProbability,
           opus.impliedProbability,
         ),
@@ -291,21 +285,21 @@ export async function runEnsemble(input: EnsembleInput): Promise<EnsembleVerdict
     return {
       approved: true,
       finalConfidenceAdjustment: avg(
-        input.grokVerdict.confidenceAdjustment,
+        input.tier1Verdict.confidenceAdjustment,
         sonnet.confidenceAdjustment,
         opus.confidenceAdjustment,
       ),
       finalExpectedValueAdjustment: avg(
-        input.grokVerdict.expectedValueAdjustment,
+        input.tier1Verdict.expectedValueAdjustment,
         sonnet.expectedValueAdjustment,
         opus.expectedValueAdjustment,
       ),
       finalImpliedProbability: avg(
-        input.grokVerdict.impliedProbability,
+        input.tier1Verdict.impliedProbability,
         sonnet.impliedProbability,
         opus.impliedProbability,
       ),
-      reasoning: `Catastrophic-bet UNANIMOUS approval: Grok+Sonnet+Opus all green.`,
+      reasoning: `Catastrophic-bet UNANIMOUS approval: Tier-1 + Sonnet + Opus all green.`,
       classification,
       reviews,
       totalAiCostUsd,
@@ -314,22 +308,22 @@ export async function runEnsemble(input: EnsembleInput): Promise<EnsembleVerdict
 
   // Rule 3b: high-stakes (non-catastrophic).
   if (sonnet.approved) {
-    // Grok ✓ + Sonnet ✓ → APPROVE. Average their adjustments.
+    // Tier-1 ✓ + Sonnet ✓ → APPROVE. Average their adjustments.
     return {
       approved: true,
       finalConfidenceAdjustment: avg(
-        input.grokVerdict.confidenceAdjustment,
+        input.tier1Verdict.confidenceAdjustment,
         sonnet.confidenceAdjustment,
       ),
       finalExpectedValueAdjustment: avg(
-        input.grokVerdict.expectedValueAdjustment,
+        input.tier1Verdict.expectedValueAdjustment,
         sonnet.expectedValueAdjustment,
       ),
       finalImpliedProbability: avg(
-        input.grokVerdict.impliedProbability,
+        input.tier1Verdict.impliedProbability,
         sonnet.impliedProbability,
       ),
-      reasoning: `Grok ✓ + Sonnet ✓ on high-stakes (${classification.reasoning})`,
+      reasoning: `Tier-1 ✓ + Sonnet ✓ on high-stakes (${classification.reasoning})`,
       classification,
       reviews,
       totalAiCostUsd,
@@ -344,15 +338,15 @@ export async function runEnsemble(input: EnsembleInput): Promise<EnsembleVerdict
     return {
       approved: false,
       finalConfidenceAdjustment: avg(
-        input.grokVerdict.confidenceAdjustment,
+        input.tier1Verdict.confidenceAdjustment,
         sonnet.confidenceAdjustment,
       ),
       finalExpectedValueAdjustment: avg(
-        input.grokVerdict.expectedValueAdjustment,
+        input.tier1Verdict.expectedValueAdjustment,
         sonnet.expectedValueAdjustment,
       ),
       finalImpliedProbability: avg(
-        input.grokVerdict.impliedProbability,
+        input.tier1Verdict.impliedProbability,
         sonnet.impliedProbability,
       ),
       reasoning: `Sonnet vetoed and gross EV ${(input.grossEvFraction * 100).toFixed(2)}% below ${(ENV.opusEscalationMinGrossEv * 100).toFixed(2)}% Opus-escalation floor — trusting Sonnet veto without escalation.`,
@@ -369,21 +363,21 @@ export async function runEnsemble(input: EnsembleInput): Promise<EnsembleVerdict
   return {
     approved: opus.approved,
     finalConfidenceAdjustment: avg(
-      input.grokVerdict.confidenceAdjustment,
+      input.tier1Verdict.confidenceAdjustment,
       sonnet.confidenceAdjustment,
       opus.confidenceAdjustment,
     ),
     finalExpectedValueAdjustment: avg(
-      input.grokVerdict.expectedValueAdjustment,
+      input.tier1Verdict.expectedValueAdjustment,
       sonnet.expectedValueAdjustment,
       opus.expectedValueAdjustment,
     ),
     finalImpliedProbability: avg(
-      input.grokVerdict.impliedProbability,
+      input.tier1Verdict.impliedProbability,
       sonnet.impliedProbability,
       opus.impliedProbability,
     ),
-    reasoning: `Tiebreaker: Grok ✓, Sonnet ✗, Opus ${opus.approved ? "✓" : "✗"} → ${opus.approved ? "APPROVE" : "VETO"}. ${opus.reasoning}`,
+    reasoning: `Tiebreaker: Tier-1 ✓, Sonnet ✗, Opus ${opus.approved ? "✓" : "✗"} → ${opus.approved ? "APPROVE" : "VETO"}. ${opus.reasoning}`,
     classification,
     reviews,
     totalAiCostUsd,
@@ -396,11 +390,11 @@ function avg(...nums: number[]): number {
   return sum / nums.length;
 }
 
-// ── Hot-path integration: filter Grok-approved signals through Tier 2/3 ───
+// ── Hot-path integration: filter Tier-1-approved signals through Tier 2/3 ─
 //
 // Called from kalshiAutonomy.ts AFTER reviewSignalsWithTrader has approved
 // a list of KalshiSignal candidates. For each signal, we synthesise a
-// GrokVerdict from the signal's existing fields, then run the ensemble.
+// Tier1Verdict from the signal's existing fields, then run the ensemble.
 // Vetoed signals are filtered out; approved signals carry the ensemble's
 // adjusted EV/confidence. Per-signal reviewer trail is logged into the
 // audit table so the calibration job can score Brier per reviewer.
@@ -433,7 +427,7 @@ export interface SignalForEnsemble {
 }
 
 export interface EnsembleFilterResult {
-  /** Signals that passed the ensemble (Grok + maybe Sonnet/Opus). */
+  /** Signals that passed the ensemble (Tier-1 + maybe Sonnet/Opus). */
   approvedSignals: SignalForEnsemble[];
   /** Per-signal verdict trail for the audit log. Keyed by composite
    *  (marketId, side, signalType) — matches the same key used downstream
@@ -448,7 +442,7 @@ export interface EnsembleFilterResult {
 }
 
 /**
- * Filter Grok-approved signals through the Tier 2/3 ensemble. Returns the
+ * Filter Tier-1-approved signals through the Tier 2/3 ensemble. Returns the
  * subset that survived plus a verdict trail for audit logging. Synchronous
  * filtering on the input order; vetoed signals are dropped.
  */
@@ -515,20 +509,15 @@ async function processOneSignalForEnsemble(
   const grossEvFraction = s.expectedValue / entryForRoi;
 
   // Synthesise a Tier-1 approval marker from the upstream-approved signal.
-  // The actual Tier-1 review (Claude Sonnet by default in Claude-as-trader
-  // mode, or Grok in legacy mode) ran in `reviewSignalsWithTrader` before
-  // this code is reached — so any signal here is already Tier-1-approved
-  // by definition. This object exists only because the ensemble's veto
-  // logic was originally written when Grok was Tier-1; the field name
-  // `grokVerdict` is a historical artifact, not a claim that Grok ran.
-  const grokVerdict: GrokVerdict = {
+  // The actual Tier-1 review (Claude Haiku) ran in `reviewSignalsWithTrader`
+  // before this code is reached — so any signal here is already Tier-1-
+  // approved by definition.
+  const tier1Verdict: Tier1Verdict = {
     approved: true,
     confidenceAdjustment: 0,
     expectedValueAdjustment: 0,
     impliedProbability: s.impliedProbability,
-    reasoning: ENV.anthropicApiKey
-      ? "Approved by primary reviewer (Tier 1: Claude Haiku)"
-      : "Approved by primary reviewer (Tier 1: Grok)",
+    reasoning: "Approved by primary reviewer (Tier 1: Claude Haiku)",
     firstPassApproved: true,
     secondPassApproved: true,
     firstPassEvAdjustment: 0,
@@ -549,7 +538,7 @@ async function processOneSignalForEnsemble(
     resolutionSecondary: s.resolutionSecondary,
     capitalUsd: liveCapitalUsd,
     resolutionAtMs: s.resolutionAtMs,
-    grokVerdict,
+    tier1Verdict,
     notionalUsd,
   });
 
@@ -651,12 +640,12 @@ function toClaudeReviewInput(input: EnsembleInput): ClaudeReviewInput {
     confidence: input.confidence,
     resolutionPrimary: input.resolutionPrimary,
     resolutionSecondary: input.resolutionSecondary,
-    grokVerdict: {
-      approved: input.grokVerdict.approved,
-      impliedProbability: input.grokVerdict.impliedProbability,
-      confidenceAdjustment: input.grokVerdict.confidenceAdjustment,
-      expectedValueAdjustment: input.grokVerdict.expectedValueAdjustment,
-      reasoning: input.grokVerdict.reasoning,
+    priorVerdict: {
+      approved: input.tier1Verdict.approved,
+      impliedProbability: input.tier1Verdict.impliedProbability,
+      confidenceAdjustment: input.tier1Verdict.confidenceAdjustment,
+      expectedValueAdjustment: input.tier1Verdict.expectedValueAdjustment,
+      reasoning: input.tier1Verdict.reasoning,
     },
     notionalUsd: input.notionalUsd,
   };

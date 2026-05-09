@@ -12,17 +12,18 @@ auto-scale as your account grows.
 
 ## What this is
 
-- **Platform**: Kalshi only.
-- **AI ensemble**: 3 tiers, asymmetric activation:
+- **Platform**: Kalshi + Polymarket.
+- **AI reviewer**: Single-vendor (Anthropic), 3 tiers, asymmetric activation:
 
   | Tier | Model | Fires on | Avg / month |
   | --- | --- | --- | --- |
-  | 1 | **Claude Haiku 4.5** (Anthropic) | every reviewed signal | ~30-50 reviews (10-min cron) |
-  | 2 | **Claude Sonnet 4.6** (Anthropic) | high-stakes signals (≥3% of capital, ≤24h to resolution, or self-consistency split) | ~5-10 reviews |
-  | 3 | **Claude Opus 4.7** (Anthropic) | candidates with gross EV ≥ 5% AND Sonnet-disagreement, OR catastrophic-bet (≥10% of capital) unanimous gate | ~2-4 reviews |
+  | 1 | **Claude Haiku 4.5** | every reviewed signal | ~30-50 reviews (10-min cron) |
+  | 2 | **Claude Sonnet 4.6** | high-stakes signals (≥3% of capital, ≤24h to resolution, or self-consistency split) | ~5-10 reviews |
+  | 3 | **Claude Opus 4.7** | candidates with gross EV ≥ 5% AND Sonnet-disagreement, OR catastrophic-bet (≥10% of capital) unanimous gate | ~2-4 reviews |
 
-  Grok 4.1 Fast (xAI) remains as a legacy fallback: when `ANTHROPIC_API_KEY`
-  is unset or `REVIEWER_PREFER_GROK=true`, the system uses Grok instead.
+  `ANTHROPIC_API_KEY` is required. The Phase 1 hardening pass removed the
+  legacy Grok / dual-bot consensus path entirely — single Claude reviewer
+  with strict fee-aware EV / confidence / drawdown / calibration guardrails.
 
 - **Cost** (live, audited per trade): ~**$1/month** at the default cadence.
 - **Mode**: live only. The single owner trades live; the only "paper"
@@ -49,7 +50,7 @@ A signal is escalated to Claude Sonnet (Tier 2) if **any** of:
 
 1. notional ≥ 3 % of live Kalshi capital, OR
 2. ≤ 24 hours to resolution, OR
-3. Grok's two self-consistency passes disagreed on direction or EV by > 3 %.
+3. The Tier-1 reviewer's two self-consistency passes disagreed on direction or EV by > 3 %.
 
 A signal is a **catastrophic-bet** (Tier 3 unanimous gate) if its notional ≥
 10 % of live capital. All three reviewers must approve, or it's vetoed.
@@ -67,7 +68,7 @@ liquid+unambiguous markets, weekly edge > 8 %):
 | $500 – $2,000 | 10 / day |
 | > $2,000 | 12 / day |
 
-## Niche priority order (Grok personas)
+## Niche priority order (single Claude persona)
 
 1. **Weather** — backed by GFS/NOAA ensemble skill vs implied probability.
 2. **Economic events** — Fed transcripts, CPI/PPI/NFP, scheduled releases.
@@ -104,10 +105,9 @@ Test connectivity (signs `/portfolio/balance`):
 DEMO_MODE=true corepack pnpm tsx -e "import('./server/_core/kalshiClient.ts').then(m=>m.getPortfolioBalance().then(console.log))"
 ```
 
-### 2. Get your AI keys
+### 2. Get your AI key
 
-- **Grok (xAI)** — required. Sign up at <https://console.x.ai/>. Set `XAI_API_KEY`.
-- **Claude (Anthropic)** — strongly recommended. Sign up at <https://console.anthropic.com/>. Set `ANTHROPIC_API_KEY`. Without this, the system silently degrades to Grok-only with a boot warning.
+**Claude (Anthropic)** — required. Sign up at <https://console.anthropic.com/> and set `ANTHROPIC_API_KEY`. Phase 1 of the hardening pass removed the legacy Grok fallback; the autonomy will fail closed on every cycle until this key is set.
 
 ### 3. Local dev
 
@@ -142,12 +142,8 @@ OWNER_EMAIL
 OWNER_PASSWORD                # 12+ chars in production
 NODE_ENV=production
 
-# AI reviewer — Claude is the primary trader (default)
-ANTHROPIC_API_KEY             # https://console.anthropic.com/  (required for Claude-as-trader)
-
-# Optional: Grok legacy fallback. Used only when ANTHROPIC_API_KEY is unset
-# OR when REVIEWER_PREFER_GROK=true.
-XAI_API_KEY                   # https://console.x.ai/
+# AI reviewer — single Claude reviewer (Phase 1 removed legacy Grok fallback)
+ANTHROPIC_API_KEY             # https://console.anthropic.com/  (required)
 
 # Kalshi — required for trading
 KALSHI_KEY_ID
@@ -163,9 +159,7 @@ ALLOWED_ORIGIN                          # CORS allow-list
 ALERT_WEBHOOK_URL                       # Slack/Discord/PagerDuty
 
 # AI cost / cadence
-GROK_MODEL                              # grok-4-1-fast (default)
-GROK_TIMEOUT_MS                         # 15000 (default)
-GROK_COST_PER_REVIEW_USD                # 0.0035 (default — amortized)
+CLAUDE_HAIKU_MODEL                      # claude-haiku-4-5 (default — Tier 1)
 CLAUDE_SONNET_MODEL                     # claude-sonnet-4-6 (default)
 CLAUDE_OPUS_MODEL                       # claude-opus-4-7 (default)
 CLAUDE_SONNET_TIMEOUT_MS                # 20000 (default)
@@ -224,13 +218,13 @@ PREFER_MAKER_ORDERS                     # true (default)
 | `server/_core/drawdownBreaker.ts` | 3 %/8 % drawdown + cold-streak pause. |
 | `server/_core/dynamicScanner.ts` | 5-base / 8-10-12-conditional analysis budget (capital-tier-scaled). |
 | `server/_core/profitGuardrails.ts` | Single canonical entry-gate (`checkFullEntry`). |
-| `server/_core/grokPersonas.ts` | Tier-1 Grok personas (8 desks, niche-priority ordered). |
+| `server/_core/categoryPersonas.ts` | Single Profit Reviewer persona (Claude-native). |
 | `server/_core/claudeReviewer.ts` | Tier 2 (Sonnet 4.6) + Tier 3 (Opus 4.7) reviewers via Anthropic SDK. Adaptive thinking, prompt caching, structured JSON output. |
 | `server/_core/highStakesDetector.ts` | Classifies signals as low-stakes / high-stakes / catastrophic-bet. |
 | `server/_core/ensembleConsensus.ts` | 3-tier orchestrator. |
 | `server/_core/performanceTracker.ts` | Per-trade outcome ledger + per-category ROI rollups. |
 | `server/_core/calibrationJob.ts` | Weekly Brier-score calibration per reviewer per category. |
-| `server/_core/tradingReviewer.ts` | Grok-only Tier-1 reviewer pipeline. |
+| `server/_core/tradingReviewer.ts` | Tier-1 reviewer pipeline (Claude Haiku, batch-cached). |
 
 ## Dashboard tabs (post-pivot)
 
