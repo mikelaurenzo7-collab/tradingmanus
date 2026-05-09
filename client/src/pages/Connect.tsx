@@ -410,6 +410,19 @@ function PolymarketConnectPanel() {
       setConnectionMessage("API key, secret, and passphrase are all required.");
       return;
     }
+    // Format guard mirrors server-side validatePolymarketCredentials —
+    // any value < 4 chars is definitionally not a valid Polymarket L2
+    // credential, so reject before round-tripping the server.
+    if (
+      trimmedApiKey.length < 4 ||
+      trimmedApiSecret.length < 4 ||
+      trimmedApiPassphrase.length < 4
+    ) {
+      setConnectionMessage(
+        "API key, secret, and passphrase must each be at least 4 characters.",
+      );
+      return;
+    }
     if (wantsLiveTrading) {
       if (!walletKeyLooksValid) {
         setConnectionMessage("Wallet private key should be 64 hex characters (with or without 0x prefix).");
@@ -699,9 +712,9 @@ function PolymarketConnectPanel() {
               onClick={handleConnect}
               disabled={
                 connectMutation.isPending ||
-                !trimmedApiKey ||
-                !trimmedApiSecret ||
-                !trimmedApiPassphrase
+                trimmedApiKey.length < 4 ||
+                trimmedApiSecret.length < 4 ||
+                trimmedApiPassphrase.length < 4
               }
               className="w-full bg-gradient-to-br from-sky-500 to-cyan-500 hover:from-sky-600 hover:to-cyan-600 glow-primary"
               size="lg"
@@ -836,7 +849,133 @@ export default function Connect() {
       {/* Connection panels */}
       <KalshiConnectPanel />
       <PolymarketConnectPanel />
+      <CoinbaseConnectPanel />
     </div>
+  );
+}
+
+function CoinbaseConnectPanel() {
+  const [apiKey, setApiKey] = useState("");
+  const [apiSecret, setApiSecret] = useState("");
+  const [apiPassphrase, setApiPassphrase] = useState("");
+  const [sandboxMode, setSandboxMode] = useState(true);
+  const [message, setMessage] = useState<string | null>(null);
+  const utils = trpc.useUtils();
+  const statusQuery = trpc.coinbase.getCoinbaseAccountStatus.useQuery();
+  const connectMutation = trpc.coinbase.connectCoinbaseAccount.useMutation({
+    onSuccess: (result) => {
+      setMessage(result.success ? result.message ?? "Connected." : result.error ?? "Failed.");
+      void utils.coinbase.getCoinbaseAccountStatus.invalidate();
+      if (result.success) {
+        setApiKey("");
+        setApiSecret("");
+        setApiPassphrase("");
+      }
+    },
+    onError: (err) => setMessage(err.message),
+  });
+  const disconnectMutation = trpc.coinbase.disconnectCoinbaseAccount.useMutation({
+    onSuccess: () => {
+      setMessage("Disconnected.");
+      void utils.coinbase.getCoinbaseAccountStatus.invalidate();
+    },
+  });
+
+  const connected = statusQuery.data?.connected ?? false;
+
+  return (
+    <Card className="mt-6 border-amber-500/30 bg-amber-500/5">
+      <CardContent className="p-6 space-y-4">
+        <div className="flex items-start justify-between">
+          <div>
+            <h3 className="text-base font-semibold">Coinbase</h3>
+            <p className="text-sm text-muted-foreground">
+              Scaffolding only — live trading is disabled
+              (<code>ENABLE_COINBASE_LIVE=false</code>). Connect now to be ready
+              when instruments are decided. Your credentials are encrypted at rest.
+            </p>
+          </div>
+          {connected && (
+            <span className="inline-flex items-center gap-1 rounded-md bg-green-500/20 px-2 py-1 text-xs font-medium text-green-300">
+              Connected (sandbox)
+            </span>
+          )}
+        </div>
+
+        {!connected && (
+          <div className="grid gap-3">
+            <label className="text-xs font-medium text-muted-foreground">
+              API Key
+              <input
+                type="text"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder="organizations/.../apiKeys/..."
+                className="mt-1 block w-full rounded-md border border-white/10 bg-black/20 px-3 py-2 text-sm font-mono"
+              />
+            </label>
+            <label className="text-xs font-medium text-muted-foreground">
+              API Secret
+              <input
+                type="password"
+                value={apiSecret}
+                onChange={(e) => setApiSecret(e.target.value)}
+                className="mt-1 block w-full rounded-md border border-white/10 bg-black/20 px-3 py-2 text-sm font-mono"
+              />
+            </label>
+            <label className="text-xs font-medium text-muted-foreground">
+              API Passphrase (optional — only legacy keys need this)
+              <input
+                type="password"
+                value={apiPassphrase}
+                onChange={(e) => setApiPassphrase(e.target.value)}
+                className="mt-1 block w-full rounded-md border border-white/10 bg-black/20 px-3 py-2 text-sm font-mono"
+              />
+            </label>
+            <label className="flex items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                checked={sandboxMode}
+                onChange={(e) => setSandboxMode(e.target.checked)}
+              />
+              Sandbox mode (recommended until live trading is implemented)
+            </label>
+            <Button
+              onClick={() =>
+                connectMutation.mutate({
+                  apiKey: apiKey.trim(),
+                  apiSecret: apiSecret.trim(),
+                  apiPassphrase: apiPassphrase.trim() || undefined,
+                  sandboxMode,
+                })
+              }
+              disabled={
+                connectMutation.isPending ||
+                apiKey.trim().length < 4 ||
+                apiSecret.trim().length < 4
+              }
+            >
+              {connectMutation.isPending ? "Saving…" : "Connect Coinbase"}
+            </Button>
+          </div>
+        )}
+        {connected && (
+          <Button
+            variant="outline"
+            onClick={() => disconnectMutation.mutate()}
+            disabled={disconnectMutation.isPending}
+          >
+            {disconnectMutation.isPending ? "Disconnecting…" : "Disconnect Coinbase"}
+          </Button>
+        )}
+
+        {message && (
+          <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs">
+            {message}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

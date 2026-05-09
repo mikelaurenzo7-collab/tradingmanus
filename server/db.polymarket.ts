@@ -13,7 +13,7 @@ import {
   type PolymarketOrder,
   type PolymarketPosition,
 } from "../drizzle/schema";
-import { eq, and, desc, inArray } from "drizzle-orm";
+import { eq, and, desc, inArray, gte } from "drizzle-orm";
 import { getDb } from "./db";
 import { assertPositiveIntegerUserId } from "./_core/userScope";
 
@@ -52,6 +52,40 @@ export async function getPolymarketTradeHistory(
     )
     .orderBy(desc(polymarketOrders.createdAt))
     .limit(limit);
+}
+
+/**
+ * Count Polymarket orders placed by this user since UTC-midnight today.
+ * Used by the daily-sports-play runner to honor the per-user
+ * `tradingPreferences.maxDailyOrders` cap (mirrors getTodayKalshiOrderCount
+ * in db.ts so each platform respects the same cap independently).
+ */
+export async function getTodayPolymarketOrderCount(userId: number): Promise<number> {
+  const scopedUserId = assertPositiveIntegerUserId(userId, "getTodayPolymarketOrderCount");
+  const database = await getDb();
+  if (!database) return 0;
+  const now = new Date();
+  const startOfDay = new Date(
+    Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate(),
+      0,
+      0,
+      0,
+      0,
+    ),
+  );
+  const rows = await database
+    .select()
+    .from(polymarketOrders)
+    .where(
+      and(
+        eq(polymarketOrders.userId, scopedUserId),
+        gte(polymarketOrders.createdAt, startOfDay),
+      ),
+    );
+  return rows.length;
 }
 
 // ── Positions ─────────────────────────────────────────────────────────────────
@@ -109,6 +143,9 @@ export async function upsertPolymarketPosition(
     .then((rows: PolymarketPosition[]) => rows[0]);
 
   if (existing) {
+    const closingNow =
+      position.positionStatus === "closed" && existing.positionStatus !== "closed";
+    const closedAt = closingNow ? new Date() : undefined;
     await database
       .update(polymarketPositions)
       .set({
@@ -122,9 +159,41 @@ export async function upsertPolymarketPosition(
         unrealizedPnl: position.unrealizedPnl,
         realizedPnl: position.realizedPnl,
         positionStatus: position.positionStatus,
-        closedAt: position.positionStatus === "closed" ? new Date() : undefined,
+        closedAt,
       })
       .where(eq(polymarketPositions.id, existing.id));
+
+    // Daily-pick scoreboard hook: only fires on a transition to 'closed'
+    // (defensive — drift-close in polymarketPositionSync.ts is the primary
+    // close detector for the data-API path).
+    if (closingNow) {
+      try {
+        const { closeDailyPlayPickByPosition, closeDailyPlayPickByMarketFallback } =
+          await import("./db.daily-play-picks");
+        const exitPrice = Number(position.currentPrice ?? 0);
+        const realizedPnl = Number(position.realizedPnl ?? 0);
+        await closeDailyPlayPickByPosition({
+          platform: "polymarket",
+          linkedPositionId: existing.id,
+          exitPrice: Number.isFinite(exitPrice) ? exitPrice : null,
+          realizedPnl,
+          closedAt: closedAt ?? new Date(),
+        });
+        const fallbackPlayDate = new Date(existing.openedAt).toISOString().slice(0, 10);
+        await closeDailyPlayPickByMarketFallback({
+          userId: scopedUserId,
+          platform: "polymarket",
+          playDate: fallbackPlayDate,
+          marketId: position.marketId,
+          tokenId: position.tokenId,
+          exitPrice: Number.isFinite(exitPrice) ? exitPrice : null,
+          realizedPnl,
+          closedAt: closedAt ?? new Date(),
+        });
+      } catch (err) {
+        console.warn("[upsertPolymarketPosition] dailyPlayPicks hook failed", err);
+      }
+    }
   } else {
     await database.insert(polymarketPositions).values({
       userId: scopedUserId,

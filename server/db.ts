@@ -737,11 +737,12 @@ export async function closeKalshiPosition(
       ? position.quantity * (position.entryPrice - exitPrice)
       : position.quantity * (exitPrice - position.entryPrice);
 
+  const closedAt = new Date();
   await database
     .update(kalshiPositions)
     .set({
       positionStatus: "closed",
-      closedAt: new Date(),
+      closedAt,
       realizedPnl,
     })
     .where(
@@ -750,6 +751,37 @@ export async function closeKalshiPosition(
         eq(kalshiPositions.userId, scopedUserId)
       )
     );
+
+  // Daily-pick scoreboard hook: if this position links to a pending daily
+  // pick (sports / moonshot, kalshi-side), flip the pick to won/lost/
+  // breakeven.  Best-effort — never block position closure.
+  try {
+    const { closeDailyPlayPickByPosition, closeDailyPlayPickByMarketFallback } = await import(
+      "./db.daily-play-picks"
+    );
+    await closeDailyPlayPickByPosition({
+      platform: "kalshi",
+      linkedPositionId: positionId,
+      exitPrice,
+      realizedPnl,
+      closedAt,
+    });
+    // Fallback for picks where linkage hadn't yet completed (the +60s
+    // deferred linkage failed or the position closed within that window).
+    await closeDailyPlayPickByMarketFallback({
+      userId: scopedUserId,
+      platform: "kalshi",
+      playDate: new Date().toISOString().slice(0, 10),
+      marketId: position.marketId,
+      exitPrice,
+      realizedPnl,
+      closedAt,
+    });
+  } catch (err) {
+    // Don't import logger here to avoid a circular import; console-warn is
+    // adequate for a never-block side effect.
+    console.warn("[closeKalshiPosition] dailyPlayPicks hook failed", err);
+  }
 
   // Best-effort online learning + attribution updates.
   // These side-effects are non-critical and must never block position closure.

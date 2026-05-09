@@ -262,9 +262,30 @@ async function closeDriftedPositions(
     }
     if (driftIds.length === 0) return [];
 
+    // Snapshot the rows BEFORE the flip so we have entryPrice + currentPrice
+    // for the daily-pick close hook (drift-close has no true exit fill price,
+    // so we estimate exitPrice = currentPrice and realizedPnl = unrealizedPnl
+    // at last snapshot — flagged in audit so the operator can backfill).
+    const driftRows = await database
+      .select({
+        id: polymarketPositions.id,
+        marketId: polymarketPositions.marketId,
+        tokenId: polymarketPositions.tokenId,
+        currentPrice: polymarketPositions.currentPrice,
+        unrealizedPnl: polymarketPositions.unrealizedPnl,
+      })
+      .from(polymarketPositions)
+      .where(
+        and(
+          eq(polymarketPositions.userId, userId),
+          inArray(polymarketPositions.id, driftIds),
+        ),
+      );
+
+    const closedAt = new Date();
     await database
       .update(polymarketPositions)
-      .set({ positionStatus: "closed", closedAt: new Date() })
+      .set({ positionStatus: "closed", closedAt })
       .where(
         and(
           eq(polymarketPositions.userId, userId),
@@ -286,6 +307,45 @@ async function closeDriftedPositions(
       .catch((auditErr) =>
         logger.warn({ err: auditErr }, "[PolymarketPositionSync] failed to write drift audit"),
       );
+
+    // Daily-pick scoreboard hook (drift-close estimate path).
+    try {
+      const { closeDailyPlayPickByPosition, closeDailyPlayPickByMarketFallback } = await import(
+        "../db.daily-play-picks"
+      );
+      for (const row of driftRows as Array<{
+        id: number;
+        marketId: string;
+        tokenId: string;
+        currentPrice: number;
+        unrealizedPnl: number;
+      }>) {
+        const exitPrice = Number(row.currentPrice ?? 0);
+        const realizedPnl = Number(row.unrealizedPnl ?? 0);
+        await closeDailyPlayPickByPosition({
+          platform: "polymarket",
+          linkedPositionId: row.id,
+          exitPrice: Number.isFinite(exitPrice) ? exitPrice : null,
+          realizedPnl,
+          closedAt,
+        });
+        await closeDailyPlayPickByMarketFallback({
+          userId,
+          platform: "polymarket",
+          // Anchor to today's UTC date — fallback only fires inside the
+          // 30s linkage race window so a recent reservation is what we
+          // want to close, not a stale unrelated pending row.
+          playDate: new Date().toISOString().slice(0, 10),
+          marketId: row.marketId,
+          tokenId: row.tokenId,
+          exitPrice: Number.isFinite(exitPrice) ? exitPrice : null,
+          realizedPnl,
+          closedAt,
+        });
+      }
+    } catch (err) {
+      logger.warn({ err }, "[PolymarketPositionSync] dailyPlayPicks hook failed (drift)");
+    }
 
     return driftIds;
   } catch (err) {

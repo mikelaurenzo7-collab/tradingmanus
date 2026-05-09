@@ -245,7 +245,17 @@ export function detectCrossPlatformArbitrage(
   const opportunities: CrossPlatformArbitrageOpportunity[] = [];
 
   for (const kalshi of kalshiMarkets) {
-    if (!Number.isFinite(kalshi.yesPrice) || kalshi.yesPrice <= 0) continue;
+    // Gate prices to a valid probability interval (0, 1).  Out-of-range
+    // values (cent-scaled "42" instead of "0.42", or a stale "1.0" quote)
+    // would otherwise flow into spread math and surface a bogus
+    // arbitrage opportunity.
+    if (
+      !Number.isFinite(kalshi.yesPrice) ||
+      kalshi.yesPrice <= 0 ||
+      kalshi.yesPrice >= 1
+    ) {
+      continue;
+    }
     if (kalshi.liquidity < minLiquidity) continue;
 
     const match = findBestPolymarketMatch(
@@ -257,7 +267,13 @@ export function detectCrossPlatformArbitrage(
 
     const pm = polymarketMarkets.find((m) => m.marketId === match.marketId);
     if (!pm) continue;
-    if (!Number.isFinite(pm.yesPrice) || pm.yesPrice <= 0) continue;
+    if (
+      !Number.isFinite(pm.yesPrice) ||
+      pm.yesPrice <= 0 ||
+      pm.yesPrice >= 1
+    ) {
+      continue;
+    }
     if (pm.liquidity < minLiquidity) continue;
 
     // The actual cross-platform arb is: buy YES on the cheaper venue +

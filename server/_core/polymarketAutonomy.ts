@@ -616,9 +616,16 @@ export async function runPolymarketAutonomousTrading(
     bankroll
   );
 
+  // estimateSizeForRiskBudget expects the win probability of the *purchased*
+  // token, not the YES probability.  For NO trades the signal's
+  // fairValueEstimate is still the YES probability, so flip it before
+  // sizing — otherwise a contrarian NO on a 93% YES market gets sized as
+  // if NO has ~80% win probability and the live order is wildly oversized.
+  const purchasedTokenProb =
+    best.side === "no" ? 1 - best.fairValueEstimate : best.fairValueEstimate;
   const rawSize = estimateSizeForRiskBudget(
     bankroll,
-    best.fairValueEstimate,
+    purchasedTokenProb,
     best.limitPrice,
     MAX_POLYMARKET_ORDER_USDC,
     0.25

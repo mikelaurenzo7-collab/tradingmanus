@@ -31,6 +31,8 @@ import {
   type MultiTimeframeAnalysis,
 } from "./multiTimeframeAnalysis";
 import type { MarketFeed } from "./kalshiMarketFeed";
+import { lookupAwardsFundamental } from "./kalshiAwardsPrecursor";
+import { classifyTellMarket, lookupLinguisticTellPrior } from "./kalshiLinguisticTells";
 import * as db from "../db";
 import { logger } from "./logger";
 
@@ -44,7 +46,11 @@ export type PolymarketSignalType =
   | "cluster_copy"
   | "wash_volume_warning"
   | "confluence"
-  | "multi_timeframe";
+  | "multi_timeframe"
+  // Corporate code-language tell detector (M&A, CEO departure, layoffs, …)
+  | "linguistic_tell"
+  // Wikipedia recent-edit alarm signal
+  | "wikipedia_edit";
 
 export interface PolymarketSignal {
   marketId: string;
@@ -200,8 +206,27 @@ function applyPolymarketPlatformBehaviorAdjustment(
  * Estimate a naive fair value for a binary market based on its current price
  * and a category-driven prior.  In production this would be replaced by an
  * AI or fundamentals estimate.
+ *
+ * Hooks for the awards precursor model: when the market title matches a
+ * curated awards category AND the operator has populated KNOWN_NOMINEES +
+ * KNOWN_PRECURSORS, the precursor-weighted probability replaces the naive
+ * blend.  Both Kalshi and Polymarket flow through this same lookup so the
+ * model fires on whichever venue has the better edge.
  */
 function estimateFairValue(market: PolymarketMarket): number {
+  // Awards precursor model takes precedence when the operator has staged
+  // current-season precursor data.  Returns a calibrated probability per
+  // nominee directly — no blending needed.
+  const awardsPrior = lookupAwardsFundamental({ title: market.question });
+  if (
+    awardsPrior != null &&
+    Number.isFinite(awardsPrior) &&
+    awardsPrior >= 0 &&
+    awardsPrior <= 1
+  ) {
+    return awardsPrior;
+  }
+
   // Category-specific priors (same philosophy as Kalshi strategy profiles)
   const categoryPriors: Record<string, number> = {
     politics: 0.5,
@@ -262,6 +287,13 @@ export function generatePolymarketSignals(
     userId?: number;
     /** Optional platform adaptation snapshot, usually sourced from learning loop. */
     platformPerformance?: PolymarketPlatformPerformanceSnapshot;
+    /**
+     * Optional per-market news/PR/8-K snippets keyed by marketId.  Used by
+     * the linguistic-tell detector to surface code-language patterns
+     * ("strategic alternatives", "right-sizing", …) against M&A / CEO /
+     * layoff markets.
+     */
+    newsSnippetsByMarket?: Map<string, string[]>;
   } = {},
 ): PolymarketSignal[] {
   const {
@@ -276,6 +308,7 @@ export function generatePolymarketSignals(
     feeds,
     userId,
     platformPerformance,
+    newsSnippetsByMarket,
   } = options;
 
   const signals: PolymarketSignal[] = [];
@@ -349,6 +382,49 @@ export function generatePolymarketSignals(
           limitPrice,
           expectedValue: clamp(ev, -1, 5),
         });
+      }
+    }
+
+    // --- 1b. Linguistic-tell signal (M&A / CEO / layoffs / earnings) ---
+    // Fires when (a) the market title classifies as a tell-market type AND
+    // (b) recent news snippets for that company contain corporate code-language
+    // patterns (e.g. "strategic alternatives", "right-sizing").  The
+    // posterior probability stacks each tell's empirical hit-rate Bayesianly.
+    const tellMarketType = classifyTellMarket(market.question);
+    const newsSnippets = newsSnippetsByMarket?.get(market.marketId);
+    if (tellMarketType && newsSnippets && newsSnippets.length > 0) {
+      const tellResult = lookupLinguisticTellPrior({
+        marketType: tellMarketType,
+        newsSnippets,
+        basePrior: p,
+      });
+      if (tellResult && tellResult.posterior > p + 0.08) {
+        const yesTokenForTell = market.tokens.find((t) => t.outcome.toLowerCase() === "yes");
+        if (yesTokenForTell?.token_id) {
+          const limitPrice = clamp(p, 0.02, 0.98);
+          const confidence = clamp(tellResult.posterior, 0, 1);
+          const ev = (tellResult.posterior - p) / p;
+          signals.push({
+            marketId: market.marketId,
+            conditionId: market.conditionId,
+            question: market.question,
+            signalType: "linguistic_tell",
+            side: "yes",
+            confidence,
+            reasoning:
+              `Linguistic-tell: ${tellResult.matches.length} corporate code-language ` +
+              `pattern(s) detected in recent news. ` +
+              `Bayesian posterior P(${tellMarketType}) = ${(tellResult.posterior * 100).toFixed(1)}% ` +
+              `vs market ${(p * 100).toFixed(1)}%. ` +
+              `Top tell: "${tellResult.matches[0]?.tell.phrase}" ` +
+              `(historical hit-rate ${(tellResult.matches[0]?.tell.hitRate * 100).toFixed(0)}%).`,
+            impliedProbabilityYes: p,
+            fairValueEstimate: tellResult.posterior,
+            tokenId: yesTokenForTell.token_id,
+            limitPrice,
+            expectedValue: clamp(ev, -1, 5),
+          });
+        }
       }
     }
 

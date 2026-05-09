@@ -8,7 +8,6 @@
  * Reference: https://docs.polymarket.com/#authentication
  */
 
-import crypto from "crypto";
 import { CircuitBreaker } from "./circuitBreaker";
 import { fetchWithRetry } from "./fetchWithRetry";
 import { logger } from "./logger";
@@ -26,99 +25,33 @@ export const polymarketBreaker = new CircuitBreaker({
   cooldownMs: 30_000,
 });
 
-const POLYMARKET_CLOB_BASE_URL = "https://clob.polymarket.com";
 
 /**
- * Build the HMAC-SHA-256 signature required by Polymarket CLOB.
- */
-function buildPolymarketSignature(
-  apiSecret: string,
-  timestamp: string,
-  method: string,
-  path: string,
-  body: string = "",
-) {
-  const message = timestamp + method.toUpperCase() + path + body;
-  return crypto.createHmac("sha256", apiSecret).update(message).digest("base64");
-}
-
-function buildPolymarketHeaders(
-  apiKey: string,
-  apiSecret: string,
-  apiPassphrase: string,
-  method: string,
-  path: string,
-  body: string = "",
-) {
-  const timestamp = Math.floor(Date.now() / 1000).toString();
-  const signature = buildPolymarketSignature(apiSecret, timestamp, method, path, body);
-
-  return {
-    Accept: "application/json",
-    "Content-Type": "application/json",
-    "POLY-API-KEY": apiKey,
-    "POLY-SIGNATURE": signature,
-    "POLY-TIMESTAMP": timestamp,
-    "POLY-PASSPHRASE": apiPassphrase,
-  };
-}
-
-/**
- * Validate Polymarket CLOB API credentials by calling the /auth/api-key endpoint.
+ * Validate Polymarket L2 API credentials by format.
+ *
+ * Polymarket has no GET endpoint that accepts L2 (HMAC) auth for key
+ * validation — the /auth/api-key path only accepts POST (returns 405 on GET).
+ * Credentials derived via @polymarket/clob-client are definitionally valid at
+ * derivation time, so a remote round-trip adds latency without benefit.  We
+ * enforce a format floor here; any credential error will surface on the first
+ * live order attempt with a clear exchange rejection message.
  */
 export async function validatePolymarketCredentials(
   apiKey: string,
   apiSecret: string,
   apiPassphrase: string,
 ): Promise<{ valid: boolean; error?: string }> {
-  try {
-    if (
-      !apiKey ||
-      !apiSecret ||
-      !apiPassphrase ||
-      apiKey.trim().length < 4 ||
-      apiSecret.trim().length < 4 ||
-      apiPassphrase.trim().length < 4
-    ) {
-      return { valid: false, error: "Invalid credential format – all three fields are required" };
-    }
-
-    const path = "/auth/api-key";
-    const url = `${POLYMARKET_CLOB_BASE_URL}${path}`;
-    const headers = buildPolymarketHeaders(
-      apiKey.trim(),
-      apiSecret.trim(),
-      apiPassphrase.trim(),
-      "GET",
-      path,
-    );
-
-    const response = await fetchWithRetry(url, { method: "GET", headers }, { label: "Polymarket.validateCredentials", breaker: polymarketBreaker });
-
-    // A 200 means the key is accepted; anything else is an auth failure.
-    if (response.ok) {
-      return { valid: true };
-    }
-
-    const text = await response.text();
-    let message = `HTTP ${response.status}`;
-    try {
-      const payload = JSON.parse(text) as Record<string, unknown>;
-      if (typeof payload.error === "string") message = payload.error;
-      else if (typeof payload.message === "string") message = payload.message;
-    } catch {
-      // ignore parse errors
-    }
-
-    return { valid: false, error: message };
-  } catch (error) {
-    logger.error({ err: error }, "[Polymarket Auth] Validation failed");
-    return {
-      valid: false,
-      error:
-        error instanceof Error ? error.message : "Failed to validate Polymarket credentials",
-    };
+  if (
+    !apiKey ||
+    !apiSecret ||
+    !apiPassphrase ||
+    apiKey.trim().length < 4 ||
+    apiSecret.trim().length < 4 ||
+    apiPassphrase.trim().length < 4
+  ) {
+    return { valid: false, error: "Invalid credential format – all three fields are required" };
   }
+  return { valid: true };
 }
 
 export interface PolymarketMarket {
@@ -278,6 +211,22 @@ export async function placePolymarketOrder(
     return {
       success: false,
       error: "Polymarket wallet private key + funder address required for order signing",
+    };
+  }
+  // Gate live placement on POLYMARKET_OWNER_ADDRESS being set.  Without it,
+  // syncPolymarketPositions() silently no-ops, so newly opened live positions
+  // are invisible to the exit monitor (no auto-close, no trailing stop, no
+  // drift-close detection).  Failing closed here is safer than placing an
+  // order we can't reconcile.
+  if (!ENV.polymarketOwnerAddress) {
+    return {
+      success: false,
+      error:
+        "POLYMARKET_OWNER_ADDRESS is not set — live placement blocked.  " +
+        "Without the EOA proxy address, position-sync cannot reconcile new " +
+        "positions and the exit monitor would never see them.  Set the " +
+        "env var to your Polymarket wallet address (the 0x... shown on " +
+        "your account page) and redeploy.",
     };
   }
   try {

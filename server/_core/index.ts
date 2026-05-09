@@ -29,6 +29,7 @@ import { detectAllCombinatorialArbitrage } from "./kalshiCombinatorial";
 import { runCalibrationJob } from "./calibrationJob";
 import { runDailySportsPlay } from "./dailySportsPlay";
 import { runDailyMoonshotPlay } from "./dailyMoonshotPlay";
+import { runPolymarketDailySportsPlay } from "./polymarketDailySportsPlay";
 import { ENV } from "./env";
 
 function isPortAvailable(port: number): Promise<boolean> {
@@ -121,6 +122,13 @@ const CROSS_ARB_INTERVAL_MS = envIntervalMs(
 const CALIBRATION_INTERVAL_MS = envIntervalMs(
   "CALIBRATION_INTERVAL_MS",
   7 * 24 * 60 * 60 * 1000,
+);
+// Wikipedia recent-edits watcher — free real-time signal on watched politicians,
+// executives, and companies.  5 min default keeps within the 500-req/hour
+// Wikipedia rate limit even with a ~50-page watchlist.
+const WIKIPEDIA_WATCH_INTERVAL_MS = envIntervalMs(
+  "WIKIPEDIA_WATCH_INTERVAL_MS",
+  5 * 60 * 1000,
 );
 
 async function runAutonomousScheduler() {
@@ -524,6 +532,7 @@ async function runCombinatorialArbScanner() {
         "[CombinatorialArb] %d opportunity(ies) detected",
         opportunities.length,
       );
+
       // Audit-log so the dashboard's Strategies tab + manual review can pick
       // them up. Auto-execution is intentionally NOT wired here — that
       // requires per-user creds + a Kelly-clamped size + the same
@@ -552,6 +561,74 @@ async function runCombinatorialArbScanner() {
     logger.warn({ err }, "[CombinatorialArb] scan failed");
   } finally {
     combinatorialArbScanInFlight = false;
+  }
+}
+
+// ── Wikipedia recent-edits watcher ─────────────────────────────────────────
+// Polls Wikipedia for significant edits to a curated watchlist (politicians,
+// executives, public figures, companies).  When a significant edit lands —
+// large size delta or alarm-keyword in the comment — we audit-log it so the
+// dashboard surfaces the alert and the operator (or future tighter
+// integration) can act before mainstream news catches up.  Detection-only:
+// no auto-execution.
+let wikipediaWatcherInFlight = false;
+async function runWikipediaWatcher() {
+  if (wikipediaWatcherInFlight) return;
+  wikipediaWatcherInFlight = true;
+  const startedAt = Date.now();
+  try {
+    const { pollWikipediaWatchlist, matchSignalsToMarkets } = await import(
+      "./wikipediaEditWatcher"
+    );
+    const signals = await pollWikipediaWatchlist();
+    if (signals.length === 0) return;
+
+    const rawMarkets = await fetchKalshiMarkets({ status: "open" });
+    const matchedMarkets = matchSignalsToMarkets(
+      signals,
+      rawMarkets.map((m) => ({ id: m.id, title: m.title, category: m.category })),
+    );
+
+    logger.info(
+      {
+        signalCount: signals.length,
+        matchCount: matchedMarkets.length,
+        durationMs: Date.now() - startedAt,
+      },
+      "[WikipediaWatcher] %d signal(s), %d market match(es)",
+      signals.length,
+      matchedMarkets.length,
+    );
+
+    try {
+      const { logAuditEvent } = await import("../db");
+      await logAuditEvent(
+        "wikipedia_edit_scan",
+        JSON.stringify({
+          signalCount: signals.length,
+          matchCount: matchedMarkets.length,
+          signals: signals.slice(0, 10).map((s) => ({
+            page: s.pageTitle,
+            confidence: s.confidence,
+            keywords: s.revision.matchedKeywords,
+            sizeDelta: s.revision.sizeDelta,
+            comment: s.revision.comment.slice(0, 200),
+          })),
+          matches: matchedMarkets.slice(0, 10).map((m) => ({
+            marketId: m.market.id,
+            page: m.signal.pageTitle,
+            confidence: m.signal.confidence,
+          })),
+        }),
+        "wikipedia_watcher",
+      );
+    } catch (err) {
+      logger.warn({ err }, "[WikipediaWatcher] audit log failed");
+    }
+  } catch (err) {
+    logger.warn({ err }, "[WikipediaWatcher] poll failed");
+  } finally {
+    wikipediaWatcherInFlight = false;
   }
 }
 
@@ -661,6 +738,63 @@ async function maybeRunDailySportsPlay() {
     }
   } catch (err) {
     logger.warn({ err }, "[DailySportsPlay] sweep failed");
+  }
+}
+
+// ── Polymarket Daily Sports Play cron ─────────────────────────────────────
+// Mirrors maybeRunDailySportsPlay (Kalshi) but fires the Polymarket version.
+// Same per-user fence (in-process Set + audit-log dedup) so a container
+// restart within the configured hour doesn't double-fire.
+const polymarketDailySportsPlayCompletedKeys = new Set<string>();
+async function maybeRunPolymarketDailySportsPlay() {
+  if (!ENV.enablePolymarketDailySportsPlay) return;
+  const now = new Date();
+  const utcHour = now.getUTCHours();
+  if (utcHour !== ENV.polymarketDailySportsPlayHourUtc) return;
+  const utcDay = now.toISOString().slice(0, 10);
+
+  try {
+    const eligibleUsers = await getUsersEligibleForAutomaticScheduledTrading();
+    for (const user of eligibleUsers as Array<{ id: number }>) {
+      const key = `${user.id}:${utcDay}`;
+      if (polymarketDailySportsPlayCompletedKeys.has(key)) continue;
+      const alreadyRan = await dailyPlayAlreadyRanToday(user.id, utcDay, [
+        "polymarket_daily_sports_play_executed",
+        "polymarket_daily_sports_play_attempt",
+        "polymarket_daily_sports_play_blocked",
+      ]);
+      if (alreadyRan) {
+        polymarketDailySportsPlayCompletedKeys.add(key);
+        continue;
+      }
+      try {
+        const result = await runPolymarketDailySportsPlay(user.id);
+        polymarketDailySportsPlayCompletedKeys.add(key);
+        logger.info(
+          {
+            userId: user.id,
+            status: result.status,
+            reason: result.reason,
+            marketId: result.marketId,
+            tokenId: result.tokenId,
+            side: result.side,
+            sizeUsdc: result.sizeUsdc,
+            confidence: result.confidence,
+          },
+          "[PolymarketDailySportsPlay] result for user %d: %s",
+          user.id,
+          result.status,
+        );
+      } catch (err) {
+        logger.warn(
+          { err, userId: user.id },
+          "[PolymarketDailySportsPlay] run failed for user %d",
+          user.id,
+        );
+      }
+    }
+  } catch (err) {
+    logger.warn({ err }, "[PolymarketDailySportsPlay] sweep failed");
   }
 }
 
@@ -783,11 +917,15 @@ startServer()
       // Combinatorial-arb scanner — risk-free math, no AI cost. Detection-only
       // for now (auto-execution requires per-user creds + size cap).
       setInterval(runCombinatorialArbScanner, COMBINATORIAL_ARB_INTERVAL_MS);
+      // Wikipedia recent-edits watcher — free real-time signal on watched
+      // figures and companies.  Detection-only (audit-log).
+      setInterval(runWikipediaWatcher, WIKIPEDIA_WATCH_INTERVAL_MS);
       // Weekly Brier-score calibration cron.
       setInterval(runWeeklyCalibration, CALIBRATION_INTERVAL_MS);
       // Daily Sports Play (playground mode) — checks every 5 minutes
       // whether to fire; the function itself is idempotent within a UTC day.
       setInterval(maybeRunDailySportsPlay, 5 * 60 * 1000);
+      setInterval(maybeRunPolymarketDailySportsPlay, 5 * 60 * 1000);
       setInterval(maybeRunDailyMoonshotPlay, 5 * 60 * 1000);
 
       const auditRetentionDays = Number(process.env.AUDIT_LOG_RETENTION_DAYS ?? 90);

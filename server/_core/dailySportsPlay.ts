@@ -45,6 +45,10 @@ import {
   getTodayRealizedLoss,
   getKalshiTradeHistory,
 } from "../db";
+import {
+  insertDailyPlayPick,
+  linkPositionToPick,
+} from "../db.daily-play-picks";
 
 export interface DailySportsPlayResult {
   status:
@@ -72,6 +76,10 @@ export interface DailySportsPlayResult {
 export async function runDailySportsPlay(
   userId: number,
 ): Promise<DailySportsPlayResult> {
+  // Anchor playDate to run-start so a long AI-review pass that crosses
+  // UTC midnight doesn't write the pick under tomorrow's date and drift
+  // off the (userId, platform, playType, playDate) idempotency key.
+  const runPlayDate = new Date().toISOString().slice(0, 10);
   if (!ENV.enableDailySportsPlay) {
     return {
       status: "disabled",
@@ -569,6 +577,60 @@ export async function runDailySportsPlay(
     }),
     `user:${userId}`,
   ).catch(() => {});
+
+  // Persist the pick lifecycle row.  Best-effort: the insert is idempotent
+  // (ON CONFLICT DO NOTHING) and a DB hiccup must NEVER block a successful
+  // order placement.  Linkage to the position row happens lazily via
+  // linkPositionToPick once the order-sync surfaces the open position.
+  const playDate = runPlayDate;
+  try {
+    const pick = await insertDailyPlayPick({
+      userId,
+      platform: "kalshi",
+      playType: "sports",
+      playDate,
+      marketId: top.marketId,
+      side: top.side,
+      stakeUsd: trueNotionalUsd,
+      entryPrice: top.marketPrice,
+      quantity: finalCount,
+      confidence: top.confidence,
+      expectedValue: top.expectedValue,
+      reasoning:
+        ensembleResult.verdicts.find(
+          (v) =>
+            v.marketId === top.marketId &&
+            v.side === top.side &&
+            v.signalType === top.signalType,
+        )?.ensemble.reasoning ?? null,
+    });
+    // Schedule a deferred linkage attempt at +60s — by then position-sync
+    // should have surfaced the open position row.
+    if (pick) {
+      setTimeout(async () => {
+        try {
+          const positions = await getOpenKalshiPositions(userId);
+          const match = (positions as Array<{ id: number; marketId: string }>).find(
+            (p) => p.marketId === top.marketId,
+          );
+          if (match) {
+            await linkPositionToPick({
+              userId,
+              platform: "kalshi",
+              playType: "sports",
+              marketId: top.marketId,
+              playDate,
+              linkedPositionId: match.id,
+            });
+          }
+        } catch (err) {
+          logger.debug({ err, userId, marketId: top.marketId }, "[DailySportsPlay] deferred linkage failed");
+        }
+      }, 60_000).unref?.();
+    }
+  } catch (err) {
+    logger.warn({ err, userId, marketId: top.marketId }, "[DailySportsPlay] dailyPlayPicks insert failed");
+  }
 
   logger.info(
     {

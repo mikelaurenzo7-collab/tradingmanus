@@ -66,7 +66,7 @@ export function getFastActionItems() {
       body: "Check risk budgets, posture warnings, and kill-switch readiness before testing live execution.",
     },
     {
-      href: "/analytics",
+      href: "/signals",
       title: "Scan liquidity",
       body: "Inspect spread proxies, depth imbalance, and pressure watchlists before acting on any signal.",
     },

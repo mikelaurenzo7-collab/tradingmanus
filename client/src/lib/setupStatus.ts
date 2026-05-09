@@ -85,11 +85,11 @@ export function deriveSetupStatus(input: DeriveInput): SetupStatus {
       description:
         "Deposit USD into Kalshi so the bot has capital to trade.  No funds = no orders.",
       complete: funded,
-      href: "/funding",
+      href: "/connect",
       pendingHint:
         accountConnected
           ? "Equity is $0.  Deposit USD via Kalshi to enable trading."
-          : "Connect first; funding shows the live balance once linked.",
+          : "Connect first; the connect page shows the live balance once linked.",
     },
     {
       id: "configure",

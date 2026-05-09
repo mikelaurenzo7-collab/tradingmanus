@@ -309,9 +309,15 @@ export function detectYesNoMispricings(
     if (yesPrice <= 0 || noPrice <= 0) continue;
 
     const priceSum = yesPrice + noPrice;
-    // If priceSum < 1, buying both guarantees a $1 payout for < $1 cost
-    if (priceSum < 1 - minProfitPct) {
-      const guaranteedProfitPct = (1 - priceSum) / priceSum;
+    // If priceSum < 1, buying both guarantees a $1 payout for < $1 cost.
+    // Compute guaranteedProfitPct as ROI on capital (matches the metric we
+    // return) and gate the candidate on that — previously the predicate
+    // used discount-to-par (`priceSum < 1 - minProfitPct`) while the
+    // returned metric was ROI, producing inconsistent thresholds at the
+    // boundary.  Tuning `minProfitPct` now means the same thing in both
+    // the filter and the consumer.
+    const guaranteedProfitPct = (1 - priceSum) / priceSum;
+    if (guaranteedProfitPct >= minProfitPct) {
       results.push({
         marketId: market.marketId,
         question: market.question,

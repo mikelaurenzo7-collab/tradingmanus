@@ -71,19 +71,19 @@ describe("extractFeatures", () => {
     expect(features.hoursToResolution).toBe(0.5);
   });
 
-  it("encodes signalType=value_play as 0/7", () => {
+  it("encodes signalType=value_play as 0/9", () => {
     const f = extractFeatures(makeSignal({ signalType: "value_play" }));
-    expect(f.signalTypeEncoded).toBeCloseTo(0 / 7, 10);
+    expect(f.signalTypeEncoded).toBeCloseTo(0 / 9, 10);
   });
 
-  it("encodes signalType=momentum as 1/7", () => {
+  it("encodes signalType=momentum as 1/9", () => {
     const f = extractFeatures(makeSignal({ signalType: "momentum" }));
-    expect(f.signalTypeEncoded).toBeCloseTo(1 / 7, 10);
+    expect(f.signalTypeEncoded).toBeCloseTo(1 / 9, 10);
   });
 
-  it("encodes signalType=confluence as 7/7 = 1", () => {
-    const f = extractFeatures(makeSignal({ signalType: "confluence" }));
-    expect(f.signalTypeEncoded).toBeCloseTo(7 / 7, 10);
+  it("encodes signalType=wikipedia_edit as 9/9 = 1", () => {
+    const f = extractFeatures(makeSignal({ signalType: "wikipedia_edit" }));
+    expect(f.signalTypeEncoded).toBeCloseTo(9 / 9, 10);
   });
 
   it("marketPriceExtremity = |price - 0.5| * 2", () => {

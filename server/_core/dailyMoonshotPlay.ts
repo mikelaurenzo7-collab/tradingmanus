@@ -63,6 +63,10 @@ import {
   getTodayRealizedLoss,
   getKalshiTradeHistory,
 } from "../db";
+import {
+  insertDailyPlayPick,
+  linkPositionToPick,
+} from "../db.daily-play-picks";
 
 export interface DailyMoonshotPlayResult {
   status:
@@ -88,6 +92,18 @@ export interface DailyMoonshotPlayResult {
 export async function runDailyMoonshotPlay(
   userId: number,
 ): Promise<DailyMoonshotPlayResult> {
+  // Anchor playDate to run-start so a long AI-review pass that crosses
+  // UTC midnight doesn't write the pick under tomorrow's date and drift
+  // off the (userId, platform, playType, playDate) idempotency key.
+  const runStartedAt = new Date();
+  const runPlayDate = runStartedAt.toISOString().slice(0, 10);
+  const auditActor = `user:${userId}`;
+  const auditSkip = (reason: string) =>
+    logAuditEvent(
+      "kalshi_daily_moonshot_play_skipped",
+      JSON.stringify({ userId, runPlayDate, reason }),
+      auditActor,
+    ).catch(() => {});
   if (!ENV.enableDailyMoonshot) {
     return {
       status: "disabled",
@@ -99,18 +115,21 @@ export async function runDailyMoonshotPlay(
   // autonomy path's shouldSkipScheduledRun gates).
   const prefs = await getTradingPreferences(userId).catch(() => null);
   if (!prefs || !prefs.liveTradingEnabled) {
+    await auditSkip("liveTradingEnabled=0 — operator has disarmed live trading");
     return {
       status: "disabled",
       reason: "liveTradingEnabled=0 — operator has disarmed live trading",
     };
   }
   if (prefs.autonomyMode === "manual") {
+    await auditSkip("autonomyMode=manual — operator opt-out of automated trading");
     return {
       status: "disabled",
       reason: "autonomyMode=manual — operator opt-out of automated trading",
     };
   }
   if (prefs.executionCadence === "manual_only") {
+    await auditSkip("executionCadence=manual_only — operator opt-out of cron-driven trades");
     return {
       status: "disabled",
       reason: "executionCadence=manual_only — operator opt-out of cron-driven trades",
@@ -125,6 +144,7 @@ export async function runDailyMoonshotPlay(
     !creds.apiKey ||
     !creds.privateKey
   ) {
+    await auditSkip("Kalshi credentials missing or stale; reconnect required");
     return {
       status: "credentials_missing",
       reason: "Kalshi credentials missing or stale; reconnect required",
@@ -140,6 +160,7 @@ export async function runDailyMoonshotPlay(
     !Number.isFinite(equityResult.equity) ||
     equityResult.equity <= 0
   ) {
+    await auditSkip(`Live equity refresh failed: ${equityResult.error ?? "non-positive balance"}`);
     return {
       status: "balance_unknown",
       reason: `Live equity refresh failed: ${equityResult.error ?? "non-positive balance"}`,
@@ -614,6 +635,48 @@ export async function runDailyMoonshotPlay(
     }),
     `user:${userId}`,
   ).catch(() => {});
+
+  // Persist the moonshot lifecycle row (best-effort).
+  const playDate = runPlayDate;
+  try {
+    const pick = await insertDailyPlayPick({
+      userId,
+      platform: "kalshi",
+      playType: "moonshot",
+      playDate,
+      marketId: top.marketId,
+      side: top.side,
+      stakeUsd: trueNotionalUsd,
+      entryPrice: top.marketPrice,
+      quantity: finalCount,
+      confidence: top.confidence,
+      expectedValue: top.expectedValue,
+    });
+    if (pick) {
+      setTimeout(async () => {
+        try {
+          const positions = await getOpenKalshiPositions(userId);
+          const match = (positions as Array<{ id: number; marketId: string }>).find(
+            (p) => p.marketId === top.marketId,
+          );
+          if (match) {
+            await linkPositionToPick({
+              userId,
+              platform: "kalshi",
+              playType: "moonshot",
+              marketId: top.marketId,
+              playDate,
+              linkedPositionId: match.id,
+            });
+          }
+        } catch (err) {
+          logger.debug({ err, userId, marketId: top.marketId }, "[DailyMoonshotPlay] deferred linkage failed");
+        }
+      }, 60_000).unref?.();
+    }
+  } catch (err) {
+    logger.warn({ err, userId, marketId: top.marketId }, "[DailyMoonshotPlay] dailyPlayPicks insert failed");
+  }
 
   logger.info(
     {

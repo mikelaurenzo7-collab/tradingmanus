@@ -20,11 +20,25 @@ import {
 import { analyzeMicrostructure, applyMicrostructureToSignal, type MicrostructureResult } from "./marketMicrostructure";
 import { initializeBayesianProbability } from "./bayesianUpdater";
 import { extractFeatures, predictEnsemble, blendProbabilities, type EnsembleModel } from "./mlSignalEnsemble";
+import { lookupAwardsFundamental } from "./kalshiAwardsPrecursor";
+import { classifyTellMarket, lookupLinguisticTellPrior } from "./kalshiLinguisticTells";
 import * as db from "../db";
 import { assertPositiveIntegerUserId } from "./userScope";
 import { logger } from "./logger";
 
-export type SignalType = "value_play" | "momentum" | "contrarian" | "arbitrage" | "sentiment" | "confluence" | "multi_timeframe" | "order_flow";
+export type SignalType =
+  | "value_play"
+  | "momentum"
+  | "contrarian"
+  | "arbitrage"
+  | "sentiment"
+  | "confluence"
+  | "multi_timeframe"
+  | "order_flow"
+  // Corporate code-language tell detector (M&A, CEO departure, layoffs, …)
+  | "linguistic_tell"
+  // Wikipedia recent-edit alarm signal
+  | "wikipedia_edit";
 
 export interface KalshiSignal {
   marketId: string;
@@ -120,6 +134,13 @@ export interface MarketSentimentContext {
   newsSentiment?: number;
   socialSentiment?: number;
   marketSentiment?: number;
+  /**
+   * Recent news/PR/8-K snippets for the company or topic referenced by the
+   * market.  Consumed by the linguistic-tell detector to surface code-language
+   * patterns ("strategic alternatives", "right-sizing", …) that statistically
+   * predict M&A / CEO-departure / layoff events.
+   */
+  newsSnippets?: string[];
 }
 
 function clampProbability(value: number): number {
@@ -342,6 +363,15 @@ export function resolveFundamentalPrior(market: KalshiMarket, explicit?: number)
   if (explicit != null && Number.isFinite(explicit) && explicit > 0 && explicit < 1) {
     return { value: explicit, source: "explicit" };
   }
+  // Awards precursor model: when the market title matches a curated awards
+  // category AND the operator has populated KNOWN_NOMINEES + KNOWN_PRECURSORS,
+  // use the precursor-weighted probability as a per-nominee fundamental.
+  // Treated as "explicit" downstream since it's a calibrated model output,
+  // not a generic category prior.
+  const awardsPrior = lookupAwardsFundamental({ title: market.title });
+  if (awardsPrior != null && Number.isFinite(awardsPrior) && awardsPrior > 0 && awardsPrior < 1) {
+    return { value: awardsPrior, source: "explicit" };
+  }
   const profile = resolveStrategyProfile(market);
   const prior = CATEGORY_FUNDAMENTAL_PRIORS[profile];
   if (prior !== 0.5) {
@@ -561,6 +591,53 @@ export async function generateSignalsForMarket(
           marketCategory: category,
         },
       });
+    }
+  }
+
+  // Linguistic-tell signal — fires when (a) the market title classifies as a
+  // tell-market type (M&A / CEO change / layoffs / earnings miss / divestment)
+  // AND (b) recent news snippets contain corporate code-language patterns
+  // ("strategic alternatives", "right-sizing", …).  The posterior probability
+  // stacks each tell's empirical hit-rate Bayesianly.  Snippets are sourced
+  // from the autonomy loop's news context (sentimentContext.newsSnippets).
+  const tellMarketType = classifyTellMarket(market.title);
+  if (tellMarketType && sentimentContext?.newsSnippets?.length) {
+    const tellResult = lookupLinguisticTellPrior({
+      marketType: tellMarketType,
+      newsSnippets: sentimentContext.newsSnippets,
+      basePrior: market.impliedProbability,
+    });
+    if (tellResult && tellResult.posterior > market.impliedProbability + 0.08) {
+      const ev = calculateExpectedValue(
+        "yes",
+        market.yesPrice,
+        1,
+        1,
+        tellResult.posterior,
+      );
+      if (Number.isFinite(ev)) {
+        signals.push({
+          marketId: market.id,
+          signalType: "linguistic_tell",
+          side: "yes",
+          confidence: Math.max(0.1, Math.min(0.95, tellResult.posterior)),
+          reasoning:
+            `Linguistic-tell: ${tellResult.matches.length} corporate code-language ` +
+            `pattern(s) detected in recent news. ` +
+            `Bayesian posterior P(${tellMarketType}) = ${(tellResult.posterior * 100).toFixed(1)}% ` +
+            `vs market ${(market.impliedProbability * 100).toFixed(1)}%. ` +
+            `Top tell: "${tellResult.matches[0]?.tell.phrase}" ` +
+            `(historical hit-rate ${(tellResult.matches[0]?.tell.hitRate * 100).toFixed(0)}%).`,
+          impliedProbability: market.impliedProbability,
+          marketPrice: market.yesPrice,
+          expectedValue: ev,
+          metadata: {
+            fundamentalProbability: tellResult.posterior,
+            fundamentalSource: "explicit",
+            marketCategory: resolveStrategyProfile(market),
+          },
+        });
+      }
     }
   }
 
@@ -1066,10 +1143,13 @@ export function calculateSignalPerformance(
 ): Map<SignalType, SignalPerformance> {
   const performance = new Map<SignalType, SignalPerformance>();
 
-  // Initialize performance for each signal type
-  const signalTypes: SignalType[] = ["value_play", "momentum", "contrarian", "arbitrage", "sentiment"];
-  for (const type of signalTypes) {
-    performance.set(type, {
+  // Lazy-initialise per signal type so newly added SignalType variants
+  // (linguistic_tell, wikipedia_edit, …) don't crash with a non-null
+  // assertion miss on `performance.get(...)!`.
+  const getOrCreatePerformance = (type: SignalType): SignalPerformance => {
+    const existing = performance.get(type);
+    if (existing) return existing;
+    const fresh: SignalPerformance = {
       signalType: type,
       totalSignals: 0,
       winningSignals: 0,
@@ -1078,12 +1158,14 @@ export function calculateSignalPerformance(
       avgConfidence: 0,
       avgExpectedValue: 0,
       realizedPnL: 0,
-    });
-  }
+    };
+    performance.set(type, fresh);
+    return fresh;
+  };
 
   // Aggregate performance
   for (const signal of signals) {
-    const perf = performance.get(signal.signalType)!;
+    const perf = getOrCreatePerformance(signal.signalType);
     perf.totalSignals++;
     perf.avgConfidence += signal.confidence;
     perf.avgExpectedValue += signal.expectedValue;

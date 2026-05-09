@@ -832,5 +832,42 @@ describe("Kalshi Signal Generation", () => {
       expect(momentumPerf.winRate).toBe(1.0);
       expect(momentumPerf.realizedPnL).toBe(8);
     });
+
+    it("does not crash for newly added SignalType values not in the legacy seed list", () => {
+      // Regression for the previous `performance.get(signal.signalType)!`
+      // crash when the map was only pre-seeded with 5 of 10 SignalTypes.
+      const signals: KalshiSignal[] = [
+        {
+          marketId: "m-tell",
+          signalType: "linguistic_tell",
+          side: "yes",
+          confidence: 0.7,
+          reasoning: "tell",
+          impliedProbability: 0.2,
+          marketPrice: 0.2,
+          expectedValue: 0.4,
+        },
+        {
+          marketId: "m-wiki",
+          signalType: "wikipedia_edit",
+          side: "yes",
+          confidence: 0.6,
+          reasoning: "wikipedia",
+          impliedProbability: 0.3,
+          marketPrice: 0.3,
+          expectedValue: 0.2,
+        },
+      ];
+      const outcomes = new Map([
+        ["m-tell", { won: true, pnl: 12 }],
+        ["m-wiki", { won: false, pnl: -3 }],
+      ]);
+      expect(() => calculateSignalPerformance(signals, outcomes)).not.toThrow();
+      const perf = calculateSignalPerformance(signals, outcomes);
+      expect(perf.get("linguistic_tell")?.totalSignals).toBe(1);
+      expect(perf.get("linguistic_tell")?.winningSignals).toBe(1);
+      expect(perf.get("wikipedia_edit")?.totalSignals).toBe(1);
+      expect(perf.get("wikipedia_edit")?.losingSignals).toBe(1);
+    });
   });
 });

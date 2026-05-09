@@ -97,7 +97,7 @@ export function CommandPalette() {
           </CommandItem>
           <CommandItem
             value="Fund deposit balance"
-            onSelect={() => handleNavigate("/funding")}
+            onSelect={() => handleNavigate("/connect")}
           >
             <Wallet className="mr-2 h-4 w-4 opacity-70" />
             Fund account

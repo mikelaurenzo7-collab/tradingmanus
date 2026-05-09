@@ -18,6 +18,7 @@ import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { StatCard } from "@/components/widgets/StatCard";
+import { DailyPlayScoreboard } from "@/components/widgets/DailyPlayScoreboard";
 import { PerformanceChart } from "@/components/charts/PerformanceChart";
 import { StartTradingDialog } from "@/components/StartTradingDialog";
 import { LiveHeartbeat } from "@/components/LiveHeartbeat";
@@ -367,6 +368,8 @@ export default function Dashboard() {
             />
           </CardContent>
         </Card>
+
+        <DailyPlayScoreboard compact className="mb-6" />
 
         <AutonomyCommandPanel
           welcomeName={user?.name ?? null}

@@ -346,6 +346,34 @@ export const ENV = {
     { min: 0, max: 1 },
   ),
 
+  // ── Polymarket Daily Sports Play (mirrors Kalshi version, ON by default) ─
+  // Once per UTC day at the configured hour, fires the top-EV reviewed
+  // sports signal on Polymarket sized at 2.5% of bankroll.  Reuses the
+  // operator's `tradingPreferences.{liveTradingEnabled, autonomyMode,
+  // executionCadence}` gates — same kill-switch arms BOTH platforms.
+  enablePolymarketDailySportsPlay: normalizeBoolean(
+    process.env.ENABLE_POLYMARKET_DAILY_SPORTS_PLAY,
+    true,
+  ),
+  polymarketDailySportsPlayHourUtc: (() => {
+    const raw = (process.env.POLYMARKET_DAILY_SPORTS_PLAY_HOUR_UTC ?? "").trim();
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 23) return 14;
+    return parsed;
+  })(),
+  polymarketDailySportsPlayPctOfCapital: normalizeFloat(
+    process.env.POLYMARKET_DAILY_SPORTS_PLAY_PCT_OF_CAPITAL,
+    0.025,
+    { min: 0.005, max: 0.1 },
+  ),
+
+  // ── Coinbase scaffolding (Phase 10 — architectural only, NOT yet wired) ──
+  // Live placement is gated behind `enableCoinbaseLive` even when creds
+  // are present.  Sandbox mode routes orders to Coinbase's testnet so
+  // the operator can validate the integration without real funds.
+  enableCoinbaseLive: normalizeBoolean(process.env.ENABLE_COINBASE_LIVE, false),
+  coinbaseSandboxMode: normalizeBoolean(process.env.COINBASE_SANDBOX_MODE, true),
+
   // ── Dynamic scanner (5 base / 7-8 conditional) ───────────────────────────
   scannerBaseAnalysesPerDay: normalizePositiveInt(
     process.env.SCANNER_BASE_ANALYSES_PER_DAY,
