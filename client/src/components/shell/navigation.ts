@@ -2,15 +2,10 @@ import {
   Activity,
   BarChart3,
   BookOpen,
-  Bot,
-  Brain,
-  Briefcase,
   Compass,
   Cpu,
   LayoutDashboard,
   LineChart,
-  MessageSquare,
-  PieChart,
   Plug,
   Shield,
   Zap,
@@ -31,31 +26,37 @@ export type NavSection = {
 };
 
 /**
- * Action-oriented navigation: section labels are verbs (START / TRADE /
- * ANALYZE / CONFIGURE), so users see *what they can do* rather than
- * *where things are filed*.
+ * Single-owner navigation: trimmed to the pages that actually move the needle
+ * day-to-day.  Every removed item still resolves as a deep link (the routes
+ * are still wired in App.tsx) — only the sidebar surface shrinks.
  *
- * Consolidation pass:
- *   - Positions + Trades → single "Activity" page (tabs: Open / History).
- *   - Audit Log moved to a topbar-accessible drawer, not a sidebar item.
- *   - Funding folded into Dashboard cards.
- *   - Trading Readiness folded into Setup as step 4.
- *   - All removed routes still resolve as deep links — only the sidebar
- *     surface shrinks, no functionality is lost.
+ * Removed from sidebar (still routable):
+ *   - Chat (talk to desk AI)         · low utility for sole owner
+ *   - Strategies (user-defined)      · folded conceptually into Autonomy
+ *   - Sentiment (multi-source)       · Claude already factors this in review
+ *   - Markets / Analytics            · Claude already factors microstructure
+ *   - Portfolio (Kelly / MV)         · Kelly is automatic in autonomy
+ *
+ * Kept:
+ *   - Setup, Dashboard               · onboarding + home
+ *   - Signals, Activity              · daily trade surface
+ *   - Performance, Backtesting       · "is it making money?" + tuning
+ *   - Autonomy, Risk Controls,
+ *     Training                       · the dials you'll touch most
+ *   - Connect                        · Kalshi + Polymarket creds
  */
 export const navSections: NavSection[] = [
   {
     label: "Start",
     items: [
-      { icon: Compass, label: "Setup", path: "/setup", hint: "Get to live trading in 4 steps" },
-      { icon: LayoutDashboard, label: "Dashboard", path: "/dashboard", hint: "Home + key metrics" },
-      { icon: MessageSquare, label: "Chat", path: "/chat", hint: "Talk to the desk AI" },
+      { icon: Compass, label: "Setup", path: "/setup", hint: "Connect Kalshi + Polymarket, fund, arm autonomy" },
+      { icon: LayoutDashboard, label: "Dashboard", path: "/dashboard", hint: "Home + key metrics across both platforms" },
     ],
   },
   {
     label: "Trade",
     items: [
-      { icon: Zap, label: "Signals", path: "/signals", hint: "Latest reviewed signals" },
+      { icon: Zap, label: "Signals", path: "/signals", hint: "Latest reviewed signals (Kalshi + Polymarket)" },
       { icon: Activity, label: "Activity", path: "/activity", hint: "Open positions + trade history" },
     ],
   },
@@ -63,25 +64,21 @@ export const navSections: NavSection[] = [
     label: "Analyze",
     items: [
       { icon: BarChart3, label: "Performance", path: "/performance", hint: "P&L and risk-adjusted metrics" },
-      { icon: PieChart, label: "Markets", path: "/analytics", hint: "Liquidity and microstructure" },
-      { icon: Brain, label: "Sentiment", path: "/sentiment", hint: "Multi-source sentiment" },
-      { icon: LineChart, label: "Backtesting", path: "/backtest", hint: "Historical simulation" },
-      { icon: Briefcase, label: "Portfolio", path: "/portfolio", hint: "Kelly / mean-variance" },
+      { icon: LineChart, label: "Backtesting", path: "/backtest", hint: "Historical exit-strategy simulation" },
     ],
   },
   {
     label: "Configure",
     items: [
       { icon: Cpu, label: "Autonomy", path: "/autonomy", hint: "Mode + sizing + cadence" },
-      { icon: Bot, label: "Strategies", path: "/strategies", hint: "User-defined strategies" },
+      { icon: Shield, label: "Risk Controls", path: "/risk-controls", hint: "Guardrails and drawdown breakers" },
       { icon: BookOpen, label: "Training", path: "/training", hint: "Custom rules and filters" },
-      { icon: Shield, label: "Risk Controls", path: "/risk-controls", hint: "Guardrails and alerts" },
     ],
   },
   {
     label: "Account",
     items: [
-      { icon: Plug, label: "Connect", path: "/connect", hint: "Exchange API credentials" },
+      { icon: Plug, label: "Connect", path: "/connect", hint: "Kalshi + Polymarket API credentials" },
     ],
   },
 ];

@@ -52,6 +52,28 @@ export const ENV = {
   allowedOrigin: normalize(process.env.ALLOWED_ORIGIN),
   alertWebhookUrl: normalize(process.env.ALERT_WEBHOOK_URL),
 
+  // ── Polymarket ───────────────────────────────────────────────────────
+  // Polymarket EOA proxy-wallet address (the `0x...` from the Polymarket
+  // account/deposit page). Used by the position-sync data-api which keys
+  // positions by EOA address rather than by API key. Lowercased so
+  // case-insensitive comparisons work downstream. Required for live
+  // Polymarket trading; without it position-sync silently no-ops and
+  // the boot self-test surfaces a WARN.
+  polymarketOwnerAddress: normalize(process.env.POLYMARKET_OWNER_ADDRESS).toLowerCase(),
+
+  // Polymarket LIVE trading kill-switch.  Signing is implemented via
+  // @polymarket/clob-client (EIP-712 typed-data over the CTF Exchange
+  // contract on Polygon), so the default is ON — but ONLY if the user's
+  // polymarketCredentials row carries: apiKey, apiSecret, apiPassphrase,
+  // walletPrivateKeyEncrypted, walletAddress, and signatureType.  Without
+  // those, placePolymarketOrder still refuses to sign.  Flip this env to
+  // false to disable Polymarket order placement entirely (read-side paths
+  // still work).
+  polymarketLiveTradingEnabled: normalizeBoolean(
+    process.env.POLYMARKET_LIVE_TRADING_ENABLED,
+    true,
+  ),
+
   // ── Kalshi (the ONLY trading platform) ───────────────────────────────────
   // Production vs demo (https://demo-api.kalshi.co) toggle. Default false.
   kalshiDemoMode: normalizeBoolean(process.env.DEMO_MODE, false),
@@ -401,16 +423,6 @@ export const ENV = {
   // this is the only "paper" toggle that matters.
   paperTradeMode: normalizeBoolean(process.env.PAPER_TRADE_MODE, false),
 
-  // ── Single-owner lockdown ────────────────────────────────────────────
-  // Default true: only the owner (matched by OWNER_EMAIL) can register.
-  // Set ALLOW_PUBLIC_REGISTRATION=true to open the public registration
-  // endpoint to anyone (multi-tenant SaaS mode). Default protects against
-  // attackers registering against your shared ANTHROPIC_API_KEY budget,
-  // CRED_ENCRYPTION_SECRET, audit log, and DB.
-  allowPublicRegistration: normalizeBoolean(
-    process.env.ALLOW_PUBLIC_REGISTRATION,
-    false,
-  ),
 };
 
 // Hard-required vars that must be present for any deploy.

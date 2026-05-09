@@ -273,16 +273,21 @@ export default function Dashboard() {
 
       <LiveHeartbeat />
 
-      <PlatformStatusTile
-        platform="Kalshi"
-        connected={kalshiConnected}
-        detail={
-          kalshiConnected
-            ? `$${equity.toFixed(2)} synced capital`
-            : "Connect RSA API credentials"
-        }
-        onConnect={() => navigate("/connect")}
-      />
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <PlatformStatusTile
+          platform="Kalshi"
+          connected={kalshiConnected}
+          detail={
+            kalshiConnected
+              ? `$${equity.toFixed(2)} synced capital`
+              : "Connect RSA API credentials"
+          }
+          onConnect={() => navigate("/connect")}
+        />
+        <PolymarketStatusTileFromQuery
+          onConnect={() => navigate("/connect")}
+        />
+      </div>
 
       {/* Row 1: Hero KPI strip */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -813,5 +818,33 @@ function OnboardingStep({
         <p className="text-xs text-muted-foreground truncate">{subtitle}</p>
       </div>
     </div>
+  );
+}
+
+function PolymarketStatusTileFromQuery({ onConnect }: { onConnect: () => void }) {
+  const polyStatus = trpc.polymarket.getPolymarketAccountStatus.useQuery(undefined, {
+    retry: false,
+  });
+  // Only treat as connected when the query genuinely succeeded — otherwise
+  // a slow/failing status call shows a misleading "Not connected" tile.
+  const connected = polyStatus.isSuccess && polyStatus.data?.connected === true;
+  const liveReady =
+    polyStatus.isSuccess && polyStatus.data?.liveTradingReady === true;
+  const detail = polyStatus.isLoading
+    ? "Checking Polymarket account…"
+    : polyStatus.isError
+      ? "Status unavailable — retry shortly"
+      : connected
+        ? liveReady
+          ? "Live-trading ready (wallet on file)"
+          : "Read-only · add wallet key for live trades"
+        : "Optional · enables cross-arb + Polymarket trading";
+  return (
+    <PlatformStatusTile
+      platform="Polymarket"
+      connected={connected}
+      detail={detail}
+      onConnect={onConnect}
+    />
   );
 }

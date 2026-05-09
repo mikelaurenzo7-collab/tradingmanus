@@ -8,7 +8,13 @@
  */
 
 import { db, getKalshiMarket } from "../db";
-import { kalshiOrders, kalshiFills } from "../../drizzle/schema";
+import {
+  kalshiOrders,
+  kalshiFills,
+  polymarketOrders,
+  polymarketFills,
+  polymarketPositions,
+} from "../../drizzle/schema";
 import { and, eq } from "drizzle-orm";
 import { assertPositiveIntegerUserId } from "./userScope";
 import { logger } from "./logger";
@@ -277,3 +283,283 @@ export async function simulateKalshiPositionClose(
   }
 }
 
+// ── Polymarket simulation ───────────────────────────────────────────────────
+
+interface PlacePolymarketOrderResult {
+  success: boolean;
+  orderId?: string;
+  error?: string;
+  needsReconciliation?: boolean;
+  exchangeRequest?: Record<string, unknown>;
+  exchangeResponse?: Record<string, unknown>;
+}
+
+/**
+ * Simulate a Polymarket BUY at the supplied limit price.  Writes a filled
+ * order and a matching fill to the local DB and opens / tops up the
+ * polymarketPositions row so the rest of the pipeline (exit monitor, learning,
+ * reconciliation) sees a real position.
+ */
+export async function simulatePolymarketOrderFill(
+  userId: number,
+  input: {
+    marketId: string;
+    tokenId: string;
+    positionSide: "yes" | "no";
+    price: number;
+    sizeUsdc: number;
+  },
+  _triggeredByOpenId?: string,
+): Promise<PlacePolymarketOrderResult> {
+  try {
+    const scopedUserId = assertPositiveIntegerUserId(userId, "Polymarket paper trading userId");
+    const fillPrice = Number(input.price) || 0;
+    const sizeUsdc = Number(input.sizeUsdc) || 0;
+    if (!Number.isFinite(fillPrice) || fillPrice <= 0 || fillPrice >= 1) {
+      return { success: false, error: "Invalid Polymarket limit price" };
+    }
+    if (!Number.isFinite(sizeUsdc) || sizeUsdc <= 0) {
+      return { success: false, error: "Invalid Polymarket order size" };
+    }
+
+    const clientOrderId = `nexus-paper-poly-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+    try {
+      await db.insert(polymarketOrders).values({
+        userId: scopedUserId,
+        orderId: clientOrderId,
+        marketId: input.marketId,
+        tokenId: input.tokenId,
+        side: input.positionSide,
+        sizeUsdc,
+        limitPrice: fillPrice,
+        status: "filled",
+        filledSizeUsdc: sizeUsdc,
+        averagePrice: fillPrice,
+        filledAt: new Date(),
+      });
+    } catch (insertError) {
+      logger.error(
+        { err: insertError, clientOrderId, marketId: input.marketId },
+        "[PaperTrading] Failed to write simulated polymarket order to DB",
+      );
+      return {
+        success: false,
+        error:
+          "Failed to record simulated polymarket order in local ledger: " +
+          (insertError instanceof Error ? insertError.message : String(insertError)),
+      };
+    }
+
+    try {
+      await db.insert(polymarketFills).values({
+        userId: scopedUserId,
+        orderId: clientOrderId,
+        marketId: input.marketId,
+        tokenId: input.tokenId,
+        fillPrice,
+        fillSizeUsdc: sizeUsdc,
+        fillTime: new Date(),
+      });
+    } catch (fillError) {
+      logger.error(
+        { err: fillError, clientOrderId, marketId: input.marketId },
+        "[PaperTrading] Failed to write simulated polymarket fill",
+      );
+    }
+
+    // Upsert position row so the exit monitor can see it.
+    try {
+      const existing = await db
+        .select()
+        .from(polymarketPositions)
+        .where(
+          and(
+            eq(polymarketPositions.userId, scopedUserId),
+            eq(polymarketPositions.tokenId, input.tokenId),
+            eq(polymarketPositions.positionStatus, "open"),
+          ),
+        )
+        .limit(1);
+      const existingRow = existing[0];
+      if (existingRow) {
+        // Blend cost basis in TOKEN space, not USDC outlay.  An add at a
+        // different price weights by tokens acquired, not capital spent —
+        // otherwise the average entry skews toward whichever leg cost more
+        // in dollars, which is dimensionally wrong.
+        const oldEntry = Number(existingRow.entryPrice) || 0;
+        const oldSizeUsdc = Number(existingRow.sizeUsdc) || 0;
+        const oldTokens = oldEntry > 0 ? oldSizeUsdc / oldEntry : 0;
+        const newTokens = fillPrice > 0 ? sizeUsdc / fillPrice : 0;
+        const totalTokens = oldTokens + newTokens;
+        const blendedEntry =
+          totalTokens > 0
+            ? (oldEntry * oldTokens + fillPrice * newTokens) / totalTokens
+            : fillPrice;
+        const newSize = oldSizeUsdc + sizeUsdc;
+        await db
+          .update(polymarketPositions)
+          .set({
+            sizeUsdc: newSize,
+            entryPrice: blendedEntry,
+            currentPrice: fillPrice,
+          })
+          .where(eq(polymarketPositions.id, existingRow.id));
+      } else {
+        await db.insert(polymarketPositions).values({
+          userId: scopedUserId,
+          marketId: input.marketId,
+          tokenId: input.tokenId,
+          side: input.positionSide,
+          sizeUsdc,
+          entryPrice: fillPrice,
+          currentPrice: fillPrice,
+          unrealizedPnl: 0,
+          realizedPnl: 0,
+          positionStatus: "open",
+        });
+      }
+    } catch (positionError) {
+      logger.error(
+        { err: positionError, clientOrderId, marketId: input.marketId },
+        "[PaperTrading] Failed to upsert simulated polymarket position",
+      );
+    }
+
+    return {
+      success: true,
+      orderId: clientOrderId,
+      needsReconciliation: false,
+      exchangeRequest: {
+        marketId: input.marketId,
+        tokenId: input.tokenId,
+        side: input.positionSide,
+        sizeUsdc,
+        limitPrice: fillPrice,
+        clientOrderId,
+        simulated: true,
+      },
+      exchangeResponse: {
+        orderId: clientOrderId,
+        filled: true,
+        fillPrice,
+        fillSizeUsdc: sizeUsdc,
+        simulated: true,
+      },
+    };
+  } catch (error) {
+    logger.error({ err: error }, "[PaperTrading] Unexpected error during polymarket order simulation");
+    return {
+      success: false,
+      error: String(error),
+      exchangeResponse: {
+        error: String(error),
+        simulated: true,
+      },
+    };
+  }
+}
+
+/**
+ * Simulate closing a Polymarket position at the supplied current price.
+ * Marks the local position row as `closed` so the exit monitor stops
+ * re-firing on it.
+ */
+export async function simulatePolymarketPositionClose(
+  userId: number,
+  positionId: number,
+  currentPrice: number,
+  _triggeredByOpenId?: string,
+): Promise<{ success: boolean; error?: string; orderId?: string }> {
+  try {
+    const scopedUserId = assertPositiveIntegerUserId(userId, "Polymarket paper close userId");
+    const fillPrice = Number(currentPrice) || 0;
+    if (!Number.isFinite(fillPrice) || fillPrice <= 0 || fillPrice >= 1) {
+      return { success: false, error: "Invalid Polymarket close price" };
+    }
+
+    const rows = await db
+      .select()
+      .from(polymarketPositions)
+      .where(eq(polymarketPositions.id, positionId))
+      .limit(1);
+    const position = rows[0];
+    if (!position || position.userId !== scopedUserId) {
+      return { success: false, error: "Polymarket position not found" };
+    }
+    if (position.positionStatus !== "open") {
+      return { success: false, error: `Position is ${position.positionStatus}, not open` };
+    }
+
+    const closeOrderId = `nexus-paper-poly-close-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    const sizeUsdc = Number(position.sizeUsdc) || 0;
+
+    try {
+      await db.insert(polymarketOrders).values({
+        userId: scopedUserId,
+        orderId: closeOrderId,
+        marketId: position.marketId,
+        tokenId: position.tokenId,
+        side: position.side,
+        sizeUsdc,
+        limitPrice: fillPrice,
+        status: "filled",
+        filledSizeUsdc: sizeUsdc,
+        averagePrice: fillPrice,
+        filledAt: new Date(),
+      });
+      await db.insert(polymarketFills).values({
+        userId: scopedUserId,
+        orderId: closeOrderId,
+        marketId: position.marketId,
+        tokenId: position.tokenId,
+        fillPrice,
+        fillSizeUsdc: sizeUsdc,
+        fillTime: new Date(),
+      });
+    } catch (insertError) {
+      logger.error(
+        { err: insertError, closeOrderId, positionId },
+        "[PaperTrading] Failed to write simulated polymarket close",
+      );
+      return {
+        success: false,
+        error: "Failed to record simulated polymarket close in local ledger",
+      };
+    }
+
+    // Realized PnL = (exit − entry) × tokens.  Tokens = USDC entry capital ÷
+    // entry price.  Multiplying by sizeUsdc instead would dimension PnL in
+    // (USDC×price) space — wrong by a factor of the entry price.
+    const entryPrice = Number(position.entryPrice) || 0;
+    const tokens = entryPrice > 0 ? sizeUsdc / entryPrice : 0;
+    const realizedPnl = (fillPrice - entryPrice) * tokens;
+    try {
+      await db
+        .update(polymarketPositions)
+        .set({
+          positionStatus: "closed",
+          currentPrice: fillPrice,
+          realizedPnl,
+          unrealizedPnl: 0,
+          closedAt: new Date(),
+        })
+        .where(eq(polymarketPositions.id, positionId));
+    } catch (updateError) {
+      logger.warn(
+        { err: updateError, positionId },
+        "[PaperTrading] Failed to mark polymarket position closed",
+      );
+    }
+
+    logger.info(
+      { closeOrderId, positionId, fillPrice, sizeUsdc, realizedPnl },
+      "[PaperTrading] Simulated polymarket position closed",
+    );
+
+    return { success: true, orderId: closeOrderId };
+  } catch (error) {
+    logger.error({ err: error }, "[PaperTrading] Polymarket position close simulation error");
+    return { success: false, error: String(error) };
+  }
+}

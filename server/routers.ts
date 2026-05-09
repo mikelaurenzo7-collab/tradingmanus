@@ -68,6 +68,8 @@ import {
   type RiskParameters,
 } from "./_core/riskTuningHelper";
 import * as kalshiCredDb from "./db.kalshi-credentials";
+import * as polymarketCredDb from "./db.polymarket-credentials";
+import { validatePolymarketCredentials } from "./_core/polymarketAuth";
 import * as tradingPreferencesDb from "./db.trading-preferences";
 import {
   detectAllCombinatorialArbitrage,
@@ -75,7 +77,9 @@ import {
 } from "./_core/kalshiCombinatorial";
 import { trainingRouter } from "./training.router";
 import { advancedRouter } from "./advanced.router";
-import { chatRouter } from "./chat.router";
+// Chat router removed in single-owner trim — slash commands were read-only
+// and the conversational endpoint just burned AI tokens without changing
+// trade behavior.
 import {
   applyMarketImpactGuardrails,
   calculateKalshiBuyOrderRisk,
@@ -496,20 +500,12 @@ export const appRouter = router({
       )
       .mutation(async ({ input, ctx }) => {
         const normalizedEmail = input.email.trim().toLowerCase();
-        // Single-owner lockdown: by default only the configured OWNER_EMAIL
-        // can register. ALLOW_PUBLIC_REGISTRATION=true reopens it for
-        // multi-tenant SaaS deployments. Without this gate, anyone with
-        // the public URL could register a free account, connect their own
-        // Kalshi creds (encrypted with the shared CRED_ENCRYPTION_SECRET),
-        // and burn the owner's ANTHROPIC_API_KEY budget on AI reviews.
-        if (
-          !ENV.allowPublicRegistration &&
-          normalizedEmail !== ENV.ownerEmail.trim().toLowerCase()
-        ) {
+        // Single-owner: only the configured OWNER_EMAIL can register.
+        // No multi-tenant escape hatch.
+        if (normalizedEmail !== ENV.ownerEmail.trim().toLowerCase()) {
           throw new TRPCError({
             code: "FORBIDDEN",
-            message:
-              "Public registration is disabled in single-owner mode. Set ALLOW_PUBLIC_REGISTRATION=true to enable.",
+            message: "Registration is restricted to the configured OWNER_EMAIL.",
           });
         }
         const existingUser = await db.getUserByEmail(normalizedEmail);
@@ -2690,6 +2686,166 @@ export const appRouter = router({
       }),
   }),
 
+  // ── Polymarket account connection ─────────────────────────────────────────
+  // Mirrors the Kalshi connect/status/disconnect surface but takes the extra
+  // wallet fields (privateKey + address + signatureType) that EIP-712 order
+  // signing requires.  Read-side reconciliation works without the wallet
+  // fields too, so the connect form treats them as optional and only the
+  // live-trade path refuses to fire when they're missing.
+  polymarket: router({
+    connectPolymarketAccount: protectedProcedure
+      .input(
+        z
+          .object({
+            apiKey: z.string().min(1),
+            apiSecret: z.string().min(1),
+            apiPassphrase: z.string().min(1),
+            // EIP-712 signing fields are optional at the API boundary, but
+            // when present must be the right shape so `liveTradingReady`
+            // can't be set on garbage input.  64-hex with optional 0x
+            // prefix, and a 0x-prefixed 40-byte address.
+            walletPrivateKey: z
+              .string()
+              .regex(
+                /^(0x)?[0-9a-fA-F]{64}$/,
+                "Wallet private key must be 64 hex characters (with or without 0x prefix)",
+              )
+              .optional(),
+            walletAddress: z
+              .string()
+              .regex(
+                /^0x[0-9a-fA-F]{40}$/,
+                "Wallet address must be 0x-prefixed 40-character hex",
+              )
+              .optional(),
+            // 0=EOA, 1=POLY_PROXY (default — Polymarket UI), 2=POLY_GNOSIS_SAFE
+            signatureType: z.number().int().min(0).max(2).optional(),
+          })
+          .refine(
+            ({ walletPrivateKey, walletAddress }) =>
+              Boolean(walletPrivateKey) === Boolean(walletAddress),
+            {
+              message:
+                "walletPrivateKey and walletAddress must be provided together",
+              path: ["walletPrivateKey"],
+            },
+          ),
+      )
+      .mutation(async ({ input, ctx }) => {
+        try {
+          const validation = await validatePolymarketCredentials(
+            input.apiKey,
+            input.apiSecret,
+            input.apiPassphrase,
+          );
+          if (!validation.valid) {
+            return {
+              success: false,
+              error:
+                validation.error ||
+                "Polymarket rejected these credentials. Verify the API key, secret, and passphrase from your Polymarket account.",
+            };
+          }
+
+          const userId = getRequiredUserId(ctx);
+          try {
+            await polymarketCredDb.savePolymarketCredentials(
+              userId,
+              input.apiKey,
+              input.apiSecret,
+              input.apiPassphrase,
+              {
+                walletPrivateKey: input.walletPrivateKey,
+                walletAddress: input.walletAddress,
+                signatureType: input.signatureType,
+              },
+            );
+            await db.logAuditEvent(
+              "polymarket_account_connected",
+              JSON.stringify({
+                hasWalletKey: Boolean(input.walletPrivateKey),
+                signatureType: input.signatureType ?? 1,
+              }),
+              ctx.user!.openId,
+            );
+          } catch (storageError) {
+            logger.error(
+              { err: storageError },
+              "[Polymarket] Failed to persist validated credentials",
+            );
+            return {
+              success: false,
+              error:
+                "Your Polymarket credentials were validated, but the dashboard could not save the connection state. Please retry in a moment.",
+            };
+          }
+
+          return {
+            success: true,
+            // Surface to the UI which capabilities are now available.
+            liveTradingReady: Boolean(input.walletPrivateKey && input.walletAddress),
+          };
+        } catch (error) {
+          logger.error({ err: error }, "[Polymarket] Connect account error");
+          return {
+            success: false,
+            error: "Failed to connect Polymarket account. Check your credentials and try again.",
+          };
+        }
+      }),
+
+    getPolymarketAccountStatus: protectedProcedure.query(async ({ ctx }) => {
+      try {
+        const userId = getRequiredUserId(ctx);
+        const creds = await polymarketCredDb.getPolymarketCredentials(userId);
+        if (!creds) {
+          return {
+            connected: false,
+            status: "disconnected" as const,
+            liveTradingReady: false,
+            walletAddress: null,
+            signatureType: 1,
+          };
+        }
+        // Never return raw key material — UI only needs presence flags.
+        return {
+          connected: creds.accountStatus === "connected",
+          status: creds.accountStatus,
+          liveTradingReady: Boolean(creds.walletPrivateKey && creds.walletAddress),
+          walletAddress: creds.walletAddress,
+          signatureType: creds.signatureType ?? 1,
+          lastSyncedAt: creds.lastSyncedAt,
+        };
+      } catch (error) {
+        logger.error({ err: error }, "[Polymarket] Get account status error");
+        return {
+          connected: false,
+          status: "error" as const,
+          liveTradingReady: false,
+          walletAddress: null,
+          signatureType: 1,
+          error: String(error),
+        };
+      }
+    }),
+
+    disconnectPolymarketAccount: protectedProcedure.mutation(async ({ ctx }) => {
+      try {
+        const userId = getRequiredUserId(ctx);
+        await polymarketCredDb.deletePolymarketCredentials(userId);
+        await db.logAuditEvent(
+          "polymarket_account_disconnected",
+          "",
+          ctx.user!.openId,
+        );
+        return { success: true };
+      } catch (error) {
+        logger.error({ err: error }, "[Polymarket] Disconnect account error");
+        return { success: false, error: String(error) };
+      }
+    }),
+  }),
+
   // Beta access management
   beta: router({
     /** Return the current user's beta access level. */
@@ -2751,11 +2907,6 @@ export const appRouter = router({
       }),
   }),
 
-
-  // --------------------------------------------------------------------------
-  // AI Chatbot workspaces (Kalshi + Polymarket, persistent memory)
-  // --------------------------------------------------------------------------
-  chat: chatRouter,
 
   combinatorial: router({
     /**

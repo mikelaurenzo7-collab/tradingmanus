@@ -101,8 +101,8 @@ export function LoginScreen({
             Financial Command Center
           </p>
           <p className="text-xs text-muted-foreground/70 text-center max-w-sm">
-            Run a Kalshi prediction-market trading desk backed by an AI
-            reviewer.
+            Run a Kalshi + Polymarket prediction-market trading desk backed
+            by an AI reviewer.
           </p>
         </div>
 
@@ -255,7 +255,7 @@ export function LoginScreen({
 
         <div className="flex items-center justify-center gap-2 mt-8 text-xs text-muted-foreground/60">
           <Shield className="w-3.5 h-3.5" />
-          <span>Subscription access · Kalshi bot</span>
+          <span>Single-owner desk · Kalshi + Polymarket</span>
         </div>
       </form>
     </div>

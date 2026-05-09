@@ -16,7 +16,7 @@ import { getDb } from "./db";
 import { assertPositiveIntegerUserId } from "./_core/userScope";
 import { logger } from "./_core/logger";
 
-export type DeskPlatform = "kalshi";
+export type DeskPlatform = "kalshi" | "polymarket";
 export type DeskOutcome = "win" | "loss" | "scratch";
 
 export type DeskMemoryNote = {
@@ -312,6 +312,52 @@ export async function tryRecordKalshiCloseToDeskMemory(input: {
   } catch (error) {
     (input.logger ?? console).warn(
       `[deskMemory] Kalshi close memory write failed for marketId=${input.marketId}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+/**
+ * Polymarket equivalent of tryRecordKalshiCloseToDeskMemory.  Polymarket
+ * doesn't have a per-market table to look up like Kalshi does, so the caller
+ * passes the market title + category tag inline.  Same fail-soft semantics:
+ * memory writes never block or fail a trade close.
+ */
+export async function tryRecordPolymarketCloseToDeskMemory(input: {
+  userId: number;
+  marketId: string;
+  marketTitle?: string | null;
+  marketCategoryTag?: string | null;
+  side: "yes" | "no";
+  entryPrice: number;
+  exitPrice: number;
+  sizeUsdc: number;
+  realizedPnl: number;
+  logger?: Pick<Console, "warn">;
+}): Promise<void> {
+  try {
+    const { classifyMarketCategory } = await import("./_core/marketCategoryRouter");
+    const category = classifyMarketCategory({
+      category: input.marketCategoryTag ?? undefined,
+      title: input.marketTitle ?? undefined,
+    });
+    const { outcome, note } = summarizeTradeAsDeskNote({
+      side: input.side,
+      entryPrice: input.entryPrice,
+      exitPrice: input.exitPrice,
+      quantity: input.sizeUsdc,
+      realizedPnl: input.realizedPnl,
+      marketTitle: input.marketTitle ?? undefined,
+    });
+    await recordDeskTradeOutcome({
+      userId: input.userId,
+      platform: "polymarket",
+      marketCategory: category,
+      outcome,
+      note,
+    });
+  } catch (error) {
+    (input.logger ?? console).warn(
+      `[deskMemory] Polymarket close memory write failed for marketId=${input.marketId}: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 }

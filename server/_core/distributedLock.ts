@@ -220,6 +220,25 @@ export function createOrderSyncLock(userId: number): DistributedLock {
 }
 
 /**
+ * Create a distributed lock for Polymarket autonomous trading per user.
+ * Mirrors createAutonomousTradingLock but in a separate namespace so a
+ * Polymarket run never blocks on a Kalshi run for the same user (and vice
+ * versa).
+ */
+export function createPolymarketAutonomousTradingLock(userId: number): DistributedLock {
+  return new DistributedLock(`polymarket_autonomous_trading_user_${userId}`);
+}
+
+/**
+ * Create a distributed lock for Polymarket order synchronization per user.
+ * Mirrors createOrderSyncLock but in a separate namespace so the two order
+ * syncs can run interleaved.
+ */
+export function createPolymarketOrderSyncLock(userId: number): DistributedLock {
+  return new DistributedLock(`polymarket_order_sync_user_${userId}`);
+}
+
+/**
  * Create a distributed lock for market data updates
  */
 export function createMarketDataLock(marketId: string): DistributedLock {
