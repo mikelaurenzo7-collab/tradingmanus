@@ -87,10 +87,21 @@ async function readMarketRow(marketId: string): Promise<MarketRow | null> {
   return rows.length === 0 ? null : (rows[0] as MarketRow);
 }
 
-function pickPriceFor(side: "yes" | "no", row: MarketRow): number | null {
+function pickPriceFor(
+  side: "yes" | "no",
+  row: MarketRow,
+  marketId: string,
+): number | null {
   const raw = side === "yes" ? row.yesPrice : row.noPrice;
   const price = Number(raw ?? 0);
-  return Number.isFinite(price) && price > 0 && price < 1 ? price : null;
+  if (!Number.isFinite(price) || price <= 0 || price >= 1) {
+    logger.debug(
+      { marketId, side, raw },
+      "[ExitMonitor] market price missing or out-of-range — skipping exit evaluation this tick",
+    );
+    return null;
+  }
+  return price;
 }
 
 /**
@@ -155,7 +166,20 @@ export async function evaluateExitsForOpenPositions(
 
     const marketRow = await readMarketRow(marketId);
     if (!marketRow) continue;
-    const currentPrice = pickPriceFor(side, marketRow);
+
+    // If the market has already resolved (resolutionDate in the past), skip
+    // the exit-strategy evaluation entirely — the position is settled and the
+    // exchange will close it automatically. Attempting a close on a resolved
+    // market returns an exchange error that would loop indefinitely.
+    if (marketRow.resolutionDate && marketRow.resolutionDate <= new Date()) {
+      logger.info(
+        { positionId, marketId, resolutionDate: marketRow.resolutionDate },
+        "[ExitMonitor] market already resolved — skipping exit evaluation",
+      );
+      continue;
+    }
+
+    const currentPrice = pickPriceFor(side, marketRow, marketId);
     if (currentPrice === null) continue;
 
     // Per-market volatility from recent snapshots (high-vol → wider stops,
