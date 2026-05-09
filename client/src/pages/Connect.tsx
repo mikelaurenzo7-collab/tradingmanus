@@ -361,6 +361,45 @@ function PolymarketConnectPanel() {
     },
   });
 
+  const deriveMutation = trpc.polymarket.deriveApiKeysFromWallet.useMutation({
+    onSuccess: (data) => {
+      if (data.success) {
+        setApiKey(data.apiKey ?? "");
+        setApiSecret(data.apiSecret ?? "");
+        setApiPassphrase(data.apiPassphrase ?? "");
+        setConnectionMessage(
+          `L2 credentials derived. Click Connect Polymarket to save (signer: ${
+            data.signerAddress
+              ? `${data.signerAddress.slice(0, 6)}…${data.signerAddress.slice(-4)}`
+              : "—"
+          }).`,
+        );
+        return;
+      }
+      setConnectionMessage(data.error || "Failed to derive Polymarket L2 credentials.");
+    },
+    onError: (error) => {
+      setConnectionMessage(error.message || "Failed to derive Polymarket L2 credentials.");
+    },
+  });
+
+  const handleDerive = () => {
+    if (!walletKeyLooksValid) {
+      setConnectionMessage("Enter a valid 64-hex wallet private key first.");
+      return;
+    }
+    if (!walletAddressLooksValid) {
+      setConnectionMessage("Enter a valid 0x-prefixed 40-hex funder address first.");
+      return;
+    }
+    setConnectionMessage(null);
+    deriveMutation.mutate({
+      walletPrivateKey: trimmedWalletKey,
+      walletAddress: trimmedWalletAddress,
+      signatureType,
+    });
+  };
+
   const isAlreadyConnected = statusQuery.data?.connected === true;
   const liveTradingReady = statusQuery.data?.liveTradingReady === true;
   const storedWalletAddress = statusQuery.data?.walletAddress ?? null;
@@ -598,13 +637,58 @@ function PolymarketConnectPanel() {
                     <option value={2}>POLY_GNOSIS_SAFE</option>
                   </select>
                 </div>
+
+                {/* Polymarket has no UI page that exposes apiKey/secret/
+                    passphrase — this button signs with the wallet key
+                    (server-side, never persisted) and auto-fills the API
+                    fields above so you can submit. */}
+                <div className="space-y-2 pt-2 border-t border-border/40">
+                  <p className="text-xs text-muted-foreground">
+                    Polymarket has no API-keys page in their UI. Use this to
+                    derive the L2 credentials from your wallet — auto-fills
+                    the API fields above. Wallet key is signed in-memory and
+                    never persisted by this call.
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleDerive}
+                    disabled={
+                      deriveMutation.isPending ||
+                      !walletKeyLooksValid ||
+                      !walletAddressLooksValid
+                    }
+                    className="w-full"
+                  >
+                    {deriveMutation.isPending ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" />
+                        Signing derive-key request…
+                      </>
+                    ) : (
+                      <>
+                        <KeyRound className="w-3.5 h-3.5 mr-2" />
+                        Derive API keys from wallet
+                      </>
+                    )}
+                  </Button>
+                </div>
               </div>
             </details>
 
             {connectionMessage && !connected ? (
               <Alert
-                variant={connectMutation.isError ? "destructive" : "default"}
-                className={connectMutation.isError ? "glow-destructive" : ""}
+                variant={
+                  connectMutation.isError || deriveMutation.isError
+                    ? "destructive"
+                    : "default"
+                }
+                className={
+                  connectMutation.isError || deriveMutation.isError
+                    ? "glow-destructive"
+                    : ""
+                }
               >
                 <AlertCircle className="h-4 w-4" />
                 <AlertDescription>{connectionMessage}</AlertDescription>

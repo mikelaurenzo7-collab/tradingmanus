@@ -13,6 +13,7 @@
     "build:server": "esbuild server/_core/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
     "start": "NODE_ENV=production pnpm migrate:apply && node dist/index.js",
     "backtest": "tsx scripts/backtest-exits.ts",
+    "derive:poly-keys": "tsx scripts/derivePolymarketKeys.ts",
     "check": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write .",

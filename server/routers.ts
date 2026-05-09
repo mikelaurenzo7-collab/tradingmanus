@@ -2844,6 +2844,108 @@ export const appRouter = router({
         return { success: false, error: String(error) };
       }
     }),
+
+    /**
+     * Derive Polymarket L2 API credentials from the operator's wallet
+     * private key + funder address.  Polymarket has no public UI page that
+     * exposes apiKey/secret/passphrase — they must be derived via a signed
+     * request to the CLOB.  This endpoint signs in-memory (key never
+     * persisted by this call) and returns the three creds for the caller
+     * to immediately submit through `connectPolymarketAccount`.
+     */
+    deriveApiKeysFromWallet: protectedProcedure
+      .input(
+        z.object({
+          walletPrivateKey: z
+            .string()
+            .regex(
+              /^(0x)?[0-9a-fA-F]{64}$/,
+              "Wallet private key must be 64 hex characters (with or without 0x prefix)",
+            ),
+          walletAddress: z
+            .string()
+            .regex(
+              /^0x[0-9a-fA-F]{40}$/,
+              "Wallet address must be 0x-prefixed 40-character hex",
+            ),
+          // 0=EOA, 1=POLY_PROXY (default — Polymarket UI), 2=POLY_GNOSIS_SAFE
+          signatureType: z.number().int().min(0).max(2).optional(),
+        }),
+      )
+      .mutation(async ({ input, ctx }) => {
+        try {
+          const { ClobClient, Chain, SignatureType } = await import("@polymarket/clob-client");
+          const { createWalletClient, http } = await import("viem");
+          const { privateKeyToAccount } = await import("viem/accounts");
+          const { polygon } = await import("viem/chains");
+
+          const normalizedKey = (input.walletPrivateKey.startsWith("0x")
+            ? input.walletPrivateKey
+            : `0x${input.walletPrivateKey}`) as `0x${string}`;
+          const account = privateKeyToAccount(normalizedKey);
+          const walletClient = createWalletClient({
+            account,
+            chain: polygon,
+            transport: http(),
+          });
+          const sigType = (input.signatureType ?? SignatureType.POLY_PROXY) as
+            | 0
+            | 1
+            | 2;
+          const client = new ClobClient(
+            "https://clob.polymarket.com",
+            Chain.POLYGON,
+            walletClient,
+            undefined,
+            sigType,
+            input.walletAddress,
+          );
+
+          const creds = await client.createOrDeriveApiKey();
+          // ClobClient's default mode is to RESOLVE rather than throw on
+          // CLOB API errors — that leaves us with an object that may be
+          // missing one or more of key/secret/passphrase (geoblock, wrong
+          // signatureType/funder, transient 4xx/5xx, etc.).  Validate
+          // explicitly before audit-logging "success" or returning what
+          // the UI will then write to its form fields.
+          if (!creds || !creds.key || !creds.secret || !creds.passphrase) {
+            return {
+              success: false,
+              error:
+                "Polymarket CLOB returned an incomplete L2 credential set. " +
+                "Common causes: wrong signatureType (check POLY_PROXY vs EOA), " +
+                "wrong funder address, geoblock, or transient CLOB error. " +
+                "Try again, and if it persists verify your wallet + funder match " +
+                "what's shown on https://polymarket.com/settings.",
+            };
+          }
+          await db.logAuditEvent(
+            "polymarket_api_keys_derived",
+            JSON.stringify({
+              signerAddress: account.address,
+              funderAddress: input.walletAddress,
+              signatureType: sigType,
+            }),
+            ctx.user!.openId,
+          );
+          return {
+            success: true,
+            apiKey: creds.key,
+            apiSecret: creds.secret,
+            apiPassphrase: creds.passphrase,
+            signerAddress: account.address,
+          };
+        } catch (error) {
+          logger.error({ err: error }, "[Polymarket] Derive API keys failed");
+          return {
+            success: false,
+            error:
+              error instanceof Error
+                ? error.message
+                : "Failed to derive Polymarket L2 credentials",
+          };
+        }
+      }),
   }),
 
   // Beta access management
