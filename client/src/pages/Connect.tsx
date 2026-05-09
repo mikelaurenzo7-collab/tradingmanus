@@ -849,7 +849,6 @@ export default function Connect() {
       {/* Connection panels */}
       <KalshiConnectPanel />
       <PolymarketConnectPanel />
-      <CoinbaseConnectPanel />
     </div>
   );
 }
