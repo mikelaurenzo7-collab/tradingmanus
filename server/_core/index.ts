@@ -295,17 +295,14 @@ async function runPolymarketAutonomousScheduler() {
 
     let executedUsers = 0;
     for (const user of scopedUsers as Array<{ id: number; openId: string }>) {
-      // Single-owner fence: Polymarket creds + the POLYMARKET_OWNER_ADDRESS
-      // env var both belong to the operator's wallet.  In default lockdown
-      // mode `getUsersEligibleForAutomaticScheduledTrading()` already only
-      // returns `owner:primary`, but enforce it explicitly here so a future
-      // ALLOW_PUBLIC_REGISTRATION=true rollout can't accidentally apply the
-      // owner's wallet to another user's autonomy run.
+      // Single-owner: only the owner row should ever reach this loop, but
+      // belt-and-braces the openId match in case the eligibility query
+      // ever broadens.  Polymarket creds + POLYMARKET_OWNER_ADDRESS env
+      // both belong to the operator's wallet.
       if (user.openId !== "owner:primary") continue;
-      // Skip the per-user lock when Polymarket creds aren't connected — keeps
-      // the audit log clean of "skipped — no creds" rows when the operator
-      // hasn't yet wired Polymarket up.
-      const hasPolymarket = await polymarketCredDb.isUserSubscribedToPolymarket(user.id);
+      // Skip when Polymarket isn't connected — keeps the audit log clean of
+      // "no creds" rows when Polymarket hasn't been wired up yet.
+      const hasPolymarket = await polymarketCredDb.isPolymarketConnected(user.id);
       if (!hasPolymarket) continue;
 
       const lock = createPolymarketAutonomousTradingLock(user.id);
@@ -372,7 +369,7 @@ async function runPolymarketOrderSync() {
       // rollout would copy the owner's positions into every subscribed
       // user and false-flag their real positions as drifted-closed.
       if (user.openId !== "owner:primary") continue;
-      const hasPolymarket = await polymarketCredDb.isUserSubscribedToPolymarket(user.id);
+      const hasPolymarket = await polymarketCredDb.isPolymarketConnected(user.id);
       if (!hasPolymarket) continue;
 
       const lock = createPolymarketOrderSyncLock(user.id);

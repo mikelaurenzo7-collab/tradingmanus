@@ -292,7 +292,7 @@ export async function syncPolymarketPositions(userId: number): Promise<Polymarke
   if (!wallet) return NOOP_RESULT_NO_ADDRESS;
 
   try {
-    const subscribed = await polymarketCredDb.isUserSubscribedToPolymarket(userId);
+    const subscribed = await polymarketCredDb.isPolymarketConnected(userId);
     if (!subscribed) {
       return {
         walletAddress: wallet,

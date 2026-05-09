@@ -23,7 +23,7 @@ const mocks = vi.hoisted(() => ({
   },
   getTradingPreferences: vi.fn(),
   getPolymarketCredentials: vi.fn(),
-  isUserSubscribedToPolymarket: vi.fn(),
+  isPolymarketConnected: vi.fn(),
   fetchPolymarketMarkets: vi.fn(),
   placePolymarketOrder: vi.fn(),
   generatePolymarketSignals: vi.fn(),
@@ -47,7 +47,7 @@ vi.mock("./db.trading-preferences", () => ({
 
 vi.mock("./db.polymarket-credentials", () => ({
   getPolymarketCredentials: mocks.getPolymarketCredentials,
-  isUserSubscribedToPolymarket: mocks.isUserSubscribedToPolymarket,
+  isPolymarketConnected: mocks.isPolymarketConnected,
 }));
 
 vi.mock("./db", () => ({
@@ -140,7 +140,7 @@ const SAMPLE_SIGNAL = {
 
 function setupHappyPath() {
   vi.clearAllMocks();
-  mocks.isUserSubscribedToPolymarket.mockResolvedValue(true);
+  mocks.isPolymarketConnected.mockResolvedValue(true);
   mocks.getTradingPreferences.mockResolvedValue(mocks.DEFAULT_PREFERENCES);
   mocks.getPolymarketCredentials.mockResolvedValue({
     userId: 8,

@@ -500,20 +500,12 @@ export const appRouter = router({
       )
       .mutation(async ({ input, ctx }) => {
         const normalizedEmail = input.email.trim().toLowerCase();
-        // Single-owner lockdown: by default only the configured OWNER_EMAIL
-        // can register. ALLOW_PUBLIC_REGISTRATION=true reopens it for
-        // multi-tenant SaaS deployments. Without this gate, anyone with
-        // the public URL could register a free account, connect their own
-        // Kalshi creds (encrypted with the shared CRED_ENCRYPTION_SECRET),
-        // and burn the owner's ANTHROPIC_API_KEY budget on AI reviews.
-        if (
-          !ENV.allowPublicRegistration &&
-          normalizedEmail !== ENV.ownerEmail.trim().toLowerCase()
-        ) {
+        // Single-owner: only the configured OWNER_EMAIL can register.
+        // No multi-tenant escape hatch.
+        if (normalizedEmail !== ENV.ownerEmail.trim().toLowerCase()) {
           throw new TRPCError({
             code: "FORBIDDEN",
-            message:
-              "Public registration is disabled in single-owner mode. Set ALLOW_PUBLIC_REGISTRATION=true to enable.",
+            message: "Registration is restricted to the configured OWNER_EMAIL.",
           });
         }
         const existingUser = await db.getUserByEmail(normalizedEmail);
@@ -2703,18 +2695,41 @@ export const appRouter = router({
   polymarket: router({
     connectPolymarketAccount: protectedProcedure
       .input(
-        z.object({
-          apiKey: z.string().min(1),
-          apiSecret: z.string().min(1),
-          apiPassphrase: z.string().min(1),
-          // EIP-712 signing fields are optional at the API boundary, but
-          // live order placement refuses to fire without them.  Hex-encoded
-          // private key, with or without the 0x prefix.
-          walletPrivateKey: z.string().optional(),
-          walletAddress: z.string().optional(),
-          // 0=EOA, 1=POLY_PROXY (default — Polymarket UI), 2=POLY_GNOSIS_SAFE
-          signatureType: z.number().int().min(0).max(2).optional(),
-        }),
+        z
+          .object({
+            apiKey: z.string().min(1),
+            apiSecret: z.string().min(1),
+            apiPassphrase: z.string().min(1),
+            // EIP-712 signing fields are optional at the API boundary, but
+            // when present must be the right shape so `liveTradingReady`
+            // can't be set on garbage input.  64-hex with optional 0x
+            // prefix, and a 0x-prefixed 40-byte address.
+            walletPrivateKey: z
+              .string()
+              .regex(
+                /^(0x)?[0-9a-fA-F]{64}$/,
+                "Wallet private key must be 64 hex characters (with or without 0x prefix)",
+              )
+              .optional(),
+            walletAddress: z
+              .string()
+              .regex(
+                /^0x[0-9a-fA-F]{40}$/,
+                "Wallet address must be 0x-prefixed 40-character hex",
+              )
+              .optional(),
+            // 0=EOA, 1=POLY_PROXY (default — Polymarket UI), 2=POLY_GNOSIS_SAFE
+            signatureType: z.number().int().min(0).max(2).optional(),
+          })
+          .refine(
+            ({ walletPrivateKey, walletAddress }) =>
+              Boolean(walletPrivateKey) === Boolean(walletAddress),
+            {
+              message:
+                "walletPrivateKey and walletAddress must be provided together",
+              path: ["walletPrivateKey"],
+            },
+          ),
       )
       .mutation(async ({ input, ctx }) => {
         try {

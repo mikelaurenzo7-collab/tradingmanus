@@ -340,17 +340,8 @@ export async function getUsersEligibleForAutomaticScheduledTrading() {
   const database = await getDb();
   if (!database) return [];
 
-  // Single-owner lockdown: by default only the OWNER_OPEN_ID is returned,
-  // so cron-driven autonomy/sports/moonshot only fires for the operator's
-  // account. ALLOW_PUBLIC_REGISTRATION=true (or any other multi-tenant
-  // setup) widens this to all users with role IN ('user','admin').
-  // Without this scope, anyone who registered (and the public-register
-  // endpoint was open until this PR) could be picked up by the autonomy
-  // loop using their own Kalshi creds — but the SHARED ANTHROPIC_API_KEY
-  // billing.
-  const { ENV } = await import("./_core/env");
-  const ownerOnly = !ENV.allowPublicRegistration;
-
+  // Single-owner: this query always returns exactly the owner's row when
+  // they're armed for live trading, or nothing.  No multi-tenant fallback.
   return database
     .select({
       id: users.id,
@@ -365,8 +356,7 @@ export async function getUsersEligibleForAutomaticScheduledTrading() {
     .innerJoin(kalshiCredentials, eq(users.id, kalshiCredentials.userId))
     .where(
       and(
-        inArray(users.role, ["user", "admin"]),
-        ownerOnly ? eq(users.openId, "owner:primary") : sql`1=1`,
+        eq(users.openId, "owner:primary"),
         eq(tradingPreferences.liveTradingEnabled, 1),
         eq(tradingPreferences.autonomyMode, "fully_autonomous"),
         inArray(tradingPreferences.executionCadence, [

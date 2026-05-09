@@ -825,13 +825,20 @@ function PolymarketStatusTileFromQuery({ onConnect }: { onConnect: () => void })
   const polyStatus = trpc.polymarket.getPolymarketAccountStatus.useQuery(undefined, {
     retry: false,
   });
-  const connected = polyStatus.data?.connected === true;
-  const liveReady = polyStatus.data?.liveTradingReady === true;
-  const detail = connected
-    ? liveReady
-      ? "Live-trading ready (wallet on file)"
-      : "Read-only · add wallet key for live trades"
-    : "Optional · enables cross-arb + Polymarket trading";
+  // Only treat as connected when the query genuinely succeeded — otherwise
+  // a slow/failing status call shows a misleading "Not connected" tile.
+  const connected = polyStatus.isSuccess && polyStatus.data?.connected === true;
+  const liveReady =
+    polyStatus.isSuccess && polyStatus.data?.liveTradingReady === true;
+  const detail = polyStatus.isLoading
+    ? "Checking Polymarket account…"
+    : polyStatus.isError
+      ? "Status unavailable — retry shortly"
+      : connected
+        ? liveReady
+          ? "Live-trading ready (wallet on file)"
+          : "Read-only · add wallet key for live trades"
+        : "Optional · enables cross-arb + Polymarket trading";
   return (
     <PlatformStatusTile
       platform="Polymarket"

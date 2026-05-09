@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getDb: vi.fn(),
-  isUserSubscribedToPolymarket: vi.fn(),
+  isPolymarketConnected: vi.fn(),
   logAuditEvent: vi.fn(),
   fetchWithRetry: vi.fn(),
 }));
@@ -20,7 +20,7 @@ vi.mock("./db", () => ({
 }));
 
 vi.mock("./db.polymarket-credentials", () => ({
-  isUserSubscribedToPolymarket: mocks.isUserSubscribedToPolymarket,
+  isPolymarketConnected: mocks.isPolymarketConnected,
 }));
 
 vi.mock("./_core/fetchWithRetry", () => ({
@@ -199,7 +199,7 @@ describe("syncPolymarketPositions", () => {
   });
 
   it("no-ops with skippedReason when user not subscribed", async () => {
-    mocks.isUserSubscribedToPolymarket.mockResolvedValue(false);
+    mocks.isPolymarketConnected.mockResolvedValue(false);
     const { syncPolymarketPositions } = await import("./_core/polymarketPositionSync");
     const result = await syncPolymarketPositions(7);
     expect(result.skippedReason).toMatch(/not subscribed/);
@@ -207,7 +207,7 @@ describe("syncPolymarketPositions", () => {
   });
 
   it("returns skippedReason when data-api fetch fails", async () => {
-    mocks.isUserSubscribedToPolymarket.mockResolvedValue(true);
+    mocks.isPolymarketConnected.mockResolvedValue(true);
     mocks.fetchWithRetry.mockResolvedValue({
       ok: false,
       status: 500,
@@ -219,7 +219,7 @@ describe("syncPolymarketPositions", () => {
   });
 
   it("inserts a new position when data-api returns one we haven't seen", async () => {
-    mocks.isUserSubscribedToPolymarket.mockResolvedValue(true);
+    mocks.isPolymarketConnected.mockResolvedValue(true);
     mocks.fetchWithRetry.mockReturnValue(
       fetchOk([
         { market: "m1", asset: "t1", outcome: "Yes", size: 10, avgPrice: 0.5 },
@@ -249,7 +249,7 @@ describe("syncPolymarketPositions", () => {
   });
 
   it("updates an existing position with fresh price + size + pnl", async () => {
-    mocks.isUserSubscribedToPolymarket.mockResolvedValue(true);
+    mocks.isPolymarketConnected.mockResolvedValue(true);
     mocks.fetchWithRetry.mockReturnValue(
       fetchOk([
         {
@@ -283,7 +283,7 @@ describe("syncPolymarketPositions", () => {
   });
 
   it("marks local 'open' positions absent from remote as drift-closed", async () => {
-    mocks.isUserSubscribedToPolymarket.mockResolvedValue(true);
+    mocks.isPolymarketConnected.mockResolvedValue(true);
     // Remote returns ONE position; local has TWO.  The other should be drift-closed.
     mocks.fetchWithRetry.mockReturnValue(
       fetchOk([
@@ -314,7 +314,7 @@ describe("syncPolymarketPositions", () => {
   });
 
   it("does not flag drift when all local positions are present remotely", async () => {
-    mocks.isUserSubscribedToPolymarket.mockResolvedValue(true);
+    mocks.isPolymarketConnected.mockResolvedValue(true);
     mocks.fetchWithRetry.mockReturnValue(
       fetchOk([
         { market: "m1", asset: "t1", outcome: "Yes", size: 10, avgPrice: 0.5 },

@@ -131,6 +131,15 @@ export async function submitSignedPolymarketOrder(
         : typeof resp?.orderID === "string"
           ? resp.orderID
           : undefined;
+    if (!orderId) {
+      // CLOB responded OK but didn't echo an order id — without it we
+      // can't reconcile, cancel, or persist this order downstream.  Treat
+      // as a failed submission rather than silently succeed.
+      return {
+        success: false,
+        error: "CLOB accepted order without returning an order id",
+      };
+    }
     return { success: true, orderId };
   } catch (error) {
     logger.error({ err: error }, "[Polymarket] CLOB order signing/post failed");

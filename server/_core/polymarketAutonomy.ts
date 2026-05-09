@@ -171,7 +171,7 @@ export async function runPolymarketAutonomousTrading(
   const triggeredByOpenId = options.triggeredByOpenId ?? `user:${scopedUserId}`;
 
   // --- 0. Subscription gate: user must be subscribed to Polymarket ---
-  const subscribed = await polymarketCredDb.isUserSubscribedToPolymarket(scopedUserId);
+  const subscribed = await polymarketCredDb.isPolymarketConnected(scopedUserId);
   if (!subscribed) {
     logger.info({ userId: scopedUserId }, "[PolymarketAutonomy] Run skipped — user not subscribed to Polymarket");
     return {

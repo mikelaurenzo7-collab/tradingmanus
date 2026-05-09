@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
   },
   getTradingPreferences: vi.fn(),
   getPolymarketCredentials: vi.fn(),
-  isUserSubscribedToPolymarket: vi.fn(),
+  isPolymarketConnected: vi.fn(),
   fetchPolymarketMarkets: vi.fn(),
   placePolymarketOrder: vi.fn(),
   generatePolymarketSignals: vi.fn(),
@@ -37,7 +37,7 @@ vi.mock("./db.trading-preferences", () => ({
 
 vi.mock("./db.polymarket-credentials", () => ({
   getPolymarketCredentials: mocks.getPolymarketCredentials,
-  isUserSubscribedToPolymarket: mocks.isUserSubscribedToPolymarket,
+  isPolymarketConnected: mocks.isPolymarketConnected,
 }));
 
 vi.mock("./db", () => ({
@@ -135,7 +135,7 @@ describe("Polymarket autonomy E2E — full cycle", () => {
     vi.clearAllMocks();
 
     // Default happy-path setup
-    mocks.isUserSubscribedToPolymarket.mockResolvedValue(true);
+    mocks.isPolymarketConnected.mockResolvedValue(true);
     mocks.getTradingPreferences.mockResolvedValue(mocks.DEFAULT_PREFERENCES);
     mocks.getPolymarketCredentials.mockResolvedValue({
       userId: 8,
@@ -339,7 +339,7 @@ describe("Polymarket autonomy E2E — full cycle", () => {
   });
 
   it("Subscription gate blocks execution when user not subscribed to Polymarket", async () => {
-    mocks.isUserSubscribedToPolymarket.mockResolvedValue(false);
+    mocks.isPolymarketConnected.mockResolvedValue(false);
 
     const result = await runPolymarketAutonomousTrading(8);
 
@@ -581,7 +581,7 @@ describe("Polymarket autonomy E2E — risk calculations", () => {
   beforeEach(() => {
     vi.clearAllMocks();
 
-    mocks.isUserSubscribedToPolymarket.mockResolvedValue(true);
+    mocks.isPolymarketConnected.mockResolvedValue(true);
     mocks.getTradingPreferences.mockResolvedValue(mocks.DEFAULT_PREFERENCES);
     mocks.getPolymarketCredentials.mockResolvedValue({
       userId: 8,

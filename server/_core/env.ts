@@ -423,16 +423,6 @@ export const ENV = {
   // this is the only "paper" toggle that matters.
   paperTradeMode: normalizeBoolean(process.env.PAPER_TRADE_MODE, false),
 
-  // ── Single-owner lockdown ────────────────────────────────────────────
-  // Default true: only the owner (matched by OWNER_EMAIL) can register.
-  // Set ALLOW_PUBLIC_REGISTRATION=true to open the public registration
-  // endpoint to anyone (multi-tenant SaaS mode). Default protects against
-  // attackers registering against your shared ANTHROPIC_API_KEY budget,
-  // CRED_ENCRYPTION_SECRET, audit log, and DB.
-  allowPublicRegistration: normalizeBoolean(
-    process.env.ALLOW_PUBLIC_REGISTRATION,
-    false,
-  ),
 };
 
 // Hard-required vars that must be present for any deploy.

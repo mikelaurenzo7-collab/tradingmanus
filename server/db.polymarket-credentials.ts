@@ -1,4 +1,4 @@
-import { polymarketCredentials, userPlatformSubscriptions } from "../drizzle/schema";
+import { polymarketCredentials } from "../drizzle/schema";
 import { eq } from "drizzle-orm";
 import { getDb } from "./db";
 import { encryptCredential, decryptCredential } from "./_core/kalshiAuth";
@@ -28,11 +28,16 @@ export async function savePolymarketCredentials(
     throw new Error("Database not initialized");
   }
 
-  const encryptedApiKey = encryptCredential(apiKey, userId);
-  const encryptedApiSecret = encryptCredential(apiSecret, userId);
-  const encryptedApiPassphrase = encryptCredential(apiPassphrase, userId);
-  const encryptedWalletPrivateKey = options.walletPrivateKey
-    ? encryptCredential(options.walletPrivateKey, userId)
+  // Trim before encrypting so the stored value matches what the caller
+  // validated (and what every later authenticated request will use).  If
+  // we encrypt raw input with leading/trailing whitespace, the connect
+  // succeeds but every subsequent CLOB call fails signature checks.
+  const encryptedApiKey = encryptCredential(apiKey.trim(), userId);
+  const encryptedApiSecret = encryptCredential(apiSecret.trim(), userId);
+  const encryptedApiPassphrase = encryptCredential(apiPassphrase.trim(), userId);
+  const trimmedWalletPrivateKey = options.walletPrivateKey?.trim();
+  const encryptedWalletPrivateKey = trimmedWalletPrivateKey
+    ? encryptCredential(trimmedWalletPrivateKey, userId)
     : null;
   const walletAddress = options.walletAddress?.trim() || null;
   const signatureType = Number.isFinite(options.signatureType)
@@ -173,40 +178,12 @@ export async function deletePolymarketCredentials(userId: number) {
 }
 
 /**
- * Get or initialize platform subscriptions for a user
+ * Single-owner gate for whether the Polymarket pipeline should run for the
+ * owner.  Returns true iff the polymarketCredentials row has status
+ * 'connected'.  Connecting Polymarket creds IS the "subscription" — there
+ * is no separate gate.
  */
-export async function getPlatformSubscriptions(userId: number) {
-  const database = await getDb();
-  if (!database) {
-    return { subscribedPlatforms: "kalshi" as const };
-  }
-
-  try {
-    const result = await database
-      .select()
-      .from(userPlatformSubscriptions)
-      .where(eq(userPlatformSubscriptions.userId, userId))
-      .limit(1);
-
-    if (!result || result.length === 0) {
-      return { subscribedPlatforms: "kalshi" as const };
-    }
-
-    return { subscribedPlatforms: result[0].subscribedPlatforms };
-  } catch (error) {
-    logger.error({ err: error }, "[Database] Get platform subscriptions failed");
-    return { subscribedPlatforms: "kalshi" as const };
-  }
-}
-
-/**
- * Single-owner gate for whether the Polymarket pipeline should run.  Returns
- * true iff this user has connected Polymarket credentials with status
- * `connected`.  The previous multi-tenant `userPlatformSubscriptions` table
- * is no longer consulted — at single-owner scale, "connecting Polymarket
- * credentials" IS the subscription.  Name kept for call-site compatibility.
- */
-export async function isUserSubscribedToPolymarket(userId: number): Promise<boolean> {
+export async function isPolymarketConnected(userId: number): Promise<boolean> {
   const database = await getDb();
   if (!database) {
     return false;
@@ -222,35 +199,7 @@ export async function isUserSubscribedToPolymarket(userId: number): Promise<bool
     if (!result || result.length === 0) return false;
     return result[0].accountStatus === "connected";
   } catch (error) {
-    logger.error({ err: error }, "[Database] isUserSubscribedToPolymarket check failed");
+    logger.error({ err: error }, "[Database] isPolymarketConnected check failed");
     return false;
-  }
-}
-
-/**
- * Save platform subscriptions for a user
- */
-export async function savePlatformSubscriptions(
-  userId: number,
-  subscribedPlatforms: "kalshi" | "polymarket" | "both",
-) {
-  const database = await getDb();
-  if (!database) {
-    throw new Error("Database not initialized");
-  }
-
-  try {
-    await database
-      .insert(userPlatformSubscriptions)
-      .values({ userId, subscribedPlatforms })
-      .onConflictDoUpdate({
-        target: userPlatformSubscriptions.userId,
-        set: { subscribedPlatforms },
-      });
-
-    return { success: true, subscribedPlatforms };
-  } catch (error) {
-    logger.error({ err: error }, "[Database] Save platform subscriptions failed");
-    throw error;
   }
 }
