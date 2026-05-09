@@ -1944,7 +1944,7 @@ export async function savePerformanceAttribution(data: {
 
 export async function getPerformanceAttributionHistory(
   userId: number,
-  platform: "kalshi",
+  platform: "kalshi" | "polymarket",
   limit: number = 200
 ) {
   const scopedUserId = assertPositiveIntegerUserId(

@@ -250,7 +250,10 @@ export function generateMMQuotePairs(
     // Widen spreads on uncertain markets (high distance from 0.5)
     const extremity = Math.abs(p - 0.5);
     const volatilityBoost = extremity > 0.35 ? 0.05 : 0;
-    if (volatilityBoost > 0 && params.volatility !== undefined) {
+    if (volatilityBoost > 0) {
+      // Apply the boost regardless of whether `params.volatility` was set —
+      // the previous gate skipped widening on the common default-params
+      // path, exactly the case where the spread should widen the most.
       params.volatility = (params.volatility ?? DEFAULT_PARAMS.volatility) + volatilityBoost;
     }
 

@@ -292,11 +292,15 @@ function detectRetracement(snapshot: MarketSnapshot): {
   const estimatedPrePumpPrice = Math.max(0.02, p - moveSize);
   const retraceFraction = (p - estimatedPrePumpPrice) / moveSize;
 
-  // Fade trigger at 50% retracement
+  // Fade trigger at 50% retracement.  `detected` reflects whether the
+  // retracement has reached the 50 % threshold the comments describe —
+  // not just "any >5 % move happened".  Without this, downstream signal
+  // builders fade on the first wiggle instead of waiting for the
+  // retracement to materialise.
   const fadeTriggerReady = retraceFraction <= 0.5;
 
   return {
-    detected: true,
+    detected: fadeTriggerReady,
     pumpPeak: p + moveSize * (1 - retraceFraction),
     fairPrice: estimatedPrePumpPrice,
   };

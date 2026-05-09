@@ -60,13 +60,17 @@ export async function getOpenPolymarketPositions(userId: number): Promise<Polyma
   const scopedUserId = assertPositiveIntegerUserId(userId, "getOpenPolymarketPositions");
   const database = await getDb();
   if (!database) return [];
+  // Restrict to status='open' so the exit monitor doesn't re-trigger on
+  // positions whose SELL has already been submitted (those are 'closing').
+  // Live auto-close marks the row 'closing' specifically to debounce until
+  // reconciliation flips it to 'closed'.
   return database
     .select()
     .from(polymarketPositions)
     .where(
       and(
         eq(polymarketPositions.userId, scopedUserId),
-        inArray(polymarketPositions.positionStatus, ["open", "closing"]),
+        eq(polymarketPositions.positionStatus, "open"),
       ),
     )
     .orderBy(desc(polymarketPositions.openedAt));
@@ -108,6 +112,12 @@ export async function upsertPolymarketPosition(
     await database
       .update(polymarketPositions)
       .set({
+        // Refresh size + entry from the incoming reconciliation payload so a
+        // remote position that grew, shrank, or rolled its average entry
+        // stays in sync with our local row.  Without this, exposure and
+        // PnL drift after every adjustment.
+        sizeUsdc: position.sizeUsdc,
+        entryPrice: position.entryPrice,
         currentPrice: position.currentPrice,
         unrealizedPnl: position.unrealizedPnl,
         realizedPnl: position.realizedPnl,

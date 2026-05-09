@@ -12,6 +12,7 @@ import crypto from "crypto";
 import { CircuitBreaker } from "./circuitBreaker";
 import { fetchWithRetry } from "./fetchWithRetry";
 import { logger } from "./logger";
+import { ENV } from "./env";
 
 /**
  * Single shared breaker for all Polymarket CLOB / gamma API calls.
@@ -159,14 +160,46 @@ export async function fetchPolymarketMarkets(options: {
       return [];
     }
 
+    // Gamma `/markets` returns token data in three parallel JSON-string
+    // fields (`outcomes`, `outcomePrices`, `clobTokenIds`) rather than a
+    // structured `tokens` array.  We support BOTH shapes — falling back to
+    // the older `tokens` array if a future Gamma response includes it
+    // directly — so detection works against current production payloads.
+    const parseJsonStringArray = (raw: unknown): string[] => {
+      if (Array.isArray(raw)) return raw.map((v) => String(v));
+      if (typeof raw === "string") {
+        try {
+          const parsed = JSON.parse(raw);
+          return Array.isArray(parsed) ? parsed.map((v) => String(v)) : [];
+        } catch {
+          return [];
+        }
+      }
+      return [];
+    };
+
     return raw.map((m) => {
-      const tokens = Array.isArray(m.tokens)
-        ? (m.tokens as Array<Record<string, unknown>>).map((t) => ({
-            token_id: String(t.token_id ?? t.tokenId ?? ""),
-            outcome: String(t.outcome ?? ""),
-            price: Number(t.price ?? 0),
-          }))
-        : [];
+      let tokens: Array<{ token_id: string; outcome: string; price: number }> = [];
+
+      if (Array.isArray(m.tokens)) {
+        tokens = (m.tokens as Array<Record<string, unknown>>).map((t) => ({
+          token_id: String(t.token_id ?? t.tokenId ?? ""),
+          outcome: String(t.outcome ?? ""),
+          price: Number(t.price ?? 0),
+        }));
+      } else {
+        const outcomes = parseJsonStringArray(m.outcomes);
+        const outcomePrices = parseJsonStringArray(m.outcomePrices ?? m.outcome_prices);
+        const clobTokenIds = parseJsonStringArray(m.clobTokenIds ?? m.clob_token_ids);
+        const len = Math.max(outcomes.length, outcomePrices.length, clobTokenIds.length);
+        for (let i = 0; i < len; i++) {
+          tokens.push({
+            token_id: String(clobTokenIds[i] ?? ""),
+            outcome: String(outcomes[i] ?? ""),
+            price: Number(outcomePrices[i] ?? 0),
+          });
+        }
+      }
 
       const yesToken = tokens.find((t) => t.outcome.toLowerCase() === "yes");
       const impliedProbabilityYes = yesToken ? yesToken.price : 0.5;
@@ -201,6 +234,23 @@ export async function fetchPolymarketMarkets(options: {
 
 /**
  * Place an order on Polymarket CLOB.
+ *
+ * KNOWN LIMITATION: the production Polymarket CLOB rejects this simplified
+ * `{ token_id, price, size, side, order_type }` body.  The real `/order`
+ * endpoint expects an EIP-712-signed `order` object containing maker/taker
+ * amounts (USDC scaled to 6 decimals + token quantity scaled to 6 decimals),
+ * `owner`, `signer`, `signature`, and a typed-data structure signed against
+ * the Polymarket CTF Exchange contract on Polygon.  Building that signing
+ * layer is a separate ~200 LOC subproject (viem + USDC scaling + typed-data
+ * domain).  Until that lands, autonomy + auto-close are GUARDED off via the
+ * `POLYMARKET_LIVE_TRADING_ENABLED=false` default below; only the read-only
+ * cross-platform arb DETECTION + Gamma market scan are wired to live data.
+ *
+ * This function is left in place (rather than throwing immediately) so the
+ * test suite + audit-event shape stay intact.  The runtime gate at the
+ * call sites returns `success: false` with a clear error before reaching
+ * here; if you remove that gate without first wiring EIP-712 signing, this
+ * function will reach Polymarket and be rejected at the API boundary.
  */
 export async function placePolymarketOrder(
   apiKey: string,
@@ -213,6 +263,15 @@ export async function placePolymarketOrder(
     size: number;
   },
 ): Promise<{ success: boolean; orderId?: string; error?: string }> {
+  if (!ENV.polymarketLiveTradingEnabled) {
+    return {
+      success: false,
+      error:
+        "Polymarket live trading is disabled (POLYMARKET_LIVE_TRADING_ENABLED=false). " +
+        "The CLOB requires an EIP-712 signed order body which is not yet implemented; " +
+        "flip the env var only after that signing layer lands or trades will be rejected.",
+    };
+  }
   try {
     const path = "/order";
     const url = `${POLYMARKET_CLOB_BASE_URL}${path}`;

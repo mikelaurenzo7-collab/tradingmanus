@@ -144,6 +144,7 @@ export function getAllSchedulerSnapshots() {
       autonomy_kalshi: getSchedulerSnapshot("autonomy_kalshi"),
       autonomy_polymarket: getSchedulerSnapshot("autonomy_polymarket"),
       order_sync: getSchedulerSnapshot("order_sync"),
+      polymarket_order_sync: getSchedulerSnapshot("polymarket_order_sync"),
       cross_arb: getSchedulerSnapshot("cross_arb"),
     },
   };

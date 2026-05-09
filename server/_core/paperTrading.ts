@@ -383,13 +383,20 @@ export async function simulatePolymarketOrderFill(
         .limit(1);
       const existingRow = existing[0];
       if (existingRow) {
-        const newSize = (Number(existingRow.sizeUsdc) || 0) + sizeUsdc;
+        // Blend cost basis in TOKEN space, not USDC outlay.  An add at a
+        // different price weights by tokens acquired, not capital spent —
+        // otherwise the average entry skews toward whichever leg cost more
+        // in dollars, which is dimensionally wrong.
+        const oldEntry = Number(existingRow.entryPrice) || 0;
+        const oldSizeUsdc = Number(existingRow.sizeUsdc) || 0;
+        const oldTokens = oldEntry > 0 ? oldSizeUsdc / oldEntry : 0;
+        const newTokens = fillPrice > 0 ? sizeUsdc / fillPrice : 0;
+        const totalTokens = oldTokens + newTokens;
         const blendedEntry =
-          newSize > 0
-            ? ((Number(existingRow.entryPrice) || 0) * (Number(existingRow.sizeUsdc) || 0) +
-                fillPrice * sizeUsdc) /
-              newSize
+          totalTokens > 0
+            ? (oldEntry * oldTokens + fillPrice * newTokens) / totalTokens
             : fillPrice;
+        const newSize = oldSizeUsdc + sizeUsdc;
         await db
           .update(polymarketPositions)
           .set({
@@ -521,7 +528,12 @@ export async function simulatePolymarketPositionClose(
       };
     }
 
-    const realizedPnl = (fillPrice - (Number(position.entryPrice) || 0)) * sizeUsdc;
+    // Realized PnL = (exit − entry) × tokens.  Tokens = USDC entry capital ÷
+    // entry price.  Multiplying by sizeUsdc instead would dimension PnL in
+    // (USDC×price) space — wrong by a factor of the entry price.
+    const entryPrice = Number(position.entryPrice) || 0;
+    const tokens = entryPrice > 0 ? sizeUsdc / entryPrice : 0;
+    const realizedPnl = (fillPrice - entryPrice) * tokens;
     try {
       await db
         .update(polymarketPositions)

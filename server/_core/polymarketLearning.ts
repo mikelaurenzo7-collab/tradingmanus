@@ -488,7 +488,7 @@ export async function recordPolymarketTradeEntry(
     userId,
     "recordPolymarketTradeEntry userId"
   );
-  const tradeId = `pm-trade-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  const tradeId = `pm-trade-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 
   const trade: PolymarketTradeRecord = {
     id: tradeId,
@@ -680,32 +680,41 @@ export async function getPolymarketTradeHistory(
     userId,
     "getPolymarketTradeHistory userId"
   );
-  const trades = await db.getKalshiTradeHistory(
-    filters?.limit || 50,
-    scopedUserId
-  );
-  return trades.map((t: any) => ({
-    id: `pm-trade-${t.id}`,
-    marketId: t.marketId,
-    tokenId: t.marketId, // Placeholder
-    signalId: "",
-    signalType: "momentum",
-    side: t.side,
-    entryPrice: t.entryPrice,
-    entrySizeUsdc: t.quantity * t.entryPrice,
-    exitPrice: t.currentPrice,
-    exitSizeUsdc: t.quantity * t.currentPrice,
-    pnl: getTradePnL(t),
-    pnlPercent: getTradePnL(t)
-      ? (getTradePnL(t) / (t.entryPrice * t.quantity)) * 100
-      : 0,
-    outcome:
-      getTradePnL(t) > 0 ? "win" : getTradePnL(t) < 0 ? "loss" : "breakeven",
-    entryTime: t.createdAt || new Date(),
-    exitTime: t.closedAt,
-    reasoning: "",
-    status: t.positionStatus,
-  }));
+  // Use Polymarket positions (not Kalshi orders).  positions carry the
+  // entry/current price + realizedPnl / status fields this view shape needs.
+  const positions = await polyDb.getPolymarketPositions(scopedUserId);
+  const limit = filters?.limit ?? 50;
+  return positions.slice(0, limit).map((t) => {
+    const entryPrice = Number(t.entryPrice) || 0;
+    const exitPrice = Number(t.currentPrice) || entryPrice;
+    const sizeUsdc = Number(t.sizeUsdc) || 0;
+    const realizedPnl = Number(t.realizedPnl) || 0;
+    const pnlPercent =
+      entryPrice * sizeUsdc > 0 ? (realizedPnl / (entryPrice * sizeUsdc)) * 100 : 0;
+    return {
+      id: `pm-trade-${t.id}`,
+      marketId: t.marketId,
+      tokenId: t.tokenId,
+      signalId: "",
+      signalType: "momentum",
+      side: t.side,
+      entryPrice,
+      entrySizeUsdc: sizeUsdc,
+      exitPrice,
+      exitSizeUsdc: sizeUsdc,
+      pnl: realizedPnl,
+      pnlPercent,
+      outcome:
+        realizedPnl > 0 ? "win" : realizedPnl < 0 ? "loss" : "breakeven",
+      entryTime: t.openedAt || new Date(),
+      exitTime: t.closedAt ?? undefined,
+      reasoning: "",
+      // Map drizzle's positionStatus enum (open|closing|closed) to the trade-
+      // record's narrower (open|closed|partial) shape; treat 'closing' as
+      // 'partial' since a SELL is in flight but the row isn't closed yet.
+      status: t.positionStatus === "closing" ? ("partial" as const) : t.positionStatus,
+    };
+  });
 }
 
 /**
@@ -721,8 +730,8 @@ export async function calculatePolymarketStreaks(userId: number): Promise<{
     userId,
     "calculatePolymarketStreaks userId"
   );
-  const trades = await db.getKalshiTradeHistory(1000, scopedUserId);
-  const closedTrades = trades.filter((t: any) => t.positionStatus === "closed");
+  const positions = await polyDb.getPolymarketPositions(scopedUserId);
+  const closedTrades = positions.filter((p) => p.positionStatus === "closed");
 
   let currentWinStreak = 0;
   let maxWinStreak = 0;
@@ -730,7 +739,7 @@ export async function calculatePolymarketStreaks(userId: number): Promise<{
   let maxLossStreak = 0;
 
   for (const trade of closedTrades) {
-    const pnl = getTradePnL(trade);
+    const pnl = Number(trade.realizedPnl) || 0;
     if (pnl > 0) {
       currentWinStreak++;
       currentLossStreak = 0;

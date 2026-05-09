@@ -413,6 +413,7 @@ async function runCrossPlatformArbScanner() {
   if (crossArbScanInFlight) return;
   crossArbScanInFlight = true;
   const startedAt = Date.now();
+  hb.markTickStart("cross_arb", "scanning", "Fetching Kalshi + Polymarket markets");
   try {
     const [rawKalshi, rawPoly] = await Promise.all([
       fetchKalshiMarkets({ status: "open" }),
@@ -472,10 +473,11 @@ async function runCrossPlatformArbScanner() {
     // operator can manually arb them.
   } catch (error) {
     logger.error({ err: error }, "[CrossArb] Scanner failed");
+    hb.setError("cross_arb", error);
   } finally {
     crossArbScanInFlight = false;
     hb.recordTickTelemetry("cross_arb", { ordersPlaced: 0 });
-    void startedAt;
+    hb.markTickComplete("cross_arb", startedAt);
   }
 }
 

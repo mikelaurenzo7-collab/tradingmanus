@@ -246,8 +246,14 @@ export async function evaluatePolymarketExitsForOpenPositions(
             if (userPaperMode) {
               return simulatePolymarketPositionClose(userId, positionId, currentPrice, triggeredByOpenId);
             }
-            if (!creds || creds.accountStatus !== "connected" || !creds.apiKey) {
-              return { success: false, error: "Polymarket credentials not connected" };
+            if (
+              !creds ||
+              creds.accountStatus !== "connected" ||
+              !creds.apiKey ||
+              !creds.apiSecret ||
+              !creds.apiPassphrase
+            ) {
+              return { success: false, error: "Polymarket credentials not connected or incomplete" };
             }
             return closePolymarketPosition(creds.apiKey, creds.apiSecret, creds.apiPassphrase, {
               tokenId,
