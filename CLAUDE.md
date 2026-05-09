@@ -456,15 +456,32 @@ price hasn't moved materially since their last review.  Tunable via env:
 - `SIGNAL_REVIEW_STALE_TTL_MS` (default `600000` = 10 min) — heartbeat:
   even quiet markets get re-reviewed at least this often.
 
-Empirically this skips ~70-85 % of cycle candidates, so AI cost drops 3-5×
-for the same cadence.  Or equivalently, you can tighten `AUTONOMY_INTERVAL_MS`
-to 60 s — adaptive cadence absorbs the extra ticks so actual Anthropic spend
-increases only ~15-20 % vs the 10-min default.
+The effective review rate per market per day is governed by the **per-category
+base TTL** (e.g. crypto=1 min, sports=2 min, politics=10 min, weather=15 min)
+rather than by tick count alone.  At 10-min intervals almost every TTL expires
+between ticks, so each category is reviewed ~144 times/day.  Tightening to
+1-min intervals only adds cost for the fast-moving categories whose TTLs are
+shorter than the tick gap:
 
-Each autonomy run emits a `kalshi_adaptive_cadence_skipped` /
-`polymarket_adaptive_cadence_skipped` audit event with the skipped count
-+ first 50 market IDs + cache telemetry, so the operator can verify the
-gate is working.
+| Category | TTL | Reviews/day @ 10 min | Reviews/day @ 1 min |
+|---|---|---|---|
+| crypto | 1 min | 144 | 1,440 |
+| sports | 2 min | 144 | 720 |
+| tech/econ | 5 min | 144 | 288 |
+| politics/other | 10 min | 144 | 144 |
+| weather | 15 min | 96 | 96 |
+
+In practice Kalshi's market mix is dominated by politics/economics, so the
+actual AI cost uplift from 10-min → 1-min is roughly **1.5–3× depending on
+how many crypto/sports signals surface on a given day** (not 15–20% as
+previously stated).  Estimated daily AI spend:
+
+- **10-min interval**: ~$1.90/day
+- **1-min interval**: ~$4–6/day
+
+Each autonomy run emits a `kalshi_adaptive_cadence_skipped` audit event with
+the skipped count + first 50 market IDs + cache telemetry, so the operator
+can verify the gate is working.
 
 ---
 
