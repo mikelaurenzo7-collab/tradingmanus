@@ -156,18 +156,19 @@ export async function runEnsemble(input: EnsembleInput): Promise<EnsembleVerdict
   // Tier 2: Sonnet (deeper review on high-stakes signals).
   if (!ENV.anthropicApiKey) {
     // No Anthropic key configured — should never happen post-Phase-1 since
-    // env validation requires ANTHROPIC_API_KEY. Defensive trust-Tier-1 fall
-    // through with a loud warning so the operator notices.
-    logger.warn(
+    // env validation requires ANTHROPIC_API_KEY in production. Fail CLOSED:
+    // a high-stakes bet without Tier-2/3 review is a configuration error that
+    // must not silently pass through to execution.
+    logger.error(
       { ticker: input.ticker, classification: classification.reasoning },
-      "[Ensemble] high-stakes signal but ANTHROPIC_API_KEY unset — trusting Tier-1 verdict",
+      "[Ensemble] ANTHROPIC_API_KEY unset — refusing high-stakes signal (fail closed)",
     );
     return {
-      approved: true,
+      approved: false,
       finalConfidenceAdjustment: input.tier1Verdict.confidenceAdjustment,
       finalExpectedValueAdjustment: input.tier1Verdict.expectedValueAdjustment,
       finalImpliedProbability: input.tier1Verdict.impliedProbability,
-      reasoning: `Tier-1-only (Anthropic key unset). High-stakes triggers: ${classification.reasoning}`,
+      reasoning: `Configuration error: ANTHROPIC_API_KEY unset; refusing high-stakes trade. Triggers: ${classification.reasoning}`,
       classification,
       reviews,
       totalAiCostUsd,

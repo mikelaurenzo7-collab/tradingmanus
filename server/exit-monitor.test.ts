@@ -328,6 +328,43 @@ describe("evaluateExitsForOpenPositions — time decay", () => {
   });
 });
 
+describe("evaluateExitsForOpenPositions — resolved market guard", () => {
+  it("skips evaluation entirely when resolutionDate is in the past", async () => {
+    const resolvedYesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    mocks.getOpenKalshiPositions.mockResolvedValue([
+      { id: 400, marketId: "KX-RESOLVED", side: "yes", entryPrice: 0.6, quantity: 10, exitState: null },
+    ]);
+    mocks.getDb.mockResolvedValue(
+      fakeDb({ marketRow: { yesPrice: 0.5, noPrice: 0.5, resolutionDate: resolvedYesterday } }),
+    );
+
+    const { evaluateExitsForOpenPositions } = await import("./_core/exitMonitor");
+    const results = await evaluateExitsForOpenPositions(7);
+
+    // Position is skipped entirely — exchange will settle it
+    expect(results).toHaveLength(0);
+    expect(mocks.logAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("still evaluates when resolutionDate is in the future", async () => {
+    const resolutionTomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    mocks.getOpenKalshiPositions.mockResolvedValue([
+      { id: 401, marketId: "KX-ACTIVE", side: "yes", entryPrice: 0.6, quantity: 10, exitState: null },
+    ]);
+    // Price at stop-loss level to trigger an exit
+    mocks.getDb.mockResolvedValue(
+      fakeDb({ marketRow: { yesPrice: 0.5, noPrice: 0.5, resolutionDate: resolutionTomorrow } }),
+    );
+    mocks.logAuditEvent.mockResolvedValue(true);
+
+    const { evaluateExitsForOpenPositions } = await import("./_core/exitMonitor");
+    const results = await evaluateExitsForOpenPositions(7);
+
+    expect(results).toHaveLength(1);
+    expect(results[0].decision.shouldExit).toBe(true);
+  });
+});
+
 describe("evaluateExitsForOpenPositions — persisted state parsing", () => {
   it("re-initialises state when the persisted blob is malformed", async () => {
     let capturedState: unknown;

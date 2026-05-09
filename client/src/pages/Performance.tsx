@@ -177,6 +177,7 @@ export default function Performance() {
         <StatCard
           label="Avg Hold Time"
           value="—"
+          subtitle="not yet tracked"
           icon={<Clock size={20} />}
           color="#fbbf24"
         />
