@@ -213,6 +213,22 @@ export async function placePolymarketOrder(
       error: "Polymarket wallet private key + funder address required for order signing",
     };
   }
+  // Gate live placement on POLYMARKET_OWNER_ADDRESS being set.  Without it,
+  // syncPolymarketPositions() silently no-ops, so newly opened live positions
+  // are invisible to the exit monitor (no auto-close, no trailing stop, no
+  // drift-close detection).  Failing closed here is safer than placing an
+  // order we can't reconcile.
+  if (!ENV.polymarketOwnerAddress) {
+    return {
+      success: false,
+      error:
+        "POLYMARKET_OWNER_ADDRESS is not set — live placement blocked.  " +
+        "Without the EOA proxy address, position-sync cannot reconcile new " +
+        "positions and the exit monitor would never see them.  Set the " +
+        "env var to your Polymarket wallet address (the 0x... shown on " +
+        "your account page) and redeploy.",
+    };
+  }
   try {
     const { buildPolymarketClobClient, submitSignedPolymarketOrder } = await import(
       "./polymarketSigner"
