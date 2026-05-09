@@ -708,23 +708,35 @@ export async function runPolymarketAutonomousTrading(
           },
           triggeredByOpenId,
         )
-      : await placePolymarketOrder(
-          creds.apiKey,
-          creds.apiSecret,
-          creds.apiPassphrase,
-          {
-            tokenId: best.tokenId,
-            side: "BUY",
-            price: best.limitPrice,
-            // CLOB `size` is TOKEN quantity, not USDC.  scaledSize is a USDC
-            // budget (from maxOrderNotional / Kelly / risk limits).  Convert
-            // budget → tokens by dividing by the limit price; the matching
-            // engine fills at-or-better, so notional ≤ scaledSize is the
-            // post-condition we want.  Floor a hair below the budget to
-            // avoid rounding above it.
-            size: Math.max(0, Math.floor((scaledSize / Math.max(best.limitPrice, 1e-6)) * 100) / 100),
-          },
-        );
+      : await (async () => {
+          if (!creds.walletPrivateKey || !creds.walletAddress) {
+            return {
+              success: false,
+              error:
+                "Polymarket wallet credentials missing — connect your wallet private key + funder address in settings before live trading",
+            };
+          }
+          return placePolymarketOrder(
+            creds.apiKey,
+            creds.apiSecret,
+            creds.apiPassphrase,
+            {
+              tokenId: best.tokenId,
+              side: "BUY",
+              price: best.limitPrice,
+              // CLOB `size` is TOKEN quantity, not USDC.  scaledSize is a USDC
+              // budget (from maxOrderNotional / Kelly / risk limits).  Convert
+              // budget → tokens by dividing by the limit price; the matching
+              // engine fills at-or-better, so notional ≤ scaledSize is the
+              // post-condition we want.  Floor a hair below the budget to
+              // avoid rounding above it.
+              size: Math.max(0, Math.floor((scaledSize / Math.max(best.limitPrice, 1e-6)) * 100) / 100),
+              walletPrivateKey: creds.walletPrivateKey,
+              walletAddress: creds.walletAddress,
+              signatureType: creds.signatureType,
+            },
+          );
+        })();
 
     if (!orderResult.success) {
       await db.logAuditEvent(

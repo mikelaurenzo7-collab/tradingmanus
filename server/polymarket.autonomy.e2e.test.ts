@@ -141,7 +141,11 @@ describe("Polymarket autonomy E2E — full cycle", () => {
       userId: 8,
       accountStatus: "connected",
       apiKey: "pm-key",
-      privateKey: "pm-secret",
+      apiSecret: "pm-secret",
+      apiPassphrase: "pm-pass",
+      walletPrivateKey: "0x" + "11".repeat(32),
+      walletAddress: "0x0000000000000000000000000000000000000001",
+      signatureType: 1,
     });
     mocks.getKalshiCapital.mockResolvedValue({
       currentBalance: 500,
@@ -583,7 +587,11 @@ describe("Polymarket autonomy E2E — risk calculations", () => {
       userId: 8,
       accountStatus: "connected",
       apiKey: "key",
-      privateKey: "secret",
+      apiSecret: "secret",
+      apiPassphrase: "pass",
+      walletPrivateKey: "0x" + "11".repeat(32),
+      walletAddress: "0x0000000000000000000000000000000000000001",
+      signatureType: 1,
     });
     mocks.getKalshiCapital.mockResolvedValue({
       currentBalance: 1000,

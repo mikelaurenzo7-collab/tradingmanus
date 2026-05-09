@@ -661,6 +661,18 @@ export const polymarketCredentials = pgTable("polymarketCredentials", {
   apiKeyEncrypted: text("apiKeyEncrypted").notNull(),
   apiSecretEncrypted: text("apiSecretEncrypted").notNull(),
   apiPassphraseEncrypted: text("apiPassphraseEncrypted").notNull(),
+  // EIP-712 order signing requires the wallet private key (the EOA whose
+  // key signs the order typed-data).  Encrypted at rest under
+  // CREDENTIAL_ENCRYPTION_SECRET.  Nullable so existing read-only rows
+  // don't break — but live order placement will refuse to run until set.
+  walletPrivateKeyEncrypted: text("walletPrivateKeyEncrypted"),
+  // Funder/maker address.  For POLY_PROXY (the default for Polymarket UI
+  // users), this is the proxy wallet address (not the EOA address that
+  // signs).  For EOA signature type, this is the same as the EOA address.
+  walletAddress: varchar("walletAddress", { length: 42 }),
+  // 0=EOA, 1=POLY_PROXY (default — Polymarket UI users), 2=POLY_GNOSIS_SAFE.
+  // Stored as smallint matching the on-chain enum.
+  signatureType: integer("signatureType").default(1),
   accountStatus: polymarketAccountStatusEnum("accountStatus")
     .default("disconnected")
     .notNull(),

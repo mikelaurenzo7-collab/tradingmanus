@@ -61,19 +61,17 @@ export const ENV = {
   // the boot self-test surfaces a WARN.
   polymarketOwnerAddress: normalize(process.env.POLYMARKET_OWNER_ADDRESS).toLowerCase(),
 
-  // Polymarket LIVE trading off by default.  The CLOB `/order` endpoint
-  // requires an EIP-712 signed order body that this codebase does not yet
-  // construct (separate ~200 LOC subproject: viem typed-data signing +
-  // USDC/token decimal scaling + maker/taker amount math).  Until that
-  // ships, `placePolymarketOrder` returns a clear error before reaching
-  // the API so live mode can never silently misfire — flipping this to
-  // true without the signing layer just gets every order rejected by
-  // Polymarket.  Detection-only paths (Gamma market scan, cross-arb
-  // scanner audit log, position read-side reconciliation) work either
-  // way; this gate only blocks SUBMIT side.
+  // Polymarket LIVE trading kill-switch.  Signing is implemented via
+  // @polymarket/clob-client (EIP-712 typed-data over the CTF Exchange
+  // contract on Polygon), so the default is ON — but ONLY if the user's
+  // polymarketCredentials row carries: apiKey, apiSecret, apiPassphrase,
+  // walletPrivateKeyEncrypted, walletAddress, and signatureType.  Without
+  // those, placePolymarketOrder still refuses to sign.  Flip this env to
+  // false to disable Polymarket order placement entirely (read-side paths
+  // still work).
   polymarketLiveTradingEnabled: normalizeBoolean(
     process.env.POLYMARKET_LIVE_TRADING_ENABLED,
-    false,
+    true,
   ),
 
   // ── Kalshi (the ONLY trading platform) ───────────────────────────────────

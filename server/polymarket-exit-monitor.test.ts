@@ -196,6 +196,9 @@ describe("evaluatePolymarketExitsForOpenPositions — auto-close routing", () =>
       apiKey: "k",
       apiSecret: "s",
       apiPassphrase: "p",
+      walletPrivateKey: "0x" + "11".repeat(32),
+      walletAddress: "0x0000000000000000000000000000000000000001",
+      signatureType: 1,
     });
     mocks.closePolymarketPosition.mockResolvedValue({ success: true, orderId: "live-close-1" });
 
@@ -205,7 +208,13 @@ describe("evaluatePolymarketExitsForOpenPositions — auto-close routing", () =>
     expect(results[0].closed).toBe(true);
     expect(mocks.closePolymarketPosition).toHaveBeenCalledWith(
       "k", "s", "p",
-      { tokenId: "t1", sizeUsdc: 10, price: 0.5 },
+      expect.objectContaining({
+        tokenId: "t1",
+        sizeUsdc: 10,
+        price: 0.5,
+        walletPrivateKey: expect.any(String),
+        walletAddress: expect.any(String),
+      }),
     );
     expect(mocks.simulatePolymarketPositionClose).not.toHaveBeenCalled();
   });
@@ -223,6 +232,9 @@ describe("evaluatePolymarketExitsForOpenPositions — auto-close routing", () =>
     mocks.logAuditEvent.mockResolvedValue(true);
     mocks.getPolymarketCredentials.mockResolvedValue({
       accountStatus: "connected", apiKey: "k", apiSecret: "s", apiPassphrase: "p",
+      walletPrivateKey: "0x" + "11".repeat(32),
+      walletAddress: "0x0000000000000000000000000000000000000001",
+      signatureType: 1,
     });
     mocks.closePolymarketPosition.mockResolvedValue({ success: false, error: "insufficient bids" });
 

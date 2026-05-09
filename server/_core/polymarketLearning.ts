@@ -214,11 +214,12 @@ export function calculatePerformanceMetricsFromTrades(
 
   const returns = closedTrades
     .map(trade => {
-      const entryNotional = Math.abs(
-        Number(trade.entryPrice ?? 0) * Number(trade.sizeUsdc ?? 0)
-      );
-      if (entryNotional <= 0) return null;
-      return getTradePnL(trade) / entryNotional;
+      // sizeUsdc is the deployed USDC capital — that IS the cost basis.
+      // Multiplying by entryPrice again would dimension the denominator in
+      // (USDC × price) space and skew Sharpe / mean-return downward by 1/p.
+      const costBasisUsdc = Math.abs(Number(trade.sizeUsdc ?? 0));
+      if (costBasisUsdc <= 0) return null;
+      return getTradePnL(trade) / costBasisUsdc;
     })
     .filter(
       (value): value is number => value !== null && Number.isFinite(value)
@@ -684,19 +685,36 @@ export async function getPolymarketTradeHistory(
   // entry/current price + realizedPnl / status fields this view shape needs.
   const positions = await polyDb.getPolymarketPositions(scopedUserId);
   const limit = filters?.limit ?? 50;
-  return positions.slice(0, limit).map((t) => {
+  // Apply status + outcome filters BEFORE the limit slice so the limit acts
+  // on filtered results, not the raw position list.  signalType filtering is
+  // not yet supported (positions don't carry signal-family metadata) — we
+  // surface that to callers by passing through `signalType: undefined`
+  // rather than fabricating a value.
+  const mapStatus = (s: string) =>
+    s === "closing" ? ("partial" as const) : (s as "open" | "closed");
+  const filtered = positions.filter((t) => {
+    const realizedPnl = Number(t.realizedPnl) || 0;
+    const outcome = realizedPnl > 0 ? "win" : realizedPnl < 0 ? "loss" : "breakeven";
+    if (filters?.status && mapStatus(t.positionStatus) !== filters.status) return false;
+    if (filters?.outcome && outcome !== filters.outcome) return false;
+    // signalType filter is intentionally a no-op (and noted above) — silently
+    // accepted but not applied, since real signal metadata isn't joined yet.
+    return true;
+  });
+  return filtered.slice(0, limit).map((t) => {
     const entryPrice = Number(t.entryPrice) || 0;
     const exitPrice = Number(t.currentPrice) || entryPrice;
     const sizeUsdc = Number(t.sizeUsdc) || 0;
     const realizedPnl = Number(t.realizedPnl) || 0;
-    const pnlPercent =
-      entryPrice * sizeUsdc > 0 ? (realizedPnl / (entryPrice * sizeUsdc)) * 100 : 0;
+    const pnlPercent = sizeUsdc > 0 ? (realizedPnl / sizeUsdc) * 100 : 0;
     return {
       id: `pm-trade-${t.id}`,
       marketId: t.marketId,
       tokenId: t.tokenId,
       signalId: "",
-      signalType: "momentum",
+      // Real signal-family metadata isn't joined into positions yet; left
+      // blank rather than fabricated so callers can tell it's missing.
+      signalType: "",
       side: t.side,
       entryPrice,
       entrySizeUsdc: sizeUsdc,
@@ -709,10 +727,7 @@ export async function getPolymarketTradeHistory(
       entryTime: t.openedAt || new Date(),
       exitTime: t.closedAt ?? undefined,
       reasoning: "",
-      // Map drizzle's positionStatus enum (open|closing|closed) to the trade-
-      // record's narrower (open|closed|partial) shape; treat 'closing' as
-      // 'partial' since a SELL is in flight but the row isn't closed yet.
-      status: t.positionStatus === "closing" ? ("partial" as const) : t.positionStatus,
+      status: mapStatus(t.positionStatus),
     };
   });
 }
@@ -731,7 +746,18 @@ export async function calculatePolymarketStreaks(userId: number): Promise<{
     "calculatePolymarketStreaks userId"
   );
   const positions = await polyDb.getPolymarketPositions(scopedUserId);
-  const closedTrades = positions.filter((p) => p.positionStatus === "closed");
+  // Sort closed positions by close timestamp so streaks are computed in
+  // chronological order regardless of DB row order — without this, a
+  // different ORDER BY in getPolymarketPositions would silently change the
+  // current-/max-streak numbers even though the underlying trades didn't.
+  const closedTrades = positions
+    .filter((p) => p.positionStatus === "closed")
+    .slice()
+    .sort((a, b) => {
+      const left = a.closedAt instanceof Date ? a.closedAt.getTime() : 0;
+      const right = b.closedAt instanceof Date ? b.closedAt.getTime() : 0;
+      return left - right;
+    });
 
   let currentWinStreak = 0;
   let maxWinStreak = 0;

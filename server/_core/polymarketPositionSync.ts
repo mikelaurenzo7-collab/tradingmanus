@@ -81,9 +81,20 @@ function parseRemoteSide(raw: unknown): "yes" | "no" | null {
   return null;
 }
 
-function parseFiniteNumber(raw: unknown, allowZero = false): number | null {
+function parseFiniteNumber(
+  raw: unknown,
+  mode: boolean | "signed" = false,
+): number | null {
   const n = Number(raw);
   if (!Number.isFinite(n)) return null;
+  // Three modes:
+  //   false      → strict positive (default; e.g. size, price)
+  //   true       → allow zero, reject negative
+  //   "signed"   → allow zero AND negative (e.g. unrealized PnL on losing
+  //                positions — we MUST persist these or drawdown silently
+  //                resets to 0 every sync until the position recovers).
+  if (mode === "signed") return n;
+  const allowZero = mode === true;
   if (!allowZero && n <= 0) return null;
   if (allowZero && n < 0) return null;
   return n;
@@ -120,7 +131,7 @@ export function parseRemotePositions(payload: unknown): RemotePosition[] {
     if (avg === null || avg >= 1) continue;
     const cur = parseFiniteNumber(r.curPrice ?? r.currentPrice ?? avg) ?? avg;
     if (cur >= 1) continue;
-    const pnl = parseFiniteNumber(r.cashPnl ?? r.unrealizedPnl ?? 0, true) ?? 0;
+    const pnl = parseFiniteNumber(r.cashPnl ?? r.unrealizedPnl ?? 0, "signed") ?? 0;
 
     out.push({
       marketId,

@@ -148,6 +148,9 @@ function setupHappyPath() {
     apiKey: "k",
     apiSecret: "s",
     apiPassphrase: "p",
+    walletPrivateKey: "0x" + "11".repeat(32),
+    walletAddress: "0x0000000000000000000000000000000000000001",
+    signatureType: 1,
   });
   mocks.getKalshiCapital.mockResolvedValue({ currentBalance: 500, startingBalance: 500 });
   mocks.getPolymarketPerformanceOverview.mockResolvedValue({

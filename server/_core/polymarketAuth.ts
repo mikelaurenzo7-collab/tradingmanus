@@ -233,24 +233,24 @@ export async function fetchPolymarketMarkets(options: {
 }
 
 /**
- * Place an order on Polymarket CLOB.
+ * Place a signed order on Polymarket CLOB.
  *
- * KNOWN LIMITATION: the production Polymarket CLOB rejects this simplified
- * `{ token_id, price, size, side, order_type }` body.  The real `/order`
- * endpoint expects an EIP-712-signed `order` object containing maker/taker
- * amounts (USDC scaled to 6 decimals + token quantity scaled to 6 decimals),
- * `owner`, `signer`, `signature`, and a typed-data structure signed against
- * the Polymarket CTF Exchange contract on Polygon.  Building that signing
- * layer is a separate ~200 LOC subproject (viem + USDC scaling + typed-data
- * domain).  Until that lands, autonomy + auto-close are GUARDED off via the
- * `POLYMARKET_LIVE_TRADING_ENABLED=false` default below; only the read-only
- * cross-platform arb DETECTION + Gamma market scan are wired to live data.
+ * Real Polymarket order submission uses EIP-712 typed-data signing against
+ * the CTF Exchange contract on Polygon (chainId 137).  This is wired through
+ * `@polymarket/clob-client` in `polymarketSigner.ts` — that module wraps
+ * Polymarket's official client with our credential decryption boundary so
+ * the wallet private key only lives in plaintext for the lifetime of one
+ * call.
  *
- * This function is left in place (rather than throwing immediately) so the
- * test suite + audit-event shape stay intact.  The runtime gate at the
- * call sites returns `success: false` with a clear error before reaching
- * here; if you remove that gate without first wiring EIP-712 signing, this
- * function will reach Polymarket and be rejected at the API boundary.
+ * Caller responsibilities:
+ *   • `size` MUST be in TOKEN quantity (not USDC notional).  Polymarket's
+ *     `size` field is the token count; the autonomy loop converts from a
+ *     USDC budget via `floor(usdc / price)` before invoking us.
+ *   • `walletPrivateKey` MUST already be decrypted; we never re-encrypt or
+ *     persist it.
+ *   • Setting `POLYMARKET_LIVE_TRADING_ENABLED=false` short-circuits this
+ *     to a no-op (returns failure) so a misconfigured deploy can't fire
+ *     live orders.  Default is now ON, since signing is implemented.
  */
 export async function placePolymarketOrder(
   apiKey: string,
@@ -261,6 +261,9 @@ export async function placePolymarketOrder(
     side: "BUY" | "SELL";
     price: number;
     size: number;
+    walletPrivateKey: string;
+    walletAddress: string;
+    signatureType?: number;
   },
 ): Promise<{ success: boolean; orderId?: string; error?: string }> {
   if (!ENV.polymarketLiveTradingEnabled) {
@@ -268,47 +271,33 @@ export async function placePolymarketOrder(
       success: false,
       error:
         "Polymarket live trading is disabled (POLYMARKET_LIVE_TRADING_ENABLED=false). " +
-        "The CLOB requires an EIP-712 signed order body which is not yet implemented; " +
-        "flip the env var only after that signing layer lands or trades will be rejected.",
+        "Flip the env var to enable live order placement.",
+    };
+  }
+  if (!order.walletPrivateKey || !order.walletAddress) {
+    return {
+      success: false,
+      error: "Polymarket wallet private key + funder address required for order signing",
     };
   }
   try {
-    const path = "/order";
-    const url = `${POLYMARKET_CLOB_BASE_URL}${path}`;
-    const bodyObj = {
-      token_id: order.tokenId,
-      price: order.price,
-      size: order.size,
-      side: order.side,
-      order_type: "GTC",
-    };
-    const body = JSON.stringify(bodyObj);
-    const headers = buildPolymarketHeaders(
+    const { buildPolymarketClobClient, submitSignedPolymarketOrder } = await import(
+      "./polymarketSigner"
+    );
+    const client = buildPolymarketClobClient({
       apiKey,
       apiSecret,
       apiPassphrase,
-      "POST",
-      path,
-      body,
-    );
-
-    const response = await fetchWithRetry(url, { method: "POST", headers, body }, { label: "Polymarket.placeOrder", breaker: polymarketBreaker });
-    const payload = (await response.json()) as Record<string, unknown>;
-
-    if (!response.ok) {
-      const msg =
-        typeof payload.error === "string"
-          ? payload.error
-          : typeof payload.message === "string"
-            ? payload.message
-            : `HTTP ${response.status}`;
-      return { success: false, error: msg };
-    }
-
-    return {
-      success: true,
-      orderId: typeof payload.order_id === "string" ? payload.order_id : undefined,
-    };
+      privateKey: order.walletPrivateKey,
+      walletAddress: order.walletAddress,
+      signatureType: order.signatureType as 0 | 1 | 2 | undefined,
+    });
+    return await submitSignedPolymarketOrder(client, {
+      tokenId: order.tokenId,
+      side: order.side,
+      price: order.price,
+      size: order.size,
+    });
   } catch (error) {
     logger.error({ err: error }, "[Polymarket] Place order failed");
     return {
@@ -335,7 +324,14 @@ export async function closePolymarketPosition(
   apiKey: string,
   apiSecret: string,
   apiPassphrase: string,
-  position: { tokenId: string; sizeUsdc: number; price: number },
+  position: {
+    tokenId: string;
+    sizeUsdc: number;
+    price: number;
+    walletPrivateKey: string;
+    walletAddress: string;
+    signatureType?: number;
+  },
 ): Promise<{ success: boolean; orderId?: string; error?: string }> {
   // CLOB `size` is TOKEN quantity, not USDC notional.  Convert the USDC
   // budget into tokens via `sizeUsdc / price`.  Floor a hair below to avoid
@@ -349,5 +345,8 @@ export async function closePolymarketPosition(
     side: "SELL",
     price: position.price,
     size: tokens,
+    walletPrivateKey: position.walletPrivateKey,
+    walletAddress: position.walletAddress,
+    signatureType: position.signatureType,
   });
 }

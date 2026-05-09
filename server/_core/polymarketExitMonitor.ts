@@ -160,7 +160,19 @@ export async function evaluatePolymarketExitsForOpenPositions(
 
     if (!Number.isFinite(entryPrice) || entryPrice <= 0 || entryPrice >= 1) continue;
 
-    const currentPrice = priceMap.get(tokenId);
+    // Prefer the live Gamma price, but fall back to the value
+    // syncPolymarketPositions just refreshed onto the position row when the
+    // token isn't in the first Gamma page (manual / stale / niche markets).
+    // Without the fallback, those positions never get their trailing stop
+    // ratcheted and their exit signals never fire.
+    const livePrice = priceMap.get(tokenId);
+    const syncedPrice = Number((position as { currentPrice?: number }).currentPrice ?? NaN);
+    const currentPrice =
+      livePrice !== undefined
+        ? livePrice
+        : Number.isFinite(syncedPrice) && syncedPrice > 0 && syncedPrice < 1
+          ? syncedPrice
+          : undefined;
     if (currentPrice === undefined) continue;
 
     const config: ExitStrategyConfig = {
@@ -251,14 +263,23 @@ export async function evaluatePolymarketExitsForOpenPositions(
               creds.accountStatus !== "connected" ||
               !creds.apiKey ||
               !creds.apiSecret ||
-              !creds.apiPassphrase
+              !creds.apiPassphrase ||
+              !creds.walletPrivateKey ||
+              !creds.walletAddress
             ) {
-              return { success: false, error: "Polymarket credentials not connected or incomplete" };
+              return {
+                success: false,
+                error:
+                  "Polymarket credentials incomplete — auto-close requires apiKey/secret/passphrase + walletPrivateKey + walletAddress",
+              };
             }
             return closePolymarketPosition(creds.apiKey, creds.apiSecret, creds.apiPassphrase, {
               tokenId,
               sizeUsdc,
               price: currentPrice,
+              walletPrivateKey: creds.walletPrivateKey,
+              walletAddress: creds.walletAddress,
+              signatureType: creds.signatureType,
             });
           });
           evaluation.closed = result.success;
