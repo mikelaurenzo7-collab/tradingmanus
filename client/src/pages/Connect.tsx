@@ -679,8 +679,16 @@ function PolymarketConnectPanel() {
 
             {connectionMessage && !connected ? (
               <Alert
-                variant={connectMutation.isError ? "destructive" : "default"}
-                className={connectMutation.isError ? "glow-destructive" : ""}
+                variant={
+                  connectMutation.isError || deriveMutation.isError
+                    ? "destructive"
+                    : "default"
+                }
+                className={
+                  connectMutation.isError || deriveMutation.isError
+                    ? "glow-destructive"
+                    : ""
+                }
               >
                 <AlertCircle className="h-4 w-4" />
                 <AlertDescription>{connectionMessage}</AlertDescription>
