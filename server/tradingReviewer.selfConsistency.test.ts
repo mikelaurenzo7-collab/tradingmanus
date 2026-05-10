@@ -79,10 +79,10 @@ const baseSignal = {
   marketId: "TEST-1",
   signalType: "value_play" as const,
   side: "yes" as const,
-  // 0.78 sits above the post-adjust confidence floor (0.76) but below
-  // the high-stakes confidence trigger (0.80) so self-consistency fires
+  // 0.75 sits at the post-adjust confidence floor and below the
+  // high-stakes confidence trigger (0.80) so self-consistency fires
   // instead of jumping straight to the deep tier.
-  confidence: 0.78,
+  confidence: 0.75,
   marketPrice: 0.5,
   impliedProbability: 0.5,
   // EV per $1 payout face. Bumped to 0.10 (vs 0.05 in Phase 1.5) so the

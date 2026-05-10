@@ -221,7 +221,7 @@ export const ENV = {
     // means "both reviewers agreed and the joint posterior is ≥0.70".
     minConfidenceAfterAdjust: normalizeFloat(
       process.env.MIN_CONFIDENCE_AFTER_ADJUST,
-      0.70,
+      0.75,
       { min: 0, max: 1 },
     ),
     // 35% total exposure (was 25%): at $500 we want 3-7 concurrent

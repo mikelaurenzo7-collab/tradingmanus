@@ -61,7 +61,10 @@ const baseSignal = {
   marketId: "TEST-1",
   signalType: "value_play" as const,
   side: "yes" as const,
-  confidence: 0.8,
+  // Use 0.75 to match the hardcoded SELF_CONSISTENCY_UPPER bound in
+  // `server/_core/tradingReviewer.ts` so self-consistency tests behave
+  // deterministically without relying on an environment override.
+  confidence: 0.75,
   marketPrice: 0.4,
   impliedProbability: 0.4,
   expectedValue: 0.12,

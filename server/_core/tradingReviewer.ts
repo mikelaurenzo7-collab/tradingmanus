@@ -334,9 +334,12 @@ async function requestAnthropicReviews(
   const thinking = buildExtendedThinking(stakesForCall);
   // Bumped from 4 → 6 on deep tier.  Sports lineups, weather, news primaries,
   // and macro consensus often need multiple targeted queries to triangulate.
+  // Reduce non-deep Haiku web-search uses to 1 (was 2) to cut token
+  // overhead on routine batches while keeping richer search capacity
+  // on deep Sonnet/Opus calls.
   const tools = buildToolList([], {
     allowWebSearch: true,
-    maxWebSearchUses: useDeepModel ? 6 : 2,
+    maxWebSearchUses: useDeepModel ? 6 : 1,
   });
 
   // Build the system prompt as up to two cached blocks: persona mandate
@@ -550,8 +553,17 @@ async function callReviewer(
   // thinking) bypasses self-consistency — extended thinking provides its
   // own variance-reduction internally and explicit temperature is ignored.
   const useDeepModel = forceDeep || isHighStakes(stakes);
-  const selfConsistencyActive =
-    !useDeepModel && ENV.claudeHaikuSelfConsistencyEnabled;
+     const topBatchConfidence = typeof stakes?.confidence === "number" ? stakes.confidence : undefined;
+    const SELF_CONSISTENCY_LOWER = 0.55;
+    // Hardcoded upper bound so this behavior is controlled in-code
+    // and doesn't require setting an environment variable on Railway.
+    const SELF_CONSISTENCY_UPPER = 0.75;
+     const selfConsistencyActive =
+     !useDeepModel &&
+     ENV.claudeHaikuSelfConsistencyEnabled &&
+     typeof topBatchConfidence === "number" &&
+     topBatchConfidence >= SELF_CONSISTENCY_LOWER &&
+     topBatchConfidence <= SELF_CONSISTENCY_UPPER;
   try {
     if (selfConsistencyActive) {
       const [respA, respB] = await Promise.all([
