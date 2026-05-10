@@ -3,7 +3,7 @@ import { createServer } from "http";
 import net from "net";
 import { createApp, scopeScheduledUsersToTrigger } from "./app";
 import { serveStatic, setupVite } from "./vite";
-import { getUsersEligibleForAutomaticScheduledTrading } from "../db";
+import { getUsersEligibleForAutomaticScheduledTrading, logAuditEvent } from "../db";
 import { runScheduledAutonomousTradingBatch } from "./kalshiAutonomy";
 import { syncPendingOrders, syncLivePositions } from "./kalshiOrderSync";
 import { evaluateExitsForOpenPositions } from "./exitMonitor";
@@ -143,6 +143,24 @@ async function runAutonomousScheduler() {
         "autonomy_kalshi",
         `Daily loss limit exceeded (net $${board ? board.netUsd.toFixed(2) : "?"}  < -$${getDailyLossLimitUsd()})`,
       );
+      // Emit a dedicated audit event so the operator can see in the audit log
+      // when the daily loss stop fired.  Without this, the skip is invisible
+      // beyond a warn log line, making it impossible to count red-zone days
+      // or correlate with strategy / market events.
+      try {
+        await logAuditEvent(
+          "kalshi_daily_loss_limit_triggered",
+          JSON.stringify({
+            netUsd: board ? Number(board.netUsd.toFixed(2)) : null,
+            limitUsd: getDailyLossLimitUsd(),
+            tier: "red",
+            scopedUserCount: scopedUsers.length,
+          }),
+          "local_scheduler",
+        );
+      } catch (err) {
+        logger.warn({ err }, "[Scheduler] Failed to emit daily loss limit audit event");
+      }
       return;
     }
 

@@ -643,6 +643,28 @@ async function generateScheduledSignals(
     }
   }
 
+  // STRATEGY AUTO-DISABLE AUDIT: when any signal type is auto-disabled
+  // (win rate <35% over 20+ trades), surface it once per autonomy run so
+  // the operator sees in the audit log which strategies were silenced for
+  // this tick.  Without this event the auto-disable is invisible beyond
+  // debug logs and the operator cannot tell why a strategy stopped firing.
+  if (platformPerformance?.signalWinRates) {
+    const disabledStrategies = Object.entries(platformPerformance.signalWinRates)
+      .filter(([, winRate]) => winRate < 0.35)
+      .map(([signalType, winRate]) => ({ signalType, winRate: Number(winRate.toFixed(3)) }));
+    if (disabledStrategies.length > 0) {
+      try {
+        await db.logAuditEvent(
+          "kalshi_strategy_auto_disabled",
+          JSON.stringify({ disabledStrategies, threshold: 0.35 }),
+          `user:${userId}`,
+        );
+      } catch (err) {
+        logger.debug({ err, userId }, "Failed to emit strategy_auto_disabled audit event");
+      }
+    }
+  }
+
   const allSignals = await generateSignalsForMarkets(
     actionableMarkets,
     feeds,
