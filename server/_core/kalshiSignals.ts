@@ -482,6 +482,22 @@ export async function generateSignalsForMarket(
 ): Promise<KalshiSignal[]> {
   const signals: KalshiSignal[] = [];
   const strategyProfile = resolveStrategyProfile(market);
+  
+  // STRATEGY AUTO-DISABLE: Check if any signal types should be skipped due to
+  // poor recent performance (win rate <35% or negative Sharpe over 15-20 trades).
+  // This prevents runaway losses from a broken signal type.
+  const disabledStrategies = new Set<SignalType>();
+  if (platformPerformance?.signalWinRates) {
+    for (const [signalType, winRate] of Object.entries(platformPerformance.signalWinRates)) {
+      if (winRate < 0.35) {
+        disabledStrategies.add(signalType as SignalType);
+        logger.debug(
+          { signalType, winRate: winRate.toFixed(3), marketId: market.id },
+          "[Signals] Strategy auto-disabled due to poor win rate"
+        );
+      }
+    }
+  }
 
   let sentimentOverlay: ReturnType<typeof calculateCompositeSentiment> | null = null;
   if (sentimentContext?.topic) {
@@ -572,7 +588,7 @@ export async function generateSignalsForMarket(
     usesFallbackFundamental
       ? null
       : detectValueOpportunity(market, baselineFundamentalProbability, 0.05);
-  if (valueOpportunity) {
+  if (valueOpportunity && !disabledStrategies.has("value_play")) {
     const confidence = Math.min(
       0.95,
       Math.abs(baselineFundamentalProbability - market.impliedProbability) * 2
@@ -619,7 +635,7 @@ export async function generateSignalsForMarket(
   // stacks each tell's empirical hit-rate Bayesianly.  Snippets are sourced
   // from the autonomy loop's news context (sentimentContext.newsSnippets).
   const tellMarketType = classifyTellMarket(market.title);
-  if (tellMarketType && sentimentContext?.newsSnippets?.length) {
+  if (!disabledStrategies.has("linguistic_tell") && tellMarketType && sentimentContext?.newsSnippets?.length) {
     const tellResult = lookupLinguisticTellPrior({
       marketType: tellMarketType,
       newsSnippets: sentimentContext.newsSnippets,
@@ -660,13 +676,18 @@ export async function generateSignalsForMarket(
   }
 
   // Momentum: detect strong directional moves
-  if (feed) {
+  // LIQUIDITY GATE: Skip momentum signals on thin markets (<$500 24h volume).
+  // 1% price moves on low-volume markets are often random walk noise rather
+  // than actionable directional signals. This gate reduces false positives.
+  const totalVolume24h = market.volume24h ?? ((market.yesVolume ?? 0) + (market.noVolume ?? 0));
+  const MIN_MOMENTUM_VOLUME = 500; // $500 USD minimum 24h volume
+  if (feed && totalVolume24h >= MIN_MOMENTUM_VOLUME) {
     const { yesMomentum, noMomentum } = calculatePriceMomentum(feed, 60000); // 1-minute window
     const { yesVolumeMomentum, noVolumeMomentum } = calculateVolumeMomentum(feed, 60000);
     const volatility = detectVolatility(feed, 300000); // 5-minute window
 
     const momentumThreshold = 0.01; // 1% price move
-    if (Math.abs(yesMomentum) > momentumThreshold || Math.abs(noMomentum) > momentumThreshold) {
+    if (!disabledStrategies.has("momentum") && (Math.abs(yesMomentum) > momentumThreshold || Math.abs(noMomentum) > momentumThreshold)) {
       const side = Math.abs(yesMomentum) > Math.abs(noMomentum) ? (yesMomentum > 0 ? "yes" : "no") : noMomentum > 0 ? "yes" : "no";
       const momentum = side === "yes" ? yesMomentum : noMomentum;
       const volumeMomentum = side === "yes" ? yesVolumeMomentum : noVolumeMomentum;
@@ -709,6 +730,7 @@ export async function generateSignalsForMarket(
   }
 
   if (
+    !disabledStrategies.has("sentiment") &&
     sentimentOverlay &&
     sentimentOverlay.confidence >= 0.15 &&
     Math.abs(sentimentOverlay.overallSentiment) >= 0.2

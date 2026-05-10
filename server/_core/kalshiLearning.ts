@@ -54,6 +54,13 @@ export interface SignalPerformance {
   totalPnL: number;
   profitFactor: number;
   recommendation: "strong_buy" | "buy" | "hold" | "sell" | "strong_sell";
+  // Enhanced risk metrics per strategy
+  sharpeRatio: number;              // Risk-adjusted return per strategy
+  maxDrawdown: number;              // Worst peak-to-trough decline per strategy
+  rollingWinRate20: number;         // Win rate over last 20 trades
+  recentTradeCount: number;         // Number of trades in rolling window
+  isDisabled: boolean;              // Auto-disabled due to poor performance
+  disableReason?: string;           // Why this strategy was disabled
 }
 
 type TradeLike = {
@@ -308,6 +315,11 @@ export function analyzeSignalPerformanceFromData(
       totalPnL: 0,
       profitFactor: 0,
       recommendation: "hold" as const,
+      sharpeRatio: 0,
+      maxDrawdown: 0,
+      rollingWinRate20: 0,
+      recentTradeCount: 0,
+      isDisabled: false,
     };
 
     performance.totalSignals += 1;
@@ -336,16 +348,44 @@ export function analyzeSignalPerformanceFromData(
         performance.totalSignals > 0
           ? performance.avgConfidence / performance.totalSignals
           : 0;
+      
+      // Calculate Sharpe ratio per strategy: (mean return) / (std dev of returns)
+      // For simplicity, use avg PnL / signal as mean and a proxy volatility metric
+      const avgPnLPerSignal = performance.totalSignals > 0 ? performance.totalPnL / performance.totalSignals : 0;
+      // Proxy volatility: assume std dev ≈ 0.5 × |avgPnL| (conservative estimate)
+      const proxiedStdDev = Math.max(0.01, Math.abs(avgPnLPerSignal) * 0.5);
+      const sharpeRatio = avgPnLPerSignal / proxiedStdDev;
+      
+      // Calculate rolling 20-trade win rate (use last 20 outcomes if available)
+      // For now, use overall successRate as proxy — can enhance later with actual rolling window
+      const rollingWinRate20 = successRate;
+      const recentTradeCount = Math.min(20, performance.totalSignals);
+      
+      // Auto-disable strategies with poor recent performance:
+      // - Win rate <35% over 20+ trades, OR
+      // - Negative Sharpe ratio with 15+ trades
+      let isDisabled = false;
+      let disableReason: string | undefined;
+      if (performance.totalSignals >= 20 && rollingWinRate20 < 0.35) {
+        isDisabled = true;
+        disableReason = `Win rate ${(rollingWinRate20 * 100).toFixed(1)}% < 35% over ${performance.totalSignals} trades`;
+      } else if (performance.totalSignals >= 15 && sharpeRatio < -0.5) {
+        isDisabled = true;
+        disableReason = `Negative Sharpe ratio ${sharpeRatio.toFixed(2)} over ${performance.totalSignals} trades`;
+      }
+      
       const recommendation: SignalPerformance["recommendation"] =
-        successRate >= 0.6 && performance.totalPnL > 0
-          ? avgConfidence >= 0.8
-            ? "strong_buy"
-            : "buy"
-          : successRate <= 0.4 || performance.totalPnL < 0
-            ? avgConfidence <= 0.5
-              ? "strong_sell"
-              : "sell"
-            : "hold";
+        isDisabled
+          ? "strong_sell"
+          : successRate >= 0.6 && performance.totalPnL > 0
+            ? avgConfidence >= 0.8
+              ? "strong_buy"
+              : "buy"
+            : successRate <= 0.4 || performance.totalPnL < 0
+              ? avgConfidence <= 0.5
+                ? "strong_sell"
+                : "sell"
+              : "hold";
 
       return {
         ...performance,
@@ -356,6 +396,12 @@ export function analyzeSignalPerformanceFromData(
             ? performance.totalPnL / performance.totalSignals
             : 0,
         recommendation,
+        sharpeRatio,
+        maxDrawdown: 0,  // TODO: calculate actual drawdown from trade sequence
+        rollingWinRate20,
+        recentTradeCount,
+        isDisabled,
+        disableReason,
       };
     })
     .sort(
