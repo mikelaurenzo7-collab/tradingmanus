@@ -332,6 +332,25 @@ export const ENV = {
       40_000,
       { min: 0, max: 10_000_000 },
     ),
+    // Minimum order notional in USD.  When market-impact guardrails or
+    // Kelly+contract-rounding shrink an order below this value, the order
+    // is BLOCKED rather than placed, on the principle that a trade smaller
+    // than ~3× the AI-review cost has negative net EV regardless of edge.
+    // Default $5: at a typical $0.0025 Haiku review + ~$0.01 round-trip
+    // Kalshi fee on a $5 notional, the dust-trade threshold for net-positive
+    // EV is ~$3, with $5 leaving headroom for slippage.  Raise this once
+    // the account is bigger; lower only if you've measured your actual AI
+    // amortized cost per trade and it's < $0.01.
+    // Default 0 = dust block disabled. Set MIN_ORDER_EXPOSURE_USD=5 in
+    // production to refuse sub-$5 trades whose fees + AI cost guarantee
+    // negative net EV. The primary dust-trap (Kelly+impact rounding to
+    // 1 contract) is already eliminated by allowing impact halving to
+    // round to 0 below.
+    minOrderExposureUsd: normalizeFloat(
+      process.env.MIN_ORDER_EXPOSURE_USD,
+      0,
+      { min: 0, max: 100 },
+    ),
   },
 
   // ── Kalshi fee schedule (override per Kalshi published rates) ────────────

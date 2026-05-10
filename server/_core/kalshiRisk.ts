@@ -4,6 +4,7 @@ import {
   calculateImpactAdjustedSize,
   estimateMarketImpact,
 } from "./marketImpactModel";
+import { ENV } from "./env";
 
 export const MIN_KALSHI_LIMIT_PRICE = 0.01;
 export const MAX_KALSHI_LIMIT_PRICE = 0.99;
@@ -151,10 +152,30 @@ export function applyMarketImpactGuardrails(input: {
     impact.shouldReduceSize &&
     recommendedQuantity > 0
   ) {
-    recommendedQuantity = Math.max(1, Math.floor(recommendedQuantity * 0.5));
+    // Use Math.max(0, ...) — the previous Math.max(1, ...) floor was the
+    // root cause of $1 dust trades: when impact halving cut quantity to
+    // 0.5, flooring forced 1 contract through. Allow it to round to 0,
+    // and let the existing `recommendedQuantity < 1` check block it.
+    recommendedQuantity = Math.max(0, Math.floor(recommendedQuantity * 0.5));
   }
 
-  const shouldBlockOrder = impact.shouldBlockOrder || recommendedQuantity < 1;
+  // Dust-trade block: if Kelly + impact + contract-rounding has shrunk the
+  // order below the configured minimum exposure (default $5), block it
+  // outright rather than firing a 1-contract dust trade whose round-trip
+  // fee + AI review cost guarantee negative net EV.  This is what was
+  // making the user see "$1 bets" on a $459 account: low-confidence signals
+  // on high-priced ($0.85+) NO contracts were rounding down to 1 contract
+  // after the impact guardrail's 50% defensive cut.
+  const recommendedExposureUsd = recommendedQuantity * limitPrice;
+  const minExposureUsd = ENV.profitGuardrails.minOrderExposureUsd;
+  const dustBlocked =
+    recommendedQuantity > 0 &&
+    Number.isFinite(minExposureUsd) &&
+    minExposureUsd > 0 &&
+    recommendedExposureUsd < minExposureUsd;
+
+  const shouldBlockOrder =
+    impact.shouldBlockOrder || recommendedQuantity < 1 || dustBlocked;
 
   return {
     estimatedMarketImpact: impact.totalImpact,

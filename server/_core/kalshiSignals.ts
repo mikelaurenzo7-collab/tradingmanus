@@ -25,6 +25,7 @@ import { classifyTellMarket, lookupLinguisticTellPrior } from "./kalshiLinguisti
 import * as db from "../db";
 import { assertPositiveIntegerUserId } from "./userScope";
 import { logger } from "./logger";
+import { ENV } from "./env";
 
 export type SignalType =
   | "value_play"
@@ -383,12 +384,15 @@ export function resolveFundamentalPrior(market: KalshiMarket, explicit?: number)
 /**
  * Compute Kelly fraction for a signal.
  *
- * Uses fractional Kelly (25%) to limit over-sizing.  The win probability is
+ * Uses the env-configured fractional-Kelly multiplier (default half-Kelly)
+ * and per-position max (default 25 % of capital).  Until May 2026 these
+ * were hardcoded at 0.25/0.20 which silently halved every bet on a small
+ * account because the env defaults are 0.50/0.25.  The win probability is
  * the signal confidence and the "odds" are derived from the market price:
  *   odds = (1 / marketPrice) - 1  (net profit per dollar risked on a win)
  *
- * Returns a value in [0, 0.2] that can be multiplied by available capital to
- * get a target exposure.
+ * Returns a value in [0, kellyMaxPctOfCapital] that can be multiplied by
+ * available capital to get a target exposure.
  */
 export function computeKellyFraction(confidence: number, marketPrice: number): number {
   if (!Number.isFinite(confidence) || !Number.isFinite(marketPrice) || marketPrice <= 0 || marketPrice >= 1) {
@@ -398,8 +402,9 @@ export function computeKellyFraction(confidence: number, marketPrice: number): n
   const odds = (1 - marketPrice) / marketPrice;
   const lossProbability = 1 - confidence;
   const fullKelly = (confidence * odds - lossProbability) / odds;
-  // Quarter-Kelly for safety; cap at 20% of capital per position
-  return Math.max(0, Math.min(0.2, fullKelly * 0.25));
+  const fraction = ENV.profitGuardrails.kellyFraction;
+  const cap = ENV.profitGuardrails.kellyMaxPctOfCapital;
+  return Math.max(0, Math.min(cap, fullKelly * fraction));
 }
 
 /**

@@ -8,12 +8,28 @@
  *
  * Full Kelly fraction: f* = (p * b - q) / b = p - q/b
  *
- * We apply fractional Kelly (0.25×) to reduce variance and cap at 25% of capital.
+ * The fractional-Kelly multiplier and the per-position max are sourced from
+ * ENV.profitGuardrails so operator overrides via KELLY_FRACTION / KELLY_MAX_
+ * PCT_OF_CAPITAL actually take effect.  Until May 2026 these constants were
+ * hardcoded at 0.25/0.25 (quarter-Kelly) which silently overrode the env
+ * defaults of 0.50/0.25, halving every recommended bet size.
  */
 
-const FRACTIONAL_KELLY = 0.25; // 25% of full Kelly — standard conservative betting
-const MAX_KELLY_FRACTION = 0.25; // Never bet more than 25% of capital per position
+import { ENV } from "./env";
+
 const MIN_KELLY_FRACTION = 0; // Never negative (no shorting prediction markets)
+
+/** Resolves the active fractional-Kelly multiplier from env. */
+function getFractionalKelly(): number {
+  const v = ENV.profitGuardrails.kellyFraction;
+  return Number.isFinite(v) && v > 0 && v <= 1 ? v : 0.5;
+}
+
+/** Resolves the active per-position max as a fraction of capital. */
+function getMaxKellyFraction(): number {
+  const v = ENV.profitGuardrails.kellyMaxPctOfCapital;
+  return Number.isFinite(v) && v > 0 && v <= 1 ? v : 0.25;
+}
 
 export interface KellyInput {
   /** p: estimated probability of winning (0–1) */
@@ -27,7 +43,7 @@ export interface KellyInput {
 export interface KellyResult {
   /** f* before fractional scaling (may be negative for negative-EV bets) */
   fullKellyFraction: number;
-  /** 0.25 × fullKellyFraction, clamped to [0, MAX_KELLY_FRACTION] */
+  /** fractionalKellyFraction = ENV.profitGuardrails.kellyFraction × fullKellyFraction, clamped to [0, kellyMaxPctOfCapital] */
   fractionalKellyFraction: number;
   /** fractionalKellyFraction × totalCapital, in dollars */
   kellySuggestedSize: number;
@@ -68,9 +84,9 @@ export function calculateKelly(input: KellyInput): KellyResult {
     return zero;
   }
 
-  // Guard: guaranteed win — cap at MAX_KELLY_FRACTION
+  // Guard: guaranteed win — cap at the per-position max
   if (winProbability >= 1) {
-    const fraction = MAX_KELLY_FRACTION;
+    const fraction = getMaxKellyFraction();
     const capital = Math.max(0, totalCapital);
     return {
       fullKellyFraction: 1, // theoretical full Kelly → infinity, practical cap
@@ -89,7 +105,7 @@ export function calculateKelly(input: KellyInput): KellyResult {
 
   const fractionalKelly = Math.max(
     MIN_KELLY_FRACTION,
-    Math.min(MAX_KELLY_FRACTION, fullKelly * FRACTIONAL_KELLY),
+    Math.min(getMaxKellyFraction(), fullKelly * getFractionalKelly()),
   );
 
   const capital = Math.max(0, totalCapital);

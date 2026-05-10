@@ -9,8 +9,8 @@ describe("calculateKelly", () => {
   it("returns correct fractions for a positive-EV signal", () => {
     // p=0.6, market price=0.4 → netOdds = (1 - 0.4) / 0.4 = 1.5
     // fullKelly = (0.6*1.5 - 0.4) / 1.5 = (0.9 - 0.4) / 1.5 = 0.5/1.5 ≈ 0.3333
-    // fractionalKelly = 0.3333 * 0.25 ≈ 0.0833
-    // kellySuggestedSize = 0.0833 * 1000 ≈ 83.33
+    // fractionalKelly = 0.3333 * 0.5 ≈ 0.1667 (env-default half-Kelly)
+    // kellySuggestedSize = 0.1667 * 1000 ≈ 166.67
     const result = calculateKelly({
       winProbability: 0.6,
       netOdds: 1.5,
@@ -19,8 +19,8 @@ describe("calculateKelly", () => {
 
     expect(result.isPositiveEV).toBe(true);
     expect(result.fullKellyFraction).toBeCloseTo(1 / 3, 4);
-    expect(result.fractionalKellyFraction).toBeCloseTo(1 / 3 * 0.25, 4);
-    expect(result.kellySuggestedSize).toBeCloseTo((1 / 3) * 0.25 * 1000, 2);
+    expect(result.fractionalKellyFraction).toBeCloseTo((1 / 3) * 0.5, 4);
+    expect(result.kellySuggestedSize).toBeCloseTo((1 / 3) * 0.5 * 1000, 2);
   });
 
   it("returns zero for negative-EV signal", () => {
