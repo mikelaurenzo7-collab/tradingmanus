@@ -679,7 +679,7 @@ export async function generateSignalsForMarket(
   // LIQUIDITY GATE: Skip momentum signals on thin markets (<$500 24h volume).
   // 1% price moves on low-volume markets are often random walk noise rather
   // than actionable directional signals. This gate reduces false positives.
-  const totalVolume24h = market.volume24h ?? ((market.yesVolume ?? 0) + (market.noVolume ?? 0));
+  const totalVolume24h = (market.yesVolume ?? 0) + (market.noVolume ?? 0);
   const MIN_MOMENTUM_VOLUME = 500; // $500 USD minimum 24h volume
   if (feed && totalVolume24h >= MIN_MOMENTUM_VOLUME) {
     const { yesMomentum, noMomentum } = calculatePriceMomentum(feed, 60000); // 1-minute window

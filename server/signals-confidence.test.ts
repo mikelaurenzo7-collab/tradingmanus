@@ -104,7 +104,11 @@ describe("Signal Generation - Momentum Confidence & NaN/Infinity Guards", () => 
 
   describe("Momentum Confidence Calculation Tests", () => {
     it("should calculate momentum confidence correctly for strong upward move", async () => {
-      const market = createMarket({ impliedProbability: 0.5 });
+      const market = createMarket({ 
+        impliedProbability: 0.5,
+        yesVolume: 600,  // Total volume ($600) exceeds MIN_MOMENTUM_VOLUME ($500)
+        noVolume: 400,
+      });
       const feed = createFeed({
         priceHistory: [
           { timestamp: Date.now() - 60000, yesPrice: 0.40, noPrice: 0.60, volume: 1000 },
@@ -130,7 +134,11 @@ describe("Signal Generation - Momentum Confidence & NaN/Infinity Guards", () => 
     });
 
     it("should clamp momentum confidence to valid range [0.1, 0.95]", async () => {
-      const market = createMarket({ impliedProbability: 0.5 });
+      const market = createMarket({ 
+        impliedProbability: 0.5,
+        yesVolume: 600,  // Ensure minimum liquidity for momentum check
+        noVolume: 400,
+      });
       const feed = createFeed({
         priceHistory: [
           { timestamp: Date.now() - 60000, yesPrice: 0.01, noPrice: 0.99, volume: 1000 },
