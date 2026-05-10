@@ -21,6 +21,11 @@ import { runCalibrationJob } from "./calibrationJob";
 import { runDailySportsPlay } from "./dailySportsPlay";
 import { runDailyMoonshotPlay } from "./dailyMoonshotPlay";
 import { ENV } from "./env";
+import {
+  decideAutonomyCadence,
+  loadAutonomyCadenceConfig,
+  type AutonomyCadenceTier,
+} from "./autonomyCadence";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -645,7 +650,47 @@ startServer()
       hb.configureSchedulerInterval("autonomy_kalshi", AUTONOMOUS_TRADING_INTERVAL_MS);
       hb.configureSchedulerInterval("order_sync", ORDER_SYNC_INTERVAL_MS);
 
-      setInterval(runAutonomousScheduler, AUTONOMOUS_TRADING_INTERVAL_MS);
+      // Time-of-day adaptive cadence: prime hours run at base interval,
+      // overnight quiet hours slow by AUTONOMY_OVERNIGHT_MULTIPLIER (default 4×).
+      // Self-rescheduling setTimeout so each tick re-evaluates the tier.
+      const cadenceConfig = loadAutonomyCadenceConfig(AUTONOMOUS_TRADING_INTERVAL_MS);
+      let lastCadenceTier: AutonomyCadenceTier | null = null;
+      logger.info(
+        {
+          baseIntervalMs: cadenceConfig.baseIntervalMs,
+          overnightMultiplier: cadenceConfig.overnightMultiplier,
+          primeStartUtcHour: cadenceConfig.primeStartUtcHour,
+          primeEndUtcHour: cadenceConfig.primeEndUtcHour,
+        },
+        "[Scheduler] Autonomy cadence: prime %dh-%dh UTC at %dms, overnight %d× slower",
+        cadenceConfig.primeStartUtcHour,
+        cadenceConfig.primeEndUtcHour,
+        cadenceConfig.baseIntervalMs,
+        cadenceConfig.overnightMultiplier,
+      );
+      const runAutonomyTickAndReschedule = async () => {
+        try {
+          await runAutonomousScheduler();
+        } catch (err) {
+          logger.error({ err }, "[Scheduler] Autonomy tick threw");
+        } finally {
+          const decision = decideAutonomyCadence(new Date(), cadenceConfig);
+          if (decision.tier !== lastCadenceTier) {
+            logger.info(
+              { tier: decision.tier, hourUtc: decision.hourUtc, nextIntervalMs: decision.intervalMs },
+              "[Scheduler] Autonomy cadence tier transitioned to %s (UTC hour %d, next tick in %dms)",
+              decision.tier,
+              decision.hourUtc,
+              decision.intervalMs,
+            );
+            lastCadenceTier = decision.tier;
+            hb.configureSchedulerInterval("autonomy_kalshi", decision.intervalMs);
+          }
+          setTimeout(runAutonomyTickAndReschedule, decision.intervalMs);
+        }
+      };
+      // First tick fires from the existing 30s warmup setTimeout below; this
+      // helper schedules every subsequent tick using the live tier interval.
       setInterval(runOrderSync, ORDER_SYNC_INTERVAL_MS);
       // Combinatorial-arb scanner — risk-free math, no AI cost. Detection-only.
       setInterval(runCombinatorialArbScanner, COMBINATORIAL_ARB_INTERVAL_MS);
@@ -677,7 +722,9 @@ startServer()
       void runAuditCleanup();
       setInterval(runAuditCleanup, 24 * 60 * 60 * 1000);
 
-      setTimeout(runAutonomousScheduler, 30 * 1000);
+      // First autonomy tick fires after a 30s warmup; the helper then
+      // self-reschedules using the time-of-day-aware interval.
+      setTimeout(runAutonomyTickAndReschedule, 30 * 1000);
       const autonomyMin = (AUTONOMOUS_TRADING_INTERVAL_MS / 60_000).toFixed(1);
       const orderSyncSec = (ORDER_SYNC_INTERVAL_MS / 1_000).toFixed(0);
       logger.info("[Scheduler] Kalshi autonomy started (%s-min interval)", autonomyMin);
