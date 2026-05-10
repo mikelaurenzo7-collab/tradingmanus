@@ -61,11 +61,6 @@ export function getFastActionItems() {
       body: "Decide whether the agent should stay manual, require approval, or run in a semi or fully autonomous live-trading mode.",
     },
     {
-      href: "/risk-controls",
-      title: "Review guardrails",
-      body: "Check risk budgets, posture warnings, and kill-switch readiness before testing live execution.",
-    },
-    {
       href: "/activity",
       title: "Watch the bot work",
       body: "The autonomy loop scans, reviews, and acts on signals automatically — open Activity to see live positions and the latest trades it executed.",

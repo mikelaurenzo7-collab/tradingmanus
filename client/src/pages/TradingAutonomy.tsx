@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
-import { CheckCircle2, Circle, Loader2, Shield, Zap, ChevronRight, Clock, Ban, Activity, AlertTriangle, Target, TrendingUp, Settings } from "lucide-react";
+import { CheckCircle2, Circle, Loader2, Shield, Zap, Clock, Ban, Activity, AlertTriangle, Target, TrendingUp, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -510,11 +510,6 @@ export default function TradingAutonomy() {
                   "Save Settings"
                 )}
               </Button>
-              <Link href="/risk-controls">
-                <Button variant="outline" className="flex items-center gap-1">
-                  Risk Controls <ChevronRight className="w-3.5 h-3.5" />
-                </Button>
-              </Link>
             </div>
           )}
         </CardContent>

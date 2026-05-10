@@ -69,21 +69,28 @@ export type TradingPreferencesSettings = {
 };
 
 export const DEFAULT_TRADING_PREFERENCES: TradingPreferencesSettings = {
-  autonomyMode: "manual",
-  liveTradingEnabled: false,
+  autonomyMode: "fully_autonomous",
+  liveTradingEnabled: true,
   paperTradeMode: false,
   aggressiveMode: true,
-  moonshotMode: false,
-  executionCadence: "manual_only",
-  riskPosture: "balanced",
-  // Lowered from 0.72 → 0.70 for higher trade volume on a small high-risk
-  // account.  The dual-bot Claude+Grok consensus already enforces a hard
-  // floor independent of this preference, so 0.70 is the sweet spot for
-  // "trade more often without weakening review quality".
-  minSignalConfidence: 0.70,
-  maxOrderNotional: 50,  // $50 default — capital-fraction math is the real cap
-  maxDailyOrders: 3,
-  requireApprovalAbove: 8,
+  moonshotMode: true,
+  executionCadence: "continuous_watch",
+  riskPosture: "aggressive",
+  // Per-user floor; the env-driven MIN_CONFIDENCE_AFTER_ADJUST is the
+  // authoritative gate.  Keep this aligned so the dashboard preset never
+  // bottlenecks the env aggressive preset (0.50).
+  minSignalConfidence: 0.50,
+  // Per-user notional cap; ENV-driven Kelly + MAX_RISK_PER_TRADE_PERCENT
+  // are the authoritative sizing.  Set well above the env-derived per-trade
+  // ceiling ($69 on a $459 account at 15% max risk) so it's never the
+  // binding constraint.
+  maxOrderNotional: 200,
+  // Per-user daily order cap; aggressive preset targets 15-30 trades/day,
+  // so 100 leaves headroom for spike days without ever bottlenecking.
+  maxDailyOrders: 100,
+  // Effectively never require manual approval — env aggressive preset
+  // assumes fully-autonomous owner trading.
+  requireApprovalAbove: 999,
 };
 
 /**

@@ -8,7 +8,6 @@ import DashboardLayout from "./components/DashboardLayout";
 
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const Activity = lazy(() => import("./pages/Activity"));
-const RiskControls = lazy(() => import("./pages/RiskControls"));
 const AuditLog = lazy(() => import("./pages/AuditLog"));
 const Connect = lazy(() => import("./pages/Connect"));
 const Training = lazy(() => import("./pages/Training"));
@@ -49,7 +48,6 @@ function Router() {
       <Route path={"/activity/:tab"} component={withLayout(Activity)} />
       <Route path={"/positions"} component={withLayout(Activity)} />
       <Route path={"/trades"} component={withLayout(Activity)} />
-      <Route path={"/risk-controls"} component={withLayout(RiskControls)} />
       <Route path={"/audit"} component={withLayout(AuditLog)} />
       <Route path={"/training"} component={withLayout(Training)} />
       <Route path={"/performance"} component={withLayout(Performance)} />

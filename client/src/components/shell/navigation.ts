@@ -7,7 +7,6 @@ import {
   LayoutDashboard,
   LineChart,
   Plug,
-  Shield,
 } from "lucide-react";
 
 export type NavItem = {
@@ -69,7 +68,6 @@ export const navSections: NavSection[] = [
     label: "Configure",
     items: [
       { icon: Cpu, label: "Autonomy", path: "/autonomy", hint: "Mode + sizing + cadence" },
-      { icon: Shield, label: "Risk Controls", path: "/risk-controls", hint: "Guardrails and drawdown breakers" },
       { icon: BookOpen, label: "Training", path: "/training", hint: "Custom rules and filters" },
     ],
   },
