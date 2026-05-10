@@ -142,7 +142,18 @@ export async function estimateImpactOnRecentRuns(
       .where(eq(kalshiCapital.userId, userId))
       .limit(1);
 
-    const currentBalance = kapitalResult?.[0]?.currentBalance ?? 10000;
+    // Use real capital — never a hardcoded fallback. A $10k synthetic
+    // default would 20x-misrepresent risk for a sub-$1k account.
+    const currentBalance = Number(kapitalResult?.[0]?.currentBalance ?? 0);
+    if (!Number.isFinite(currentBalance) || currentBalance <= 0) {
+      return {
+        wouldHaveBlocked: 0,
+        wouldHaveExecuted: 0,
+        accountAtRisk: 0,
+        recommendation:
+          "No capital balance recorded yet — connect Kalshi and fund the account to preview impact",
+      };
+    }
 
     // Fetch recent autonomy runs (last 20)
     const recentRuns = await database
