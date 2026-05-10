@@ -105,7 +105,7 @@ missing — high-stakes signals are explicitly refused rather than approved
 without escalation review.
 
 ### Optional reviewers
-- **Grok (xAI)** — set `XAI_API_KEY` and `ENABLE_GROK_TEAM=true` for parallel dual-bot consensus on Tier 2 (alternate reviewer for breaking-news categories with ≤72h resolution).  Without it, the system gracefully degrades to Claude-only.
+- **Grok (xAI)** — set `XAI_API_KEY` and `GROK_REVIEWER_ENABLED=true` for parallel dual-bot consensus on Tier 2 (alternate reviewer for breaking-news categories with ≤72h resolution).  Without it, the system gracefully degrades to Claude-only.
 - **OpenRouter free pre-triage** — set `OPENROUTER_API_KEY` to run a free model (default Qwen3 235B) before paid Claude review.  It drops obvious junk; it never approves trades; on errors it fails open to the full paid stack.
 
 ---
@@ -243,16 +243,18 @@ ALLOWED_ORIGIN                          # extra origin in production
 ALERT_WEBHOOK_URL                       # Slack/Discord/PagerDuty inbound
 
 # AI models (defaults shown)
-CLAUDE_MODEL                            # claude-haiku-4-5-20251001 (Tier 1)
-CLAUDE_TRIAGE_MODEL                     # claude-haiku-4-5-20251001
-CLAUDE_DEEP_MODEL                       # claude-opus-4-7 (Tier 3)
+CLAUDE_HAIKU_MODEL                      # claude-haiku-4-5 (Tier 1)
+CLAUDE_SONNET_MODEL                     # claude-sonnet-4-6 (Tier 2)
+CLAUDE_OPUS_MODEL                       # claude-opus-4-7 (Tier 3)
+CLAUDE_HAIKU_TIMEOUT_MS                 # 15000
 CLAUDE_SONNET_TIMEOUT_MS                # 20000
 CLAUDE_OPUS_TIMEOUT_MS                  # 45000
+OPUS_ESCALATION_MIN_GROSS_EV            # 0.15
 
 # Optional secondary reviewers
 XAI_API_KEY                             # enables Grok dual-bot
-GROK_MODEL                              # grok-3-latest
-ENABLE_GROK_TEAM                        # true (when XAI_API_KEY set)
+GROK_MODEL                              # grok-4-latest
+GROK_REVIEWER_ENABLED                   # false (must opt in even when XAI_API_KEY set)
 OPENROUTER_API_KEY                      # enables free pre-triage
 OPENROUTER_TRIAGE_MODEL                 # qwen/qwen3-235b-a22b:free
 OPENROUTER_TRIAGE_THRESHOLD             # 0 (run on every non-empty batch)
