@@ -139,7 +139,7 @@ describe("Phase 1 trading reviewer (Claude-only)", () => {
   });
 
   it("drops a signal whose post-adjustment confidence falls below the floor", async () => {
-    // -0.25 adjustment on 0.8 → 0.55, well below MIN_CONFIDENCE_AFTER_ADJUST 0.76
+    // -0.25 adjustment on 0.8 → 0.55, well below MIN_CONFIDENCE_AFTER_ADJUST 0.60
     const anthropicClient = buildAnthropicClient([
       {
         marketId: "TEST-1",

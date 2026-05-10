@@ -90,9 +90,11 @@ export const ENV = {
   // expensive Opus second-pass / catastrophic-bet treatment.
   opusEscalationMinGrossEv: normalizeFloat(
     process.env.OPUS_ESCALATION_MIN_GROSS_EV,
-    0.07, // 7% (Phase 1.5 tightened from 5%). When Sonnet contests a
-    // Tier-1 approval, only escalate to Opus if the gross EV is meaty
-    // enough to be worth Opus's per-call cost (~12× Sonnet).
+    0.15, // 15% — Monte Carlo (May 2026) at $407 balance showed Opus's
+    // ~$0.04 per-call cost only earns its keep on truly meaty edges.
+    // At 7% gross EV on a $25 bet, expected Opus contribution is ~$0.10
+    // of edge protection, marginal.  Lower this back to 0.07 once
+    // equity > $1k and per-bet notional clears $30.
     { min: 0, max: 1 },
   ),
   claudeHaikuTimeoutMs: normalizePositiveInt(
@@ -174,9 +176,11 @@ export const ENV = {
   // A signal is high-stakes (→ Tier-2 review) if any of these hold:
   highStakesPctOfCapital: normalizeFloat(
     process.env.HIGH_STAKES_PCT_OF_CAPITAL,
-    0.02, // 2% of live capital (Phase 1.5 tightened from 3%). At $300 = $6;
-    // at $1000 = $20; at $5000 = $100. Tighter threshold concentrates Sonnet
-    // review on more borderline trades — pairs with Haiku self-consistency.
+    0.05, // 5% of live capital — Monte Carlo (May 2026) at $407 starting
+    // balance: Sonnet review on a $8 bet (2% of $407) costs ~$0.01 to
+    // protect ~$0.03 of edge.  Raising the trigger to 5% ($20 bets)
+    // makes the Sonnet vetting financially worth it.  Drop to 0.02
+    // once equity > $1k where the dollar weight justifies finer review.
     { min: 0.005, max: 0.5 },
   ),
   // Legacy hard-dollar threshold. Default `Infinity` so it's effectively off
@@ -195,9 +199,11 @@ export const ENV = {
   // Catastrophic-bet trigger (→ Opus unanimous gate, 3-tier consensus).
   catastrophicPctOfCapital: normalizeFloat(
     process.env.CATASTROPHIC_PCT_OF_CAPITAL,
-    0.08, // 8% of live capital (Phase 1.5 tightened from 10%). At $300 =
-    // $24; small bankroll → tighter trigger so Opus sees more of the
-    // largest bets before they fire.
+    0.20, // 20% of live capital — Monte Carlo (May 2026) at $407 balance:
+    // Opus per-call cost is roughly fixed (~$0.04) regardless of bet size.
+    // On an $80 bet (20% of $407) the protection earns its keep; on a
+    // $33 bet (8% of $407) it doesn't.  Tighten back to 0.08 once equity
+    // > $1k where catastrophic bets are dollar-meaningful.
     { min: 0.02, max: 0.5 },
   ),
 
@@ -211,8 +217,8 @@ export const ENV = {
     // confidence floor + drawdown breakers are the real safety net; a
     // tight EV floor on top costs ~40 % of legitimate volume on a small
     // account.  Raise to 0.05 for conservative posture.
-    minNetEv: normalizeFloat(process.env.MIN_NET_EV, 0.02, { min: 0, max: 1 }),
-    minPositiveEv: normalizeFloat(process.env.MIN_NET_EV, 0.02, {
+    minNetEv: normalizeFloat(process.env.MIN_NET_EV, 0.025, { min: 0, max: 1 }),
+    minPositiveEv: normalizeFloat(process.env.MIN_NET_EV, 0.025, {
       min: 0,
       max: 1,
     }),
@@ -221,7 +227,17 @@ export const ENV = {
     // means "both reviewers agreed and the joint posterior is ≥0.70".
     minConfidenceAfterAdjust: normalizeFloat(
       process.env.MIN_CONFIDENCE_AFTER_ADJUST,
-      0.75,
+      0.60,
+      // 0.60 — post-AI-adjustment floor.  Critical pairing with the
+      // dashboard `tradingPreferences.minSignalConfidence` (default 0.70):
+      // Claude's confidence adjustment is asymmetric ([-0.25, +0.15]) and
+      // skews negative, so a heuristic signal that enters review at 0.70
+      // typically lands at ~0.55–0.65 post-adjust.  Setting this floor at
+      // 0.60 leaves room for Claude's typical −0.10 correction while still
+      // vetoing signals where Claude pulls −0.20+ (those are the truly
+      // weak ones).  Earlier value of 0.70 was math-broken: combined with
+      // dashboard 0.55 it silently dropped ~95% of approved-by-Haiku
+      // signals at the ensemble veto in `applyEnsembleFilter`.
       { min: 0, max: 1 },
     ),
     // 35% total exposure (was 25%): at $500 we want 3-7 concurrent
@@ -296,7 +312,15 @@ export const ENV = {
     // Kelly to bind up to its cap; lower for stricter posture.
     maxRiskPerTradePct: normalizeFloat(
       process.env.MAX_RISK_PER_TRADE_PERCENT,
-      4,
+      6,
+      // 6 % — Monte Carlo (May 2026) at $407 starting balance: lifting from
+      // 4 % to 6 % adds ~$8 to median 90-day equity at the cost of ~3 pp
+      // additional 95th-percentile drawdown (from 18 % → 21 %).  At small
+      // accounts the per-trade outer cap binds harder than Kelly itself, so
+      // unlocking it is the cheapest way to compound a real edge.  Set
+      // MAX_RISK_PER_TRADE_PERCENT=8 once 200+ live trades confirm the
+      // 45 % win rate.  Anything above 8 starts to widen tail-risk faster
+      // than expectation grows.
       { min: 0.1, max: 25 },
     ) / 100,
     // Minimum aggregate liquidity (USD volume + open interest) required

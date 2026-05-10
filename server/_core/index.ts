@@ -90,7 +90,12 @@ function envIntervalMs(name: string, fallbackMs: number): number {
 // better with a 5-min tick than a 10-min one — each market reaches its
 // staleness threshold every tick at 5 min rather than every other tick.
 // Estimated ~$2.50–3.50/day vs ~$1.90/day at 10 min.
-const AUTONOMOUS_TRADING_INTERVAL_MS = envIntervalMs("AUTONOMY_INTERVAL_MS", 5 * 60 * 1000);
+// Default 10 min: validated via Monte Carlo on a $407 starting balance as the
+// best AI-cost vs market-coverage tradeoff for accounts <$1k. At 10 min the
+// Haiku-only stack costs ~$0.15/day instead of ~$0.94/day at 5 min with full
+// escalation, which moves the median 90-day P&L from −18% to +8%.
+// Override with AUTONOMY_INTERVAL_MS once equity > $1k to recapture more crypto/sports ticks.
+const AUTONOMOUS_TRADING_INTERVAL_MS = envIntervalMs("AUTONOMY_INTERVAL_MS", 10 * 60 * 1000);
 const ORDER_SYNC_INTERVAL_MS = envIntervalMs("ORDER_SYNC_INTERVAL_MS", 30 * 1000);
 // Cross-platform arb scanner removed — Kalshi-only.
 const COMBINATORIAL_ARB_INTERVAL_MS = envIntervalMs(
