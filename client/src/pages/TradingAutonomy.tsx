@@ -515,11 +515,6 @@ export default function TradingAutonomy() {
                   Risk Controls <ChevronRight className="w-3.5 h-3.5" />
                 </Button>
               </Link>
-              <Link href="/signals">
-                <Button variant="outline" className="flex items-center gap-1">
-                  Signals <ChevronRight className="w-3.5 h-3.5" />
-                </Button>
-              </Link>
             </div>
           )}
         </CardContent>

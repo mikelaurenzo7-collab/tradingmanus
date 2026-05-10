@@ -11,7 +11,6 @@ const shortcuts = {
   navigation: [
     { keys: ["⌘/Ctrl", "K"], description: "Open command palette" },
     { keys: ["G", "then", "D"], description: "Go to Dashboard" },
-    { keys: ["G", "then", "S"], description: "Go to Signals" },
     { keys: ["G", "then", "P"], description: "Go to Positions" },
     { keys: ["G", "then", "T"], description: "Go to Trades" },
   ],

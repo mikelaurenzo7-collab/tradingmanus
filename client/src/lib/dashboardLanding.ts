@@ -66,9 +66,9 @@ export function getFastActionItems() {
       body: "Check risk budgets, posture warnings, and kill-switch readiness before testing live execution.",
     },
     {
-      href: "/signals",
-      title: "Scan liquidity",
-      body: "Inspect spread proxies, depth imbalance, and pressure watchlists before acting on any signal.",
+      href: "/activity",
+      title: "Watch the bot work",
+      body: "The autonomy loop scans, reviews, and acts on signals automatically — open Activity to see live positions and the latest trades it executed.",
     },
   ] as const;
 }

@@ -8,7 +8,6 @@ import {
   LineChart,
   Plug,
   Shield,
-  Zap,
 } from "lucide-react";
 
 export type NavItem = {
@@ -36,10 +35,15 @@ export type NavSection = {
  *   - Sentiment (multi-source)       · Claude already factors this in review
  *   - Markets / Analytics            · Claude already factors microstructure
  *   - Portfolio (Kelly / MV)         · Kelly is automatic in autonomy
+ *   - Signals                        · removed entirely; the bot acts on
+ *                                       reviewed signals automatically and
+ *                                       the heuristic-baseline noise (e.g.
+ *                                       MLB HR props vs 50% prior) was never
+ *                                       actionable in the first place.
  *
  * Kept:
  *   - Setup, Dashboard               · onboarding + home
- *   - Signals, Activity              · daily trade surface
+ *   - Activity                       · open positions + trade history
  *   - Performance, Backtesting       · "is it making money?" + tuning
  *   - Autonomy, Risk Controls,
  *     Training                       · the dials you'll touch most
@@ -54,15 +58,9 @@ export const navSections: NavSection[] = [
     ],
   },
   {
-    label: "Trade",
-    items: [
-      { icon: Zap, label: "Signals", path: "/signals", hint: "Latest reviewed signals (Kalshi)" },
-      { icon: Activity, label: "Activity", path: "/activity", hint: "Open positions + trade history" },
-    ],
-  },
-  {
     label: "Analyze",
     items: [
+      { icon: Activity, label: "Activity", path: "/activity", hint: "Open positions + trade history" },
       { icon: BarChart3, label: "Performance", path: "/performance", hint: "P&L and risk-adjusted metrics" },
       { icon: LineChart, label: "Backtesting", path: "/backtest", hint: "Historical exit-strategy simulation" },
     ],

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useLocation } from "wouter";
-import { Sparkles, Zap, RefreshCw, ShieldAlert, Plug, Wallet } from "lucide-react";
+import { Zap, RefreshCw, ShieldAlert, Plug, Wallet } from "lucide-react";
 import {
   CommandDialog,
   CommandEmpty,
@@ -101,13 +101,6 @@ export function CommandPalette() {
           >
             <Wallet className="mr-2 h-4 w-4 opacity-70" />
             Fund account
-          </CommandItem>
-          <CommandItem
-            value="Generate signals scan"
-            onSelect={() => handleNavigate("/signals")}
-          >
-            <Sparkles className="mr-2 h-4 w-4 opacity-70" />
-            View latest signals
           </CommandItem>
           <CommandItem
             value="Arm autonomy go live"
