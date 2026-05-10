@@ -2,29 +2,25 @@
  * Hybrid ensemble consensus orchestrator (Grok + Claude).
  *
  * Tiers:
- *   1. Claude Haiku 4.5    — always runs (cheap, fast triage).
+ *   1. Tier-1 verdict      — already computed upstream and passed in here.
  *   2A. Grok 4 (xAI)       — breaking-news niches (Weather, Sports, Economics)
  *                            with real-time X search + NOAA + order book tools.
- *   2B. Claude Opus 4.7    — non-breaking-news high-stakes (Politics, Other)
- *                            where depth of reasoning > speed.
- *   3. Claude Opus 4.7     — catastrophic-bet unanimous gate (Haiku + Tier2 + Opus).
+ *   2B. Claude Sonnet 4.6  — default high-stakes adversarial review.
  *
  * Decision rules:
  *   - Tier 1 veto → SKIP.
  *   - !highStakes → trust Tier 1.
  *   - highStakes && breaking-news niche → Grok Tier-2.
- *   - highStakes && non-breaking-news → Opus Tier-2.
- *   - catastrophicBet → require unanimous Haiku + Tier-2 + Opus.
- *
- * Sonnet 4.6 is deprecated — Grok handles the middle tier more cost-effectively
- * for breaking-news signals, and Opus handles non-breaking-news depth.
+ *   - highStakes && otherwise → Sonnet Tier-2.
+ *   - catastrophicBet → require Tier-2 approval, but do not pay for a
+ *                       third reviewer.
+ *   - Tier-2 veto on high-stakes → trust the veto to minimize AI spend.
  */
 
 import { ENV } from "./env";
 import { logger } from "./logger";
 import {
   reviewWithSonnet,
-  reviewWithOpus,
   type ClaudeReviewInput,
   type ClaudeReviewVerdict,
 } from "./claudeReviewer";
@@ -157,57 +153,66 @@ export async function runEnsemble(input: EnsembleInput): Promise<EnsembleVerdict
     };
   }
 
-  // Tier 2: Grok (breaking-news niches) or Sonnet (everything else).
-  // Grok fires when:
-  //   1. XAI_API_KEY is set AND GROK_REVIEWER_ENABLED=true
-  //   2. Category is weather / sports / economics (real-time info = edge)
-  //   3. Resolution is ≤72h away (fresh info matters)
-  // Everything else falls through to Sonnet for depth reasoning.
-  if (!ENV.anthropicApiKey) {
+  // Tier 2: Grok (breaking-news niches with real-time edge) or Sonnet
+  // (everything else). Grok routing is shared with the OpenRouter team path
+  // and now depends on urgency plus economics, not category alone.
+  if (!ENV.openRouterApiKey) {
     // No Anthropic key configured — should never happen post-Phase-1 since
     // env validation requires ANTHROPIC_API_KEY in production. Fail CLOSED:
     // a high-stakes bet without Tier-2/3 review is a configuration error that
     // must not silently pass through to execution.
     logger.error(
       { ticker: input.ticker, classification: classification.reasoning },
-      "[Ensemble] ANTHROPIC_API_KEY unset — refusing high-stakes signal (fail closed)",
+      "[Ensemble] OPENROUTER_API_KEY unset — refusing high-stakes signal (fail closed)",
     );
     return {
       approved: false,
       finalConfidenceAdjustment: input.tier1Verdict.confidenceAdjustment,
       finalExpectedValueAdjustment: input.tier1Verdict.expectedValueAdjustment,
       finalImpliedProbability: input.tier1Verdict.impliedProbability,
-      reasoning: `Configuration error: ANTHROPIC_API_KEY unset; refusing high-stakes trade. Triggers: ${classification.reasoning}`,
+      reasoning: `Configuration error: OPENROUTER_API_KEY unset; refusing high-stakes trade. Triggers: ${classification.reasoning}`,
       classification,
       reviews,
       totalAiCostUsd,
     };
   }
 
+  const category = normalizeCategory(input.category);
   const hoursToResolution = input.resolutionAtMs
     ? (input.resolutionAtMs - Date.now()) / (1000 * 60 * 60)
     : null;
+  const sideWinProbability =
+    input.side === "yes"
+      ? input.tier1Verdict.impliedProbability
+      : 1 - input.tier1Verdict.impliedProbability;
+  const edgeFraction = sideWinProbability - input.entryPrice;
   const useGrok =
     ENV.grokReviewerEnabled &&
     Boolean(ENV.xaiApiKey) &&
-    shouldUseGrokReviewer(normalizeCategory(input.category), hoursToResolution);
+    shouldUseGrokReviewer({
+      category,
+      hoursToResolution,
+      sideWinProbability,
+      edgeFraction,
+      roiFraction: input.grossEvFraction,
+      confidence: input.confidence,
+    });
 
   const tier2ReviewInput: ClaudeReviewInput = toClaudeReviewInput(input);
 
-  // For CATASTROPHIC-BETS, normal Tier-2 routing still applies (Grok for
-  // breaking-news, Sonnet otherwise). The unanimous Opus gate happens below
-  // in Rule 3a regardless of which Tier-2 reviewer is chosen.
+  // For catastrophic bets, normal Tier-2 routing still applies (Grok for
+  // breaking-news, Sonnet otherwise). We do not pay for a third reviewer.
   let tier2: ClaudeReviewVerdict | GrokReviewVerdict;
   if (useGrok) {
     // Tier-2 Grok path — breaking-news niche with real-time edge
     const grokInput: GrokReviewInput = {
       marketId: input.marketId,
       ticker: input.ticker,
-      category: normalizeCategory(input.category),
+      category,
       side: input.side,
       count: input.count,
       entryPrice: input.entryPrice,
-      grossEvFraction: input.grossEvFraction,
+      roiFraction: input.grossEvFraction,
       confidence: input.confidence,
       resolutionPrimary: input.resolutionPrimary ?? null,
       resolutionSecondary: input.resolutionSecondary ?? null,
@@ -222,116 +227,80 @@ export async function runEnsemble(input: EnsembleInput): Promise<EnsembleVerdict
       hoursToResolution,
     };
     const grokVerdict = await reviewWithGrok(grokInput);
-    reviews.push({ reviewerId: "grok-4-latest", verdict: grokVerdict });
+    reviews.push({ reviewerId: grokVerdict.reviewerId, verdict: grokVerdict });
     totalAiCostUsd += grokVerdict.costUsd;
     tier2 = grokVerdict;
   } else {
     // Tier-2 default: Sonnet for non-breaking-news high-stakes signals
     const sonnet = await reviewWithSonnet(tier2ReviewInput);
-    reviews.push({ reviewerId: "claude.sonnet-4-6", verdict: sonnet });
+    reviews.push({ reviewerId: sonnet.reviewerId, verdict: sonnet });
     totalAiCostUsd += sonnet.costUsd;
     tier2 = sonnet;
   }
 
-  // Alias for the existing downstream code that uses `sonnet` and `sonnetReviewInput`
-  const sonnetReviewInput = tier2ReviewInput;
-  const sonnet = tier2;
+  const tier2Reviewer = tier2;
 
-  // Rule 3a: catastrophic-bet → demand unanimous (Sonnet approves AND Opus approves).
+  // Catastrophic bets stay fail-closed on a Tier-2 veto, but we do not pay
+  // for a third reviewer just to break ties.
   if (classification.isCatastrophicBet) {
-    if (!sonnet.approved) {
+    if (!tier2Reviewer.approved) {
       return {
         approved: false,
         finalConfidenceAdjustment: avg(
           input.tier1Verdict.confidenceAdjustment,
-          sonnet.confidenceAdjustment,
+          tier2Reviewer.confidenceAdjustment,
         ),
         finalExpectedValueAdjustment: avg(
           input.tier1Verdict.expectedValueAdjustment,
-          sonnet.expectedValueAdjustment,
+          tier2Reviewer.expectedValueAdjustment,
         ),
         finalImpliedProbability: avg(
           input.tier1Verdict.impliedProbability,
-          sonnet.impliedProbability,
+          tier2Reviewer.impliedProbability,
         ),
-        reasoning: `Catastrophic-bet veto: Tier-2 rejected. ${sonnet.reasoning}`,
+        reasoning: `Catastrophic-bet veto: Tier-2 rejected (${tier2Reviewer.reviewerId}). ${tier2Reviewer.reasoning}`,
         classification,
         reviews,
         totalAiCostUsd,
       };
     }
 
-    // Both approve so far; still need Opus unanimous.
-    const opus = await reviewWithOpus(sonnetReviewInput);
-    reviews.push({ reviewerId: "claude.opus-4-7", verdict: opus });
-    totalAiCostUsd += opus.costUsd;
-
-    if (!opus.approved) {
-      return {
-        approved: false,
-        finalConfidenceAdjustment: avg(
-          input.tier1Verdict.confidenceAdjustment,
-          sonnet.confidenceAdjustment,
-          opus.confidenceAdjustment,
-        ),
-        finalExpectedValueAdjustment: avg(
-          input.tier1Verdict.expectedValueAdjustment,
-          sonnet.expectedValueAdjustment,
-          opus.expectedValueAdjustment,
-        ),
-        finalImpliedProbability: avg(
-          input.tier1Verdict.impliedProbability,
-          sonnet.impliedProbability,
-          opus.impliedProbability,
-        ),
-        reasoning: `Catastrophic-bet veto: Opus rejected. ${opus.reasoning}`,
-        classification,
-        reviews,
-        totalAiCostUsd,
-      };
-    }
-
-    // Unanimous approval on a catastrophic-bet.
     return {
       approved: true,
       finalConfidenceAdjustment: avg(
         input.tier1Verdict.confidenceAdjustment,
-        sonnet.confidenceAdjustment,
-        opus.confidenceAdjustment,
+        tier2Reviewer.confidenceAdjustment,
       ),
       finalExpectedValueAdjustment: avg(
         input.tier1Verdict.expectedValueAdjustment,
-        sonnet.expectedValueAdjustment,
-        opus.expectedValueAdjustment,
+        tier2Reviewer.expectedValueAdjustment,
       ),
       finalImpliedProbability: avg(
         input.tier1Verdict.impliedProbability,
-        sonnet.impliedProbability,
-        opus.impliedProbability,
+        tier2Reviewer.impliedProbability,
       ),
-      reasoning: `Catastrophic-bet UNANIMOUS approval: Tier-1 + Tier-2 + Opus all green.`,
+      reasoning: `Catastrophic-bet approval: Tier-1 + Tier-2 (${tier2Reviewer.reviewerId}) both green; Opus disabled for cost control.`,
       classification,
       reviews,
       totalAiCostUsd,
     };
   }
 
-  // Rule 3b: high-stakes (non-catastrophic).
-  if (sonnet.approved) {
-    // Tier-1 ✓ + Sonnet ✓ → APPROVE. Average their adjustments.
+  // High-stakes (non-catastrophic).
+  if (tier2Reviewer.approved) {
     return {
       approved: true,
       finalConfidenceAdjustment: avg(
         input.tier1Verdict.confidenceAdjustment,
-        sonnet.confidenceAdjustment,
+        tier2Reviewer.confidenceAdjustment,
       ),
       finalExpectedValueAdjustment: avg(
         input.tier1Verdict.expectedValueAdjustment,
-        sonnet.expectedValueAdjustment,
+        tier2Reviewer.expectedValueAdjustment,
       ),
       finalImpliedProbability: avg(
         input.tier1Verdict.impliedProbability,
-        sonnet.impliedProbability,
+        tier2Reviewer.impliedProbability,
       ),
       reasoning: `Tier-1 ✓ + Tier-2 ✓ on high-stakes (${classification.reasoning})`,
       classification,
@@ -340,54 +309,21 @@ export async function runEnsemble(input: EnsembleInput): Promise<EnsembleVerdict
     };
   }
 
-  // Tier-1 ✓ + Sonnet ✗ → escalate to Opus tiebreaker, BUT only when the
-  // signal's gross EV clears the OPUS_ESCALATION_MIN_GROSS_EV floor
-  // (default 5 %). Below that the candidate isn't worth Opus's cost
-  // (~$0.083/call vs Sonnet's ~$0.017) — we just trust Sonnet's veto.
-  if (input.grossEvFraction < ENV.opusEscalationMinGrossEv) {
-    return {
-      approved: false,
-      finalConfidenceAdjustment: avg(
-        input.tier1Verdict.confidenceAdjustment,
-        sonnet.confidenceAdjustment,
-      ),
-      finalExpectedValueAdjustment: avg(
-        input.tier1Verdict.expectedValueAdjustment,
-        sonnet.expectedValueAdjustment,
-      ),
-      finalImpliedProbability: avg(
-        input.tier1Verdict.impliedProbability,
-        sonnet.impliedProbability,
-      ),
-      reasoning: `Tier-2 vetoed and gross EV ${(input.grossEvFraction * 100).toFixed(2)}% below ${(ENV.opusEscalationMinGrossEv * 100).toFixed(2)}% Opus-escalation floor — trusting Tier-2 veto without escalation.`,
-      classification,
-      reviews,
-      totalAiCostUsd,
-    };
-  }
-
-  const opus = await reviewWithOpus(sonnetReviewInput);
-  reviews.push({ reviewerId: "claude.opus-4-7", verdict: opus });
-  totalAiCostUsd += opus.costUsd;
-
   return {
-    approved: opus.approved,
+    approved: false,
     finalConfidenceAdjustment: avg(
       input.tier1Verdict.confidenceAdjustment,
-      sonnet.confidenceAdjustment,
-      opus.confidenceAdjustment,
+      tier2Reviewer.confidenceAdjustment,
     ),
     finalExpectedValueAdjustment: avg(
       input.tier1Verdict.expectedValueAdjustment,
-      sonnet.expectedValueAdjustment,
-      opus.expectedValueAdjustment,
+      tier2Reviewer.expectedValueAdjustment,
     ),
     finalImpliedProbability: avg(
       input.tier1Verdict.impliedProbability,
-      sonnet.impliedProbability,
-      opus.impliedProbability,
+      tier2Reviewer.impliedProbability,
     ),
-    reasoning: `Tiebreaker: Tier-1 ✓, Tier-2 ✗, Opus ${opus.approved ? "✓" : "✗"} → ${opus.approved ? "APPROVE" : "VETO"}. ${opus.reasoning}`,
+    reasoning: `Tier-2 veto (${tier2Reviewer.reviewerId}) on high-stakes (${classification.reasoning}); Opus disabled for cost control. ${tier2Reviewer.reasoning}`,
     classification,
     reviews,
     totalAiCostUsd,
@@ -437,7 +373,7 @@ export interface SignalForEnsemble {
 }
 
 export interface EnsembleFilterResult {
-  /** Signals that passed the ensemble (Tier-1 + maybe Sonnet/Opus). */
+  /** Signals that passed the ensemble (Tier-1 + maybe Sonnet/Grok). */
   approvedSignals: SignalForEnsemble[];
   /** Per-signal verdict trail for the audit log. Keyed by composite
    *  (marketId, side, signalType) — matches the same key used downstream

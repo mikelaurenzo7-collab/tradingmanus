@@ -1,21 +1,21 @@
 /**
- * Unit tests for the 3-tier ensemble consensus orchestrator.
+ * Unit tests for the cost-minimized ensemble consensus orchestrator.
  *
  * Focus areas:
- *   - Fail-closed when ANTHROPIC_API_KEY is unset on high-stakes signals
- *   - Tier-1 veto passes through without calling Sonnet/Opus
+ *   - Fail-closed when OPENROUTER_API_KEY is unset on high-stakes signals
+ *   - Fail-closed when live capital is unavailable
+ *   - Tier-1 veto passes through without calling Tier-2 reviewers
  *   - Low-stakes signals trust Tier-1 without escalation
  *   - High-stakes: Tier-1 ✓ + Sonnet ✓ → APPROVE
- *   - High-stakes: Tier-1 ✓ + Sonnet ✗ (below EV floor) → VETO without Opus
- *   - High-stakes: Tier-1 ✓ + Sonnet ✗ (above EV floor) → Opus tiebreaker
+ *   - High-stakes: Tier-1 ✓ + Sonnet ✗ → VETO without Opus
+ *   - Catastrophic bets still require Tier-2 approval, but do not pay for Opus
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Inject API key before the ENV module is loaded
 vi.hoisted(() => {
-  process.env.ANTHROPIC_API_KEY = "sk-ant-test";
-  process.env.OPUS_ESCALATION_MIN_GROSS_EV = "0.05";
+  process.env.OPENROUTER_API_KEY = "sk-or-test";
 });
 
 const claudeReviewerMocks = vi.hoisted(() => ({
@@ -23,15 +23,30 @@ const claudeReviewerMocks = vi.hoisted(() => ({
   reviewWithOpus: vi.fn(),
 }));
 
+const grokReviewerMocks = vi.hoisted(() => ({
+  reviewWithGrok: vi.fn(),
+}));
+
 vi.mock("./_core/claudeReviewer", () => ({
   reviewWithSonnet: claudeReviewerMocks.reviewWithSonnet,
   reviewWithOpus: claudeReviewerMocks.reviewWithOpus,
 }));
 
+vi.mock("./_core/grokReviewer", async () => {
+  const actual = await vi.importActual<typeof import("./_core/grokReviewer")>(
+    "./_core/grokReviewer",
+  );
+  return {
+    ...actual,
+    reviewWithGrok: grokReviewerMocks.reviewWithGrok,
+  };
+});
+
 vi.mock("../db", () => ({
   logAuditEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
+import { ENV } from "./_core/env";
 import { runEnsemble, type EnsembleInput, type Tier1Verdict } from "./_core/ensembleConsensus";
 
 function makeTier1(approved: boolean): Tier1Verdict {
@@ -89,8 +104,39 @@ const vetoVerdict = {
   reviewerId: "claude.sonnet-4-6" as const,
 };
 
+const grokApproveVerdict = {
+  reviewerId: "grok-4-latest" as const,
+  approved: true,
+  confidenceAdjustment: 0.04,
+  expectedValueAdjustment: 0.02,
+  impliedProbability: 0.81,
+  reasoning: "Fresh weather edge confirmed.",
+  ambiguityFlag: false,
+  toolCallsSummary: "NOAA + order book",
+  costUsd: 0.01,
+  tokensIn: 12,
+  tokensOut: 6,
+  latencyMs: 40,
+  toolCallsMade: [],
+};
+
+const grokVetoVerdict = {
+  ...grokApproveVerdict,
+  approved: false,
+  reasoning: "Fresh data vetoed the signal.",
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
+  (ENV as { grokReviewerEnabled: boolean }).grokReviewerEnabled = true;
+  (ENV as { xaiApiKey: string }).xaiApiKey = "xai-test";
+  (ENV as { grokWeatherMaxHours: number }).grokWeatherMaxHours = 72;
+  (ENV as { grokSportsMaxHours: number }).grokSportsMaxHours = 24;
+  (ENV as { grokEconomicsMaxHours: number }).grokEconomicsMaxHours = 12;
+  (ENV as { grokMinSideProbability: number }).grokMinSideProbability = 0.75;
+  (ENV as { grokMinEdgeFraction: number }).grokMinEdgeFraction = 0.1;
+  (ENV as { grokMinRoiFraction: number }).grokMinRoiFraction = 0.18;
+  (ENV as { grokMinConfidence: number }).grokMinConfidence = 0.7;
 });
 
 describe("runEnsemble — Tier-1 veto shortcircuit", () => {
@@ -115,8 +161,8 @@ describe("runEnsemble — low-stakes path", () => {
   });
 });
 
-describe("runEnsemble — fail-closed when ANTHROPIC_API_KEY unset on high-stakes", () => {
-  it("vetoes a high-stakes signal when ANTHROPIC_API_KEY is missing (fail closed)", async () => {
+describe("runEnsemble — fail-closed when OPENROUTER_API_KEY unset on high-stakes", () => {
+  it("vetoes a high-stakes signal when OPENROUTER_API_KEY is missing (fail closed)", async () => {
     // We need to reload the module with an empty API key. The ENV singleton
     // captures the key at load time, so we temporarily patch ENV directly.
     vi.resetModules();
@@ -131,13 +177,13 @@ describe("runEnsemble — fail-closed when ANTHROPIC_API_KEY unset on high-stake
     }));
 
     // Patch process.env and reimport
-    const savedKey = process.env.ANTHROPIC_API_KEY;
-    process.env.ANTHROPIC_API_KEY = "";
+    const savedKey = process.env.OPENROUTER_API_KEY;
+    process.env.OPENROUTER_API_KEY = "";
 
     const { ENV } = await import("./_core/env");
     // Temporarily empty the key on the singleton (the in-memory value)
-    const originalKey = (ENV as unknown as Record<string, string>).anthropicApiKey;
-    (ENV as unknown as Record<string, string>).anthropicApiKey = "";
+    const originalKey = (ENV as unknown as Record<string, string>).openRouterApiKey;
+    (ENV as unknown as Record<string, string>).openRouterApiKey = "";
 
     const { runEnsemble: runEnsembleReloaded } = await import("./_core/ensembleConsensus");
 
@@ -147,14 +193,28 @@ describe("runEnsemble — fail-closed when ANTHROPIC_API_KEY unset on high-stake
     );
 
     expect(result.approved).toBe(false);
-    expect(result.reasoning).toMatch(/ANTHROPIC_API_KEY unset|Configuration error/i);
+    expect(result.reasoning).toMatch(/OPENROUTER_API_KEY unset|Configuration error/i);
     expect(claudeReviewerMocks.reviewWithSonnet).not.toHaveBeenCalled();
 
     // Restore
-    (ENV as unknown as Record<string, string>).anthropicApiKey = originalKey;
-    process.env.ANTHROPIC_API_KEY = savedKey ?? "";
+    (ENV as unknown as Record<string, string>).openRouterApiKey = originalKey;
+    process.env.OPENROUTER_API_KEY = savedKey ?? "";
     vi.resetModules();
   });
+});
+
+describe("runEnsemble — fail-closed when live capital is unavailable", () => {
+  it.each([0, Number.NaN])( 
+    "vetoes the signal when capitalUsd=%s",
+    async (capitalUsd) => {
+      const result = await runEnsemble(makeInput({ capitalUsd }));
+
+      expect(result.approved).toBe(false);
+      expect(result.reasoning).toMatch(/capital unavailable/i);
+      expect(claudeReviewerMocks.reviewWithSonnet).not.toHaveBeenCalled();
+      expect(claudeReviewerMocks.reviewWithOpus).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("runEnsemble — high-stakes non-catastrophic", () => {
@@ -175,52 +235,132 @@ describe("runEnsemble — high-stakes non-catastrophic", () => {
     expect(claudeReviewerMocks.reviewWithOpus).not.toHaveBeenCalled();
   });
 
-  it("vetoes when Sonnet ✗ and gross EV below Opus escalation floor", async () => {
-    claudeReviewerMocks.reviewWithSonnet.mockResolvedValue(vetoVerdict);
+  it("routes urgent high-edge weather trades to Grok instead of Sonnet", async () => {
+    grokReviewerMocks.reviewWithGrok.mockResolvedValue(grokApproveVerdict);
 
-    // grossEvFraction = 0.03 < default OPUS_ESCALATION_MIN_GROSS_EV (0.05)
     const result = await runEnsemble(
       makeInput({
         notionalUsd: HIGH_STAKES_NON_CATASTROPHIC_NOTIONAL,
         capitalUsd: CAPITAL,
-        grossEvFraction: 0.03,
+        confidence: 0.82,
+        grossEvFraction: 0.25,
+        resolutionAtMs: Date.now() + 6 * 60 * 60 * 1000,
+        tier1Verdict: {
+          ...makeTier1(true),
+          impliedProbability: 0.8,
+        },
+      }),
+    );
+
+    expect(grokReviewerMocks.reviewWithGrok).toHaveBeenCalledTimes(1);
+    expect(claudeReviewerMocks.reviewWithSonnet).not.toHaveBeenCalled();
+    expect(result.approved).toBe(true);
+  });
+
+  it("falls back to Sonnet when the shared Grok thresholds are not met", async () => {
+    claudeReviewerMocks.reviewWithSonnet.mockResolvedValue(approveVerdict);
+
+    const result = await runEnsemble(
+      makeInput({
+        notionalUsd: HIGH_STAKES_NON_CATASTROPHIC_NOTIONAL,
+        capitalUsd: CAPITAL,
+        confidence: 0.82,
+        grossEvFraction: 0.25,
+        resolutionAtMs: Date.now() + 6 * 60 * 60 * 1000,
+        tier1Verdict: {
+          ...makeTier1(true),
+          impliedProbability: 0.7,
+        },
+      }),
+    );
+
+    expect(grokReviewerMocks.reviewWithGrok).not.toHaveBeenCalled();
+    expect(claudeReviewerMocks.reviewWithSonnet).toHaveBeenCalledTimes(1);
+    expect(result.approved).toBe(true);
+  });
+
+  it("falls back to Sonnet when xAI is unavailable", async () => {
+    claudeReviewerMocks.reviewWithSonnet.mockResolvedValue(approveVerdict);
+    (ENV as { xaiApiKey: string }).xaiApiKey = "";
+
+    const result = await runEnsemble(
+      makeInput({
+        notionalUsd: HIGH_STAKES_NON_CATASTROPHIC_NOTIONAL,
+        capitalUsd: CAPITAL,
+        confidence: 0.82,
+        grossEvFraction: 0.25,
+        resolutionAtMs: Date.now() + 6 * 60 * 60 * 1000,
+        tier1Verdict: {
+          ...makeTier1(true),
+          impliedProbability: 0.8,
+        },
+      }),
+    );
+
+    expect(grokReviewerMocks.reviewWithGrok).not.toHaveBeenCalled();
+    expect(claudeReviewerMocks.reviewWithSonnet).toHaveBeenCalledTimes(1);
+    expect(result.approved).toBe(true);
+  });
+
+  it("vetoes when Sonnet ✗ on a high-stakes trade without escalating to Opus", async () => {
+    claudeReviewerMocks.reviewWithSonnet.mockResolvedValue(vetoVerdict);
+
+    const result = await runEnsemble(
+      makeInput({
+        notionalUsd: HIGH_STAKES_NON_CATASTROPHIC_NOTIONAL,
+        capitalUsd: CAPITAL,
+        grossEvFraction: 0.25,
       }),
     );
 
     expect(result.approved).toBe(false);
-    expect(result.reasoning).toMatch(/below.*floor/i);
+    expect(result.reasoning).toMatch(/Tier-2 veto/i);
     expect(claudeReviewerMocks.reviewWithOpus).not.toHaveBeenCalled();
   });
 
-  it("escalates to Opus tiebreaker when Sonnet ✗ and gross EV above floor", async () => {
-    claudeReviewerMocks.reviewWithSonnet.mockResolvedValue(vetoVerdict);
-    claudeReviewerMocks.reviewWithOpus.mockResolvedValue({
-      ...approveVerdict,
-      reviewerId: "claude.opus-4-7" as const,
-    });
+  it("approves catastrophic bets with Tier-1 + Tier-2 only", async () => {
+    claudeReviewerMocks.reviewWithSonnet.mockResolvedValue(approveVerdict);
 
-    // grossEvFraction = 0.12 > 0.05 floor → Opus runs as tiebreaker
     const result = await runEnsemble(
-      makeInput({ notionalUsd: HIGH_STAKES_NON_CATASTROPHIC_NOTIONAL, capitalUsd: CAPITAL }),
+      makeInput({ notionalUsd: 50, capitalUsd: 200 }),
     );
 
-    expect(claudeReviewerMocks.reviewWithOpus).toHaveBeenCalledTimes(1);
     expect(result.approved).toBe(true);
-    expect(result.reasoning).toMatch(/Tiebreaker/i);
+    expect(result.reasoning).toMatch(/Catastrophic-bet approval/i);
+    expect(claudeReviewerMocks.reviewWithOpus).not.toHaveBeenCalled();
   });
 
-  it("respects Opus veto in tiebreaker", async () => {
+  it("vetoes catastrophic bets when Tier-2 rejects them", async () => {
     claudeReviewerMocks.reviewWithSonnet.mockResolvedValue(vetoVerdict);
-    claudeReviewerMocks.reviewWithOpus.mockResolvedValue({
-      ...vetoVerdict,
-      reviewerId: "claude.opus-4-7" as const,
-    });
 
     const result = await runEnsemble(
-      makeInput({ notionalUsd: HIGH_STAKES_NON_CATASTROPHIC_NOTIONAL, capitalUsd: CAPITAL }),
+      makeInput({ notionalUsd: 50, capitalUsd: 200 }),
     );
 
     expect(result.approved).toBe(false);
-    expect(result.reasoning).toMatch(/Tiebreaker.*VETO/i);
+    expect(result.reasoning).toMatch(/Catastrophic-bet veto/i);
+    expect(claudeReviewerMocks.reviewWithOpus).not.toHaveBeenCalled();
+  });
+
+  it("respects a Grok veto on an urgent weather trade", async () => {
+    grokReviewerMocks.reviewWithGrok.mockResolvedValue(grokVetoVerdict);
+
+    const result = await runEnsemble(
+      makeInput({
+        notionalUsd: HIGH_STAKES_NON_CATASTROPHIC_NOTIONAL,
+        capitalUsd: CAPITAL,
+        confidence: 0.82,
+        grossEvFraction: 0.25,
+        resolutionAtMs: Date.now() + 6 * 60 * 60 * 1000,
+        tier1Verdict: {
+          ...makeTier1(true),
+          impliedProbability: 0.8,
+        },
+      }),
+    );
+
+    expect(grokReviewerMocks.reviewWithGrok).toHaveBeenCalledTimes(1);
+    expect(result.approved).toBe(false);
+    expect(result.reasoning).toMatch(/Tier-2 veto/i);
   });
 });

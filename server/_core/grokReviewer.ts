@@ -12,7 +12,7 @@
  *   - Sports (≤72h): injury/lineup news on X before odds adjust
  *   - Economics (≤72h): Fed-watcher X sentiment pre-release
  *
- * All other categories → Claude Opus (reasoning depth > real-time speed).
+ * All other categories stay on Sonnet (reasoning depth > real-time speed).
  */
 
 import { ENV } from "./env";
@@ -104,7 +104,7 @@ export interface GrokReviewInput {
   side: "yes" | "no";
   count: number;
   entryPrice: number;
-  grossEvFraction: number;
+  roiFraction: number;
   confidence: number;
   resolutionPrimary: string | null;
   resolutionSecondary: string | null;
@@ -135,6 +135,34 @@ export interface GrokReviewVerdict {
   tokensOut: number;
   latencyMs: number;
   toolCallsMade: ToolCall[];
+}
+
+export interface GrokRoutingInput {
+  category: MarketCategory;
+  hoursToResolution: number | null;
+  sideWinProbability: number;
+  edgeFraction: number;
+  roiFraction: number;
+  confidence: number;
+}
+
+const GROK_REAL_TIME_CATEGORIES: ReadonlySet<MarketCategory> = new Set([
+  "weather",
+  "sports",
+  "economics",
+]);
+
+function getGrokMaxHours(category: MarketCategory): number | null {
+  switch (category) {
+    case "weather":
+      return ENV.grokWeatherMaxHours;
+    case "sports":
+      return ENV.grokSportsMaxHours;
+    case "economics":
+      return ENV.grokEconomicsMaxHours;
+    default:
+      return null;
+  }
 }
 
 // ── System prompts per category ───────────────────────────────────────────────
@@ -204,7 +232,7 @@ Resolution rule: "${resText}"
 
 Proposed trade: ${input.side.toUpperCase()} × ${input.count} @ $${input.entryPrice.toFixed(2)}
 Notional: $${input.notionalUsd.toFixed(2)}
-Gross EV (after fees): ${(input.grossEvFraction * 100).toFixed(1)}%
+Estimated ROI edge: ${(input.roiFraction * 100).toFixed(1)}%
 Initial confidence: ${(input.confidence * 100).toFixed(0)}%
 
 Tier-1 (Claude Haiku) verdict:
@@ -445,11 +473,32 @@ function estimateGrokCost(tokensIn: number, tokensOut: number): number {
  * True only for breaking-news niches where real-time data = genuine edge.
  */
 export function shouldUseGrokReviewer(
-  category: MarketCategory,
-  hoursToResolution: number | null,
+  input: GrokRoutingInput,
 ): boolean {
   if (!ENV.grokReviewerEnabled) return false;
-  if (!["weather", "sports", "economics"].includes(category)) return false;
-  if (hoursToResolution === null || hoursToResolution > 72) return false;
+  if (!GROK_REAL_TIME_CATEGORIES.has(input.category)) return false;
+
+  const maxHours = getGrokMaxHours(input.category);
+  if (maxHours === null) return false;
+  if (
+    input.hoursToResolution === null ||
+    !Number.isFinite(input.hoursToResolution) ||
+    input.hoursToResolution <= 0 ||
+    input.hoursToResolution > maxHours
+  ) {
+    return false;
+  }
+  if (!Number.isFinite(input.sideWinProbability) || input.sideWinProbability < ENV.grokMinSideProbability) {
+    return false;
+  }
+  if (!Number.isFinite(input.edgeFraction) || input.edgeFraction < ENV.grokMinEdgeFraction) {
+    return false;
+  }
+  if (!Number.isFinite(input.roiFraction) || input.roiFraction < ENV.grokMinRoiFraction) {
+    return false;
+  }
+  if (!Number.isFinite(input.confidence) || input.confidence < ENV.grokMinConfidence) {
+    return false;
+  }
   return true;
 }

@@ -32,7 +32,7 @@ import { calculateKelly, applyKellyToPositionSize } from "./kellyCriterion";
 import { assertPositiveIntegerUserId } from "./userScope";
 import { withUserLock } from "./userMutex";
 import { reviewSignalsWithTrader } from "./tradingReviewer";
-import { applyEnsembleFilter } from "./ensembleConsensus";
+import { buildExecutionPayloadWithExecutioner } from "./openRouterKalshiTeam";
 import { getLiveCapitalUsd } from "./liveCapital";
 import { getCacheHitRatio, newReviewerTelemetry } from "./aiToolbelt";
 import { createOrderSyncLock } from "./distributedLock";
@@ -812,185 +812,17 @@ async function generateScheduledSignals(
       triageRan: telemetry.triageRan,
       triageInputCount: telemetry.triageInputCount,
       triageKeptCount: telemetry.triageKeptCount,
+      reviewerCalls: telemetry.anthropicCalls,
+      reviewerFailures: telemetry.anthropicFailures,
+      openRouterCalls: telemetry.anthropicCalls,
+      openRouterFailures: telemetry.anthropicFailures,
       anthropicCalls: telemetry.anthropicCalls,
       anthropicFailures: telemetry.anthropicFailures,
     }),
     `user:${userId}`,
   );
 
-  // ── Tier 2/3 ensemble post-filter ──────────────────────────────────────
-  // Tier 1 (Claude Haiku) already approved each `savedSignal`. We now run
-  // them through the deeper ensemble: high-stakes signals get Sonnet review;
-  // catastrophic-bets demand unanimous Tier-1 + Sonnet + Opus. Vetoed
-  // signals are dropped here; approved signals carry the ensemble's
-  // adjusted EV/confidence into execution.
-  let ensembleApproved = savedSignals;
-  if (ENV.anthropicApiKey && savedSignals.length > 0) {
-    try {
-      // Prefer the per-user equity passed in by the caller (already
-      // fetched with this user's encrypted credentials). Fall back to the
-      // process-level balance ONLY if the caller didn't supply one — which
-      // means the path is a non-scheduled / test invocation. Without this
-      // fallback the ensemble would silently veto every signal in tests.
-      const liveCapitalUsd =
-        Number.isFinite(options.liveCapitalUsd) &&
-        (options.liveCapitalUsd ?? 0) > 0
-          ? (options.liveCapitalUsd as number)
-          : await getLiveCapitalUsd().catch(() => 0);
-      const marketsByIdLocal = new Map(
-        actionableMarkets.map((m) => [m.id, m]),
-      );
-      // Lazy-import the Kelly sizer so the closure stays small in test
-      // builds that don't exercise this path.
-      const { calculateKellyPosition } = await import("./kellySizer");
-      const ensembleInputs = savedSignals.map((sig) => {
-        const market = marketsByIdLocal.get(sig.marketId);
-        // KalshiMarket exposes resolutionDate (ISO string), not closeTime.
-        const closeMs = market?.resolutionDate
-          ? new Date(market.resolutionDate).getTime()
-          : null;
-        // Estimate the actual stake the executor will use. Kelly alone
-        // overestimates because the real executor also caps by
-        // `preferences.maxOrderNotional`, `riskLimits.maxPositionSize`,
-        // and `riskLimits.maxLossPerTrade` — none of which are in scope
-        // here (they're loaded by the caller). Without modeling those, a
-        // $1k account in non-aggressive mode can place a real $5–$10
-        // trade while Kelly says $40 and the 3 % high-stakes gate
-        // over-fires.
-        //
-        // Conservative heuristic: shrink Kelly's recommendation by 50 %.
-        // On non-aggressive setups the per-user caps typically halve the
-        // Kelly stake; on aggressive setups they don't, but those are
-        // genuinely high-stakes and the gate firing is correct.
-        // For NO-side trades, signal.confidence is already side-aware.
-        const kellySizing = calculateKellyPosition({
-          winProbability: sig.confidence,
-          contractPrice: Math.max(0.01, sig.marketPrice),
-          totalCapitalUsd: liveCapitalUsd,
-        });
-        const HIGH_STAKES_ESTIMATOR_SHRINK = 0.5;
-        const cappedNotionalUsd = Math.max(
-          0,
-          Math.min(
-            kellySizing.positionUsd * HIGH_STAKES_ESTIMATOR_SHRINK,
-            liveCapitalUsd, // can never exceed total capital
-          ),
-        );
-        const estimatedCount = Math.max(
-          1,
-          Math.floor(cappedNotionalUsd / Math.max(0.01, sig.marketPrice)),
-        );
-        return {
-          marketId: sig.marketId,
-          // (marketId, side, signalType) is the stable composite identity
-          // used to match ensemble verdicts back to source signals. The
-          // signal generator can emit multiple signal types/sides per
-          // market — keying by marketId alone collapses them.
-          signalType: String(sig.signalType ?? "default"),
-          ticker: sig.marketId,
-          category: market?.category ?? "other",
-          side: sig.side,
-          confidence: sig.confidence,
-          impliedProbability: sig.impliedProbability,
-          marketPrice: sig.marketPrice,
-          expectedValue: sig.expectedValue,
-          count: estimatedCount,
-          resolutionAtMs:
-            Number.isFinite(closeMs) && closeMs !== null ? closeMs : null,
-          // KalshiMarket has `description` but not separate primary/secondary
-          // rule blocks. Pass it as the primary rules text — the persona
-          // mandate's `${RULES_BLOCK}` slot accepts a single block.
-          resolutionPrimary: market?.description ?? null,
-          resolutionSecondary: null,
-        };
-      });
-      const ensembleResult = await applyEnsembleFilter(ensembleInputs, {
-        liveCapitalUsd,
-      });
-      // Build a composite-key map (marketId:side:signalType) → ensemble-
-      // adjusted (confidence, EV, implied probability) so we can carry the
-      // Tier 2/3 trims into the saved signal. Keying by marketId alone
-      // would collapse multiple signals on the same market — Sonnet/Opus
-      // could veto one candidate but approve another with the same
-      // marketId, and the wrong one would survive.
-      const compositeKey = (s: { marketId: string; side: string; signalType?: string }) =>
-        `${s.marketId}::${s.side}::${String(s.signalType ?? "default")}`;
-      const adjustmentByKey = new Map(
-        ensembleResult.approvedSignals.map((s) => [
-          compositeKey(s),
-          {
-            confidence: s.confidence,
-            expectedValue: s.expectedValue,
-            impliedProbability: s.impliedProbability,
-          },
-        ]),
-      );
-      ensembleApproved = savedSignals
-        .filter((s) => adjustmentByKey.has(compositeKey({
-          marketId: s.marketId,
-          side: s.side,
-          signalType: s.signalType,
-        })))
-        .map((s) => {
-          const adj = adjustmentByKey.get(compositeKey({
-            marketId: s.marketId,
-            side: s.side,
-            signalType: s.signalType,
-          }));
-          if (!adj) return s;
-          return {
-            ...s,
-            confidence: adj.confidence,
-            expectedValue: adj.expectedValue,
-            impliedProbability: adj.impliedProbability,
-          };
-        });
-
-      // Audit-log the per-signal trail so the calibration job can score
-      // Brier per reviewer per category.
-      await db.logAuditEvent(
-        "kalshi_ensemble_review",
-        JSON.stringify({
-          liveCapitalUsd,
-          totalCandidates: savedSignals.length,
-          ensembleApproved: ensembleApproved.length,
-          totalAiCostUsd: ensembleResult.verdicts.reduce(
-            (a, v) => a + v.ensemble.totalAiCostUsd,
-            0,
-          ),
-          verdicts: ensembleResult.verdicts.map((v) => ({
-            marketId: v.marketId,
-            approved: v.ensemble.approved,
-            reasoning: v.ensemble.reasoning,
-            reviewers: v.ensemble.reviews.map((r) => r.reviewerId),
-            classification: {
-              isHighStakes: v.ensemble.classification.isHighStakes,
-              isCatastrophicBet: v.ensemble.classification.isCatastrophicBet,
-              triggers: v.ensemble.classification.triggers,
-            },
-          })),
-        }),
-        `user:${userId}`,
-      );
-    } catch (err) {
-      logger.warn(
-        { err },
-        "[Ensemble] post-filter failed; falling back to Tier-1-only signals",
-      );
-      // Persist the failure to the audit trail per repo convention.
-      await db
-        .logAuditEvent(
-          "ai_reviewer_failure",
-          JSON.stringify({
-            phase: "ensemble_post_filter",
-            error: err instanceof Error ? err.message : String(err),
-            signalCount: savedSignals.length,
-          }),
-          `user:${userId}`,
-        )
-        .catch(() => {});
-    }
-  }
+  const ensembleApproved = savedSignals;
 
   await saveSignals(ensembleApproved, userId);
 
@@ -1008,9 +840,8 @@ async function generateScheduledSignals(
       afterConditionFilter: conditionFilteredSignals.length,
       afterInstructionFilter: instructionFilteredSignals.length,
       afterReviewerFilter: savedSignals.length,
-      // Final-stage count after Tier 2/3 (Sonnet/Opus) ensemble vetoes.
-      // Equals afterReviewerFilter when ANTHROPIC_API_KEY is unset (no
-      // ensemble — Tier-1 verdicts pass through unchanged).
+      // The OpenRouter Kalshi team is now the single reviewer gate, so the
+      // final-stage count matches the reviewer-approved count.
       afterEnsembleFilter: ensembleApproved.length,
       activeInstructionCount: activeInstructions.length,
       minConfidence,
@@ -1018,9 +849,6 @@ async function generateScheduledSignals(
     `user:${userId}`,
   );
 
-  // CRITICAL: return the ENSEMBLE-FILTERED list — not `savedSignals`. The
-  // caller iterates these to place orders, so a Sonnet/Opus veto must
-  // remove the signal here too, not just from the saved-signals table.
   return {
     actionableMarkets,
     savedSignals: ensembleApproved,
@@ -1383,7 +1211,7 @@ export async function runScheduledAutonomousTrading(
       aggressiveMode: preferences.aggressiveMode,
       // Moonshot only takes effect when aggressiveMode is also on — it's an
       // advanced sleeve, not a beginner toggle.
-      moonshotMode: preferences.aggressiveMode && preferences.moonshotMode,
+      moonshotMode: false,
       // Pass the THIS-USER live equity (already fetched upstream at line
       // ~1210 with the user's encrypted creds, not process-level
       // KALSHI_KEY_ID) so the ensemble's capital-based gates score against
@@ -1641,12 +1469,9 @@ export async function runScheduledAutonomousTrading(
   const availableCapital = Number(capital?.currentBalance ?? equityResult.equity ?? 0);
   const limitPrice = Number(eligibleSignal.marketPrice);
 
-  // Moonshot path: the candidate's price sits in the moonshot band AND the
-  // user has both aggressiveMode + moonshotMode on.  Replace Kelly-sized notional
-  // with the fixed MOONSHOT_MAX_NOTIONAL and refuse if the open moonshot
-  // exposure has already hit the bucket cap.  Hard-bounds the downside on
-  // the riskier sleeve.
-  const moonshotEnabled = preferences.aggressiveMode && preferences.moonshotMode;
+  // Moonshot mode is retired. The bot now targets true-winner setups only,
+  // so low-price lottery-ticket sizing never activates in the main autonomy path.
+  const moonshotEnabled = false;
   const isMoonshotCandidate = moonshotEnabled && isMoonshotPrice(limitPrice);
 
   if (isMoonshotCandidate) {
@@ -2051,12 +1876,51 @@ export async function runScheduledAutonomousTrading(
   // the audit-payload object literal and avoids a second DB read.
   const effectivePaperMode = await getEffectivePaperTradeMode(userId);
 
+  let executionPayload;
+  try {
+    executionPayload = await buildExecutionPayloadWithExecutioner({
+      ticker: eligibleSignal.marketId,
+      side: eligibleSignal.side,
+      count: orderRisk.quantity,
+      limitPrice: orderRisk.limitPrice,
+      telemetry: reviewerTelemetry ?? undefined,
+    });
+  } catch (executionerError) {
+    return finalize({
+      status: "blocked",
+      reason: "executioner could not produce a valid Kalshi order payload",
+      signalsGenerated: savedSignals.length,
+      executionCandidates: executionCandidates.length,
+      orderPlaced: false,
+      candidateMarketId: eligibleSignal.marketId,
+      autonomyMode: preferences.autonomyMode,
+      executionCadence: preferences.executionCadence,
+      candidateSet,
+      rejectedCandidates,
+      decision: buildDecisionDetails(eligibleSignal, {
+        quantity,
+        availableCapital,
+        maxBudget,
+        orderExposure,
+        maxLossOnTrade,
+        blockedBy: "executioner_payload_failed",
+      }),
+    }, {
+      appliedGuardrails: safeJsonStringify(buildAppliedGuardrails(preferences, riskLimits)),
+      exchangeRequest: safeJsonStringify({
+        error: executionerError instanceof Error ? executionerError.message : String(executionerError),
+      }),
+    });
+  }
+
+  // The executioner payload is audit-only. Live placement stays pinned to the
+  // already risk-checked market, side, quantity, and limit price.
   const result = await placeKalshiOrder(
     userId,
     eligibleSignal.marketId,
     eligibleSignal.side,
     orderRisk.quantity,
-    orderRisk.limitPrice
+    orderRisk.limitPrice,
   );
 
   if (!result.success) {
@@ -2081,6 +1945,7 @@ export async function runScheduledAutonomousTrading(
         orderExposure,
         maxLossOnTrade,
         reason: result.error ?? "unknown",
+        executionPayload,
         exchangeRequest: result.exchangeRequest ?? null,
         exchangeResponse: result.exchangeResponse ?? null,
         simulated: effectivePaperMode,
@@ -2144,6 +2009,7 @@ export async function runScheduledAutonomousTrading(
       orderExposure,
       maxLossOnTrade,
       kellySuggestedSize: eligibleKellySuggestedSize ?? null,
+      executionPayload,
       reconciliationStatus: result.needsReconciliation ? "pending" : "not_required",
       reconciliationReason: result.reconciliationReason ?? null,
       simulated: effectivePaperMode,
@@ -2196,12 +2062,12 @@ export async function runScheduledAutonomousTradingBatch(
   // placed; running the batch without it would silently downgrade safety to
   // raw heuristics.  We log a critical audit event so the operator sees this
   // in the audit feed even after the throw is caught upstream.
-  if (ENV.isProduction && !ENV.anthropicApiKey) {
+  if (ENV.isProduction && !ENV.openRouterApiKey) {
     try {
       await db.logAuditEvent(
         "scheduled_autonomy_run_aborted",
         JSON.stringify({
-          reason: "ANTHROPIC_API_KEY_MISSING",
+          reason: "OPENROUTER_API_KEY_MISSING",
           triggeredByOpenId,
           eligibleUsers: users.length,
         }),
@@ -2211,8 +2077,8 @@ export async function runScheduledAutonomousTradingBatch(
       // Audit-log failure must not mask the underlying configuration error.
     }
     throw new Error(
-      "ANTHROPIC_API_KEY is not configured. Refusing to run scheduled autonomous trading without the AI reviewer gate. " +
-        "Set ANTHROPIC_API_KEY in the deployment environment and redeploy."
+      "OPENROUTER_API_KEY is not configured. Refusing to run scheduled autonomous trading without the AI reviewer gate. " +
+        "Set OPENROUTER_API_KEY in the deployment environment and redeploy."
     );
   }
 

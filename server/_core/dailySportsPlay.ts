@@ -189,9 +189,9 @@ export async function runDailySportsPlay(
   }
 
   // Run reviewer-approved signals through the ensemble for high-stakes /
-  // catastrophic-bet escalation (Sonnet adversarial, Opus tiebreaker /
-  // unanimous gate). The fabricated Tier-1 approval inside applyEnsembleFilter
-  // is now legitimate because we just ran the real reviewer above.
+  // catastrophic-bet escalation (Sonnet adversarial, Grok for real-time
+  // niches). The fabricated Tier-1 approval inside applyEnsembleFilter is now
+  // legitimate because we just ran the real reviewer above.
   const ensembleInputs = reviewedSignals.map((sig) => {
     const market = sportsMarkets.find((m) => m.id === sig.marketId);
     const closeMs = market?.resolutionDate
@@ -255,7 +255,7 @@ export async function runDailySportsPlay(
   if (ensembleResult.approvedSignals.length === 0) {
     return {
       status: "no_qualifying_play",
-      reason: "All sports candidates vetoed by ensemble (Sonnet/Opus)",
+      reason: "All sports candidates vetoed by ensemble tier-2 review",
     };
   }
 

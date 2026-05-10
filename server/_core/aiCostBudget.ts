@@ -1,7 +1,7 @@
 /**
  * AI cost budget + auto-throttle.
  *
- * Tracks USD spend on Anthropic calls for the current UTC day and
+ * Tracks USD spend on model calls for the current UTC day and
  * exposes a throttle factor the schedulers consult before kicking off
  * an autonomy run.  When AI_DAILY_BUDGET_USD is unset (or 0), this
  * module is a no-op and every run proceeds normally.
@@ -50,7 +50,7 @@ type ModelPricing = {
 };
 
 /**
- * List prices as of 2026-05.  Update when Anthropic publishes new
+ * List prices as of 2026-05.  Update when providers publish new
  * tiers.  Values that are not exactly matched fall through to the
  * conservative DEFAULT_PRICING below so an unknown model still bills
  * approximately right (slight over-billing biases toward earlier
@@ -85,6 +85,24 @@ const PRICE_TABLE: Record<string, ModelPricing> = {
     outputUsdPerMillion: 75.0,
     cacheReadUsdPerMillion: 1.5,
     cacheWriteUsdPerMillion: 18.75,
+  },
+  // OpenRouter free-tier Kalshi quartet defaults.
+  "meta-llama/llama-3.3-70b-instruct:free": {
+    inputUsdPerMillion: 0,
+    outputUsdPerMillion: 0,
+  },
+  "deepseek/deepseek-r1:free": {
+    inputUsdPerMillion: 0,
+    outputUsdPerMillion: 0,
+  },
+  "qwen/qwen-2.5-coder-32b-instruct:free": {
+    inputUsdPerMillion: 0,
+    outputUsdPerMillion: 0,
+  },
+  // xAI Grok estimate aligned with grokReviewer.ts.
+  "grok-4-latest": {
+    inputUsdPerMillion: 3.0,
+    outputUsdPerMillion: 15.0,
   },
 };
 
@@ -196,7 +214,7 @@ function maybeRoll(now: number = Date.now()): void {
 export function recordAiCallCost(
   model: string,
   usage: CostUsage,
-  context?: { provider?: "anthropic"; reviewer?: string; userId?: number },
+  context?: { provider?: "anthropic" | "openrouter" | "xai"; reviewer?: string; userId?: number },
 ): number {
   const usd = computeCallCostUsd(model, usage);
   if (!Number.isFinite(usd) || usd < 0) return 0;
@@ -216,7 +234,7 @@ async function writeAuditEvent(input: {
   model: string;
   usage: CostUsage;
   usd: number;
-  context?: { provider?: "anthropic"; reviewer?: string; userId?: number };
+  context?: { provider?: "anthropic" | "openrouter" | "xai"; reviewer?: string; userId?: number };
 }): Promise<void> {
   try {
     const db = await import("../db");

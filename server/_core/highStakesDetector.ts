@@ -13,7 +13,7 @@
  *   4. Tier-1 self-consistency split (the two passes disagreed on direction OR
  *                                     EV adjustment differed by > 0.03)
  *
- * A signal qualifies as catastrophic-bet (Tier 3 unanimous gate) if:
+ * A signal qualifies as catastrophic-bet (extra-caution Tier-2 path) if:
  *   - notional / capital ≥ CATASTROPHIC_PCT_OF_CAPITAL (default 10%)
  */
 

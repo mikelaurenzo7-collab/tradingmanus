@@ -1,8 +1,9 @@
 /**
  * Environment configuration for the personal Kalshi-only trading dashboard.
  *
- * Single-owner Kalshi-only deployment.  Claude (Anthropic) + optional Grok
- * (xAI, breaking-news niches) are the AI reviewers.  The Kalshi Trade API
+ * Single-owner Kalshi-only deployment. OpenRouter free models run the
+ * Researcher/Quant/Executioner stack, with optional Grok (xAI) for
+ * breaking-news escalation. The Kalshi Trade API
  * uses RSA-PSS signing with a private key loaded from
  * `KALSHI_PRIVATE_KEY_PATH` (preferred) or inlined via `KALSHI_PRIVATE_KEY`
  * (multi-line PEM).  Account is sized at ~$500; all %-based thresholds scale
@@ -67,27 +68,13 @@ export const ENV = {
   // paths don't break. New deployments should use KALSHI_KEY_ID + key.
   kalshiApiKey: normalize(process.env.KALSHI_API_KEY),
 
-  // ── Claude (sole AI reviewer, Phase 1+) ──────────────────────────────────
-  // ANTHROPIC_API_KEY is REQUIRED. The pipeline runs:
-  //   Tier 1 — Claude Haiku 4.5     — every signal (cheap, fast).
-  //   Tier 2 — Claude Sonnet 4.6    — high-stakes signals (cross-tier).
-  //   Tier 3 — Claude Opus 4.7      — catastrophic-bet unanimous gate, or
-  //                                   intra-Claude tiebreaker on contested
-  //                                   high-EV approvals.
+  // ── Legacy Anthropic fields (deprecated, retained for compatibility) ────
   anthropicApiKey: normalize(process.env.ANTHROPIC_API_KEY),
-  // Haiku 4.5 is the default primary reviewer (Tier 1) on every signal —
-  // 3× cheaper than Sonnet, fast enough that the 10-min cron still has
-  // headroom. Opus 4.7 reserves for high-edge candidates only.
   claudeHaikuModel:
     normalize(process.env.CLAUDE_HAIKU_MODEL) || "claude-haiku-4-5",
-  // Sonnet kept available for callers that explicitly want it (the
-  // ensemble's high-stakes Tier 2 still uses Sonnet).
   claudeSonnetModel:
     normalize(process.env.CLAUDE_SONNET_MODEL) || "claude-sonnet-4-6",
   claudeOpusModel: normalize(process.env.CLAUDE_OPUS_MODEL) || "claude-opus-4-7",
-  // Opus is gated on gross-EV-after-Haiku to control cost. Default 5 %:
-  // only candidates with ≥5 % gross EV after the Haiku review get the
-  // expensive Opus second-pass / catastrophic-bet treatment.
   opusEscalationMinGrossEv: normalizeFloat(
     process.env.OPUS_ESCALATION_MIN_GROSS_EV,
     0.15, // 15% — Monte Carlo (May 2026) at $407 balance showed Opus's
@@ -101,10 +88,6 @@ export const ENV = {
     process.env.CLAUDE_HAIKU_TIMEOUT_MS,
     15000,
   ),
-  // Phase 1.5 — Haiku self-consistency on Tier 1.  Two parallel calls at
-  // different temperatures; both must approve to clear Tier 1.  When passes
-  // disagree (`split`), the signal auto-escalates to Sonnet for a tiebreaker
-  // instead of being plain-vetoed — disagreement IS a useful signal.
   claudeHaikuSelfConsistencyEnabled: normalizeBoolean(
     process.env.CLAUDE_HAIKU_SELF_CONSISTENCY_ENABLED,
     true,
@@ -135,8 +118,8 @@ export const ENV = {
   // ── Grok (xAI) — Real-time information specialist ────────────────────────
   // Optional. When enabled, Grok 4 handles Tier-2 review for breaking-news
   // niches (Weather, Sports, Economics) where real-time X/Twitter info +
-  // NOAA data provides edge. For non-breaking-news high-stakes (Politics,
-  // Other), Claude Opus handles Tier-2 depth reasoning.
+  // NOAA data provides edge. For non-breaking-news high-stakes, Sonnet stays
+  // the default Tier-2 reviewer while Opus remains legacy-only.
   xaiApiKey: normalize(process.env.XAI_API_KEY),
   grokModel: normalize(process.env.GROK_MODEL) || "grok-4-latest",
   grokReviewerEnabled: normalizeBoolean(
@@ -144,13 +127,52 @@ export const ENV = {
     false, // Default OFF — must opt-in explicitly after Phase B shadow-mode validation
   ),
   grokTimeoutMs: normalizePositiveInt(process.env.GROK_TIMEOUT_MS, 25000),
+  grokWeatherMaxHours: normalizeFloat(
+    process.env.GROK_WEATHER_MAX_HOURS,
+    72,
+    { min: 1, max: 168 },
+  ),
+  grokSportsMaxHours: normalizeFloat(
+    process.env.GROK_SPORTS_MAX_HOURS,
+    24,
+    { min: 1, max: 168 },
+  ),
+  grokEconomicsMaxHours: normalizeFloat(
+    process.env.GROK_ECONOMICS_MAX_HOURS,
+    12,
+    { min: 1, max: 168 },
+  ),
+  grokMinSideProbability: normalizeFloat(
+    process.env.GROK_MIN_SIDE_PROBABILITY ??
+      process.env.GROK_ESCALATION_MIN_SIDE_PROBABILITY,
+    0.75,
+    { min: 0.5, max: 0.99 },
+  ),
+  grokMinEdgeFraction: normalizeFloat(
+    process.env.GROK_MIN_EDGE_FRACTION ??
+      process.env.GROK_ESCALATION_MIN_EDGE_FRACTION,
+    0.1,
+    { min: 0, max: 0.5 },
+  ),
+  grokMinRoiFraction: normalizeFloat(
+    process.env.GROK_MIN_ROI_FRACTION,
+    0.18,
+    { min: 0, max: 2 },
+  ),
+  grokMinConfidence: normalizeFloat(
+    process.env.GROK_MIN_CONFIDENCE,
+    0.7,
+    { min: 0.5, max: 0.99 },
+  ),
 
-  // ── OpenRouter (optional free pre-triage only) ───────────────────────────
-  // OpenRouter MUST NOT be a final trade approver.  Free models are useful
-  // for one thing that improves expected value: drop obvious junk before we
-  // spend paid Claude/Grok tokens.  The layer fails open (full paid review)
-  // on timeout, malformed JSON, rate limit, or unavailable free model.
+  // ── OpenRouter (primary reviewer stack) ──────────────────────────────────
   openRouterApiKey: normalize(process.env.OPENROUTER_API_KEY),
+  openRouterResearcherModel:
+    normalize(process.env.OPENROUTER_RESEARCHER_MODEL) || "meta-llama/llama-3.3-70b-instruct:free",
+  openRouterQuantModel:
+    normalize(process.env.OPENROUTER_QUANT_MODEL) || "deepseek/deepseek-r1:free",
+  openRouterExecutionerModel:
+    normalize(process.env.OPENROUTER_EXECUTIONER_MODEL) || "qwen/qwen-2.5-coder-32b-instruct:free",
   openRouterTriageEnabled: normalizeBoolean(
     process.env.OPENROUTER_TRIAGE_ENABLED,
     true,
@@ -167,6 +189,21 @@ export const ENV = {
   openRouterTimeoutMs: normalizePositiveInt(
     process.env.OPENROUTER_TIMEOUT_MS,
     8000,
+  ),
+  trueWinnerMinSideProbability: normalizeFloat(
+    process.env.TRUE_WINNER_MIN_SIDE_PROBABILITY,
+    0.67,
+    { min: 0.5, max: 0.99 },
+  ),
+  trueWinnerMinEdgeFraction: normalizeFloat(
+    process.env.TRUE_WINNER_MIN_EDGE_FRACTION,
+    0.08,
+    { min: 0, max: 0.5 },
+  ),
+  trueWinnerMinRoiFraction: normalizeFloat(
+    process.env.TRUE_WINNER_MIN_ROI_FRACTION,
+    0.12,
+    { min: 0, max: 2 },
   ),
   openRouterSiteUrl: normalize(process.env.OPENROUTER_SITE_URL),
   openRouterAppName:
@@ -527,9 +564,8 @@ export function validateServerEnv() {
     .filter(([, value]) => value.length === 0)
     .map(([name]) => String(name));
 
-  // Anthropic is the sole AI provider after Phase 1.
-  if (ENV.anthropicApiKey.length === 0) {
-    missing.push("ANTHROPIC_API_KEY");
+  if (ENV.isProduction && ENV.openRouterApiKey.length === 0) {
+    missing.push("OPENROUTER_API_KEY");
   }
 
   if (missing.length > 0) {

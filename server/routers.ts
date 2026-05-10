@@ -849,7 +849,7 @@ export const appRouter = router({
           catastrophicPctOfCapital: ENV.catastrophicPctOfCapital,
           catastrophicUsd: capitalUsd * ENV.catastrophicPctOfCapital,
           highStakesResolutionMinutes: ENV.highStakesResolutionMinutes,
-          anthropicConfigured: ENV.anthropicApiKey.length > 0,
+          openRouterConfigured: ENV.openRouterApiKey.length > 0,
         },
         scanner: {
           tier,
@@ -924,7 +924,7 @@ export const appRouter = router({
 
         if (database) {
           // 1. AI spend from kalshi_ensemble_review audit events
-          //    (totalAiCostUsd field captures Sonnet + Opus per-signal cost).
+          //    (totalAiCostUsd field captures Sonnet/Grok per-signal cost).
           // Scope to THIS user's reviewer events. Audit rows are tagged
           // with `triggeredByOpenId = "user:${userId}"` when the autonomy
           // logs them (see kalshi_ensemble_review emission in

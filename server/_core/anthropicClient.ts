@@ -1,15 +1,13 @@
-/**
- * Anthropic SDK adapter — Claude is the only AI reviewer (Phase 1).
- *
- * ANTHROPIC_API_KEY is a hard requirement (env validation rejects boot
- * otherwise). Cache_control + extended thinking + structured outputs all
- * flow through natively.
- */
-
-import Anthropic from "@anthropic-ai/sdk";
 import { ENV } from "./env";
+import { createOpenRouterClient } from "./openRouterClient";
 
-type AnthropicMessageInput = Record<string, unknown>;
+type AnthropicMessageInput = {
+  model?: unknown;
+  max_tokens?: unknown;
+  temperature?: unknown;
+  system?: unknown;
+  messages?: Array<{ role?: unknown; content?: unknown }>;
+};
 
 type AnthropicMessageOutput = {
   content: Array<{ type: string; text?: string; [key: string]: unknown }>;
@@ -20,45 +18,78 @@ type AnthropicMessageOutput = {
     cache_read_input_tokens?: number;
     [key: string]: unknown;
   };
+  model?: string;
   [key: string]: unknown;
 };
 
-// Lazy-init real Anthropic client. Re-used across calls; ENV.anthropicApiKey
-// is read once at first construction.
-let _anthropicClientInstance: Anthropic | null = null;
-function getAnthropicSdk(): Anthropic {
-  const key = ENV.anthropicApiKey.trim();
-  if (!key) {
-    throw new Error(
-      "AI reviewer not configured: ANTHROPIC_API_KEY is required",
-    );
+function normalizeSystemPrompt(value: unknown) {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => {
+        if (typeof entry === "string") return entry;
+        if (typeof entry === "object" && entry !== null && "text" in entry) {
+          return typeof (entry as { text?: unknown }).text === "string"
+            ? String((entry as { text?: unknown }).text)
+            : "";
+        }
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n\n");
   }
-  if (!_anthropicClientInstance) {
-    _anthropicClientInstance = new Anthropic({ apiKey: key });
-  }
-  return _anthropicClientInstance;
+  return "";
 }
 
-/**
- * Returns a thin client whose `messages.create()` matches the SDK signature
- * but throws fast when ANTHROPIC_API_KEY is unset (which env validation
- * already prevents at boot).
- */
-export function createAnthropicClient(_apiKey: string): {
+export function createAnthropicClient(apiKey: string): {
   messages: {
     create: (input: AnthropicMessageInput) => Promise<AnthropicMessageOutput>;
   };
 } {
+  const client = createOpenRouterClient({
+    apiKey: apiKey.trim() || ENV.openRouterApiKey,
+  });
+
   return {
     messages: {
-      async create(
-        input: AnthropicMessageInput,
-      ): Promise<AnthropicMessageOutput> {
-        const sdk = getAnthropicSdk();
-        const response = (await sdk.messages.create(
-          input as unknown as Anthropic.MessageCreateParamsNonStreaming,
-        )) as unknown as Anthropic.Message;
-        return response as unknown as AnthropicMessageOutput;
+      async create(input: AnthropicMessageInput): Promise<AnthropicMessageOutput> {
+        const systemPrompt = normalizeSystemPrompt(input.system);
+        const response = await client.chat({
+          model:
+            typeof input.model === "string" && input.model.trim().length > 0
+              ? input.model.trim()
+              : ENV.openRouterQuantModel,
+          maxTokens: Number(input.max_tokens ?? 900) || 900,
+          temperature: Number(input.temperature ?? 0) || 0,
+          messages: [
+            ...(systemPrompt
+              ? [{ role: "system" as const, content: systemPrompt }]
+              : []),
+            ...((input.messages ?? [])
+              .filter((message) => typeof message.content === "string")
+              .map((message) => {
+                const role =
+                  message.role === "assistant"
+                    ? ("assistant" as const)
+                    : ("user" as const);
+                return {
+                  role,
+                  content: String(message.content),
+                };
+              })),
+          ],
+        });
+
+        return {
+          content: [{ type: "text", text: response.content }],
+          usage: {
+            input_tokens: response.inputTokens,
+            output_tokens: response.outputTokens,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+          },
+          model: response.model,
+        };
       },
     },
   };

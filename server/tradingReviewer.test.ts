@@ -1,52 +1,33 @@
-/**
- * Phase 1 acceptance test for the Claude-only trading reviewer.
- *
- * Mocks the Anthropic client so no network calls fire. Verifies:
- *   1. High-EV / high-confidence input → at least one signal survives.
- *   2. Reviewer veto → signal dropped.
- *   3. The `isTradingReviewerConfigured` gate matches `ANTHROPIC_API_KEY`.
- */
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+const mocks = vi.hoisted(() => ({
+  reviewSignalWithOpenRouterKalshiTeam: vi.fn(),
+}));
 
-// vi.hoisted runs BEFORE any import (including the env.ts module-load that
-// snapshots ANTHROPIC_API_KEY into ENV). A plain top-level assignment runs
-// AFTER ESM hoists imports, so it's too late.
 vi.hoisted(() => {
-  process.env.ANTHROPIC_API_KEY = "sk-ant-test-key";
-});
-
-// Stub @anthropic-ai/sdk before any imports that touch it. Phase 1's
-// reviewer no longer has a Grok fallback, so the SDK is the only path.
-vi.mock("@anthropic-ai/sdk", () => {
-  return {
-    default: class {
-      messages = {
-        create: vi.fn(),
-      };
-    },
-  };
+  process.env.OPENROUTER_API_KEY = "sk-or-test-key";
+  process.env.OPENROUTER_TRIAGE_ENABLED = "false";
 });
 
 vi.mock("../db", () => ({
   logAuditEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("../db.desk-memory", () => ({
-  formatDeskMemoryForPrompt: () => null,
-  getDeskMemoryBatch: vi.fn().mockResolvedValue(new Map()),
+vi.mock("./_core/openRouterKalshiTeam", () => ({
+  reviewSignalWithOpenRouterKalshiTeam:
+    mocks.reviewSignalWithOpenRouterKalshiTeam,
 }));
 
 import {
-  reviewSignalsWithTrader,
   isTradingReviewerConfigured,
+  reviewSignalsWithTrader,
 } from "./_core/tradingReviewer";
 
 const baseMarket = {
   id: "TEST-1",
   ticker: "TEST-1",
   title: "Will outcome X happen?",
-  description: "Test fixture market for the Phase 1 reviewer test.",
+  description: "True-winner reviewer test market.",
   category: "weather",
   status: "open" as const,
   yesPrice: 0.4,
@@ -61,17 +42,14 @@ const baseSignal = {
   marketId: "TEST-1",
   signalType: "value_play" as const,
   side: "yes" as const,
-  // Use 0.75 to match the hardcoded SELF_CONSISTENCY_UPPER bound in
-  // `server/_core/tradingReviewer.ts` so self-consistency tests behave
-  // deterministically without relying on an environment override.
-  confidence: 0.75,
+  confidence: 0.68,
   marketPrice: 0.4,
   impliedProbability: 0.4,
-  expectedValue: 0.12,
-  reasoning: "fundamental prior 55% vs 40% market",
+  expectedValue: 0.18,
+  reasoning: "fundamental prior 58% vs 40% market",
   metadata: {
     fundamentalSource: "explicit" as const,
-    fundamentalProbability: 0.55,
+    fundamentalProbability: 0.58,
     marketCategory: "weather" as const,
     liquidityScore: 0.8,
     spreadProxy: 0.02,
@@ -79,114 +57,146 @@ const baseSignal = {
   },
 };
 
-function buildAnthropicClient(reviews: Array<{
-  marketId: string;
-  approved: boolean;
-  confidenceAdjustment?: number;
-  expectedValueAdjustment?: number;
-  reasoning?: string;
-}>) {
+function makeTeamReview(overrides: Partial<Awaited<ReturnType<typeof mocks.reviewSignalWithOpenRouterKalshiTeam>>> = {}) {
   return {
-    messages: {
-      create: vi.fn().mockResolvedValue({
-        content: [{ type: "text", text: JSON.stringify({ reviews }) }],
-        usage: { input_tokens: 100, output_tokens: 50 },
-      }),
+    approved: true,
+    confidenceAdjustment: 0.08,
+    expectedValueAdjustment: 0.04,
+    impliedProbability: 0.78,
+    reasoning: "Research + quant agree this is a true-winner setup.",
+    researcher: {
+      summary: "Researcher found a durable probability edge.",
+      estimatedYesProbability: 78,
+      confidence: 0.72,
+      catalysts: ["supportive catalyst"],
+      risks: ["headline reversal"],
+      ambiguityFlag: false,
     },
+    quant: {
+      approved: true,
+      side: "yes" as const,
+      sideWinProbability: 0.78,
+      marketPrice: 0.4,
+      edgeFraction: 0.38,
+      roiFraction: 0.95,
+      confidenceAdjustment: 0.08,
+      expectedValueAdjustment: 0.04,
+      reasoning: "Quant cleared the true-winner thresholds.",
+      ambiguityFlag: false,
+    },
+    executionPrototype: {
+      ticker: "TEST-1",
+      action: "buy" as const,
+      side: "yes" as const,
+      count: 1,
+      type: "limit" as const,
+      time_in_force: "good_till_cancelled" as const,
+      yes_price: 40,
+    },
+    ...overrides,
   };
 }
 
-describe("Phase 1 trading reviewer (Claude-only)", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
+describe("trading reviewer", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.reviewSignalWithOpenRouterKalshiTeam.mockResolvedValue(
+      makeTeamReview(),
+    );
   });
 
-  it("isTradingReviewerConfigured is true when ANTHROPIC_API_KEY is set", () => {
+  it("is configured when OPENROUTER_API_KEY is set", () => {
     expect(isTradingReviewerConfigured()).toBe(true);
   });
 
-  it("approves a high-EV high-confidence signal", async () => {
-    const anthropicClient = buildAnthropicClient([
-      {
-        marketId: "TEST-1",
-        approved: true,
-        confidenceAdjustment: 0.0,
-        expectedValueAdjustment: 0.0,
-        reasoning: "ok",
-      },
-    ]);
-    const result = await reviewSignalsWithTrader(
-      { markets: [baseMarket], signals: [baseSignal] },
-      { anthropicClient, skipInTest: false },
-    );
-    expect(result.length).toBe(1);
-    expect(result[0].marketId).toBe("TEST-1");
+  it("treats an injected client as configured even with an empty override key", () => {
+    expect(
+      isTradingReviewerConfigured({
+        openRouterApiKey: "",
+        client: { chat: vi.fn() },
+      }),
+    ).toBe(true);
   });
 
-  it("drops a vetoed signal", async () => {
-    const anthropicClient = buildAnthropicClient([
-      {
-        marketId: "TEST-1",
+  it("approves a true-winner signal when the OpenRouter team approves it", async () => {
+    const result = await reviewSignalsWithTrader(
+      { markets: [baseMarket], signals: [baseSignal] },
+      { skipInTest: false, triageThresholdOverride: 999 },
+    );
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      marketId: "TEST-1",
+      confidence: 0.76,
+      impliedProbability: 0.78,
+    });
+    expect(result[0].reasoning).toContain("Kalshi beasts");
+  });
+
+  it("drops a signal when the OpenRouter team vetoes it", async () => {
+    mocks.reviewSignalWithOpenRouterKalshiTeam.mockResolvedValueOnce(
+      makeTeamReview({
         approved: false,
-        reasoning: "thin liquidity",
-      },
-    ]);
+        confidenceAdjustment: 0,
+        expectedValueAdjustment: 0,
+        reasoning: "Quant rejected the edge as too weak.",
+      }),
+    );
+
     const result = await reviewSignalsWithTrader(
       { markets: [baseMarket], signals: [baseSignal] },
-      { anthropicClient, skipInTest: false },
+      { skipInTest: false, triageThresholdOverride: 999 },
     );
-    expect(result.length).toBe(0);
+
+    expect(result).toHaveLength(0);
   });
 
-  it("drops a signal whose post-adjustment confidence falls below the floor", async () => {
-    // -0.25 adjustment on 0.8 → 0.55, well below MIN_CONFIDENCE_AFTER_ADJUST 0.60
-    const anthropicClient = buildAnthropicClient([
-      {
-        marketId: "TEST-1",
-        approved: true,
+  it("drops a signal whose post-review confidence falls below the floor", async () => {
+    mocks.reviewSignalWithOpenRouterKalshiTeam.mockResolvedValueOnce(
+      makeTeamReview({
         confidenceAdjustment: -0.25,
-        expectedValueAdjustment: 0.0,
-        reasoning: "ok but low conviction",
-      },
-    ]);
+        expectedValueAdjustment: 0,
+        impliedProbability: 0.58,
+      }),
+    );
+
     const result = await reviewSignalsWithTrader(
       { markets: [baseMarket], signals: [baseSignal] },
-      { anthropicClient, skipInTest: false },
+      { skipInTest: false, triageThresholdOverride: 999 },
     );
-    expect(result.length).toBe(0);
+
+    expect(result).toHaveLength(0);
   });
 
-  it("drops a signal whose post-adjustment EV falls below the net-EV floor", async () => {
-    // -0.10 adjustment on 0.12 → 0.02 EV per payout face. After ROI conversion
-    // (entry 0.4) ≈ 5%; minus fees + AI cost it falls below MIN_NET_EV 0.05.
-    const anthropicClient = buildAnthropicClient([
-      {
-        marketId: "TEST-1",
-        approved: true,
-        confidenceAdjustment: 0.0,
-        expectedValueAdjustment: -0.1,
-        reasoning: "EV thinner than priced",
-      },
-    ]);
+  it("drops a signal whose post-review EV fails the profit guardrails", async () => {
+    mocks.reviewSignalWithOpenRouterKalshiTeam.mockResolvedValueOnce(
+      makeTeamReview({
+        confidenceAdjustment: 0.08,
+        expectedValueAdjustment: -0.17,
+        impliedProbability: 0.66,
+      }),
+    );
+
     const result = await reviewSignalsWithTrader(
       { markets: [baseMarket], signals: [baseSignal] },
-      { anthropicClient, skipInTest: false },
+      { skipInTest: false, triageThresholdOverride: 999 },
     );
-    // Either guardrail rejection or post-fee gate drops this; both are valid.
-    expect(result.length).toBe(0);
+
+    expect(result).toHaveLength(0);
   });
 
-  it("never makes a network call (mock-only)", async () => {
-    const anthropicClient = buildAnthropicClient([
-      { marketId: "TEST-1", approved: true, reasoning: "" },
-    ]);
+  it("passes an injected OpenRouter client through to the team reviewer", async () => {
+    const client = { chat: vi.fn() };
+
     await reviewSignalsWithTrader(
       { markets: [baseMarket], signals: [baseSignal] },
-      { anthropicClient, skipInTest: false },
+      { client, skipInTest: false, triageThresholdOverride: 999 },
     );
-    // Phase 1.5: bulk-Haiku self-consistency runs the prompt twice (temp=0.2
-    // and temp=0.7) and intersects the verdicts. Both calls go through the
-    // mocked client; no real network use.
-    expect(anthropicClient.messages.create).toHaveBeenCalledTimes(2);
+
+    expect(mocks.reviewSignalWithOpenRouterKalshiTeam).toHaveBeenCalledWith(
+      baseMarket,
+      baseSignal,
+      expect.objectContaining({ client }),
+    );
   });
 });

@@ -1,5 +1,5 @@
 /**
- * Startup Self-Test (Kalshi-only, Claude-only).
+ * Startup Self-Test (Kalshi-only, OpenRouter-first).
  *
  * Run once at server boot to surface mis-configurations LOUDLY before any
  * autonomy cycle fires.  The goal is to fail-fast on the misconfigurations
@@ -8,7 +8,7 @@
  *
  *   - DB unreachable
  *   - exitState column missing (drizzle-kit push not run)
- *   - ANTHROPIC_API_KEY missing in production
+ *   - OPENROUTER_API_KEY missing in production
  *
  * Each check returns { ok, detail } so the operator sees the full picture
  * even when one check fails — not just the first error.
@@ -79,26 +79,26 @@ async function checkExitStateColumn(table: string): Promise<SelfTestCheck> {
   }
 }
 
-function checkAnthropicKey(): SelfTestCheck {
-  if (ENV.anthropicApiKey.length > 0) {
+function checkOpenRouterKey(): SelfTestCheck {
+  if (ENV.openRouterApiKey.length > 0) {
     return {
-      name: "anthropic_api_key",
+      name: "openrouter_api_key",
       status: "ok",
-      detail: `ANTHROPIC_API_KEY is set; Claude is the sole reviewer (Haiku=${ENV.claudeHaikuModel}, Sonnet=${ENV.claudeSonnetModel}, Opus on high-stakes=${ENV.claudeOpusModel}).`,
+      detail: `OPENROUTER_API_KEY is set; reviewer stack is Researcher=${ENV.openRouterResearcherModel}, Quant=${ENV.openRouterQuantModel}, Executioner=${ENV.openRouterExecutionerModel}.`,
     };
   }
   if (ENV.isProduction) {
     return {
-      name: "anthropic_api_key",
+      name: "openrouter_api_key",
       status: "fail",
       detail:
-        "ANTHROPIC_API_KEY is not set in production. AI review is disabled — every autonomy cycle will fail closed.",
+        "OPENROUTER_API_KEY is not set in production. AI review is disabled — every autonomy cycle will fail closed.",
     };
   }
   return {
-    name: "anthropic_api_key",
+    name: "openrouter_api_key",
     status: "warn",
-    detail: "ANTHROPIC_API_KEY unset (dev mode — autonomy will skip AI review).",
+    detail: "OPENROUTER_API_KEY unset (dev mode — autonomy will skip AI review).",
   };
 }
 
@@ -168,7 +168,7 @@ export async function runStartupSelfTest(): Promise<SelfTestResult> {
   if (database.status === "ok") {
     checks.push(kalshiExitColumn);
   }
-  checks.push(checkAnthropicKey());
+  checks.push(checkOpenRouterKey());
   checks.push(checkDailyLossLimit());
   checks.push(checkCredentialEncryptionSecret());
   checks.push(checkPaperMode());

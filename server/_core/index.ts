@@ -644,7 +644,7 @@ startServer()
     if (!schedulersArmed) {
       logger.error(
         { failed: failedChecks.map((c) => c.name) },
-        "[Startup] Self-test FAILED in production — schedulers will NOT arm. HTTP server stays up so /api/health/* and the dashboard remain reachable. Fix the failures above (most commonly: set ANTHROPIC_API_KEY, KALSHI_KEY_ID + KALSHI_PRIVATE_KEY, run `pnpm db:push`, set DATABASE_URL) and redeploy.",
+        "[Startup] Self-test FAILED in production — schedulers will NOT arm. HTTP server stays up so /api/health/* and the dashboard remain reachable. Fix the failures above (most commonly: set OPENROUTER_API_KEY, KALSHI_KEY_ID + KALSHI_PRIVATE_KEY, run `pnpm db:push`, set DATABASE_URL) and redeploy.",
       );
     } else {
       hb.configureSchedulerInterval("autonomy_kalshi", AUTONOMOUS_TRADING_INTERVAL_MS);
@@ -700,8 +700,6 @@ startServer()
       setInterval(runWeeklyCalibration, CALIBRATION_INTERVAL_MS);
       // Daily plays — check every 5 minutes; idempotent within a UTC day.
       setInterval(maybeRunDailySportsPlay, 5 * 60 * 1000);
-      setInterval(maybeRunDailyMoonshotPlay, 5 * 60 * 1000);
-
       const auditRetentionDays = Number(process.env.AUDIT_LOG_RETENTION_DAYS ?? 90);
       const runAuditCleanup = async () => {
         try {
