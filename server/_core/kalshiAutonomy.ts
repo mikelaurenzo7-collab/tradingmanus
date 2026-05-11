@@ -654,16 +654,18 @@ async function generateScheduledSignals(
 
   if (canLoadPerformanceSnapshot) {
     try {
-      const [performanceOverview, recentSignals] = await Promise.all([
+      const [performanceOverview, recentSignals, recentLearningUpdates] = await Promise.all([
         getPerformanceOverview(userId),
         db.getRecentSignals(600, userId),
+        db.getRecentOnlineLearningUpdates(userId, "kalshi", 300).catch(() => []),
       ]);
       platformPerformance = buildKalshiPlatformBehaviorSnapshot(
         performanceOverview.metrics,
         performanceOverview.signalPerformance,
         recentSignals as Array<{ metadata?: { marketCategory?: string | null } | null; expectedValue?: number | null }>,
         performanceOverview.trades,
-        userId
+        userId,
+        recentLearningUpdates
       );
       if (platformPerformance) {
         platformPerformance.polymarketPriors = polymarketPriors;
@@ -1370,23 +1372,27 @@ export async function runScheduledAutonomousTrading(
     });
   }
 
-  await db.logAuditEvent(
-    SCHEDULED_SCAN_EVENT,
-    JSON.stringify({
-      runId,
-      triggerSource,
-      signalsGenerated: savedSignals.length,
-      executionCandidates: executionCandidates.length,
-      autonomyMode: preferences.autonomyMode,
-      executionCadence: preferences.executionCadence,
-      riskPosture: preferences.riskPosture,
-      activeInstructions: activeInstructions.length,
-      aiReviewerFailures,
-      candidateSet,
-      decision: buildDecisionDetails(topCandidate),
-    }),
-    triggeredByOpenId
-  );
+  // Only log detailed scan data if signals were found OR occasionally for health heartbeat.
+  // This drastically reduces DB bloat for continuous-watch users.
+  if (savedSignals.length > 0 || Math.random() < 0.02) {
+    await db.logAuditEvent(
+      SCHEDULED_SCAN_EVENT,
+      JSON.stringify({
+        runId,
+        triggerSource,
+        signalsGenerated: savedSignals.length,
+        executionCandidates: executionCandidates.length,
+        autonomyMode: preferences.autonomyMode,
+        executionCadence: preferences.executionCadence,
+        riskPosture: preferences.riskPosture,
+        activeInstructions: activeInstructions.length,
+        aiReviewerFailures,
+        candidateSet,
+        decision: buildDecisionDetails(topCandidate),
+      }),
+      triggeredByOpenId
+    );
+  }
 
   if (executionCandidates.length === 0) {
     const reason = aiReviewerFailures > 0

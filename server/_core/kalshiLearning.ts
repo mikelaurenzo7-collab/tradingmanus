@@ -417,7 +417,8 @@ export function buildKalshiPlatformBehaviorSnapshot(
   signalPerformance: SignalPerformance[],
   signals: SignalLike[] = [],
   trades: TradeLike[] = [],
-  userId: number = 0
+  userId: number = 0,
+  recentLearningUpdates: any[] = []
 ): KalshiPlatformBehaviorSnapshot {
   const signalWinRates: Record<string, number> = {};
   for (const item of signalPerformance) {
@@ -432,7 +433,16 @@ export function buildKalshiPlatformBehaviorSnapshot(
         .filter((t) => t.positionStatus === "closed" && t.marketId)
         .map((t) => {
           const pnl = Number(t.realizedPnl ?? t.realizedPnL ?? 0);
-          // Look up signal type for this market from the signals array if possible
+          // 1. Check exact learning updates first (ground truth recorded at close)
+          const directUpdate = recentLearningUpdates.find(u => u.marketId === t.marketId);
+          if (directUpdate) {
+            return {
+              signalType: directUpdate.signalType,
+              outcome: directUpdate.outcome as TradeOutcome,
+              pnl,
+            };
+          }
+          // 2. Fallback to signal cache lookup
           const matchingSignal = signals.find((s) => s.marketId === t.marketId);
           return {
             signalType: matchingSignal?.signalType ?? "momentum", // Fallback
