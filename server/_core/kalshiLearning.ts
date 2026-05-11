@@ -3,9 +3,9 @@
  * Tracks trades, analyzes outcomes, and learns from performance
  */
 
-import * as db from "../db";
 import { assertPositiveIntegerUserId } from "./userScope";
 import { logger } from "./logger";
+import { deriveModelFromUpdates, OnlineLearningModel, TradeOutcome } from "./onlineLearning";
 
 export interface TradeRecord {
   id: string;
@@ -94,6 +94,7 @@ export interface KalshiPlatformBehaviorSnapshot {
   hasSufficientData: boolean;
   signalWinRates: Record<string, number>;
   categoryEdge: Record<string, number>;
+  onlineLearningModel?: OnlineLearningModel;
 }
 
 export interface PerformanceOverview {
@@ -101,6 +102,7 @@ export interface PerformanceOverview {
   currentBalance: number;
   metrics: PerformanceMetrics;
   signalPerformance: SignalPerformance[];
+  trades: TradeLike[];
 }
 
 function getTradePnL(trade: TradeLike): number {
@@ -413,11 +415,39 @@ export function analyzeSignalPerformanceFromData(
 export function buildKalshiPlatformBehaviorSnapshot(
   metrics: PerformanceMetrics,
   signalPerformance: SignalPerformance[],
-  signals: SignalLike[] = []
+  signals: SignalLike[] = [],
+  trades: TradeLike[] = [],
+  userId: number = 0
 ): KalshiPlatformBehaviorSnapshot {
   const signalWinRates: Record<string, number> = {};
   for (const item of signalPerformance) {
     signalWinRates[item.signalType] = item.successRate;
+  }
+
+  // Calculate dynamic signal weights via Online Learning (SGD)
+  let onlineLearningModel: OnlineLearningModel | undefined;
+  if (trades.length > 0 && userId > 0) {
+    try {
+      const updates = trades
+        .filter((t) => t.positionStatus === "closed" && t.marketId)
+        .map((t) => {
+          const pnl = Number(t.realizedPnl ?? t.realizedPnL ?? 0);
+          // Look up signal type for this market from the signals array if possible
+          const matchingSignal = signals.find((s) => s.marketId === t.marketId);
+          return {
+            signalType: matchingSignal?.signalType ?? "momentum", // Fallback
+            outcome: (pnl > 0 ? "win" : pnl < 0 ? "loss" : "breakeven") as TradeOutcome,
+            pnl,
+          };
+        });
+      onlineLearningModel = deriveModelFromUpdates({
+        userId,
+        platform: "kalshi",
+        updates,
+      });
+    } catch (err) {
+      logger.debug({ err, userId }, "[Learning] Failed to derive OnlineLearning model");
+    }
   }
 
   const categoryEdge: Record<string, number> = {};
@@ -447,6 +477,7 @@ export function buildKalshiPlatformBehaviorSnapshot(
     hasSufficientData: totalClosedTrades >= 100,
     signalWinRates,
     categoryEdge,
+    onlineLearningModel,
   };
 }
 
@@ -520,6 +551,7 @@ export async function getPerformanceOverview(userId: number): Promise<Performanc
     ),
     metrics: { ...metrics, profitFactor: safeProfitFactor },
     signalPerformance: analyzeSignalPerformanceFromData(signals, trades),
+    trades,
   };
 }
 

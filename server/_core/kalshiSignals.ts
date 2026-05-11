@@ -21,11 +21,13 @@ import { analyzeMicrostructure, applyMicrostructureToSignal, type Microstructure
 import { initializeBayesianProbability } from "./bayesianUpdater";
 import { extractFeatures, predictEnsemble, blendProbabilities, type EnsembleModel } from "./mlSignalEnsemble";
 import { lookupAwardsFundamental } from "./kalshiAwardsPrecursor";
+import { lookupSportsPrior } from "./kalshiSportsPriors";
 import { classifyTellMarket, lookupLinguisticTellPrior } from "./kalshiLinguisticTells";
 import * as db from "../db";
 import { assertPositiveIntegerUserId } from "./userScope";
 import { logger } from "./logger";
 import { ENV } from "./env";
+import { OnlineLearningModel } from "./onlineLearning";
 
 export type SignalType =
   | "value_play"
@@ -106,6 +108,7 @@ export interface KalshiPlatformPerformanceSnapshot {
   totalClosedTrades: number;
   signalWinRates?: Partial<Record<SignalType, number>>;
   categoryEdge?: Partial<Record<string, number>>;
+  onlineLearningModel?: OnlineLearningModel;
 }
 
 type StrategyProfileKey =
@@ -201,8 +204,19 @@ function buildKalshiBehaviorProfile(
     0.25
   );
 
+  // Dynamic weights from Online Learning (SGD/Bayesian)
+  let onlineWeightMultiplier = 1.0;
+  if (performance?.onlineLearningModel) {
+    const weight = performance.onlineLearningModel.signalWeights[signalType];
+    if (Number.isFinite(weight)) {
+      // Weight of 1.0 is neutral. 0.5 halves confidence, 2.0 doubles it.
+      // We clamp the impact to prevent single-strategy runaway.
+      onlineWeightMultiplier = Math.max(0.4, Math.min(1.8, weight));
+    }
+  }
+
   return {
-    multiplier: 1 + totalAdjustment,
+    multiplier: (1 + totalAdjustment) * onlineWeightMultiplier,
     sampleSize,
     adaptationEpoch,
     hasSufficientData,
@@ -372,6 +386,14 @@ export function resolveFundamentalPrior(market: KalshiMarket, explicit?: number)
   const awardsPrior = lookupAwardsFundamental({ title: market.title });
   if (awardsPrior != null && Number.isFinite(awardsPrior) && awardsPrior > 0 && awardsPrior < 1) {
     return { value: awardsPrior, source: "explicit" };
+  }
+  // Sports player prop priors: detects common prop patterns (Home Runs,
+  // Triple-Doubles) and returns empirical base rates (e.g. ~0.18 for HRs).
+  // Prevents the "lottery ticket" retail bias from polluting the value-play
+  // signal with 0.5 baseline noise.
+  const sportsPrior = lookupSportsPrior({ title: market.title });
+  if (sportsPrior != null && Number.isFinite(sportsPrior) && sportsPrior > 0 && sportsPrior < 1) {
+    return { value: sportsPrior, source: "explicit" };
   }
   const profile = resolveStrategyProfile(market);
   const prior = CATEGORY_FUNDAMENTAL_PRIORS[profile];

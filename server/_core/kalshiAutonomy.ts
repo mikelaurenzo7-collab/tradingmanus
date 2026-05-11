@@ -638,7 +638,9 @@ async function generateScheduledSignals(
       platformPerformance = buildKalshiPlatformBehaviorSnapshot(
         performanceOverview.metrics,
         performanceOverview.signalPerformance,
-        recentSignals as Array<{ metadata?: { marketCategory?: string | null } | null; expectedValue?: number | null }>
+        recentSignals as Array<{ metadata?: { marketCategory?: string | null } | null; expectedValue?: number | null }>,
+        performanceOverview.trades,
+        userId
       );
     } catch (err) {
       logger.debug({ err, userId }, "Platform performance snapshot unavailable; continuing with baseline signal profile");
