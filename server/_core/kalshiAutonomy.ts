@@ -684,15 +684,20 @@ async function generateScheduledSignals(
       const binanceKlines = await fetchCryptoKlines("15m", 100);
       for (const market of cryptoMarkets) {
         const asset = identifyCryptoAsset(market);
-        const klines =
-          asset === "BTCUSDT" ? binanceKlines.btc :
-          asset === "ETHUSDT" ? binanceKlines.eth :
-          null;
+        const assetKlines: Record<string, typeof binanceKlines.btc> = {
+          BTCUSDT: binanceKlines.btc,
+          ETHUSDT: binanceKlines.eth,
+        };
+        const klines = asset ? (assetKlines[asset] ?? null) : null;
         if (!klines || klines.length < 20) continue;
 
         const hoursToResolution = market.resolutionDate
-          ? Math.max(0, (new Date(market.resolutionDate).getTime() - Date.now()) / 3_600_000)
+          ? (new Date(market.resolutionDate).getTime() - Date.now()) / 3_600_000
           : 24;
+
+        // Skip already-resolved or imminently-resolving markets — the model
+        // has no meaningful T to work with and would clamp to ~1 h.
+        if (hoursToResolution <= 0) continue;
 
         const analysis = computeCryptoFundamentalPrior(market, klines, hoursToResolution);
         if (analysis) {

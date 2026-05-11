@@ -23,6 +23,15 @@
 import type { BinanceKline } from "./binanceClient";
 import type { KalshiMarket } from "./kalshiMarketData";
 
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+/** 15m candles per trading day (24 h × 4 per hour). */
+const PERIODS_PER_DAY_15M = 96;
+/** Calendar days per year used for annualisation. */
+const DAYS_PER_YEAR = 365;
+/** Hours per year (365 × 24). */
+const HOURS_PER_YEAR = 8_760;
+
 // ── Technical indicator helpers ───────────────────────────────────────────────
 
 /**
@@ -31,9 +40,9 @@ import type { KalshiMarket } from "./kalshiMarketData";
 export function computeEMA(closes: number[], period: number): number {
   if (closes.length === 0) return 0;
   const k = 2 / (period + 1);
-  let ema = closes[0]!;
+  let ema = closes[0] ?? 0;
   for (let i = 1; i < closes.length; i++) {
-    ema = closes[i]! * k + ema * (1 - k);
+    ema = (closes[i] ?? ema) * k + ema * (1 - k);
   }
   return ema;
 }
@@ -109,10 +118,14 @@ function normalCDF(x: number): number {
 // Patterns ordered from most-specific to least to avoid false matches.
 const STRIKE_PATTERNS = [
   /(?:at or above|at or below|equal to or above|equal to or below)\s*\$?([\d,]+(?:\.\d+)?)/i,
-  /(?:above|exceed|reach|≥|>=)\s*\$?([\d,]+(?:\.\d+)?)/i,
+  /(?:above|exceed|reach|hit|≥|>=)\s*\$?([\d,]+(?:\.\d+)?)/i,
   /(?:below|under|≤|<=)\s*\$?([\d,]+(?:\.\d+)?)/i,
   /\$?([\d,]+(?:\.\d+)?)\s*(?:or (?:above|more|higher)|or (?:below|less|lower))/i,
   /(?:close|end|finish|settle)\s+(?:at|above|below)\s+\$?([\d,]+(?:\.\d+)?)/i,
+  // Fallback: bare 4+ digit number (e.g. "Will Bitcoin hit 100000")
+  // Valid only when no dollar-sign pattern matched and the number is within
+  // a plausible crypto-price range (100 to 10,000,000).
+  /\b(\d{4,9}(?:\.\d+)?)\b/,
 ];
 
 /**
@@ -129,7 +142,13 @@ export function extractCryptoStrike(
     const match = normalized.match(pattern);
     if (match?.[1]) {
       const strikePrice = Number(match[1].replace(/,/g, ""));
-      if (Number.isFinite(strikePrice) && strikePrice > 0) {
+      // Bare-number fallback: only accept values in a plausible crypto range.
+      const isBareFallback = pattern.source.startsWith("\\b(\\d{4,9}");
+      if (
+        Number.isFinite(strikePrice) &&
+        strikePrice > 0 &&
+        (!isBareFallback || (strikePrice >= 100 && strikePrice <= 10_000_000))
+      ) {
         return { strikePrice, direction: isBelow ? "below" : "above" };
       }
     }
@@ -145,8 +164,8 @@ export function extractCryptoStrike(
 export function identifyCryptoAsset(market: KalshiMarket): string | null {
   const text = `${market.title ?? ""} ${market.category ?? ""}`.toLowerCase();
   if (/\b(bitcoin|btc)\b/.test(text)) return "BTCUSDT";
-  if (/\b(ethereum|eth(?!\w))\b/.test(text)) return "ETHUSDT";
-  if (/\b(solana|sol(?!\w))\b/.test(text)) return "SOLUSDT";
+  if (/\b(ethereum|eth)\b/.test(text)) return "ETHUSDT";
+  if (/\b(solana|sol)\b/.test(text)) return "SOLUSDT";
   if (/\b(xrp|ripple)\b/.test(text)) return "XRPUSDT";
   return null;
 }
@@ -173,19 +192,94 @@ export interface CryptoTechnicalAnalysis {
 }
 
 /**
+ * Compute the BSM-style N(d₁) probability for a binary price outcome.
+ *
+ * Shared by `computeCryptoFundamentalPrior` (live trading) and
+ * `backtestCryptoStrategy` (simulation) so the model is maintained in one
+ * place.
+ *
+ * @param klines            15m OHLCV history (min 20 candles).
+ * @param strikePrice       The price level the market resolves around.
+ * @param direction         "above" or "below" (YES direction).
+ * @param hoursToResolution Time until resolution in hours.
+ * @returns P(YES) clamped to [0.05, 0.95], or null if inputs are invalid.
+ */
+export function computeBSMProbability(
+  klines: BinanceKline[],
+  strikePrice: number,
+  direction: "above" | "below",
+  hoursToResolution: number,
+): number | null {
+  if (klines.length < 20 || strikePrice <= 0 || hoursToResolution <= 0) return null;
+
+  const closes = klines.map((k) => k.close);
+  const currentPrice = closes[closes.length - 1]!;
+  if (currentPrice <= 0) return null;
+
+  const ema9 = computeEMA(closes, 9);
+  const ema21 = computeEMA(closes, 21);
+  const rsi = computeRSI(closes, 14);
+  const atr = computeATR(klines, 14);
+  const volumeSMA = computeVolumeSMA(klines, 20);
+  const lastVolume = klines[klines.length - 1]!.volume;
+  const volumeAboveAverage = lastVolume > volumeSMA * 1.2;
+
+  const trend: "bullish" | "bearish" | "neutral" =
+    ema9 > ema21 * 1.001 ? "bullish" : ema9 < ema21 * 0.999 ? "bearish" : "neutral";
+
+  // Annualised σ from ATR(14) on 15m candles.
+  // 96 periods/day × √365 days/year gives the annualisation factor.
+  const atrFraction = atr / currentPrice;
+  const annualizedSigma = Math.max(0.01, atrFraction * Math.sqrt(PERIODS_PER_DAY_15M * DAYS_PER_YEAR));
+
+  // ±10 % drift bias from EMA crossover direction.
+  const mu = trend === "bullish" ? 0.1 : trend === "bearish" ? -0.1 : 0.0;
+
+  // Time in years; floored at 1 hour to keep T > 0.
+  const T = Math.max(1 / HOURS_PER_YEAR, hoursToResolution / HOURS_PER_YEAR);
+
+  // BSM d₁ → P(S_T > K) = N(d₁).
+  const d1 =
+    (Math.log(currentPrice / strikePrice) +
+      (mu + 0.5 * annualizedSigma ** 2) * T) /
+    (annualizedSigma * Math.sqrt(T));
+
+  const pAbove = normalCDF(d1);
+  let rawProb = direction === "above" ? pAbove : 1 - pAbove;
+
+  // RSI overbought/oversold nudge.
+  if (rsi > 70) rawProb -= 0.05;
+  if (rsi < 30) rawProb += 0.05;
+
+  // Volume confirmation.  volBias is positive when bullish, negative when
+  // bearish — reflecting the direction price is likely to move.  For an
+  // "above" market, bullish volume boosts P; for a "below" market it hurts P.
+  // The negation for "below" is intentional: −(+0.02) reduces P(below) when
+  // the trend is bullish (price moving away from resolving below the strike),
+  // and −(−0.02) = +0.02 increases P(below) when trend is bearish.
+  if (volumeAboveAverage) {
+    const volBias = trend === "bullish" ? 0.02 : trend === "bearish" ? -0.02 : 0;
+    rawProb += direction === "above" ? volBias : -volBias;
+  }
+
+  return Math.max(0.05, Math.min(0.95, rawProb));
+}
+
+/**
  * Estimate P(YES) for a Kalshi crypto binary market using Binance klines.
  *
  * Returns null when:
  *   - Fewer than 20 klines are available (insufficient history).
  *   - The market title cannot be parsed to extract a strike price.
  *   - Current or strike price is non-positive.
+ *   - The market has already resolved (hoursToResolution ≤ 0).
  */
 export function computeCryptoFundamentalPrior(
   market: KalshiMarket,
   klines: BinanceKline[],
   hoursToResolution: number,
 ): CryptoTechnicalAnalysis | null {
-  if (klines.length < 20) return null;
+  if (klines.length < 20 || hoursToResolution <= 0) return null;
 
   const strikeParse = extractCryptoStrike(market.title ?? "");
   if (!strikeParse) return null;
@@ -196,7 +290,6 @@ export function computeCryptoFundamentalPrior(
 
   if (currentPrice <= 0 || strikePrice <= 0) return null;
 
-  // ── Indicators ──────────────────────────────────────────────────────────
   const ema9 = computeEMA(closes, 9);
   const ema21 = computeEMA(closes, 21);
   const rsi = computeRSI(closes, 14);
@@ -205,45 +298,11 @@ export function computeCryptoFundamentalPrior(
   const lastVolume = klines[klines.length - 1]!.volume;
   const volumeAboveAverage = lastVolume > volumeSMA * 1.2;
 
-  // 0.1 % separation required to declare a crossover (avoids noise at flat).
   const trend: "bullish" | "bearish" | "neutral" =
     ema9 > ema21 * 1.001 ? "bullish" : ema9 < ema21 * 0.999 ? "bearish" : "neutral";
 
-  // ── Log-normal BSM probability ───────────────────────────────────────────
-  // 96 × 15 m periods per trading day; annualise with √365.
-  const periodsPerDay = 96;
-  const atrFraction = atr / currentPrice;
-  const dailySigma = atrFraction * Math.sqrt(periodsPerDay);
-  const annualizedSigma = Math.max(0.01, dailySigma * Math.sqrt(365));
-
-  // Drift: ±10 % annualised bias based on EMA crossover direction.
-  const mu = trend === "bullish" ? 0.1 : trend === "bearish" ? -0.1 : 0.0;
-
-  // Time to resolution in years (floor at 15 m so T > 0 always).
-  const T = Math.max(1 / (365 * 24), hoursToResolution / 8760);
-
-  // BSM d₁ — P(S_T > K) = N(d₁) under GBM.
-  const d1 =
-    (Math.log(currentPrice / strikePrice) +
-      (mu + 0.5 * annualizedSigma ** 2) * T) /
-    (annualizedSigma * Math.sqrt(T));
-
-  const pAbove = normalCDF(d1);
-  let rawProb = direction === "above" ? pAbove : 1 - pAbove;
-
-  // ── Bounded adjustments ──────────────────────────────────────────────────
-  // RSI extreme nudge: overbought → mean-revert down; oversold → up.
-  if (rsi > 70) rawProb -= 0.05;
-  if (rsi < 30) rawProb += 0.05;
-
-  // Volume confirmation aligns with the EMA trend direction.
-  if (volumeAboveAverage) {
-    const volBias = trend === "bullish" ? 0.02 : trend === "bearish" ? -0.02 : 0;
-    // For an "above" market: bullish volume → higher P; for "below": lower P.
-    rawProb += direction === "above" ? volBias : -volBias;
-  }
-
-  const probability = Math.max(0.05, Math.min(0.95, rawProb));
+  const probability = computeBSMProbability(klines, strikePrice, direction, hoursToResolution);
+  if (probability === null) return null;
 
   return {
     currentPrice,

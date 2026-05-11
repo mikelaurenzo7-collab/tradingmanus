@@ -262,7 +262,7 @@ export function comparePerformance(
 // ── Binance-powered crypto strategy backtest ──────────────────────────────────
 
 import type { BinanceKline } from "./binanceClient";
-import { computeEMA, computeRSI, computeATR } from "./cryptoTechnicals";
+import { computeBSMProbability } from "./cryptoTechnicals";
 
 export interface CryptoBacktestConfig {
   /** Binance trading pair, e.g. "BTCUSDT". */
@@ -293,17 +293,17 @@ export interface CryptoBacktestResult extends BacktestResults {
  * Backtest the 15m Binance → Kalshi crypto strategy against historical klines.
  *
  * Simulation logic (per 15m candle i, starting at lookbackCandles):
- *   1. Compute EMA9, EMA21, RSI14, ATR14 over the preceding `lookbackCandles`.
- *   2. Build BSM probability estimate for price staying above/below `strikePrice`
- *      at candle i + resolutionCandles.
+ *   1. Slice the preceding `lookbackCandles` candles as the analysis window.
+ *   2. Call `computeBSMProbability` (the same model used in live trading).
  *   3. If probability advantage > minEdge, simulate a Kalshi binary trade:
  *      - Entry price = kalshiEntryPrice (simulated Kalshi market price).
- *      - Exit (resolution) price = 1.0 if actual future price satisfies the
- *        condition, else 0.0.
+ *      - Resolution close = klines[i + resolutionCandles].close.
  *      - PnL = (exitPrice − entryPrice) × positionSize.
- *   4. Collect all simulated trades and return BacktestResults.
+ *   4. Collect all simulated trades and return CryptoBacktestResult.
  *
  * The `klines` array must be pre-fetched from Binance via `fetchBinanceKlines`.
+ * Use at least `lookbackCandles + resolutionCandles + 1` candles for meaningful
+ * results (e.g. 1000 candles covers ~10 days of 15m data).
  */
 export function backtestCryptoStrategy(
   klines: BinanceKline[],
@@ -319,61 +319,38 @@ export function backtestCryptoStrategy(
     kalshiEntryPrice = 0.5,
   } = config;
 
+  const direction = side === "yes" ? "above" : "below";
   const positionSize = 1; // 1 contract per trade — caller can scale
   const trades: BacktestTrade[] = [];
   let signalCount = 0;
   let filteredByEdge = 0;
 
-  // Walk forward from lookbackCandles to leave room for resolution window.
+  // Walk forward: entry at candle i, resolution close at candle i + resolutionCandles.
+  // Loop bound: i + resolutionCandles < klines.length  ↔  i < klines.length - resolutionCandles.
   const endIdx = klines.length - resolutionCandles;
   for (let i = lookbackCandles; i < endIdx; i++) {
     const window = klines.slice(i - lookbackCandles, i);
-    const closes = window.map((k) => k.close);
-    const currentPrice = closes[closes.length - 1]!;
 
-    // ── Probability model (inline simplified version for speed) ────────────
-    const ema9 = computeEMA(closes, 9);
-    const ema21 = computeEMA(closes, 21);
-    const rsi = computeRSI(closes, 14);
-    const atr = computeATR(window, 14);
+    // hoursToResolution: resolutionCandles × 15 min / 60 min per hour.
+    const hoursToResolution = (resolutionCandles * 15) / 60;
 
-    const trend = ema9 > ema21 * 1.001 ? "bullish" : ema9 < ema21 * 0.999 ? "bearish" : "neutral";
-    const mu = trend === "bullish" ? 0.1 : trend === "bearish" ? -0.1 : 0.0;
-
-    const periodsPerDay = 96;
-    const dailySigma = (atr / currentPrice) * Math.sqrt(periodsPerDay);
-    const annualizedSigma = Math.max(0.01, dailySigma * Math.sqrt(365));
-
-    const T = Math.max(1 / (365 * 24), (resolutionCandles / 4) / 8760); // 4 × 15 m = 1 h
-    const d1 =
-      (Math.log(currentPrice / strikePrice) + (mu + 0.5 * annualizedSigma ** 2) * T) /
-      (annualizedSigma * Math.sqrt(T));
-
-    // Inline normalCDF (Abramowitz & Stegun)
-    const normalCDF = (x: number) => {
-      const t = 1 / (1 + 0.2316419 * Math.abs(x));
-      const d = 0.3989423 * Math.exp((-x * x) / 2);
-      const p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.7814779 + t * (-1.8212560 + t * 1.3302744))));
-      return x >= 0 ? 1 - p : p;
-    };
-
-    let prob = side === "yes" ? normalCDF(d1) : 1 - normalCDF(d1);
-
-    // RSI adjustments
-    if (rsi > 70) prob -= 0.05;
-    if (rsi < 30) prob += 0.05;
-    prob = Math.max(0.05, Math.min(0.95, prob));
-
-    const edge = prob - kalshiEntryPrice;
+    const prob = computeBSMProbability(window, strikePrice, direction, hoursToResolution);
+    if (prob === null) continue;
 
     signalCount++;
+    const edge = prob - kalshiEntryPrice;
     if (edge < minEdge) {
       filteredByEdge++;
       continue;
     }
 
-    // ── Determine resolution outcome ───────────────────────────────────────
-    const resolutionClose = klines[i + resolutionCandles - 1]!.close;
+    // Resolution: check the close price exactly `resolutionCandles` candles ahead.
+    // Index is i + resolutionCandles; the loop guarantees this is within bounds.
+    const resolutionKline = klines[i + resolutionCandles];
+    const entryKline = klines[i];
+    if (!resolutionKline || !entryKline) continue;
+
+    const resolutionClose = resolutionKline.close;
     const resolvedYes =
       side === "yes"
         ? resolutionClose >= strikePrice
@@ -387,8 +364,8 @@ export function backtestCryptoStrategy(
       entryPrice: kalshiEntryPrice,
       exitPrice,
       size: positionSize,
-      entryTime: klines[i]!.openTime,
-      exitTime: klines[i + resolutionCandles - 1]!.closeTime,
+      entryTime: entryKline.openTime,
+      exitTime: resolutionKline.closeTime,
       pnl,
       pnlPercent: pnl / kalshiEntryPrice,
       side,

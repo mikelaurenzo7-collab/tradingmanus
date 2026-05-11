@@ -161,7 +161,7 @@ function quantModel(category?: string) {
   // Crypto lane uses Claude Sonnet 4.6 as the Quant (final decision-maker)
   // so it can reason against the Binance-derived technical prior that the
   // Researcher cannot see.  Every other category stays on the free model.
-  if (category === "crypto" && ENV.openRouterCryptoReviewerModel) {
+  if (category === "crypto") {
     return ENV.openRouterCryptoReviewerModel;
   }
   return ENV.openRouterQuantModel || DEFAULT_QUANT_MODEL;
