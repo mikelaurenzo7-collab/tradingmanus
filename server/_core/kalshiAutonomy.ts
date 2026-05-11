@@ -1298,8 +1298,11 @@ export async function runScheduledAutonomousTrading(
     {
       aggressiveMode: preferences.aggressiveMode,
       // Moonshot only takes effect when aggressiveMode is also on — it's an
-      // advanced sleeve, not a beginner toggle.
-      moonshotMode: false,
+      // advanced sleeve, not a beginner toggle.  Re-enabled May 2026: the
+      // $0.02-$0.20 band offers 5:1–50:1 payoffs that compound a small
+      // account faster than any other edge type.  Bucket limits ($25 total,
+      // 5 open, $5/trade) cap downside.
+      moonshotMode: preferences.aggressiveMode,
       // Pass the THIS-USER live equity (already fetched upstream at line
       // ~1210 with the user's encrypted creds, not process-level
       // KALSHI_KEY_ID) so the ensemble's capital-based gates score against
@@ -1557,9 +1560,10 @@ export async function runScheduledAutonomousTrading(
   const availableCapital = Number(capital?.currentBalance ?? equityResult.equity ?? 0);
   const limitPrice = Number(eligibleSignal.marketPrice);
 
-  // Moonshot mode is retired. The bot now targets true-winner setups only,
-  // so low-price lottery-ticket sizing never activates in the main autonomy path.
-  const moonshotEnabled = false;
+  // Moonshot mode — re-enabled for aggressive accounts.  Low-price contracts
+  // ($0.02-$0.20) offer 5:1–50:1 payoffs, the fastest compounding edge for
+  // small bankrolls.  Bucket limits ($25 total, 5 open, $5/trade) contain risk.
+  const moonshotEnabled = preferences.aggressiveMode;
   const isMoonshotCandidate = moonshotEnabled && isMoonshotPrice(limitPrice);
 
   if (isMoonshotCandidate) {

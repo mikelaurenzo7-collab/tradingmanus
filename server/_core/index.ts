@@ -700,6 +700,7 @@ startServer()
       setInterval(runWeeklyCalibration, CALIBRATION_INTERVAL_MS);
       // Daily plays — check every 5 minutes; idempotent within a UTC day.
       setInterval(maybeRunDailySportsPlay, 5 * 60 * 1000);
+      setInterval(maybeRunDailyMoonshotPlay, 5 * 60 * 1000);
       const auditRetentionDays = Number(process.env.AUDIT_LOG_RETENTION_DAYS ?? 90);
       const runAuditCleanup = async () => {
         try {
