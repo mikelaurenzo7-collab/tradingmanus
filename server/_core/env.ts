@@ -6,7 +6,7 @@
  * breaking-news escalation. The Kalshi Trade API
  * uses RSA-PSS signing with a private key loaded from
  * `KALSHI_PRIVATE_KEY_PATH` (preferred) or inlined via `KALSHI_PRIVATE_KEY`
- * (multi-line PEM).  Account is sized at ~$500; all %-based thresholds scale
+ * (multi-line PEM).  Account is sized at $550+; all %-based thresholds scale
  * automatically with live balance fetched each tick.
  */
 
@@ -67,6 +67,8 @@ export const ENV = {
   // Legacy single-key support; kept so existing tests/encrypted-credential
   // paths don't break. New deployments should use KALSHI_KEY_ID + key.
   kalshiApiKey: normalize(process.env.KALSHI_API_KEY),
+  // The Odds API key for real-world sports bookmaker data.
+  oddsApiKey: normalize(process.env.ODDS_API_KEY),
 
   // ── Legacy Anthropic fields (deprecated, retained for compatibility) ────
   anthropicApiKey: normalize(process.env.ANTHROPIC_API_KEY),

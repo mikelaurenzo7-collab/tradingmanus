@@ -120,31 +120,31 @@ export async function fetchBinanceKlines(
 }
 
 /**
- * Fetch BTC and ETH 15m klines in parallel.
+ * Fetch klines for multiple symbols in parallel.
  *
- * Returns null for whichever symbol fails so a single exchange hiccup
- * does not block the full crypto-prior computation.
+ * Returns a Map of symbol -> klines. Symbols that fail are excluded from the map.
  */
-export async function fetchCryptoKlines(
+export async function fetchMultipleCryptoKlines(
+  symbols: string[],
   interval: BinanceInterval = "15m",
   limit = 200,
-): Promise<{ btc: BinanceKline[] | null; eth: BinanceKline[] | null }> {
-  const [btcResult, ethResult] = await Promise.allSettled([
-    fetchBinanceKlines("BTCUSDT", interval, limit),
-    fetchBinanceKlines("ETHUSDT", interval, limit),
-  ]);
+): Promise<Map<string, BinanceKline[]>> {
+  const results = await Promise.allSettled(
+    symbols.map((symbol) => fetchBinanceKlines(symbol, interval, limit)),
+  );
 
-  if (btcResult.status === "rejected") {
-    logger.warn({ err: btcResult.reason }, "[BinanceClient] BTCUSDT fetch failed");
-  }
-  if (ethResult.status === "rejected") {
-    logger.warn({ err: ethResult.reason }, "[BinanceClient] ETHUSDT fetch failed");
-  }
+  const klinesMap = new Map<string, BinanceKline[]>();
+  
+  results.forEach((result, index) => {
+    const symbol = symbols[index]!;
+    if (result.status === "fulfilled") {
+      klinesMap.set(symbol, result.value);
+    } else {
+      logger.warn({ err: result.reason, symbol }, "[BinanceClient] Fetch failed");
+    }
+  });
 
-  return {
-    btc: btcResult.status === "fulfilled" ? btcResult.value : null,
-    eth: ethResult.status === "fulfilled" ? ethResult.value : null,
-  };
+  return klinesMap;
 }
 
 /**

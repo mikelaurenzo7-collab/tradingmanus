@@ -85,6 +85,8 @@ import {
 } from "./_core/kalshiRisk";
 import { withUserLock } from "./_core/userMutex";
 import { alertKillSwitchPartialFailure } from "./_core/alerting";
+import { getExpertPerformanceMetrics } from "./_core/expertPerformanceMonitoring";
+
 
 import {
   COOKIE_NAME,
@@ -848,9 +850,9 @@ export const appRouter = router({
           highStakesUsd: capitalUsd * ENV.highStakesPctOfCapital,
           catastrophicPctOfCapital: ENV.catastrophicPctOfCapital,
           catastrophicUsd: capitalUsd * ENV.catastrophicPctOfCapital,
-          highStakesResolutionMinutes: ENV.highStakesResolutionMinutes,
-          openRouterConfigured: ENV.openRouterApiKey.length > 0,
         },
+        highStakesResolutionMinutes: ENV.highStakesResolutionMinutes,
+        openRouterConfigured: ENV.openRouterApiKey.length > 0,
         scanner: {
           tier,
           baseAnalysesPerDay: ENV.scannerBaseAnalysesPerDay,
@@ -859,6 +861,22 @@ export const appRouter = router({
           highTierUsd: ENV.scannerCapHighTierUsd,
         },
       };
+    }),
+
+    /**
+     * Institutional-grade performance monitoring.
+     * Aggregates financial, operational, and calibration metrics.
+     */
+    getExpertPerformance: protectedProcedure.query(async ({ ctx }) => {
+      const userId = getRequiredUserId(ctx);
+      const metrics = await getExpertPerformanceMetrics(userId);
+      if (!metrics) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Failed to calculate expert performance metrics",
+        });
+      }
+      return metrics;
     }),
 
     /**

@@ -1,6 +1,8 @@
 /**
  * Kalshi Sports Player Prop Prior Model
  *
+ * Provides empirical base-rate priors and live bookmaker odds for sports markets.
+ *
  * Provides empirical base-rate priors for sports player prop markets.
  *
  * Retail bettors on prediction markets have a massive "lottery ticket" bias,
@@ -21,13 +23,23 @@
 export type SportsPropType =
   | "mlb_home_run"
   | "mlb_hits_2plus"
+  | "mlb_hits_1plus"
+  | "mlb_strikeouts_5plus"
+  | "mlb_strikeouts_7plus"
+  | "nba_points_10plus"
+  | "nba_points_20plus"
   | "nba_points_30plus"
   | "nba_triple_double"
   | "nba_double_double"
+  | "nba_rebounds_5plus"
   | "nba_rebounds_10plus"
+  | "nba_assists_5plus"
   | "nba_assists_10plus"
   | "nfl_touchdown_anytime"
+  | "nfl_pass_yds_250plus"
   | "nfl_pass_yds_300plus"
+  | "nfl_rush_yds_50plus"
+  | "nfl_rec_yds_50plus"
   | "nhl_points_1plus"
   | "nhl_goals_1plus"
   | "soccer_goal_anytime";
@@ -45,39 +57,89 @@ const PROP_RULES: SportsPropRule[] = [
     baseRate: 0.18, // Top slugger average
   },
   {
+    type: "mlb_hits_1plus",
+    patterns: ["record 1+ hits", "have 1+ hits", "get 1+ hits", "record a hit"],
+    baseRate: 0.64, // Lead-off / top order average
+  },
+  {
     type: "mlb_hits_2plus",
     patterns: ["record 2+ hits", "have 2+ hits", "get 2+ hits"],
     baseRate: 0.22, // Top contact hitter average
   },
   {
+    type: "mlb_strikeouts_5plus",
+    patterns: ["record 5+ strikeouts", "have 5+ strikeouts", "get 5+ strikeouts"],
+    baseRate: 0.55, // SP average
+  },
+  {
+    type: "mlb_strikeouts_7plus",
+    patterns: ["record 7+ strikeouts", "have 7+ strikeouts", "get 7+ strikeouts"],
+    baseRate: 0.28, // High-K SP average
+  },
+  {
+    type: "nba_points_10plus",
+    patterns: ["score 10+ points", "record 10+ points"],
+    baseRate: 0.88, // Starter average
+  },
+  {
+    type: "nba_points_20plus",
+    patterns: ["score 20+ points", "record 20+ points"],
+    baseRate: 0.42, // Star/Scorer average
+  },
+  {
     type: "nba_points_30plus",
     patterns: ["score 30+ points", "record 30+ points"],
-    baseRate: 0.25, // Star player average
+    baseRate: 0.15, // Elite scorer average (consistent with star baseline)
   },
   {
     type: "nba_triple_double",
     patterns: ["record a triple-double", "have a triple-double"],
-    baseRate: 0.08, // General star average (excluding Joker/Luka)
+    baseRate: 0.06, // General star average (updated down from 0.08)
   },
   {
     type: "nba_double_double",
     patterns: ["record a double-double", "have a double-double"],
-    baseRate: 0.25, // Above average starter
+    baseRate: 0.28, // Above average starter (updated from 0.25)
+  },
+  {
+    type: "nba_rebounds_5plus",
+    patterns: ["record 5+ rebounds", "have 5+ rebounds", "get 5+ rebounds"],
+    baseRate: 0.72,
   },
   {
     type: "nba_rebounds_10plus",
     patterns: ["record 10+ rebounds", "have 10+ rebounds", "get 10+ rebounds"],
-    baseRate: 0.20,
+    baseRate: 0.22,
+  },
+  {
+    type: "nba_assists_5plus",
+    patterns: ["record 5+ assists", "have 5+ assists", "get 5+ assists"],
+    baseRate: 0.58,
   },
   {
     type: "nba_assists_10plus",
     patterns: ["record 10+ assists", "have 10+ assists", "get 10+ assists"],
-    baseRate: 0.15,
+    baseRate: 0.18,
   },
   {
     type: "nfl_touchdown_anytime",
     patterns: ["score 1+ touchdown", "record 1+ touchdown", "anytime touchdown"],
-    baseRate: 0.35, // Lead back / WR1 average
+    baseRate: 0.32, // Lead back / WR1 average (updated from 0.35)
+  },
+  {
+    type: "nfl_rush_yds_50plus",
+    patterns: ["record 50+ rushing yards", "rushing yards over 50", "get 50+ rushing yards"],
+    baseRate: 0.62, // RB1 average
+  },
+  {
+    type: "nfl_rec_yds_50plus",
+    patterns: ["record 50+ receiving yards", "receiving yards over 50", "get 50+ receiving yards"],
+    baseRate: 0.58, // WR1/WR2 average
+  },
+  {
+    type: "nfl_pass_yds_250plus",
+    patterns: ["throw for 250+ yards", "record 250+ passing yards", "250+ passing yards"],
+    baseRate: 0.45,
   },
   {
     type: "nfl_pass_yds_300plus",
@@ -125,10 +187,17 @@ export function classifySportsPropMarket(title: string): SportsPropType | null {
  * Resolve a sports-specific fundamental prior for a market.
  * Returns the base rate if matched, else null.
  */
-export function lookupSportsPrior(market: { title: string }): number | null {
+export function lookupSportsPrior(market: { title: string }, liveOdds?: Map<string, number>): number | null {
+  // If we have a high-confidence live prior from a bookmaker (Odds API),
+  // prefer it over the static empirical base rate.
+  if (liveOdds && liveOdds.has(market.title)) {
+    return liveOdds.get(market.title)!;
+  }
+
   const type = classifySportsPropMarket(market.title);
   if (!type) return null;
 
   const rule = PROP_RULES.find(r => r.type === type);
   return rule ? rule.baseRate : null;
 }
+

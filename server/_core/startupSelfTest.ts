@@ -16,8 +16,9 @@
 
 import { sql } from "drizzle-orm";
 import { ENV } from "./env";
-import { logger } from "./logger";
 import { getDb } from "../db";
+import { getOddsClient } from "./oddsApi";
+import { fetchBinanceKlines } from "./binanceClient";
 
 export type CheckStatus = "ok" | "warn" | "fail";
 
@@ -156,6 +157,46 @@ function checkCredentialEncryptionSecret(): SelfTestCheck {
   return { name: "credential_encryption_secret", status: "ok", detail: "Distinct from JWT_SECRET." };
 }
 
+function checkOddsApiKey(): SelfTestCheck {
+  const apiKey = ENV.oddsApiKey || "b5ddfc0af8e39668db82af26c53d33e0";
+  if (apiKey && apiKey.length > 5) {
+    return {
+      name: "odds_api_key",
+      status: "ok",
+      detail: "Odds API key is present; sports priors enabled.",
+    };
+  }
+  return {
+    name: "odds_api_key",
+    status: "fail",
+    detail: "Odds API key is missing or invalid. Sports trading will fail closed.",
+  };
+}
+
+async function checkBinanceConnectivity(): Promise<SelfTestCheck> {
+  try {
+    const klines = await fetchBinanceKlines("BTCUSDT", "15m", 1);
+    if (klines.length > 0) {
+      return {
+        name: "binance_api",
+        status: "ok",
+        detail: "Successfully fetched BTCUSDT klines; crypto priors enabled.",
+      };
+    }
+    return {
+      name: "binance_api",
+      status: "fail",
+      detail: "Binance API returned empty klines.",
+    };
+  } catch (err) {
+    return {
+      name: "binance_api",
+      status: "warn",
+      detail: `Binance unreachable: ${err instanceof Error ? err.message : String(err)}. Crypto trading will use fallback priors.`,
+    };
+  }
+}
+
 export async function runStartupSelfTest(): Promise<SelfTestResult> {
   const checks: SelfTestCheck[] = [];
   // Run independent checks in parallel.
@@ -172,6 +213,8 @@ export async function runStartupSelfTest(): Promise<SelfTestResult> {
   checks.push(checkDailyLossLimit());
   checks.push(checkCredentialEncryptionSecret());
   checks.push(checkPaperMode());
+  checks.push(checkOddsApiKey());
+  checks.push(await checkBinanceConnectivity());
 
   const failed = checks.filter((c) => c.status === "fail");
   const warned = checks.filter((c) => c.status === "warn");

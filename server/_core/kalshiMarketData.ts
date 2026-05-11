@@ -3,6 +3,7 @@
  * Fetches real-time market data from Kalshi prediction markets API
  */
 
+import { getKalshiBaseUrl } from "./env";
 import { CircuitBreaker, CircuitOpenError } from "./circuitBreaker";
 import { fetchWithRetry } from "./fetchWithRetry";
 import { logger } from "./logger";
@@ -41,7 +42,7 @@ export interface KalshiOrderBook {
   no_volume: number;
 }
 
-const KALSHI_API_BASE = "https://api.elections.kalshi.com/trade-api/v2";
+const KALSHI_API_BASE = getKalshiBaseUrl();
 
 function cleanText(value: unknown, fallback: string, maxLength: number): string {
   const normalized = typeof value === "string" ? value.trim() : String(value ?? fallback).trim();

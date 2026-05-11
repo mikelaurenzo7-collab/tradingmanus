@@ -389,6 +389,30 @@ export function analyzeSignalPerformanceFromData(
                 : "sell"
               : "hold";
 
+      // Calculate actual max drawdown for this strategy:
+      const strategyTrades = trades
+        .filter(t => {
+          if (t.positionStatus !== "closed" || !t.marketId) return false;
+          const matchingSignal = signals.find(s => s.marketId === t.marketId);
+          return matchingSignal?.signalType === signalType;
+        })
+        .sort((a, b) => {
+          const left = toDate(a.closedAt)?.getTime() ?? 0;
+          const right = toDate(b.closedAt)?.getTime() ?? 0;
+          return left - right;
+        });
+
+      let strategyPeak = 0;
+      let strategyRunningPnl = 0;
+      let strategyMaxDrawdown = 0;
+      
+      for (const t of strategyTrades) {
+        strategyRunningPnl += getTradePnL(t);
+        strategyPeak = Math.max(strategyPeak, strategyRunningPnl);
+        const dd = strategyPeak > 0 ? (strategyPeak - strategyRunningPnl) / strategyPeak : 0;
+        strategyMaxDrawdown = Math.max(strategyMaxDrawdown, dd);
+      }
+
       return {
         ...performance,
         successRate,
@@ -399,7 +423,7 @@ export function analyzeSignalPerformanceFromData(
             : 0,
         recommendation,
         sharpeRatio,
-        maxDrawdown: 0,  // TODO: calculate actual drawdown from trade sequence
+        maxDrawdown: strategyMaxDrawdown,
         rollingWinRate20,
         recentTradeCount,
         isDisabled,

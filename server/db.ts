@@ -129,6 +129,12 @@ export const db = {
 };
 
 // User queries
+export async function getAllUsers() {
+  const database = await getDb();
+  if (!database) return [];
+  return database.select().from(users);
+}
+
 export async function upsertUser(payload: {
   openId: string;
   name?: string;

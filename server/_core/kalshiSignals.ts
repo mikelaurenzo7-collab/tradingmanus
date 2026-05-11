@@ -112,6 +112,8 @@ export interface KalshiPlatformPerformanceSnapshot {
   onlineLearningModel?: OnlineLearningModel;
   /** Map of Kalshi Market ID -> Polymarket Yes price [0,1] */
   polymarketPriors?: Map<string, number>;
+  /** Map of Kalshi Market Title -> Odds API Implied Probability [0,1] */
+  sportsOddsApiPriors?: Map<string, number>;
 }
 
 type StrategyProfileKey =
@@ -173,10 +175,10 @@ function buildKalshiBehaviorProfile(
   categoryAdjustment: number;
 } {
   const baseAdjustments: Partial<Record<SignalType, number>> = {
-    momentum: -0.1,
+    momentum: -0.08, // Slightly less penalizing than before (-0.1)
     sentiment: -0.02,
-    value_play: 0.03,
-    arbitrage: 0.02,
+    value_play: 0.05, // Increased from 0.03 (oracle-backed)
+    arbitrage: 0.06,  // Increased from 0.02 (now using cross-platform latency/confluence)
     contrarian: -0.04,
   };
 
@@ -237,7 +239,24 @@ function applyKalshiPlatformBehaviorAdjustment(
   performance?: KalshiPlatformPerformanceSnapshot
 ): KalshiSignal {
   const profile = buildKalshiBehaviorProfile(signal.signalType, marketCategory, performance);
-  const adjustedConfidence = Math.max(0.05, Math.min(0.99, signal.confidence * profile.multiplier));
+  let adjustedConfidence = Math.max(0.05, Math.min(0.99, signal.confidence * profile.multiplier));
+
+  // ── Polymarket Oracle Confluence ──────────────────────────────────────────
+  // If we have a Polymarket ground-truth price for this market, boost confidence
+  // if it agrees with our signal direction (e.g., Polymarket price > 0.55 and
+  // our signal is YES).
+  const polyPrior = performance?.polymarketPriors?.get(signal.marketId);
+  if (polyPrior != null && Number.isFinite(polyPrior)) {
+    const polySide = polyPrior >= 0.52 ? "yes" : polyPrior <= 0.48 ? "no" : null;
+    if (polySide === signal.side) {
+      // 5% absolute confidence boost for cross-platform agreement
+      adjustedConfidence = Math.min(0.98, adjustedConfidence + 0.05);
+      logger.debug(
+        { marketId: signal.marketId, signalSide: signal.side, polyPrice: polyPrior },
+        "[Signals] Polymarket Oracle confluence boost applied (+0.05)"
+      );
+    }
+  }
 
   return {
     ...signal,
@@ -405,7 +424,9 @@ export function resolveFundamentalPrior(
   // Triple-Doubles) and returns empirical base rates (e.g. ~0.18 for HRs).
   // Prevents the "lottery ticket" retail bias from polluting the value-play
   // signal with 0.5 baseline noise.
-  const sportsPrior = lookupSportsPrior({ title: market.title });
+  //
+  // Now supports real-time bookmaker data if platformPerformance.sportsOddsApiPriors is present.
+  const sportsPrior = lookupSportsPrior({ title: market.title }, platformPerformance?.sportsOddsApiPriors);
   if (sportsPrior != null && Number.isFinite(sportsPrior) && sportsPrior > 0 && sportsPrior < 1) {
     return { value: sportsPrior, source: "explicit" };
   }

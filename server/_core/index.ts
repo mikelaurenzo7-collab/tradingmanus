@@ -26,6 +26,9 @@ import {
   loadAutonomyCadenceConfig,
   type AutonomyCadenceTier,
 } from "./autonomyCadence";
+import { logExpertPerformanceAudit } from "./expertPerformanceMonitoring";
+import { ensureTrainingDataSeeded } from "./startupSeeding";
+
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -47,6 +50,10 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 }
 
 async function startServer() {
+  // Ensure "REAL" training data (sports/crypto/politics guardrails) is seeded
+  // for all users before starting the server.
+  await ensureTrainingDataSeeded();
+
   const app = await createApp({ runStartupMigrations: false });
   const server = createServer(app);
 
@@ -580,6 +587,23 @@ async function runWeeklyCalibration() {
   }
 }
 
+// Institutional-grade daily audit. Calculates Sharpe, Sortino, and
+// operational health for every active user and audit-logs the snapshot.
+async function runDailyExpertAudit() {
+  try {
+    const eligibleUsers = await getUsersEligibleForAutomaticScheduledTrading();
+    for (const user of eligibleUsers as Array<{ id: number }>) {
+      try {
+        await logExpertPerformanceAudit(user.id);
+      } catch (err) {
+        logger.warn({ err, userId: user.id }, "[ExpertAudit] daily run failed for user %d", user.id);
+      }
+    }
+  } catch (err) {
+    logger.warn({ err }, "[ExpertAudit] daily sweep failed");
+  }
+}
+
 startServer()
   .then(async () => {
     const selfTest = await runStartupSelfTest();
@@ -645,6 +669,7 @@ startServer()
       setInterval(runWeeklyCalibration, CALIBRATION_INTERVAL_MS);
       // Daily plays — check every 5 minutes; idempotent within a UTC day.
       setInterval(maybeRunDailySportsPlay, 5 * 60 * 1000);
+      setInterval(runDailyMoonshotPlay, 5 * 60 * 1000);
       const auditRetentionDays = Number(process.env.AUDIT_LOG_RETENTION_DAYS ?? 90);
       const runAuditCleanup = async () => {
         try {
@@ -664,6 +689,10 @@ startServer()
       };
       void runAuditCleanup();
       setInterval(runAuditCleanup, 24 * 60 * 60 * 1000);
+      // Institutional performance audit — runs every 24 hours.
+      setInterval(runDailyExpertAudit, 24 * 60 * 60 * 1000);
+      void runDailyExpertAudit(); // First run on startup
+
 
       // First autonomy tick fires after a 30s warmup; the helper then
       // self-reschedules using the time-of-day-aware interval.

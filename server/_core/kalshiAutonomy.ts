@@ -38,6 +38,7 @@ import { assertPositiveIntegerUserId } from "./userScope";
 import { withUserLock } from "./userMutex";
 import { reviewSignalsWithTrader } from "./tradingReviewer";
 import { buildExecutionPayloadWithExecutioner } from "./openRouterKalshiTeam";
+import { getOddsClient } from "./oddsApi";
 import { getLiveCapitalUsd } from "./liveCapital";
 import { getCacheHitRatio, newReviewerTelemetry } from "./aiToolbelt";
 import { createOrderSyncLock } from "./distributedLock";
@@ -48,7 +49,7 @@ import {
   getAdaptiveCadenceTelemetry,
 } from "./adaptiveCadence";
 import { classifyMarketCategory } from "./marketCategoryRouter";
-import { fetchCryptoKlines } from "./binanceClient";
+import { fetchMultipleCryptoKlines } from "./binanceClient";
 import { computeCryptoFundamentalPrior, identifyCryptoAsset } from "./cryptoTechnicals";
 import { getDeskWeights, getCategoryWeight } from "./deskAttention";
 import { getCategoryPersona } from "./categoryPersonas";
@@ -205,7 +206,11 @@ const POSTURE_MULTIPLIERS: Record<RiskPosture, { positionScale: number; confiden
 async function getDynamicRiskLimits(
   riskPosture: RiskPosture,
   userId: number,
-  options: { aggressiveMode?: boolean; liveCapitalUsd?: number } = {},
+  options: { 
+    aggressiveMode?: boolean; 
+    liveCapitalUsd?: number;
+    weeklyRealizedEdgePct?: number;
+  } = {},
 ) {
   // Prefer the live equity passed from the caller (already fetched and
   // synced to DB this tick) to avoid a redundant DB round-trip.  Falls
@@ -232,7 +237,19 @@ async function getDynamicRiskLimits(
     };
   }
 
-  const { positionScale, confidenceBoost } = POSTURE_MULTIPLIERS[riskPosture] ?? POSTURE_MULTIPLIERS.balanced;
+  let { positionScale, confidenceBoost } = POSTURE_MULTIPLIERS[riskPosture] ?? POSTURE_MULTIPLIERS.balanced;
+
+  // Performance-based scaling: if the weekly realized edge is poor (< 2%),
+  // tighten the position sizing regardless of posture. This prevents the bot
+  // from "fighting the tape" during periods of low alpha.
+  if (options.weeklyRealizedEdgePct !== undefined && options.weeklyRealizedEdgePct < 0.02) {
+    const scalingFactor = Math.max(0.5, 1 + (options.weeklyRealizedEdgePct - 0.02) * 5);
+    positionScale *= scalingFactor;
+    logger.info(
+      { userId, weeklyRealizedEdgePct: options.weeklyRealizedEdgePct, scalingFactor },
+      "[Autonomy] Risk limits scaled down due to poor weekly realized edge"
+    );
+  }
 
   return {
     maxCapital,
@@ -714,16 +731,17 @@ async function generateScheduledSignals(
   );
   if (cryptoMarkets.length > 0) {
     try {
+      // Collect unique symbols to fetch from Binance for all active crypto markets
+      const symbolsToFetch = Array.from(new Set(
+        cryptoMarkets.map(m => identifyCryptoAsset(m)).filter((s): s is string => s !== null)
+      ));
+
       // 200 candles = 50 hours of 15m data — enough for stable EMA(21) and ATR(14)
-      // warm-up while keeping the request well within Binance's free-tier rate limit.
-      const binanceKlines = await fetchCryptoKlines("15m", 200);
+      const klinesMap = await fetchMultipleCryptoKlines(symbolsToFetch, "15m", 200);
+      
       for (const market of cryptoMarkets) {
         const asset = identifyCryptoAsset(market);
-        const assetKlines: Record<string, typeof binanceKlines.btc> = {
-          BTCUSDT: binanceKlines.btc,
-          ETHUSDT: binanceKlines.eth,
-        };
-        const klines = asset ? (assetKlines[asset] ?? null) : null;
+        const klines = asset ? klinesMap.get(asset) : null;
         if (!klines || klines.length < 20) continue;
 
         const hoursToResolution = market.resolutionDate
@@ -733,8 +751,7 @@ async function generateScheduledSignals(
         // Skip already-resolved markets — no meaningful T for the model.
         if (hoursToResolution <= 0) continue;
 
-        // SHORT-TERM ONLY: skip long-dated crypto markets.  Intraday 15m
-        // momentum signals have no predictive power weeks out.
+        // SHORT-TERM ONLY: skip long-dated crypto markets.
         if (hoursToResolution > MAX_CRYPTO_RESOLUTION_HOURS) {
           logger.debug(
             { marketId: market.id, hoursToResolution: hoursToResolution.toFixed(1) },
@@ -745,7 +762,36 @@ async function generateScheduledSignals(
 
         const analysis = computeCryptoFundamentalPrior(market, klines, hoursToResolution);
         if (analysis) {
-          fundamentalProbabilities.set(market.id, analysis.probability);
+          // ── Binance Latency Exploit (Arbitrage) ──────────────────────────
+          // If Binance price has already crossed the strike but Kalshi is still
+          // priced cheaply, boost confidence. This is a "latency capture"
+          // exploit where we front-run Kalshi's slow price discovery.
+          let probability = analysis.probability;
+          const currentBinancePrice = analysis.currentPrice;
+          const strikePrice = analysis.strikePrice;
+          const kalshiYesPrice = Number(market.yesPrice ?? 0.5);
+
+          if (analysis.direction === "above") {
+            if (currentBinancePrice > strikePrice * 1.002 && kalshiYesPrice < 0.85) {
+              // Binance is already above strike + 0.2% buffer, Kalshi is lagging
+              probability = Math.min(0.98, probability + 0.15);
+              logger.info(
+                { marketId: market.id, binancePrice: currentBinancePrice, strike: strikePrice, kalshiYes: kalshiYesPrice },
+                "[Exploit] Binance Latency Arbitrage (Above Strike) detected!"
+              );
+            }
+          } else {
+            if (currentBinancePrice < strikePrice * 0.998 && (1 - kalshiYesPrice) < 0.85) {
+              // Binance is already below strike - 0.2% buffer
+              probability = Math.min(0.98, probability + 0.15);
+              logger.info(
+                { marketId: market.id, binancePrice: currentBinancePrice, strike: strikePrice, kalshiNo: 1 - kalshiYesPrice },
+                "[Exploit] Binance Latency Arbitrage (Below Strike) detected!"
+              );
+            }
+          }
+
+          fundamentalProbabilities.set(market.id, probability);
           logger.debug(
             {
               marketId: market.id,
@@ -753,12 +799,12 @@ async function generateScheduledSignals(
               currentPrice: analysis.currentPrice,
               strikePrice: analysis.strikePrice,
               direction: analysis.direction,
-              probability: analysis.probability.toFixed(3),
+              probability: probability.toFixed(3),
               trend: analysis.trend,
               rsi: analysis.rsi.toFixed(1),
               hoursToResolution: hoursToResolution.toFixed(1),
             },
-            "[Autonomy] Binance crypto prior computed (short-term)",
+            "[Autonomy] Binance crypto prior computed (with latency analysis)",
           );
         }
       }
@@ -769,14 +815,43 @@ async function generateScheduledSignals(
             cryptoTotal: cryptoMarkets.length,
             windowHours: MAX_CRYPTO_RESOLUTION_HOURS,
           },
-          "[Autonomy] Binance fundamental priors built for short-term crypto markets",
+          "[Autonomy] Binance fundamental priors built for all active crypto assets",
         );
       }
     } catch (err) {
       logger.warn(
         { err, cryptoMarketCount: cryptoMarkets.length },
-        "[Autonomy] Binance klines fetch failed; crypto markets will use neutral prior",
+        "[Autonomy] Binance multi-fetch failed; crypto markets will use neutral prior",
       );
+    }
+  }
+
+  // ── Odds API Sports Priors ──────────────────────────────────────────────
+  const sportsOddsApiPriors = new Map<string, number>();
+  const sportsMarkets = actionableMarkets.filter((m) => (m.category ?? "").toLowerCase() === "sports");
+  const oddsClient = getOddsClient();
+  
+  if (oddsClient && sportsMarkets.length > 0) {
+    try {
+      const oddsResults = await Promise.all(
+        sportsMarkets.map(async (m) => {
+          const prob = await oddsClient.mapKalshiToOddsApi(m);
+          return { title: m.title, prob };
+        })
+      );
+      for (const res of oddsResults) {
+        if (res.prob !== null) {
+          sportsOddsApiPriors.set(res.title, res.prob);
+        }
+      }
+      if (sportsOddsApiPriors.size > 0) {
+        logger.info(
+          { mappedPriors: sportsOddsApiPriors.size, sportsTotal: sportsMarkets.length },
+          "[Autonomy] Odds API fundamental priors mapped for sports markets"
+        );
+      }
+    } catch (err) {
+      logger.warn({ err }, "[Autonomy] Odds API fetch failed; sports markets will use empirical priors");
     }
   }
 
@@ -787,7 +862,10 @@ async function generateScheduledSignals(
     sentimentContexts,
     userId,
     undefined,
-    platformPerformance
+    {
+      ...platformPerformance,
+      sportsOddsApiPriors: sportsOddsApiPriors.size > 0 ? sportsOddsApiPriors : undefined,
+    }
   );
   const confidenceFilteredSignals = filterSignalsByConfidence(allSignals, minConfidence);
   const conditionFilteredSignals = filterSignalsByMarketConditions(
@@ -1431,6 +1509,39 @@ export async function runScheduledAutonomousTrading(
     );
   }
 
+  // ── Pre-calculate Performance Metrics ───────────────────────────────────
+  // We fetch the trailing 7-day history upfront so getDynamicRiskLimits can
+  // scale risk posture based on realized alpha, and the drawdown breaker
+  // can use the same dataset later.
+  const closedTrades7d = await db
+    .getKalshiTradeHistory(500, userId)
+    .then((rows: any[]) =>
+      rows.filter((t: any) => {
+        if (t.positionStatus !== "closed") return false;
+        const closedAt = t.closedAt ? new Date(t.closedAt).getTime() : 0;
+        return closedAt > Date.now() - 7 * 24 * 60 * 60 * 1000;
+      }),
+    )
+    .catch((err: unknown) => {
+      logger.warn({ err, userId }, "[Autonomy] trade history fetch failed; failing closed");
+      return null;
+    });
+
+  if (closedTrades7d === null) {
+    return finalize({
+      status: "blocked",
+      reason: "Trade history unavailable (DB outage); refusing to trade without performance priors",
+      signalsGenerated: savedSignals.length,
+      executionCandidates: 0,
+      orderPlaced: false,
+      autonomyMode: preferences.autonomyMode,
+    });
+  }
+
+  const weeklyPnlUsd = closedTrades7d.reduce((acc: number, t: any) => acc + Number(t.realizedPnl ?? 0), 0);
+  const weeklyNotional = closedTrades7d.reduce((acc: number, t: any) => acc + Number(t.entryPrice ?? 0) * Number(t.quantity ?? 0), 0);
+  const weeklyRealizedEdgePct = weeklyNotional > 0 ? weeklyPnlUsd / weeklyNotional : 1.0;
+
   const [capital, openPositions, todayRealizedLoss, riskLimits, todayOrderCount, pendingOrders] =
     await Promise.all([
       db.getKalshiCapital(userId),
@@ -1438,9 +1549,8 @@ export async function runScheduledAutonomousTrading(
       db.getTodayRealizedLoss(userId),
       getDynamicRiskLimits(preferences.riskPosture, userId, {
         aggressiveMode: preferences.aggressiveMode,
-        // Pass the live equity already fetched and synced this tick so
-        // getDynamicRiskLimits doesn't need its own DB read.
         liveCapitalUsd: equityResult.equity,
+        weeklyRealizedEdgePct,
       }),
       db.getTodayKalshiOrderCount(userId),
       db.getPendingKalshiOrders(userId),
@@ -1750,6 +1860,44 @@ export async function runScheduledAutonomousTrading(
   const orderExposure = orderRisk.orderExposure;
   const maxLossOnTrade = orderRisk.maxLossOnTrade;
 
+  // ── Sizing Floor ────────────────────────────────────────────────────────
+  // On a small account (~$500), trades below $5 (1% of bankroll) often
+  // generate 'dust' profits that don't justify the AI/transaction costs.
+  // We enforce a hard $5 floor to ensure we only take meaty entries.
+  const MIN_TRADE_NOTIONAL = 5.0;
+  if (orderExposure < MIN_TRADE_NOTIONAL && !isMoonshotCandidate) {
+    await db.logAuditEvent(
+      "scheduled_autonomy_order_blocked_sizing_floor",
+      JSON.stringify({
+        marketId: eligibleSignal.marketId,
+        orderExposure,
+        minTradeNotional: MIN_TRADE_NOTIONAL,
+        reason: "order exposure below $5 minimum floor for small accounts",
+      }),
+      triggeredByOpenId,
+    );
+
+    return finalize({
+      status: "blocked",
+      reason: `order exposure ($${orderExposure.toFixed(2)}) is below the $5.00 minimum floor`,
+      signalsGenerated: savedSignals.length,
+      executionCandidates: executionCandidates.length,
+      orderPlaced: false,
+      candidateMarketId: eligibleSignal.marketId,
+      autonomyMode: preferences.autonomyMode,
+      executionCadence: preferences.executionCadence,
+      candidateSet,
+      rejectedCandidates,
+      decision: buildDecisionDetails(eligibleSignal, {
+        quantity,
+        orderExposure,
+        blockedBy: "sizing_floor_minimum",
+      }),
+    }, {
+      appliedGuardrails: safeJsonStringify(buildAppliedGuardrails(preferences, riskLimits)),
+    });
+  }
+
   if (maxLossOnTrade > riskLimits.maxLossPerTrade) {
     return finalize({
       status: "blocked",
@@ -1775,62 +1923,9 @@ export async function runScheduledAutonomousTrading(
     });
   }
 
-  // ── New percentage-based drawdown breaker (additive to riskLimits) ──────
-  // Pauses new entries on:
-  //   - daily loss > DAILY_DRAWDOWN_PAUSE_FRAC of live capital (default 3 %)
-  //   - weekly loss > WEEKLY_DRAWDOWN_PAUSE_FRAC of live capital (default 8 %)
-  //   - consecutive losses ≥ COLD_STREAK_LOSS_COUNT (default 5)
-  //   - 7-day realized edge < COLD_STREAK_MIN_REALIZED_EDGE_PCT (default 3 %)
-  //
-  // Inputs are computed from the trailing 7-day closed-trade history. The
-  // dollar-based `riskLimits.maxLossPerDay` gate stays as a hard backstop.
-  const closedTrades7d = await db
-    .getKalshiTradeHistory(500, userId)
-    .then((rows: any[]) =>
-      rows.filter((t: any) => {
-        if (t.positionStatus !== "closed") return false;
-        const closedAt = t.closedAt ? new Date(t.closedAt).getTime() : 0;
-        return closedAt > Date.now() - 7 * 24 * 60 * 60 * 1000;
-      }),
-    )
-    .catch((err: unknown) => {
-      logger.warn(
-        { err, userId, op: "getKalshiTradeHistory" },
-        "[Autonomy] trade history fetch failed for drawdown breaker; failing closed",
-      );
-      // FAIL CLOSED: returning [] would make weekly PnL, consecutive
-      // losses, and realized edge all evaluate as "safe" — opposite of
-      // intent. Sentinel `null` triggers the abort branch below.
-      return null;
-    });
-
-  if (closedTrades7d === null) {
-    return finalize({
-      status: "blocked",
-      reason:
-        "Trade history unavailable (DB outage); refusing to trade until weekly drawdown breaker has real data",
-      signalsGenerated: savedSignals.length,
-      executionCandidates: executionCandidates.length,
-      orderPlaced: false,
-      candidateMarketId: eligibleSignal.marketId,
-      autonomyMode: preferences.autonomyMode,
-      executionCadence: preferences.executionCadence,
-      candidateSet,
-      rejectedCandidates,
-      decision: buildDecisionDetails(eligibleSignal, {
-        quantity,
-        confidence: eligibleSignal.confidence,
-        blockedBy: "trade_history_unavailable",
-      }),
-    }, {
-      appliedGuardrails: safeJsonStringify(buildAppliedGuardrails(preferences, riskLimits)),
-    });
-  }
-  // Weekly realized PnL = sum of realizedPnl across the trailing 7d window.
-  const weeklyPnlUsd = closedTrades7d.reduce(
-    (acc: number, t: any) => acc + Number(t.realizedPnl ?? 0),
-    0,
-  );
+  // ── Drawdown Breaker ──────────────────────────────────────────────────
+  // Pauses new entries on daily/weekly loss thresholds, cold streaks, or
+  // poor realized edge.  Uses the dataset fetched at the start of the run.
   // Consecutive losses: walk newest-first; stop at first non-loss.
   const newestFirst = [...closedTrades7d].sort((a: any, b: any) => {
     const aTs = a.closedAt ? new Date(a.closedAt).getTime() : 0;
@@ -1843,13 +1938,7 @@ export async function runScheduledAutonomousTrading(
     else break;
   }
   // 7-day realized edge: total notional traded vs realized PnL (return %).
-  const weeklyNotional = closedTrades7d.reduce(
-    (acc: number, t: any) =>
-      acc + Number(t.entryPrice ?? 0) * Number(t.quantity ?? 0),
-    0,
-  );
-  const weeklyRealizedEdgePct =
-    weeklyNotional > 0 ? weeklyPnlUsd / weeklyNotional : 1;
+  // (weeklyRealizedEdgePct is pre-computed at the start of the run)
 
   // Aggressive Mode bypasses the tighter global drawdown breakers (typically 5% daily / 
   // 6-loss cold streak) because moonshot strategies sit in high-variance territory where 

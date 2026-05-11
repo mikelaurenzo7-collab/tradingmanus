@@ -167,6 +167,13 @@ export function identifyCryptoAsset(market: KalshiMarket): string | null {
   if (/\b(ethereum|eth)\b/.test(text)) return "ETHUSDT";
   if (/\b(solana|sol)\b/.test(text)) return "SOLUSDT";
   if (/\b(xrp|ripple)\b/.test(text)) return "XRPUSDT";
+  if (/\b(doge|dogecoin)\b/.test(text)) return "DOGEUSDT";
+  if (/\b(pepe)\b/.test(text)) return "PEPEUSDT";
+  if (/\b(wif|dogwifhat)\b/.test(text)) return "WIFUSDT";
+  if (/\b(avalanche|avax)\b/.test(text)) return "AVAXUSDT";
+  if (/\b(cardano|ada)\b/.test(text)) return "ADAUSDT";
+  if (/\b(polkadot|dot)\b/.test(text)) return "DOTUSDT";
+  if (/\b(chainlink|link)\b/.test(text)) return "LINKUSDT";
   return null;
 }
 

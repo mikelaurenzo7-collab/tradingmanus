@@ -21,7 +21,9 @@ export default function Performance() {
   const [timeRange, setTimeRange] = useState<TimeRange>('All');
   
   const performanceOverviewQuery = trpc.kalshi.getPerformanceOverview.useQuery();
+  const expertMetricsQuery = trpc.kalshi.getExpertPerformance.useQuery();
   const attributionQuery = trpc.kalshi.getAttributionAnalysis.useQuery({ limit: 250 });
+
   const equityCurveDays = useMemo<number>(() => {
     switch (timeRange) {
       case '1D': return 7; // server minimum is 7d
@@ -252,7 +254,7 @@ export default function Performance() {
               : 'No order activity yet in the last 90 days'}
           </span>
         </div>
-        <HeatmapChart
+      <HeatmapChart
           data={heatmapData}
           rows={heatmapRows}
           cols={heatmapCols}
@@ -262,6 +264,69 @@ export default function Performance() {
           showValues={false}
         />
       </div>
+
+      {/* Institutional/Expert Performance Section */}
+      {expertMetricsQuery.isSuccess && (
+        <div className="grid gap-6 md:grid-cols-2">
+          <div className="glass-panel p-6 glow-primary">
+            <div className="flex items-center gap-2 mb-4">
+              <Activity className="text-primary" size={20} />
+              <h3 className="text-lg font-semibold text-foreground">Risk-Adjusted Alpha</h3>
+            </div>
+            <div className="grid grid-cols-3 gap-4">
+              <div className="space-y-1">
+                <div className="text-xs text-muted-foreground uppercase tracking-wider">Sortino</div>
+                <div className="text-2xl font-mono text-success">{expertMetricsQuery.data.financial.sortinoRatio.toFixed(2)}</div>
+              </div>
+              <div className="space-y-1">
+                <div className="text-xs text-muted-foreground uppercase tracking-wider">Calmar</div>
+                <div className="text-2xl font-mono text-primary">{expertMetricsQuery.data.financial.calmarRatio.toFixed(2)}</div>
+              </div>
+              <div className="space-y-1">
+                <div className="text-xs text-muted-foreground uppercase tracking-wider">Brier Score</div>
+                <div className="text-2xl font-mono text-warning">{expertMetricsQuery.data.calibration.brierScore.toFixed(3)}</div>
+              </div>
+            </div>
+            <div className="mt-6 p-3 rounded-lg bg-primary/5 border border-primary/10">
+              <div className="flex justify-between items-center mb-1">
+                <span className="text-xs font-medium text-muted-foreground">Kelly Compliance</span>
+                <span className="text-xs font-mono text-primary">{formatPercent(expertMetricsQuery.data.risk.kellyComplianceRate)}</span>
+              </div>
+              <div className="h-1.5 w-full bg-primary/10 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-primary glow-primary" 
+                  style={{ width: `${expertMetricsQuery.data.risk.kellyComplianceRate * 100}%` }}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="glass-panel p-6 border-success/20">
+            <div className="flex items-center gap-2 mb-4">
+              <Target className="text-success" size={20} />
+              <h3 className="text-lg font-semibold text-foreground">Operational Integrity</h3>
+            </div>
+            <div className="space-y-4">
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-muted-foreground">Avg Signal Latency</span>
+                <span className="text-sm font-medium text-foreground">{expertMetricsQuery.data.operational.avgLatencyMs}ms</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-muted-foreground">API Success Rate</span>
+                <span className="text-sm font-medium text-success">{formatPercent(expertMetricsQuery.data.operational.apiSuccessRate)}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-muted-foreground">Confidence Alignment</span>
+                <span className="text-sm font-medium text-primary">{expertMetricsQuery.data.calibration.confidenceAlignment.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-muted-foreground">Drift Threshold</span>
+                <span className="text-sm font-medium text-warning">+{expertMetricsQuery.data.calibration.expectedValueDrift.toFixed(3)} EV</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Attribution Charts */}
       {attributionQuery.isError && (
