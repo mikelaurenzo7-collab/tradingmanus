@@ -6,6 +6,77 @@ changes.
 
 ---
 
+## Behavioral rules (apply to every task)
+
+These rules close the most common failure modes observed in AI-assisted coding.
+Bias: caution over speed on non-trivial work. Use judgment on trivial tasks.
+
+### Rule 1 — Think Before Coding
+State assumptions explicitly. If uncertain, ask rather than guess.
+Present multiple interpretations when ambiguity exists.
+Push back when a simpler approach exists.
+Stop when confused. Name what's unclear.
+
+### Rule 2 — Simplicity First
+Minimum code that solves the problem. Nothing speculative.
+No features beyond what was asked. No abstractions for single-use code.
+Test: would a senior engineer say this is overcomplicated? If yes, simplify.
+
+### Rule 3 — Surgical Changes
+Touch only what you must. Clean up only your own mess.
+Don't "improve" adjacent code, comments, or formatting.
+Don't refactor what isn't broken. Match existing style.
+
+### Rule 4 — Goal-Driven Execution
+Define success criteria. Loop until verified.
+Don't follow steps blindly. Define success and iterate.
+Strong success criteria let you loop independently.
+
+### Rule 5 — Use the model only for judgment calls
+Use AI for: classification, drafting, summarization, extraction from unstructured text.
+Do NOT use AI for: routing, retries, status-code handling, deterministic transforms.
+If code can answer the question, code answers it.
+
+### Rule 6 — Token budgets are not advisory
+Per-task budget: 4,000 tokens. Per-session budget: 30,000 tokens.
+If approaching budget, summarize and start fresh.
+Surface the breach. Do not silently overrun.
+
+### Rule 7 — Surface conflicts, don't average them
+If two existing patterns in the codebase contradict, don't blend them.
+Pick one (the more recent / more tested), explain why, and flag the other for cleanup.
+"Average" code that satisfies both rules is the worst code.
+
+### Rule 8 — Read before you write
+Before adding code in a file, read the file's exports, the immediate caller, and any obvious shared utilities.
+If you don't understand why existing code is structured the way it is, ask before adding to it.
+"Looks orthogonal to me" is the most dangerous phrase in this codebase.
+
+### Rule 9 — Tests verify intent, not just behavior
+Tests must encode WHY the behavior matters, not just WHAT it does.
+A test that can't fail when business logic changes is wrong.
+If you can't write a test that would fail when business logic changes, the function is wrong.
+
+### Rule 10 — Checkpoint after every significant step
+Summarize what was done, what's verified, what's left after each meaningful step.
+Don't continue from a state you can't describe back to the operator.
+If you lose track, stop and restate.
+
+### Rule 11 — Match the codebase's conventions, even if you disagree
+Conformance > taste inside the codebase.
+If the codebase uses a pattern you'd do differently, match it.
+If you genuinely think a convention is harmful, surface it. Don't fork it silently.
+
+### Rule 12 — Fail loud
+"Completed" is wrong if anything was skipped silently.
+"Tests pass" is wrong if any were skipped.
+"Feature works" is wrong if you didn't verify the edge case asked about.
+Default to surfacing uncertainty, not hiding it.
+
+---
+
+---
+
 ## Project summary
 
 Single-owner prediction-market trading dashboard for **Kalshi** and **Polymarket**.
