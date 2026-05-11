@@ -371,7 +371,7 @@ export async function createApp(options: { runStartupMigrations?: boolean } = {}
       status: db.status === "ok" ? "ok" : "degraded",
       runtime: "node",
       scheduler: "node-interval",
-      interval_minutes: 10,
+      interval_minutes: process.env.AUTONOMY_INTERVAL_MS ? parseInt(process.env.AUTONOMY_INTERVAL_MS, 10) / 60000 : 10,
       checks: {
         database: {
           status: db.status,

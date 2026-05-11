@@ -32,6 +32,9 @@ function normalize(s: string): string {
 
 const TEMPORAL_KEYWORDS = [
   "today", "tomorrow", "tonight", "thisweek", "nextweek", "thismonth", "nextmonth", "thisyear", "nextyear", "daily", "weekly", "monthly",
+  "2024", "2025", "2026", "2027", "2028",
+  "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december",
+  "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "oct", "nov", "dec"
 ];
 
 function getTemporalKeywords(s: string): string[] {
@@ -54,7 +57,7 @@ export async function fetchPolymarketSnapshots(): Promise<PolymarketSnapshot[]> 
   try {
     // We fetch the top 100 active markets by volume. These are the most
     // accurate signals.
-    const url = "https://gamma-api.polymarket.com/v1/markets?active=true&limit=100&order=volume24hr&dir=desc";
+    const url = "https://gamma-api.polymarket.com/v1/markets?active=true&limit=250&order=volume24hr&dir=desc";
     const data = await fetchWithRetry(url);
 
     if (!Array.isArray(data)) return snapshotCache?.data ?? [];

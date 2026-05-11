@@ -119,13 +119,10 @@ const MOONSHOT_MAX_NOTIONAL = 10;      // $ per moonshot trade
 const MOONSHOT_MAX_TOTAL_USD = 50;     // total open moonshot exposure cap
 const MOONSHOT_MAX_OPEN_COUNT = 10;    // hard cap on open moonshot positions
 
-/** Returns true if the side's price sits in the moonshot band on either side. */
+/** Returns true if the price sits in the moonshot band ($0.02 - $0.20). */
 export function isMoonshotPrice(price: number): boolean {
   if (!Number.isFinite(price)) return false;
-  return (
-    (price >= MOONSHOT_PRICE_MIN && price <= MOONSHOT_PRICE_MAX) ||
-    (price >= 1 - MOONSHOT_PRICE_MAX && price <= 1 - MOONSHOT_PRICE_MIN)
-  );
+  return price >= MOONSHOT_PRICE_MIN && price <= MOONSHOT_PRICE_MAX;
 }
 // Markets resolving within this many hours are excluded from scheduled scans.
 // Imminent-resolution markets carry high adverse-selection risk and waste the
@@ -1596,7 +1593,7 @@ export async function runScheduledAutonomousTrading(
 
   // Moonshot mode — re-enabled for aggressive accounts.  Low-price contracts
   // ($0.02-$0.20) offer 5:1–50:1 payoffs, the fastest compounding edge for
-  // small bankrolls.  Bucket limits ($25 total, 5 open, $5/trade) contain risk.
+  // small bankrolls.  Bucket limits ($50 total, 10 open, $10/trade) contain risk.
   const moonshotEnabled = preferences.aggressiveMode;
   const isMoonshotCandidate = moonshotEnabled && isMoonshotPrice(limitPrice);
 
@@ -1854,35 +1851,41 @@ export async function runScheduledAutonomousTrading(
   const weeklyRealizedEdgePct =
     weeklyNotional > 0 ? weeklyPnlUsd / weeklyNotional : 1;
 
-  const drawdown = await import("./drawdownBreaker").then((m) =>
-    m.checkDrawdownBreaker({
-      capitalUsd: equityResult.equity,
-      todayPnlUsd: -todayRealizedLoss, // loss is positive in storage; PnL is negative
-      weeklyPnlUsd,
-      consecutiveLosses,
-      weeklyRealizedEdgePct,
-    }),
-  );
-  if (!drawdown.allowed) {
-    return finalize({
-      status: "blocked",
-      reason: drawdown.reason,
-      signalsGenerated: savedSignals.length,
-      executionCandidates: executionCandidates.length,
-      orderPlaced: false,
-      candidateMarketId: eligibleSignal.marketId,
-      autonomyMode: preferences.autonomyMode,
-      executionCadence: preferences.executionCadence,
-      candidateSet,
-      rejectedCandidates,
-      decision: buildDecisionDetails(eligibleSignal, {
-        quantity,
-        confidence: eligibleSignal.confidence,
-        blockedBy: "drawdown_breaker",
+  // Aggressive Mode bypasses the tighter global drawdown breakers (typically 5% daily / 
+  // 6-loss cold streak) because moonshot strategies sit in high-variance territory where 
+  // such thresholds are hit during normal profitable operation. We still respect the 
+  // 10% per-day hard loss limit from riskLimits.maxLossPerDay below.
+  if (!preferences.aggressiveMode) {
+    const drawdown = await import("./drawdownBreaker").then((m) =>
+      m.checkDrawdownBreaker({
+        capitalUsd: equityResult.equity,
+        todayPnlUsd: -todayRealizedLoss, // loss is positive in storage; PnL is negative
+        weeklyPnlUsd,
+        consecutiveLosses,
+        weeklyRealizedEdgePct,
       }),
-    }, {
-      appliedGuardrails: safeJsonStringify(buildAppliedGuardrails(preferences, riskLimits)),
-    });
+    );
+    if (!drawdown.allowed) {
+      return finalize({
+        status: "blocked",
+        reason: drawdown.reason,
+        signalsGenerated: savedSignals.length,
+        executionCandidates: executionCandidates.length,
+        orderPlaced: false,
+        candidateMarketId: eligibleSignal.marketId,
+        autonomyMode: preferences.autonomyMode,
+        executionCadence: preferences.executionCadence,
+        candidateSet,
+        rejectedCandidates,
+        decision: buildDecisionDetails(eligibleSignal, {
+          quantity,
+          confidence: eligibleSignal.confidence,
+          blockedBy: "drawdown_breaker",
+        }),
+      }, {
+        appliedGuardrails: safeJsonStringify(buildAppliedGuardrails(preferences, riskLimits)),
+      });
+    }
   }
 
   if (todayRealizedLoss >= riskLimits.maxLossPerDay) {

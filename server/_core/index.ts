@@ -542,64 +542,9 @@ async function maybeRunDailySportsPlay() {
 
 // ── Polymarket Daily Sports Play removed — Kalshi-only ──────────────────────
 
-// ── Daily Moonshot Play cron (aggressive playground) ─────────────────────
-// Fires once per UTC day at ENV.dailyMoonshotHourUtc (default 16:00 UTC =
-// noon ET). Tick rate is 5 min; per-user gating prevents double-firing
-// on transient retries within the configured hour.
-const dailyMoonshotCompletedKeys = new Set<string>();
-async function maybeRunDailyMoonshotPlay() {
-  if (!ENV.enableDailyMoonshot) return;
-  const now = new Date();
-  const utcHour = now.getUTCHours();
-  if (utcHour !== ENV.dailyMoonshotHourUtc) return;
-  const utcDay = now.toISOString().slice(0, 10);
-
-  try {
-    const eligibleUsers = await getUsersEligibleForAutomaticScheduledTrading();
-    for (const user of eligibleUsers as Array<{ id: number }>) {
-      const key = `${user.id}:${utcDay}`;
-      if (dailyMoonshotCompletedKeys.has(key)) continue;
-      const alreadyRan = await dailyPlayAlreadyRanToday(user.id, utcDay, [
-        "kalshi_daily_moonshot_play_executed",
-        "kalshi_daily_moonshot_play_attempt",
-        "kalshi_daily_moonshot_play_blocked",
-      ]);
-      if (alreadyRan) {
-        dailyMoonshotCompletedKeys.add(key);
-        continue;
-      }
-      try {
-        const result = await runDailyMoonshotPlay(user.id);
-        dailyMoonshotCompletedKeys.add(key);
-        logger.info(
-          {
-            userId: user.id,
-            status: result.status,
-            reason: result.reason,
-            marketId: result.marketId,
-            side: result.side,
-            count: result.count,
-            notionalUsd: result.notionalUsd,
-            confidence: result.confidence,
-            impliedProbability: result.impliedProbability,
-            payoutMultiple: result.payoutMultiple,
-          },
-          "[DailyMoonshotPlay] result for user %d: %s",
-          user.id,
-          result.status,
-        );
-      } catch (err) {
-        logger.warn(
-          { err, userId: user.id },
-          "[DailyMoonshotPlay] run failed for user %d",
-          user.id,
-        );
-      }
-    }
-  } catch (err) {
-    logger.warn({ err }, "[DailyMoonshotPlay] sweep failed");
-  }
-}
+// ── Daily Moonshot Play (Retired) ──────────────────────────────────────────
+// Moonshot execution is now handled natively by kalshiAutonomy.ts within
+// the regular schedule loop, bound by MOONSHOT_MAX_TOTAL_USD.
 
 // ── Weekly calibration cron ──────────────────────────────────────────────────
 // Recomputes Brier score per reviewer per category. Runs once per week.
@@ -700,7 +645,6 @@ startServer()
       setInterval(runWeeklyCalibration, CALIBRATION_INTERVAL_MS);
       // Daily plays — check every 5 minutes; idempotent within a UTC day.
       setInterval(maybeRunDailySportsPlay, 5 * 60 * 1000);
-      setInterval(maybeRunDailyMoonshotPlay, 5 * 60 * 1000);
       const auditRetentionDays = Number(process.env.AUDIT_LOG_RETENTION_DAYS ?? 90);
       const runAuditCleanup = async () => {
         try {

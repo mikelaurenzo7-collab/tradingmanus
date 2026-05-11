@@ -1056,9 +1056,14 @@ export function filterSignalsByMarketConditions(
     }
 
     // USD-volume gate (skipped only when MIN_LIQUIDITY_USD=0).
-    if (minLiquidityUsd > 0) {
+    // EXEMPTION: Moonshot signals (price ≤ 0.20 or ≥ 0.80) are exempt from the high 
+    // $40k floor because they naturally live on thinner, high-alpha markets.
+    const isMoonshot = signal.marketPrice <= 0.20 || signal.marketPrice >= 0.80;
+    const effectiveMinLiquidity = isMoonshot ? 100 : minLiquidityUsd;
+
+    if (effectiveMinLiquidity > 0) {
       const usdVolume = Number(signal.metadata?.totalVolume ?? 0);
-      if (!Number.isFinite(usdVolume) || usdVolume < minLiquidityUsd) {
+      if (!Number.isFinite(usdVolume) || usdVolume < effectiveMinLiquidity) {
         return false;
       }
     }
