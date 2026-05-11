@@ -673,15 +673,23 @@ async function generateScheduledSignals(
   // to estimate P(YES).  This replaces the neutral 0.5 fallback that was
   // generating noise-level signals for every crypto market.
   //
+  // SHORT-TERM FOCUS: We only compute priors for crypto markets resolving
+  // within MAX_CRYPTO_RESOLUTION_HOURS (24 h).  Markets resolving further out
+  // are less sensitive to intraday 15m price action and Sonnet 4.6 does not
+  // have enough edge to justify the extra AI cost.
+  //
   // The fetch is best-effort: if Binance is unreachable the loop continues
   // with whatever priors we have, falling back to the category-prior (0.50).
+  const MAX_CRYPTO_RESOLUTION_HOURS = 24;
   const fundamentalProbabilities = new Map<string, number>();
   const cryptoMarkets = actionableMarkets.filter(
     (m) => classifyMarketCategory({ category: m.category, title: m.title }) === "crypto",
   );
   if (cryptoMarkets.length > 0) {
     try {
-      const binanceKlines = await fetchCryptoKlines("15m", 100);
+      // 200 candles = 50 hours of 15m data — enough for stable EMA(21) and ATR(14)
+      // warm-up while keeping the request well within Binance's free-tier rate limit.
+      const binanceKlines = await fetchCryptoKlines("15m", 200);
       for (const market of cryptoMarkets) {
         const asset = identifyCryptoAsset(market);
         const assetKlines: Record<string, typeof binanceKlines.btc> = {
@@ -695,9 +703,18 @@ async function generateScheduledSignals(
           ? (new Date(market.resolutionDate).getTime() - Date.now()) / 3_600_000
           : 24;
 
-        // Skip already-resolved or imminently-resolving markets — the model
-        // has no meaningful T to work with and would clamp to ~1 h.
+        // Skip already-resolved markets — no meaningful T for the model.
         if (hoursToResolution <= 0) continue;
+
+        // SHORT-TERM ONLY: skip long-dated crypto markets.  Intraday 15m
+        // momentum signals have no predictive power weeks out.
+        if (hoursToResolution > MAX_CRYPTO_RESOLUTION_HOURS) {
+          logger.debug(
+            { marketId: market.id, hoursToResolution: hoursToResolution.toFixed(1) },
+            "[Autonomy] Skipping long-dated crypto market (beyond 24h short-term window)",
+          );
+          continue;
+        }
 
         const analysis = computeCryptoFundamentalPrior(market, klines, hoursToResolution);
         if (analysis) {
@@ -712,15 +729,16 @@ async function generateScheduledSignals(
               probability: analysis.probability.toFixed(3),
               trend: analysis.trend,
               rsi: analysis.rsi.toFixed(1),
+              hoursToResolution: hoursToResolution.toFixed(1),
             },
-            "[Autonomy] Binance crypto prior computed",
+            "[Autonomy] Binance crypto prior computed (short-term)",
           );
         }
       }
       if (fundamentalProbabilities.size > 0) {
         logger.info(
-          { count: fundamentalProbabilities.size, cryptoTotal: cryptoMarkets.length },
-          "[Autonomy] Binance fundamental priors built for crypto markets",
+          { count: fundamentalProbabilities.size, cryptoTotal: cryptoMarkets.length, windowHours: MAX_CRYPTO_RESOLUTION_HOURS },
+          "[Autonomy] Binance fundamental priors built for short-term crypto markets",
         );
       }
     } catch (err) {

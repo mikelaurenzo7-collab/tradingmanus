@@ -273,9 +273,13 @@ export interface CryptoBacktestConfig {
   side: "yes" | "no";
   /** Width of the look-back window in 15m candles. Default 96 (= 24 h). */
   lookbackCandles?: number;
-  /** How many 15m candles to hold before checking resolution. Default 96. */
+  /**
+   * How many 15m candles ahead to check resolution.
+   * Default 16 = 4 hours — matches short-term Kalshi crypto markets.
+   * Use 96 for 24-hour contracts, 192 for 48-hour contracts.
+   */
   resolutionCandles?: number;
-  /** Minimum edge required to enter a trade (raw probability – 0.5). Default 0.07. */
+  /** Minimum edge required to enter a trade (raw probability – entryPrice). Default 0.07. */
   minEdge?: number;
   /** Simulated Kalshi contract cost per trade (as a probability, 0–1). Default 0.5. */
   kalshiEntryPrice?: number;
@@ -301,9 +305,10 @@ export interface CryptoBacktestResult extends BacktestResults {
  *      - PnL = (exitPrice − entryPrice) × positionSize.
  *   4. Collect all simulated trades and return CryptoBacktestResult.
  *
- * The `klines` array must be pre-fetched from Binance via `fetchBinanceKlines`.
- * Use at least `lookbackCandles + resolutionCandles + 1` candles for meaningful
- * results (e.g. 1000 candles covers ~10 days of 15m data).
+ * The `klines` array must be pre-fetched from Binance via
+ * `fetchBinanceKlinesHistory` for deep backtest coverage.
+ * Recommended: ≥ 1,000 candles (fetchBinanceKlinesHistory("BTCUSDT","15m",1000)
+ * = ~10 days of data, giving ~800 strategy entry opportunities).
  */
 export function backtestCryptoStrategy(
   klines: BinanceKline[],
@@ -314,7 +319,7 @@ export function backtestCryptoStrategy(
     strikePrice,
     side,
     lookbackCandles = 96,
-    resolutionCandles = 96,
+    resolutionCandles = 16, // default = 4 h (short-term target)
     minEdge = 0.07,
     kalshiEntryPrice = 0.5,
   } = config;
@@ -382,3 +387,42 @@ export function backtestCryptoStrategy(
     filteredByEdge,
   };
 }
+
+/**
+ * Short-term crypto backtest — pre-configured for 4-hour resolution Kalshi
+ * markets using a rolling 24-hour EMA/RSI/ATR look-back window.
+ *
+ * Intended usage:
+ *   const klines = await fetchBinanceKlinesHistory("BTCUSDT", "15m", 2000);
+ *   const result = runShortTermCryptoBacktest(klines, "BTCUSDT", 95000, "yes");
+ *   // result.winRate, result.sharpeRatio, result.maxDrawdown …
+ *
+ * Resolution contract modelling:
+ *   - resolutionCandles = 16  → checks close 4 hours ahead (short-term)
+ *   - lookbackCandles   = 96  → 24 h of EMA/ATR history
+ *   - minEdge           = 0.07 → requires ≥ 57 % model probability vs 50 ¢ entry
+ *
+ * @param klines           Pre-fetched Binance 15m klines (recommend ≥ 1,000).
+ * @param symbol           Binance symbol, e.g. "BTCUSDT".
+ * @param strikePrice      Price the Kalshi contract resolves around.
+ * @param side             "yes" = above the strike; "no" = below.
+ * @param kalshiEntryPrice Simulated Kalshi price (cents / 100). Default 0.5.
+ */
+export function runShortTermCryptoBacktest(
+  klines: BinanceKline[],
+  symbol: string,
+  strikePrice: number,
+  side: "yes" | "no",
+  kalshiEntryPrice = 0.5,
+): CryptoBacktestResult {
+  return backtestCryptoStrategy(klines, {
+    symbol,
+    strikePrice,
+    side,
+    lookbackCandles: 96,   // 24 h
+    resolutionCandles: 16, // 4 h (short-term)
+    minEdge: 0.07,
+    kalshiEntryPrice,
+  });
+}
+
