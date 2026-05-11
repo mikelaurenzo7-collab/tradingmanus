@@ -126,7 +126,7 @@ const STRATEGY_PROFILES: Record<StrategyProfileKey, StrategyProfileConfig> = {
   weather_event: { executionAdjustment: 0.03, minLiquidity: 0.34 },
   politics_event: { executionAdjustment: -0.02, minLiquidity: 0.45 },
   sports_event: { executionAdjustment: 0.01, minLiquidity: 0.36 },
-  crypto_event: { executionAdjustment: -0.05, minLiquidity: 0.55 },
+  crypto_event: { executionAdjustment: 0.0, minLiquidity: 0.55 },
   general_event: { executionAdjustment: 0, minLiquidity: 0.35 },
 };
 

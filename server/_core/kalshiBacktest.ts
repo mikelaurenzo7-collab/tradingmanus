@@ -258,3 +258,171 @@ export function comparePerformance(
 
   return { consistent, avgWinRate, volatility };
 }
+
+// ── Binance-powered crypto strategy backtest ──────────────────────────────────
+
+import type { BinanceKline } from "./binanceClient";
+import { computeBSMProbability } from "./cryptoTechnicals";
+
+export interface CryptoBacktestConfig {
+  /** Binance trading pair, e.g. "BTCUSDT". */
+  symbol: string;
+  /** Strike price the Kalshi market resolves around. */
+  strikePrice: number;
+  /** "yes" = bet BTC closes ABOVE strike; "no" = bet BELOW. */
+  side: "yes" | "no";
+  /** Width of the look-back window in 15m candles. Default 96 (= 24 h). */
+  lookbackCandles?: number;
+  /**
+   * How many 15m candles ahead to check resolution.
+   * Default 16 = 4 hours — matches short-term Kalshi crypto markets.
+   * Use 96 for 24-hour contracts, 192 for 48-hour contracts.
+   */
+  resolutionCandles?: number;
+  /** Minimum edge required to enter a trade (raw probability – entryPrice). Default 0.07. */
+  minEdge?: number;
+  /** Simulated Kalshi contract cost per trade (as a probability, 0–1). Default 0.5. */
+  kalshiEntryPrice?: number;
+}
+
+export interface CryptoBacktestResult extends BacktestResults {
+  symbol: string;
+  strikePrice: number;
+  side: "yes" | "no";
+  signalCount: number;
+  filteredByEdge: number;
+}
+
+/**
+ * Backtest the 15m Binance → Kalshi crypto strategy against historical klines.
+ *
+ * Simulation logic (per 15m candle i, starting at lookbackCandles):
+ *   1. Slice the preceding `lookbackCandles` candles as the analysis window.
+ *   2. Call `computeBSMProbability` (the same model used in live trading).
+ *   3. If probability advantage > minEdge, simulate a Kalshi binary trade:
+ *      - Entry price = kalshiEntryPrice (simulated Kalshi market price).
+ *      - Resolution close = klines[i + resolutionCandles].close.
+ *      - PnL = (exitPrice − entryPrice) × positionSize.
+ *   4. Collect all simulated trades and return CryptoBacktestResult.
+ *
+ * The `klines` array must be pre-fetched from Binance via
+ * `fetchBinanceKlinesHistory` for deep backtest coverage.
+ * Recommended: ≥ 1,000 candles (fetchBinanceKlinesHistory("BTCUSDT","15m",1000)
+ * = ~10 days of data, giving ~800 strategy entry opportunities).
+ */
+export function backtestCryptoStrategy(
+  klines: BinanceKline[],
+  config: CryptoBacktestConfig,
+): CryptoBacktestResult {
+  const {
+    symbol,
+    strikePrice,
+    side,
+    lookbackCandles = 96,
+    resolutionCandles = 16, // default = 4 h (short-term target)
+    minEdge = 0.07,
+    kalshiEntryPrice = 0.5,
+  } = config;
+
+  const direction = side === "yes" ? "above" : "below";
+  const positionSize = 1; // 1 contract per trade — caller can scale
+  const trades: BacktestTrade[] = [];
+  let signalCount = 0;
+  let filteredByEdge = 0;
+
+  // Walk forward: entry at candle i, resolution close at candle i + resolutionCandles.
+  // Loop bound: i + resolutionCandles < klines.length  ↔  i < klines.length - resolutionCandles.
+  const endIdx = klines.length - resolutionCandles;
+  for (let i = lookbackCandles; i < endIdx; i++) {
+    const window = klines.slice(i - lookbackCandles, i);
+
+    // hoursToResolution: resolutionCandles × 15 min / 60 min per hour.
+    const hoursToResolution = (resolutionCandles * 15) / 60;
+
+    const prob = computeBSMProbability(window, strikePrice, direction, hoursToResolution);
+    if (prob === null) continue;
+
+    signalCount++;
+    const edge = prob - kalshiEntryPrice;
+    if (edge < minEdge) {
+      filteredByEdge++;
+      continue;
+    }
+
+    // Resolution: check the close price exactly `resolutionCandles` candles ahead.
+    // Index is i + resolutionCandles; the loop guarantees this is within bounds.
+    const resolutionKline = klines[i + resolutionCandles];
+    const entryKline = klines[i];
+    if (!resolutionKline || !entryKline) continue;
+
+    const resolutionClose = resolutionKline.close;
+    const resolvedYes =
+      side === "yes"
+        ? resolutionClose >= strikePrice
+        : resolutionClose < strikePrice;
+
+    const exitPrice = resolvedYes ? 1.0 : 0.0;
+    const pnl = (exitPrice - kalshiEntryPrice) * positionSize;
+
+    trades.push({
+      marketId: `${symbol}-${strikePrice}-${side}-@${i}`,
+      entryPrice: kalshiEntryPrice,
+      exitPrice,
+      size: positionSize,
+      entryTime: entryKline.openTime,
+      exitTime: resolutionKline.closeTime,
+      pnl,
+      pnlPercent: pnl / kalshiEntryPrice,
+      side,
+    });
+  }
+
+  const stats = calculateBacktestStats(trades);
+  return {
+    ...stats,
+    symbol,
+    strikePrice,
+    side,
+    signalCount,
+    filteredByEdge,
+  };
+}
+
+/**
+ * Short-term crypto backtest — pre-configured for 4-hour resolution Kalshi
+ * markets using a rolling 24-hour EMA/RSI/ATR look-back window.
+ *
+ * Intended usage:
+ *   const klines = await fetchBinanceKlinesHistory("BTCUSDT", "15m", 2000);
+ *   const result = runShortTermCryptoBacktest(klines, "BTCUSDT", 95000, "yes");
+ *   // result.winRate, result.sharpeRatio, result.maxDrawdown …
+ *
+ * Resolution contract modelling:
+ *   - resolutionCandles = 16  → checks close 4 hours ahead (short-term)
+ *   - lookbackCandles   = 96  → 24 h of EMA/ATR history
+ *   - minEdge           = 0.07 → requires ≥ 57 % model probability vs 50 ¢ entry
+ *
+ * @param klines           Pre-fetched Binance 15m klines (recommend ≥ 1,000).
+ * @param symbol           Binance symbol, e.g. "BTCUSDT".
+ * @param strikePrice      Price the Kalshi contract resolves around.
+ * @param side             "yes" = above the strike; "no" = below.
+ * @param kalshiEntryPrice Simulated Kalshi price (cents / 100). Default 0.5.
+ */
+export function runShortTermCryptoBacktest(
+  klines: BinanceKline[],
+  symbol: string,
+  strikePrice: number,
+  side: "yes" | "no",
+  kalshiEntryPrice = 0.5,
+): CryptoBacktestResult {
+  return backtestCryptoStrategy(klines, {
+    symbol,
+    strikePrice,
+    side,
+    lookbackCandles: 96,   // 24 h
+    resolutionCandles: 16, // 4 h (short-term)
+    minEdge: 0.07,
+    kalshiEntryPrice,
+  });
+}
+

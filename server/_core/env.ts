@@ -173,6 +173,12 @@ export const ENV = {
     normalize(process.env.OPENROUTER_QUANT_MODEL) || "deepseek/deepseek-r1:free",
   openRouterExecutionerModel:
     normalize(process.env.OPENROUTER_EXECUTIONER_MODEL) || "qwen/qwen-2.5-coder-32b-instruct:free",
+  // Crypto lane: Sonnet 4.6 acts as the Quant (final trade-decision maker)
+  // while the Researcher stays on the free model for context gathering.
+  // Override via OPENROUTER_CRYPTO_REVIEWER_MODEL; set to a free model string
+  // to disable paid review for crypto (not recommended).
+  openRouterCryptoReviewerModel:
+    normalize(process.env.OPENROUTER_CRYPTO_REVIEWER_MODEL) || "anthropic/claude-sonnet-4-6",
   openRouterTriageEnabled: normalizeBoolean(
     process.env.OPENROUTER_TRIAGE_ENABLED,
     true,

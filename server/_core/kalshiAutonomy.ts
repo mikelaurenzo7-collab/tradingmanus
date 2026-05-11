@@ -43,6 +43,8 @@ import {
   getAdaptiveCadenceTelemetry,
 } from "./adaptiveCadence";
 import { classifyMarketCategory } from "./marketCategoryRouter";
+import { fetchCryptoKlines } from "./binanceClient";
+import { computeCryptoFundamentalPrior, identifyCryptoAsset } from "./cryptoTechnicals";
 import { getDeskWeights, getCategoryWeight } from "./deskAttention";
 import { getCategoryPersona } from "./categoryPersonas";
 import {
@@ -665,10 +667,96 @@ async function generateScheduledSignals(
     }
   }
 
+  // ── Binance-based crypto fundamental priors ──────────────────────────────
+  // For Kalshi price-prediction markets (e.g. "Will BTC close above $95k?"),
+  // pull 15m OHLCV from Binance's free public API and use a log-normal model
+  // to estimate P(YES).  This replaces the neutral 0.5 fallback that was
+  // generating noise-level signals for every crypto market.
+  //
+  // SHORT-TERM FOCUS: We only compute priors for crypto markets resolving
+  // within MAX_CRYPTO_RESOLUTION_HOURS (24 h).  Markets resolving further out
+  // are less sensitive to intraday 15m price action and Sonnet 4.6 does not
+  // have enough edge to justify the extra AI cost.
+  //
+  // The fetch is best-effort: if Binance is unreachable the loop continues
+  // with whatever priors we have, falling back to the category-prior (0.50).
+  const MAX_CRYPTO_RESOLUTION_HOURS = 24;
+  const fundamentalProbabilities = new Map<string, number>();
+  const cryptoMarkets = actionableMarkets.filter(
+    (m) => classifyMarketCategory({ category: m.category, title: m.title }) === "crypto",
+  );
+  if (cryptoMarkets.length > 0) {
+    try {
+      // 200 candles = 50 hours of 15m data — enough for stable EMA(21) and ATR(14)
+      // warm-up while keeping the request well within Binance's free-tier rate limit.
+      const binanceKlines = await fetchCryptoKlines("15m", 200);
+      for (const market of cryptoMarkets) {
+        const asset = identifyCryptoAsset(market);
+        const assetKlines: Record<string, typeof binanceKlines.btc> = {
+          BTCUSDT: binanceKlines.btc,
+          ETHUSDT: binanceKlines.eth,
+        };
+        const klines = asset ? (assetKlines[asset] ?? null) : null;
+        if (!klines || klines.length < 20) continue;
+
+        const hoursToResolution = market.resolutionDate
+          ? (new Date(market.resolutionDate).getTime() - Date.now()) / 3_600_000
+          : 24;
+
+        // Skip already-resolved markets — no meaningful T for the model.
+        if (hoursToResolution <= 0) continue;
+
+        // SHORT-TERM ONLY: skip long-dated crypto markets.  Intraday 15m
+        // momentum signals have no predictive power weeks out.
+        if (hoursToResolution > MAX_CRYPTO_RESOLUTION_HOURS) {
+          logger.debug(
+            { marketId: market.id, hoursToResolution: hoursToResolution.toFixed(1) },
+            "[Autonomy] Skipping long-dated crypto market (beyond 24h short-term window)",
+          );
+          continue;
+        }
+
+        const analysis = computeCryptoFundamentalPrior(market, klines, hoursToResolution);
+        if (analysis) {
+          fundamentalProbabilities.set(market.id, analysis.probability);
+          logger.debug(
+            {
+              marketId: market.id,
+              asset,
+              currentPrice: analysis.currentPrice,
+              strikePrice: analysis.strikePrice,
+              direction: analysis.direction,
+              probability: analysis.probability.toFixed(3),
+              trend: analysis.trend,
+              rsi: analysis.rsi.toFixed(1),
+              hoursToResolution: hoursToResolution.toFixed(1),
+            },
+            "[Autonomy] Binance crypto prior computed (short-term)",
+          );
+        }
+      }
+      if (fundamentalProbabilities.size > 0) {
+        logger.info(
+          {
+            computedPriors: fundamentalProbabilities.size,
+            cryptoTotal: cryptoMarkets.length,
+            windowHours: MAX_CRYPTO_RESOLUTION_HOURS,
+          },
+          "[Autonomy] Binance fundamental priors built for short-term crypto markets",
+        );
+      }
+    } catch (err) {
+      logger.warn(
+        { err, cryptoMarketCount: cryptoMarkets.length },
+        "[Autonomy] Binance klines fetch failed; crypto markets will use neutral prior",
+      );
+    }
+  }
+
   const allSignals = await generateSignalsForMarkets(
     actionableMarkets,
     feeds,
-    undefined,
+    fundamentalProbabilities.size > 0 ? fundamentalProbabilities : undefined,
     sentimentContexts,
     userId,
     undefined,
