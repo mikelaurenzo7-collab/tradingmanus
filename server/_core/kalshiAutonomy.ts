@@ -737,7 +737,11 @@ async function generateScheduledSignals(
       }
       if (fundamentalProbabilities.size > 0) {
         logger.info(
-          { count: fundamentalProbabilities.size, cryptoTotal: cryptoMarkets.length, windowHours: MAX_CRYPTO_RESOLUTION_HOURS },
+          {
+            computedPriors: fundamentalProbabilities.size,
+            cryptoTotal: cryptoMarkets.length,
+            windowHours: MAX_CRYPTO_RESOLUTION_HOURS,
+          },
           "[Autonomy] Binance fundamental priors built for short-term crypto markets",
         );
       }

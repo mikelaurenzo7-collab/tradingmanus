@@ -188,8 +188,10 @@ export async function fetchBinanceKlinesHistory(
       `&limit=${batchSize}`;
 
     if (endTime !== undefined) {
-      // Subtract 1 ms so the current batch doesn't overlap with the previous one.
-      url += `&endTime=${endTime - 1}`;
+    // The comment says "subtract 1 ms so this batch doesn't overlap with the
+    // next batch backwards": since we're paging backwards, we end each new
+    // request just before the earliest candle seen so far.
+    url += `&endTime=${endTime - 1}`;
     }
 
     // Each batch goes through the shared breaker so sustained failures trip

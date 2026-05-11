@@ -229,6 +229,8 @@ export function computeBSMProbability(
 
   // Annualised σ from ATR(14) on 15m candles.
   // 96 periods/day × √365 days/year gives the annualisation factor.
+  // Floor at 1% (0.01) annual vol: below this, the BSM d₁ becomes numerically
+  // unstable and real crypto markets never sustain sub-1% annualised volatility.
   const atrFraction = atr / currentPrice;
   const annualizedSigma = Math.max(0.01, atrFraction * Math.sqrt(PERIODS_PER_DAY_15M * DAYS_PER_YEAR));
 
@@ -247,7 +249,9 @@ export function computeBSMProbability(
   const pAbove = normalCDF(d1);
   let rawProb = direction === "above" ? pAbove : 1 - pAbove;
 
-  // RSI overbought/oversold nudge.
+  // RSI overbought (>70) / oversold (<30) nudge — standard technical levels.
+  // ±0.05 is a conservative 5% adjustment that avoids overriding the BSM
+  // geometric prior while still capturing mean-reversion tendencies.
   if (rsi > 70) rawProb -= 0.05;
   if (rsi < 30) rawProb += 0.05;
 

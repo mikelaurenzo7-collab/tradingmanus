@@ -98,7 +98,7 @@ describe("computeEMA", () => {
     expect(computeEMA(closes, 21)).toBeCloseTo(100, 5);
   });
 
-  it("EMA of a rising series is below the last price but above average", () => {
+  it("EMA of a rising series is below the last price but above average — and matches manual calc", () => {
     // Prices rise 1 each step from 100 → 149.
     const closes = Array.from({ length: 50 }, (_, i) => 100 + i);
     const ema = computeEMA(closes, 9);
@@ -106,6 +106,11 @@ describe("computeEMA", () => {
     const avg = closes.reduce((a, b) => a + b, 0) / closes.length;
     expect(ema).toBeGreaterThan(avg);
     expect(ema).toBeLessThan(lastPrice);
+    // Manual spot-check: EMA(9) on a linear 1-per-candle series from 100 to 149.
+    // k = 2/(9+1) = 0.2; the EMA lags the price by roughly period/2 ≈ 4.5 periods.
+    // So EMA should be around 149 - 4.5 ≈ 144.5.  Allow ±2 for initialisation lag.
+    expect(ema).toBeGreaterThan(142);
+    expect(ema).toBeLessThan(148);
   });
 });
 
@@ -287,7 +292,10 @@ describe("computeBSMProbability", () => {
     const flatAtSame = buildKlines(60, trendKlines[trendKlines.length - 1]!.close);
     const probTrend = computeBSMProbability(trendKlines, 90_000, "above", 4)!;
     const probFlat = computeBSMProbability(flatAtSame, 90_000, "above", 4)!;
-    expect(probTrend).toBeGreaterThanOrEqual(probFlat - 0.02); // trend should not hurt
+    // Allow ±0.02 tolerance: RSI adjustments can shift probabilities by up to
+    // ±0.05, so a very slight difference in RSI between trend and flat series
+    // is acceptable — we only check that trend does not significantly *hurt* P.
+    expect(probTrend).toBeGreaterThanOrEqual(probFlat - 0.02);
   });
 });
 
