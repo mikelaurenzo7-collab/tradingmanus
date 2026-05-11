@@ -23,7 +23,14 @@ export type SportsPropType =
   | "mlb_hits_2plus"
   | "nba_points_30plus"
   | "nba_triple_double"
-  | "nfl_touchdown_anytime";
+  | "nba_double_double"
+  | "nba_rebounds_10plus"
+  | "nba_assists_10plus"
+  | "nfl_touchdown_anytime"
+  | "nfl_pass_yds_300plus"
+  | "nhl_points_1plus"
+  | "nhl_goals_1plus"
+  | "soccer_goal_anytime";
 
 interface SportsPropRule {
   type: SportsPropType;
@@ -53,9 +60,44 @@ const PROP_RULES: SportsPropRule[] = [
     baseRate: 0.08, // General star average (excluding Joker/Luka)
   },
   {
+    type: "nba_double_double",
+    patterns: ["record a double-double", "have a double-double"],
+    baseRate: 0.25, // Above average starter
+  },
+  {
+    type: "nba_rebounds_10plus",
+    patterns: ["record 10+ rebounds", "have 10+ rebounds", "get 10+ rebounds"],
+    baseRate: 0.20,
+  },
+  {
+    type: "nba_assists_10plus",
+    patterns: ["record 10+ assists", "have 10+ assists", "get 10+ assists"],
+    baseRate: 0.15,
+  },
+  {
     type: "nfl_touchdown_anytime",
     patterns: ["score 1+ touchdown", "record 1+ touchdown", "anytime touchdown"],
     baseRate: 0.35, // Lead back / WR1 average
+  },
+  {
+    type: "nfl_pass_yds_300plus",
+    patterns: ["throw for 300+ yards", "record 300+ passing yards", "300+ passing yards"],
+    baseRate: 0.18, // Top tier QB average
+  },
+  {
+    type: "nhl_points_1plus",
+    patterns: ["record 1+ points", "have 1+ points", "get 1+ points"],
+    baseRate: 0.65, // Top line forward
+  },
+  {
+    type: "nhl_goals_1plus",
+    patterns: ["score 1+ goals", "record 1+ goals", "anytime goalscorer"],
+    baseRate: 0.25, // Top line forward
+  },
+  {
+    type: "soccer_goal_anytime",
+    patterns: ["score 1+ goals", "score a goal", "anytime goalscorer"],
+    baseRate: 0.25, // Striker
   },
 ];
 

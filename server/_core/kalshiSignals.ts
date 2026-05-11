@@ -618,7 +618,7 @@ export async function generateSignalsForMarket(
   // but generating them at all wastes AI-reviewer cost and pollutes the
   // sidebar with bogus "high-confidence" picks.
   const resolvedFundamental = resolveFundamentalPrior(market, fundamentalProbability, platformPerformance);
-  const usesFallbackFundamental = resolvedFundamental.source === "neutral_fallback";
+  const usesFallbackFundamental = resolvedFundamental.source === "neutral_fallback" || resolvedFundamental.source === "category_prior";
   const baselineFundamentalProbability = clampProbability(resolvedFundamental.value);
   const valueOpportunity =
     usesFallbackFundamental

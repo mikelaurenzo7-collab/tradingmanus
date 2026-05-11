@@ -115,9 +115,9 @@ const MIN_SCHEDULED_MARKET_VOLUME = 500;
 const MOONSHOT_PRICE_MIN = 0.02; // 2¢
 const MOONSHOT_PRICE_MAX = 0.20; // 20¢ (or symmetrically 80¢..98¢ on the no side)
 const MOONSHOT_MIN_VOLUME = 100;
-const MOONSHOT_MAX_NOTIONAL = 5;       // $ per moonshot trade
-const MOONSHOT_MAX_TOTAL_USD = 25;     // total open moonshot exposure cap
-const MOONSHOT_MAX_OPEN_COUNT = 5;     // hard cap on open moonshot positions
+const MOONSHOT_MAX_NOTIONAL = 10;      // $ per moonshot trade
+const MOONSHOT_MAX_TOTAL_USD = 50;     // total open moonshot exposure cap
+const MOONSHOT_MAX_OPEN_COUNT = 10;    // hard cap on open moonshot positions
 
 /** Returns true if the side's price sits in the moonshot band on either side. */
 export function isMoonshotPrice(price: number): boolean {

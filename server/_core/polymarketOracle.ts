@@ -107,9 +107,20 @@ export function matchPolymarketPrice(
     // Exact match
     if (kNorm === pNorm) return p.price;
 
-    // Fuzzy match: check if one contains the other
-    if (kNorm.includes(pNorm) || pNorm.includes(kNorm)) {
-      const score = Math.min(kNorm.length, pNorm.length) / Math.max(kNorm.length, pNorm.length);
+    // Word-level Jaccard similarity
+    const kWords = new Set(kalshiTitle.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(w => w.length > 2));
+    const pWords = new Set(p.title.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(w => w.length > 2));
+    
+    let intersection = 0;
+    for (const w of kWords) {
+      if (pWords.has(w)) intersection++;
+    }
+    
+    // Calculate overlap score based on the smaller set of words to allow for titles with extra context
+    const minWords = Math.min(kWords.size, pWords.size);
+    if (minWords > 0) {
+      const score = intersection / minWords;
+      
       if (score > bestScore) {
         bestScore = score;
         bestMatch = p;
@@ -117,8 +128,8 @@ export function matchPolymarketPrice(
     }
   }
 
-  // High-confidence threshold (85% string overlap)
-  if (bestMatch && bestScore > 0.85) {
+  // High-confidence threshold (80% word overlap of the shorter title)
+  if (bestMatch && bestScore > 0.80) {
     return bestMatch.price;
   }
 
