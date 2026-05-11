@@ -28,6 +28,7 @@ import { assertPositiveIntegerUserId } from "./userScope";
 import { logger } from "./logger";
 import { ENV } from "./env";
 import { OnlineLearningModel } from "./onlineLearning";
+import { matchPolymarketPrice, PolymarketSnapshot } from "./polymarketOracle";
 
 export type SignalType =
   | "value_play"
@@ -109,6 +110,8 @@ export interface KalshiPlatformPerformanceSnapshot {
   signalWinRates?: Partial<Record<SignalType, number>>;
   categoryEdge?: Partial<Record<string, number>>;
   onlineLearningModel?: OnlineLearningModel;
+  /** Map of Kalshi Market ID -> Polymarket Yes price [0,1] */
+  polymarketPriors?: Map<string, number>;
 }
 
 type StrategyProfileKey =
@@ -374,9 +377,20 @@ const CATEGORY_FUNDAMENTAL_PRIORS: Record<StrategyProfileKey, number> = {
  * Resolve a category-aware fundamental prior for a market.
  * Returns the category prior when no explicit value is provided.
  */
-export function resolveFundamentalPrior(market: KalshiMarket, explicit?: number): { value: number; source: "explicit" | "category_prior" | "neutral_fallback" } {
+export function resolveFundamentalPrior(
+  market: KalshiMarket, 
+  explicit?: number,
+  platformPerformance?: KalshiPlatformPerformanceSnapshot
+): { value: number; source: "explicit" | "polymarket_oracle" | "category_prior" | "neutral_fallback" } {
   if (explicit != null && Number.isFinite(explicit) && explicit > 0 && explicit < 1) {
     return { value: explicit, source: "explicit" };
+  }
+  // Polymarket Oracle: The highest-confidence lead indicator. If the world's 
+  // most liquid prediction market is trading this same event, we treat its 
+  // price as our ground-truth prior.
+  const polyPrice = platformPerformance?.polymarketPriors?.get(market.id);
+  if (polyPrice != null && Number.isFinite(polyPrice)) {
+    return { value: polyPrice, source: "polymarket_oracle" };
   }
   // Awards precursor model: when the market title matches a curated awards
   // category AND the operator has populated KNOWN_NOMINEES + KNOWN_PRECURSORS,
@@ -603,7 +617,7 @@ export async function generateSignalsForMarket(
   // signals were already filtered out at execution by isHeuristicBaselineSignal,
   // but generating them at all wastes AI-reviewer cost and pollutes the
   // sidebar with bogus "high-confidence" picks.
-  const resolvedFundamental = resolveFundamentalPrior(market, fundamentalProbability);
+  const resolvedFundamental = resolveFundamentalPrior(market, fundamentalProbability, platformPerformance);
   const usesFallbackFundamental = resolvedFundamental.source === "neutral_fallback";
   const baselineFundamentalProbability = clampProbability(resolvedFundamental.value);
   const valueOpportunity =
@@ -618,8 +632,10 @@ export async function generateSignalsForMarket(
     const reasoningPrefix =
       resolvedFundamental.source === "explicit"
         ? "Market mispriced"
-        : resolvedFundamental.source === "category_prior"
-          ? "Market mispriced (category prior)"
+        : resolvedFundamental.source === "polymarket_oracle"
+          ? "Market mispriced (Polymarket Oracle lead indicator)"
+          : resolvedFundamental.source === "category_prior"
+            ? "Market mispriced (category prior)"
           : "Market mispriced (heuristic baseline)";
     const reasoning = `${reasoningPrefix}: ${valueOpportunity.side.toUpperCase()} probability ${(market.impliedProbability * 100).toFixed(1)}% vs ${resolvedFundamental.source === "explicit" ? "fundamental" : resolvedFundamental.source === "category_prior" ? "category prior" : "neutral baseline"} ${(baselineFundamentalProbability * 100).toFixed(1)}%`;
     if (isFinite(confidence) && isFinite(valueOpportunity.expectedValue)) {

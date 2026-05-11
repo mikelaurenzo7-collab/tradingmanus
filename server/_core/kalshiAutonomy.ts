@@ -5,6 +5,11 @@ import * as kalshiCredDb from "../db.kalshi-credentials";
 import * as tradingPreferencesDb from "../db.trading-preferences";
 import type { RiskPosture } from "../db.trading-preferences";
 import { getUserTrainingInstructions, isInstructionActiveNow, applyInstructionsToSignals } from "../db.training";
+import {
+  fetchPolymarketSnapshots,
+  matchPolymarketPrice,
+  PolymarketSnapshot,
+} from "./polymarketOracle";
 import { fetchKalshiMarkets, fetchKalshiMarketDetails } from "./kalshiMarketData";
 import { fetchKalshiAccountEquity } from "./kalshiAuth";
 import { getMarketFeed, isMarketDataStale } from "./kalshiMarketFeed";
@@ -629,6 +634,24 @@ async function generateScheduledSignals(
     Object.prototype.hasOwnProperty.call(db, "getOpenKalshiPositions") &&
     Object.prototype.hasOwnProperty.call(db, "getKalshiCapital");
 
+  // ── Polymarket Oracle Lead Indicators ─────────────────────────────────────
+  // Fetch active Polymarket prices to use as ground-truth priors for Kalshi.
+  const polymarketPriors = new Map<string, number>();
+  try {
+    const snapshots = await fetchPolymarketSnapshots();
+    if (snapshots.length > 0) {
+      for (const market of actionableMarkets) {
+        const polyPrice = matchPolymarketPrice(market.title, snapshots);
+        if (polyPrice != null) {
+          polymarketPriors.set(market.id, polyPrice);
+          logger.debug({ marketId: market.id, polyPrice }, "[Autonomy] Polymarket Oracle match found");
+        }
+      }
+    }
+  } catch (err) {
+    logger.debug({ err }, "[Autonomy] Polymarket Oracle fetch failed; continuing without lead indicators");
+  }
+
   if (canLoadPerformanceSnapshot) {
     try {
       const [performanceOverview, recentSignals] = await Promise.all([
@@ -642,6 +665,9 @@ async function generateScheduledSignals(
         performanceOverview.trades,
         userId
       );
+      if (platformPerformance) {
+        platformPerformance.polymarketPriors = polymarketPriors;
+      }
     } catch (err) {
       logger.debug({ err, userId }, "Platform performance snapshot unavailable; continuing with baseline signal profile");
     }
